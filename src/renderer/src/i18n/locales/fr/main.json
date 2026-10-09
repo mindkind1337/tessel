@@ -233,7 +233,6 @@
     "mcp": {
       "codexListFailed": "Impossible de lister les serveurs de Codex.",
       "codexListUnreadable": "Impossible de lire la liste des serveurs de Codex.",
-      "codexNoHeaders": "Codex ne peut pas enregistrer d'en-têtes personnalisés. Connectez-vous avec codex mcp login si le serveur le demande.",
       "codexNotInstalled": "Codex n'est pas installé.",
       "commandNotFound": "Commande introuvable : {{command}}",
       "commandRequired": "Saisissez la commande qui démarre le serveur.",
@@ -253,7 +252,11 @@
       "serverNotFound": "Serveur introuvable.",
       "unknownAgent": "Agent inconnu.",
       "unreachable": "Impossible de joindre le serveur : {{error}}",
-      "urlRequired": "Saisissez une URL commençant par http:// ou https://"
+      "urlRequired": "Saisissez une URL commençant par http:// ou https://",
+      "codexOtherForm": "Codex a déjà « {{name}} » écrit autrement dans config.toml : Tessel n'y touche pas. Modifiez-le à la main ou retirez-le d'abord.",
+      "codexRejectedEntry": "Codex n'a pas pu lire le nouveau serveur, Tessel a donc laissé ses paramètres tels quels.",
+      "codexNoSse": "Codex se connecte uniquement aux serveurs HTTP streamable, pas aux serveurs SSE.",
+      "envVarInvalid": "Utilisez des lettres, des chiffres et _ pour le nom de la variable."
     },
     "needs": {
       "agentName": "Un agent IA",

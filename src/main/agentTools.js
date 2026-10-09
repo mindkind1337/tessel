@@ -15,6 +15,8 @@ import path, { join, dirname, basename } from 'path'
 import os from 'os'
 import fs from 'fs'
 import { readJson } from './fileRead'
+import { cleanPsOutput, PS_QUIET_PRELUDE } from './psOutput'
+import { setCodexHttpServer } from './codexMcpConfig'
 import { t } from './i18n'
 import { copyWorktreeEnv, resolveWorktreeBase, setupWorktree } from './worktreeCreate'
 import { branchPrefixFor, branchNameFor, worktreeBaseDir } from '../shared/worktreeNaming'
@@ -159,6 +161,7 @@ export function slugify(text) {
 // git never starts a repository's core.fsmonitor program for Tessel (a
 // folder from elsewhere could name any program there; see gitSafety.js).
 const isGit = (file) => /(^|[\\/])git(\.exe)?$/i.test(String(file || ''))
+const isPowerShell = (file) => /(^|[\\/])(powershell|pwsh)(\.exe)?$/i.test(String(file || ''))
 
 export function run(file, args, opts = {}) {
   return new Promise((resolve) => {
@@ -173,11 +176,13 @@ export function run(file, args, opts = {}) {
         ...opts
       },
       (err, stdout, stderr) => {
+        // A PowerShell child's stderr comes as CLIXML: made readable.
+        const clean = isPowerShell(file) ? cleanPsOutput : String
         resolve({
           ok: !err,
           code: err ? (typeof err.code === 'number' ? err.code : 1) : 0,
-          stdout: String(stdout || ''),
-          stderr: String(stderr || ''),
+          stdout: clean(stdout || ''),
+          stderr: clean(stderr || ''),
           error: err ? err.message : null
         })
       }
@@ -237,6 +242,7 @@ async function runAgentCli(exe, args, cwd) {
   if (scriptsBlocked) return runDirect(exe, args, dir)
   const script = [
     '$ErrorActionPreference = "Continue"',
+    PS_QUIET_PRELUDE,
     PS_PATH,
     `& ${psQuote(exe)} ${args.map(psQuote).join(' ')}`,
     'exit $LASTEXITCODE'
@@ -289,8 +295,8 @@ async function runDirect(exe, args, cwd) {
   return run(target.file, [...target.pre, ...args], { cwd, timeout: 90000, env })
 }
 
-function cliError(res, fallback) {
-  const text = (res.stderr || res.stdout || res.error || '').trim()
+export function cliError(res, fallback) {
+  const text = cleanPsOutput(res.stderr || res.stdout || res.error || '').trim()
   const line = text.split(/\r?\n/).filter(Boolean).slice(-3).join(' ')
   return line || fallback
 }
@@ -479,7 +485,8 @@ export async function listMcp(cwd) {
 // spec: { agent: 'claude'|'codex', name, transport: 'stdio'|'http',
 //         commandLine, url, env: 'K=V lines', headers: 'Name: value lines',
 //         scope: 'user'|'project', cwd }
-export async function addMcp(spec) {
+// deps (tests): { codexHome, verifyCodex }
+export async function addMcp(spec, deps = {}) {
   const { agent, name, transport, cwd } = spec || {}
   if (!isValidServerName(name)) {
     return { ok: false, error: t('main.mcp.nameInvalid', 'Use letters, digits, - or _ for the name (no spaces).') }
@@ -504,7 +511,7 @@ export async function addMcp(spec) {
       if (!/^https?:\/\//i.test(spec.url || ''))
         return { ok: false, error: t('main.mcp.urlRequired', 'Enter a URL starting with http:// or https://') }
       // -H takes several values, so it goes after the name and URL.
-      args.push('--transport', 'http', name, spec.url)
+      args.push('--transport', spec.sse ? 'sse' : 'http', name, spec.url)
       for (const [k, v] of Object.entries(headers)) args.push('-H', `${k}: ${v}`)
     } else {
       const words = windowsSafeCommand(splitCommandLine(spec.commandLine))
@@ -523,8 +530,22 @@ export async function addMcp(spec) {
     if (transport === 'http') {
       if (!/^https?:\/\//i.test(spec.url || ''))
         return { ok: false, error: t('main.mcp.urlRequired', 'Enter a URL starting with http:// or https://') }
-      args.push('--url', spec.url)
-      if (spec.bearerEnvVar) args.push('--bearer-token-env-var', spec.bearerEnvVar)
+      if (spec.sse) return { ok: false, error: t('main.mcp.codexNoSse', 'Codex only connects to streamable HTTP servers, not SSE ones.') }
+      // Written into config.toml, not with `codex mcp add --url`: that one
+      // starts an OAuth sign-in on its own (hidden, so it fails) whenever the
+      // server offers it, even when the server works without it.
+      const bearer = String(spec.bearerEnvVar || '').trim()
+      if (bearer && !/^[A-Za-z_][A-Za-z0-9_]*$/.test(bearer))
+        return { ok: false, error: t('main.mcp.envVarInvalid', 'Use letters, digits and _ for the variable name.') }
+      return setCodexHttpServer(name, { url: spec.url, headers, bearerEnvVar: bearer || null }, {
+        home: deps.codexHome,
+        verify:
+          deps.verifyCodex ||
+          (async () => {
+            const res = await runAgentCli('codex', ['mcp', 'get', name, '--json'], cwd)
+            return res.ok ? { ok: true } : { ok: false, error: cliError(res, 'codex mcp get failed') }
+          })
+      })
     } else {
       const words = windowsSafeCommand(splitCommandLine(spec.commandLine))
       if (!words.length) return { ok: false, error: t('main.mcp.commandRequired', 'Enter the command that starts the server.') }
@@ -539,7 +560,7 @@ export async function addMcp(spec) {
     if (transport === 'http') {
       if (!/^https?:\/\//i.test(spec.url || ''))
         return { ok: false, error: t('main.mcp.urlRequired', 'Enter a URL starting with http:// or https://') }
-      cfg = { transport: 'http', url: spec.url, headers }
+      cfg = { transport: 'http', url: spec.url, headers, sse: !!spec.sse }
     } else {
       const words = splitCommandLine(spec.commandLine)
       if (!words.length) return { ok: false, error: t('main.mcp.commandRequired', 'Enter the command that starts the server.') }
@@ -582,6 +603,7 @@ export function normalizeServerConfig(cfg = {}) {
   if (isHttp) {
     return {
       transport: 'http',
+      sse: t.type === 'sse',
       url: t.url || '',
       headers: { ...(t.headers || t.http_headers || {}) },
       bearerEnvVar: t.bearer_token_env_var || null
@@ -874,6 +896,7 @@ export async function copyMcp({ from, to, name, scope, cwd }) {
       .map(([k, v]) => `${k}: ${v}`)
       .join('\n')
     if (cfg.bearerEnvVar) spec.bearerEnvVar = cfg.bearerEnvVar
+    if (cfg.sse) spec.sse = true
   } else {
     spec.transport = 'stdio'
     spec.commandLine = [cfg.command, ...cfg.args].map(quoteWord).join(' ')
@@ -882,11 +905,7 @@ export async function copyMcp({ from, to, name, scope, cwd }) {
       .join('\n')
   }
   const res = await addMcp(spec)
-  const note =
-    to === 'codex' && cfg.transport === 'http' && Object.keys(cfg.headers || {}).length
-      ? t('main.mcp.codexNoHeaders', 'Codex cannot store custom headers. Sign in with codex mcp login if the server asks.')
-      : null
-  return res.ok ? { ok: true, note } : res
+  return res.ok ? { ok: true, note: null } : res
 }
 
 // Keyboard-layout handle for an input method tip like '0C0C:00001009':

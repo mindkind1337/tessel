@@ -5,7 +5,11 @@
 //   Copilot CLI  ~/.copilot/mcp-config.json      "mcpServers": { name: { type: local|http, command, args, env, tools | url, headers } }
 //   OpenCode     ~/.config/opencode/opencode.json "mcp": { name: { type: local, command: [..], environment | type: remote, url, headers } }
 //   Cline        ~/.cline/data/settings/cline_mcp_settings.json "mcpServers": { name: { command, args, env | type: streamableHttp, url, headers } }
-//   Kimi Code    ~/.kimi-code/mcp.json           "mcpServers": { name: { command, args, env | transport: http, url, headers } }
+//   Kimi Code    ~/.kimi-code/mcp.json           "mcpServers": { name: { command, args, env | transport: http|sse, url, headers } }
+//   Cursor CLI   ~/.cursor/mcp.json              "mcpServers": { name: { command, args, env | url, headers } }
+// HTTP servers are streamable HTTP unless `sse` is set (an SSE endpoint):
+// Gemini/Qwen httpUrl vs url, Copilot/Cline/Kimi their type, OpenCode and
+// Cursor find out by themselves.
 // Only the server entries are read or changed; everything else in the file is
 // kept as it is. A file that cannot be read as JSON (comments in a .jsonc,
 // say) is never rewritten: the change is refused with a clear error.
@@ -16,12 +20,13 @@ import { writeFileAtomic } from './safeJson'
 import { t } from './i18n'
 import { findNode } from './nodePath'
 
-export const JSON_AGENTS = ['gemini', 'qwen', 'copilot', 'opencode', 'cline', 'kimi']
+export const JSON_AGENTS = ['gemini', 'qwen', 'copilot', 'opencode', 'cline', 'kimi', 'cursor']
 
 function settingsFile(agent, home = os.homedir()) {
   if (agent === 'gemini') return join(home, '.gemini', 'settings.json')
   if (agent === 'qwen') return join(home, '.qwen', 'settings.json')
   if (agent === 'copilot') return join(home, '.copilot', 'mcp-config.json')
+  if (agent === 'cursor') return join(home, '.cursor', 'mcp.json')
   if (agent === 'kimi') return join(process.env.KIMI_CODE_HOME || join(home, '.kimi-code'), 'mcp.json')
   if (agent === 'cline') {
     // Cline's own overrides first (CLINE_MCP_SETTINGS_PATH, CLINE_DATA_DIR, CLINE_DIR).
@@ -45,7 +50,7 @@ export function clineDataDir(home = os.homedir()) {
   return join(dir, 'data')
 }
 
-const KEY = { gemini: 'mcpServers', qwen: 'mcpServers', copilot: 'mcpServers', opencode: 'mcp', cline: 'mcpServers', kimi: 'mcpServers' }
+const KEY = { gemini: 'mcpServers', qwen: 'mcpServers', copilot: 'mcpServers', opencode: 'mcp', cline: 'mcpServers', kimi: 'mcpServers', cursor: 'mcpServers' }
 
 // -> { data } (null data: no file yet) or { error }
 function readSettings(file) {
@@ -81,12 +86,19 @@ function writeSettings(file, data) {
 export function entryToConfig(agent, e = {}) {
   if (!e || typeof e !== 'object') return null
   if (agent === 'opencode') {
-    if (e.type === 'remote' || e.url) return { transport: 'http', url: e.url || '', headers: { ...(e.headers || {}) } }
+    if (e.type === 'remote' || e.url) return { transport: 'http', sse: false, url: e.url || '', headers: { ...(e.headers || {}) } }
     const cmd = Array.isArray(e.command) ? e.command.map(String) : e.command ? [String(e.command)] : []
     return { transport: 'stdio', command: cmd[0] || '', args: cmd.slice(1), env: { ...(e.environment || {}) } }
   }
   const url = e.httpUrl || e.url
-  if (url || e.type === 'http' || e.type === 'sse') return { transport: 'http', url: url || '', headers: { ...(e.headers || {}) } }
+  if (url || ['http', 'sse', 'streamableHttp'].includes(e.type) || ['http', 'sse'].includes(e.transport)) {
+    const sse =
+      e.type === 'sse' ||
+      e.transport === 'sse' ||
+      // Gemini CLI / Qwen Code: url without a type is an SSE endpoint.
+      ((agent === 'gemini' || agent === 'qwen') && !e.httpUrl && !!e.url && e.type !== 'http')
+    return { transport: 'http', sse, url: url || '', headers: { ...(e.headers || {}) } }
+  }
   return {
     transport: 'stdio',
     command: e.command ? String(e.command) : '',
@@ -109,7 +121,7 @@ export function configToEntry(agent, cfg, extra = {}) {
   }
   if (agent === 'copilot') {
     if (cfg.transport === 'http') {
-      const e = { type: 'http', url: cfg.url, tools: ['*'] }
+      const e = { type: cfg.sse ? 'sse' : 'http', url: cfg.url, tools: ['*'] }
       if (cfg.headers && Object.keys(cfg.headers).length) e.headers = cfg.headers
       return e
     }
@@ -119,7 +131,7 @@ export function configToEntry(agent, cfg, extra = {}) {
   }
   if (agent === 'cline' || agent === 'kimi') {
     if (cfg.transport === 'http') {
-      const e = agent === 'kimi' ? { transport: 'http', url: cfg.url } : { type: 'streamableHttp', url: cfg.url }
+      const e = agent === 'kimi' ? { transport: cfg.sse ? 'sse' : 'http', url: cfg.url } : { type: cfg.sse ? 'sse' : 'streamableHttp', url: cfg.url }
       if (cfg.headers && Object.keys(cfg.headers).length) e.headers = cfg.headers
       return e
     }
@@ -127,9 +139,19 @@ export function configToEntry(agent, cfg, extra = {}) {
     if (cfg.env && Object.keys(cfg.env).length) e.env = cfg.env
     return e
   }
-  // Gemini CLI, Qwen Code
+  if (agent === 'cursor') {
+    if (cfg.transport === 'http') {
+      const e = { url: cfg.url }
+      if (cfg.headers && Object.keys(cfg.headers).length) e.headers = cfg.headers
+      return e
+    }
+    const e = { command: cfg.command, args: cfg.args || [] }
+    if (cfg.env && Object.keys(cfg.env).length) e.env = cfg.env
+    return e
+  }
+  // Gemini CLI, Qwen Code: httpUrl is streamable HTTP, url an SSE endpoint.
   if (cfg.transport === 'http') {
-    const e = { httpUrl: cfg.url }
+    const e = cfg.sse ? { url: cfg.url } : { httpUrl: cfg.url }
     if (cfg.headers && Object.keys(cfg.headers).length) e.headers = cfg.headers
     return { ...e, ...extra }
   }

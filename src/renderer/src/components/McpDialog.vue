@@ -1,13 +1,14 @@
 <script setup>
 // MCP servers for every agent CLI (Claude Code, Codex, Gemini CLI, Qwen Code,
-// Copilot CLI, OpenCode), in one place:
+// Copilot CLI, OpenCode, Cline, Kimi Code, Cursor CLI), in one place:
 //   Installed - every server, which agents have it, a live connection test,
 //               copy to the other agent, sign-in help, remove.
 //   Catalog   - popular servers, searchable, added in one click (asks only
 //               for what the server needs: a folder, an API key...).
 //   Custom    - any other server, by command or URL.
-// Claude Code and Codex are changed through their own CLI; the others in their
-// settings file, in the format each expects (src/main/jsonAgents.js). Only the
+// Claude Code and Codex stdio servers are changed through their own CLI; Codex
+// HTTP servers and the others in their settings file, in the format each
+// expects (src/main/jsonAgents.js, codexMcpConfig.js). Only the
 // agents installed here (or that already have servers) are shown. Running
 // agents load changes when restarted.
 import { ref, reactive, computed, onMounted, inject } from 'vue'
@@ -23,7 +24,7 @@ const props = defineProps({
 })
 const emit = defineEmits(['close', 'run', 'tools'])
 
-const ALL_AGENTS = ['claude', 'codex', 'gemini', 'qwen', 'copilot', 'opencode', 'cline', 'kimi']
+const ALL_AGENTS = ['claude', 'codex', 'gemini', 'qwen', 'copilot', 'opencode', 'cline', 'kimi', 'cursor']
 const AGENT_NAME = {
   claude: 'Claude Code', // i18n-ignore
   codex: 'Codex', // i18n-ignore
@@ -32,7 +33,8 @@ const AGENT_NAME = {
   copilot: 'Copilot CLI', // i18n-ignore
   opencode: 'OpenCode', // i18n-ignore
   cline: 'Cline', // i18n-ignore
-  kimi: 'Kimi Code' // i18n-ignore
+  kimi: 'Kimi Code', // i18n-ignore
+  cursor: 'Cursor CLI' // i18n-ignore
 }
 function scopeLabel(scope) {
   if (scope === 'user') return t('mcp.scope.user', 'All projects')
@@ -239,9 +241,17 @@ async function remove(agent, s) {
   refresh()
 }
 
+// Signing in opens a browser and waits for its redirect: it runs in a pane
+// the user sees (never in a hidden process), for the CLIs that have a command
+// for it. Names are letters, digits, - and _ (checked when added).
 function signIn(agent, name) {
+  if (!/^[A-Za-z0-9_-]{1,64}$/.test(String(name))) return
   if (agent === 'codex') {
     emit('run', { label: t('mcp.signIn.pane', 'Sign in: {{name}}', { name }), command: `codex mcp login ${name}` }) // i18n-ignore
+  } else if (agent === 'opencode') {
+    emit('run', { label: t('mcp.signIn.pane', 'Sign in: {{name}}', { name }), command: `opencode mcp auth ${name}` }) // i18n-ignore
+  } else if (agent === 'gemini' || agent === 'qwen') {
+    say(t('mcp.signIn.gemini', 'In a {{agent}} pane, type /mcp auth {{name}}. Your browser opens to sign in.', { name, agent: AGENT_NAME[agent] }))
   } else if (agent !== 'claude') {
     say(
       t('mcp.signIn.other', 'Sign in to "{{name}}" from a {{agent}} pane (its own MCP command), or set the server\'s API key.', { name, agent: AGENT_NAME[agent] })
@@ -273,6 +283,67 @@ const filtered = computed(() => {
 
 function addedTo(id) {
   return AGENTS.value.filter((a) => listOf(a).some((s) => s.name === id))
+}
+// "Added" only when every agent installed here has it.
+function fullyAdded(id) {
+  const want = AGENTS.value.filter((a) => installed.value[a])
+  const has = addedTo(id)
+  return want.length > 0 && want.every((a) => has.includes(a))
+}
+
+// What the last add did for each agent, per catalog entry:
+//   entryId -> { agent: { state: 'added'|'auth'|'failed', error } }
+// 'auth': added, but the server answers only after signing in.
+const results = reactive({})
+function resultLabel(r) {
+  if (r.state === 'auth') return t('mcp.test.needsSignIn', 'Needs sign-in')
+  if (r.state === 'failed') return t('mcp.test.failed', 'Failed')
+  return t('mcp.catalog.addedTag', 'Added')
+}
+const resultClass = (r) => (r.state === 'added' ? 'connected' : r.state === 'auth' ? 'auth' : 'error')
+
+// Each chosen agent in turn; one failing never stops the others.
+async function addToAgents(chosen, specFor) {
+  const out = {}
+  for (const agent of chosen) {
+    let res
+    try {
+      res = await window.shellApi.mcpAdd(specFor(agent))
+    } catch (err) {
+      res = { ok: false, error: err && err.message }
+    }
+    out[agent] = res && res.ok ? { state: 'added' } : { state: 'failed', error: (res && res.error) || t('mcp.addFailed', 'failed') }
+  }
+  return out
+}
+const failuresText = (out) =>
+  Object.entries(out)
+    .filter(([, r]) => r.state === 'failed')
+    .map(([a, r]) => `${AGENT_NAME[a]}: ${r.error}`)
+    .join('\n')
+const addedNames = (out) =>
+  Object.keys(out)
+    .filter((a) => out[a].state !== 'failed')
+    .map((a) => AGENT_NAME[a])
+
+// After adding: test the server for each agent that has it; one that answers
+// only after a sign-in shows "Needs sign-in" (with Sign in) instead of Added.
+async function checkAdded(name, out) {
+  await refresh()
+  await Promise.all(
+    Object.keys(out)
+      .filter((a) => out[a].state === 'added')
+      .map(async (agent) => {
+        const s = listOf(agent).find((x) => x.name === name)
+        if (!s) {
+          out[agent] = { state: 'failed', error: t('mcp.addNotListed', '{{agent}} does not list it.', { agent: AGENT_NAME[agent] }) }
+          return
+        }
+        await test(agent, s)
+        const r = tests[testKey(agent, s)]
+        if (r && r.status === 'auth') out[agent] = { state: 'auth', error: r.error }
+      })
+  )
 }
 
 function open(entry) {
@@ -308,22 +379,19 @@ async function addFromCatalog(entry) {
     }
   }
   busy.value = `add:${entry.id}` // i18n-ignore
-  const done = []
+  let out
   try {
-    for (const agent of chosen) {
-      const spec = catalogSpec(entry, answers, agent)
-      spec.scope = agent === 'claude' ? scope.value : 'user'
-      spec.cwd = props.cwd
-      const res = await window.shellApi.mcpAdd(spec)
-      if (!res || !res.ok) {
-        formError.value = `${AGENT_NAME[agent]}: ${(res && res.error) || t('mcp.addFailed', 'failed')}`
-        break
-      }
-      done.push(AGENT_NAME[agent])
-    }
+    out = await addToAgents(chosen, (agent) => ({
+      ...catalogSpec(entry, answers, agent),
+      scope: agent === 'claude' ? scope.value : 'user',
+      cwd: props.cwd
+    }))
   } finally {
     busy.value = ''
   }
+  results[entry.id] = out
+  formError.value = failuresText(out)
+  const done = addedNames(out)
   if (done.length) {
     const vars = { name: entry.name, agents: agentList(done) }
     say(
@@ -332,12 +400,8 @@ async function addFromCatalog(entry) {
         : t('mcp.catalog.added', 'Added {{name}} to {{agents}}. Restart running agent panes to load it.', vars)
     )
     if (!formError.value) openId.value = null
-    await refresh()
-    // Check it right away.
-    for (const agent of chosen) {
-      const s = listOf(agent).find((x) => x.name === entry.id)
-      if (s) test(agent, s)
-    }
+    await checkAdded(entry.id, out)
+    results[entry.id] = { ...out }
   }
 }
 
@@ -362,47 +426,46 @@ async function addCustom() {
     return
   }
   busy.value = 'custom'
-  const done = []
+  const name = custom.name.trim()
+  let out
   try {
-    for (const agent of chosen) {
-      const res = await window.shellApi.mcpAdd({
-        agent,
-        name: custom.name.trim(),
-        transport: custom.transport,
-        commandLine: custom.commandLine,
-        url: custom.url.trim(),
-        env: custom.env,
-        headers: custom.headers,
-        bearerEnvVar: custom.bearerEnvVar.trim(),
-        scope: agent === 'claude' ? scope.value : 'user',
-        cwd: props.cwd
-      })
-      if (!res || !res.ok) {
-        customError.value = `${AGENT_NAME[agent]}: ${(res && res.error) || t('mcp.addFailed', 'failed')}`
-        break
-      }
-      done.push(AGENT_NAME[agent])
-    }
+    out = await addToAgents(chosen, (agent) => ({
+      agent,
+      name,
+      transport: custom.transport,
+      commandLine: custom.commandLine,
+      url: custom.url.trim(),
+      env: custom.env,
+      headers: custom.headers,
+      bearerEnvVar: custom.bearerEnvVar.trim(),
+      scope: agent === 'claude' ? scope.value : 'user',
+      cwd: props.cwd
+    }))
   } finally {
     busy.value = ''
   }
+  customError.value = failuresText(out)
+  const done = addedNames(out)
   if (done.length) {
     say(
       t('mcp.custom.added', 'Added "{{name}}" to {{agents}}. Restart running agent panes to load it.', {
-        name: custom.name.trim(),
+        name,
         agents: agentList(done)
       })
     )
-    Object.assign(custom, {
-      name: '',
-      commandLine: '',
-      url: '',
-      env: '',
-      headers: '',
-      bearerEnvVar: ''
-    })
-    await refresh()
-    tab.value = 'installed'
+    if (!customError.value) {
+      Object.assign(custom, {
+        name: '',
+        commandLine: '',
+        url: '',
+        env: '',
+        headers: '',
+        bearerEnvVar: ''
+      })
+      tab.value = 'installed'
+    }
+    // The Installed tab shows each agent's test (Needs sign-in, Sign in).
+    await checkAdded(name, out)
   }
 }
 
@@ -785,7 +848,7 @@ onMounted(async () => {
               </span>
               <span class="set-hint">{{ entry.desc }}</span>
             </div>
-            <span v-if="addedTo(entry.id).length === 2" class="tool-status ok">{{ t('mcp.catalog.addedTag', 'Added') }}</span>
+            <span v-if="fullyAdded(entry.id)" class="tool-status ok">{{ t('mcp.catalog.addedTag', 'Added') }}</span>
             <button
               v-else
               class="exit-btn"
@@ -800,6 +863,19 @@ onMounted(async () => {
                     : t('mcp.catalog.add', 'Add')
               }}
             </button>
+          </div>
+
+          <div v-if="results[entry.id]" class="mcp-agents mcp-add-results">
+            <div v-for="(r, agent) in results[entry.id]" :key="agent" class="mcp-agent">
+              <BrandIcon :kind="agent" :size="14" />
+              <span class="mcp-agent-name">{{ AGENT_NAME[agent] }}</span>
+              <span class="mcp-status" :class="resultClass(r)" :title="r.error || ''">{{ resultLabel(r) }}</span>
+              <span class="mcp-agent-actions">
+                <button v-if="r.state === 'auth'" type="button" class="exit-btn" @click="signIn(agent, entry.id)">
+                  {{ t('mcp.installed.signIn', 'Sign in') }}
+                </button>
+              </span>
+            </div>
           </div>
 
           <form

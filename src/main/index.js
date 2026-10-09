@@ -148,6 +148,7 @@ import { createCliServer, CliError } from './cliServer'
 import { createCliBridge } from './cliBridge'
 import { createCloseGuard } from './closeGuard'
 import { installRendererRecovery } from './rendererRecovery'
+import { cleanPsOutput, PS_QUIET_PRELUDE } from './psOutput'
 import { prepareAntigravityContinue } from './antigravityIdeHistory'
 import { createCliInstaller, createUserPathRegistry, cliBinDir, cliCommandName, cliScriptPath, cliLauncherPath, iniText, readRegistryPathSync } from './cliInstall'
 import {
@@ -2060,6 +2061,7 @@ function validateCodexConfig(text) {
   fs.writeFileSync(join(home, 'config.toml'), text, 'utf8')
   const script = [
     "$env:Path = [Environment]::GetEnvironmentVariable('Path','Machine') + ';' + [Environment]::GetEnvironmentVariable('Path','User')",
+    PS_QUIET_PRELUDE,
     `$env:CODEX_HOME = '${home.replace(/'/g, "''")}'`,
     // codex.cmd, not the npm codex.ps1 shim (it cannot run where scripts are
     // blocked); the arguments are plain words, safe through cmd.exe.
@@ -2077,7 +2079,7 @@ function validateCodexConfig(text) {
         } catch {
           // a temp folder
         }
-        const why = String(stderr || '').split(/\r?\n/).find((l) => l.trim() && !/WARNING/.test(l)) || ''
+        const why = cleanPsOutput(stderr).split(/\r?\n/).find((l) => l.trim() && !/WARNING/.test(l)) || ''
         resolveCheck(err ? { ok: false, error: why.trim() || 'codex mcp list failed' } : { ok: true })
       }
     )
@@ -2266,6 +2268,9 @@ ipcMain.handle(
     // Gemini CLI, Qwen Code, Copilot CLI, OpenCode, Cline: in their settings file,
     // for those installed here (a file Tessel cannot read is left alone).
     for (const agent of JSON_AGENTS) {
+      // Cursor's servers are listed and edited in Settings > MCP; the team
+      // tools are not set up for it.
+      if (agent === 'cursor') continue
       const preset = (await getAgents()).find((a) => a.id === agent)
       if (!preset || !preset.available) continue
       const r = setJsonAgentServer(agent, SERVER_NAME, teamToolsEntry(agent, script, node))

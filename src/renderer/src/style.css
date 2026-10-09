@@ -3311,6 +3311,12 @@ body.pane-dragging * {
   margin: 8px 0 0;
   color: #ff9b9e;
   font-size: 12px;
+  /* One line per agent when several failed. */
+  white-space: pre-line;
+}
+
+.mcp-add-results {
+  margin-top: 8px;
 }
 
 .mcp-notice {

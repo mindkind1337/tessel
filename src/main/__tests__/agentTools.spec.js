@@ -163,10 +163,12 @@ describe('normalizeServerConfig', () => {
     })
     expect(normalizeServerConfig({ type: 'http', url: 'https://x', headers: { H: 'v' } })).toEqual({
       transport: 'http',
+      sse: false,
       url: 'https://x',
       headers: { H: 'v' },
       bearerEnvVar: null
     })
+    expect(normalizeServerConfig({ type: 'sse', url: 'https://x/sse' }).sse).toBe(true)
   })
   it('normalizes Codex list entries', () => {
     expect(
@@ -174,7 +176,9 @@ describe('normalizeServerConfig', () => {
         name: 'g',
         transport: { type: 'streamable_http', url: 'https://g', bearer_token_env_var: 'TOK' }
       })
-    ).toEqual({ transport: 'http', url: 'https://g', headers: {}, bearerEnvVar: 'TOK' })
+    ).toEqual({ transport: 'http', sse: false, url: 'https://g', headers: {}, bearerEnvVar: 'TOK' })
+    // Codex keeps custom headers too (http_headers).
+    expect(normalizeServerConfig({ transport: { type: 'streamable_http', url: 'https://g', http_headers: { K: 'v' } } }).headers).toEqual({ K: 'v' })
   })
 })
 

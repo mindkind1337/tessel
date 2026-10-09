@@ -9,7 +9,9 @@ import {
   removeJsonAgentServer,
   jsonAgentConfig,
   configToEntry,
-  teamToolsEntry
+  entryToConfig,
+  teamToolsEntry,
+  JSON_AGENTS
 } from '../jsonAgents'
 
 let home
@@ -103,5 +105,63 @@ describe('MCP servers in agents settings files', () => {
         if (v !== undefined) process.env[k] = v
       }
     }
+  })
+})
+
+// Each agent's own format for a streamable HTTP server, an SSE one and a
+// command, where its settings file is, and that it reads back the same.
+describe('MCP server formats, per agent', () => {
+  const http = { transport: 'http', url: 'https://mcp.context7.com/mcp', headers: { K: 'v' } }
+  const sse = { transport: 'http', sse: true, url: 'https://x/sse', headers: {} }
+  const stdio = { transport: 'stdio', command: 'npx', args: ['-y', 'srv'], env: { A: '1' } }
+  const cases = {
+    gemini: { file: ['.gemini', 'settings.json'], key: 'mcpServers', http: { httpUrl: http.url, headers: { K: 'v' } }, sse: { url: sse.url }, stdio: { command: 'npx', args: ['-y', 'srv'], env: { A: '1' } } },
+    qwen: { file: ['.qwen', 'settings.json'], key: 'mcpServers', http: { httpUrl: http.url, headers: { K: 'v' } }, sse: { url: sse.url }, stdio: { command: 'npx', args: ['-y', 'srv'], env: { A: '1' } } },
+    copilot: { file: ['.copilot', 'mcp-config.json'], key: 'mcpServers', http: { type: 'http', url: http.url, tools: ['*'], headers: { K: 'v' } }, sse: { type: 'sse', url: sse.url, tools: ['*'] }, stdio: { type: 'local', command: 'npx', args: ['-y', 'srv'], tools: ['*'], env: { A: '1' } } },
+    opencode: { file: ['.config', 'opencode', 'opencode.json'], key: 'mcp', http: { type: 'remote', url: http.url, enabled: true, headers: { K: 'v' } }, sse: { type: 'remote', url: sse.url, enabled: true }, stdio: { type: 'local', command: ['npx', '-y', 'srv'], enabled: true, environment: { A: '1' } } },
+    cline: { file: ['.cline', 'data', 'settings', 'cline_mcp_settings.json'], key: 'mcpServers', http: { type: 'streamableHttp', url: http.url, headers: { K: 'v' } }, sse: { type: 'sse', url: sse.url }, stdio: { command: 'npx', args: ['-y', 'srv'], env: { A: '1' } } },
+    kimi: { file: ['.kimi-code', 'mcp.json'], key: 'mcpServers', http: { transport: 'http', url: http.url, headers: { K: 'v' } }, sse: { transport: 'sse', url: sse.url }, stdio: { command: 'npx', args: ['-y', 'srv'], env: { A: '1' } } },
+    cursor: { file: ['.cursor', 'mcp.json'], key: 'mcpServers', http: { url: http.url, headers: { K: 'v' } }, sse: { url: sse.url }, stdio: { command: 'npx', args: ['-y', 'srv'], env: { A: '1' } } }
+  }
+  const saved = {}
+  beforeEach(() => {
+    for (const k of ['CLINE_MCP_SETTINGS_PATH', 'CLINE_DATA_DIR', 'CLINE_DIR', 'KIMI_CODE_HOME']) {
+      saved[k] = process.env[k]
+      delete process.env[k]
+    }
+  })
+  afterEach(() => {
+    for (const [k, v] of Object.entries(saved)) if (v !== undefined) process.env[k] = v
+  })
+
+  it('covers every agent with a settings file', () => {
+    expect(Object.keys(cases).sort()).toEqual([...JSON_AGENTS].sort())
+  })
+
+  it.each(Object.keys(cases))('%s: adds HTTP, SSE and command servers in its own format, lists and removes them', (agent) => {
+    const c = cases[agent]
+    expect(setJsonAgentServer(agent, 'web', configToEntry(agent, http), home).ok).toBe(true)
+    expect(setJsonAgentServer(agent, 'old', configToEntry(agent, sse), home).ok).toBe(true)
+    expect(setJsonAgentServer(agent, 'cmd', configToEntry(agent, stdio), home).ok).toBe(true)
+    const servers = read(...c.file)[c.key]
+    expect(servers.web).toEqual(c.http)
+    expect(servers.old).toEqual(c.sse)
+    expect(servers.cmd).toEqual(c.stdio)
+    expect(listJsonAgent(agent, home).servers).toEqual([
+      { name: 'web', scope: 'user', type: 'http', target: http.url },
+      { name: 'old', scope: 'user', type: 'http', target: sse.url },
+      { name: 'cmd', scope: 'user', type: 'stdio', target: 'npx -y srv' }
+    ])
+    // Read back as it was written (OpenCode and Cursor find SSE by themselves).
+    expect(jsonAgentConfig(agent, 'web', home)).toEqual({ ...http, sse: false })
+    expect(jsonAgentConfig(agent, 'old', home).sse).toBe(!['opencode', 'cursor'].includes(agent))
+    expect(jsonAgentConfig(agent, 'cmd', home)).toEqual(stdio)
+    expect(removeJsonAgentServer(agent, 'web', home).changed).toBe(true)
+    expect(Object.keys(read(...c.file)[c.key])).toEqual(['old', 'cmd'])
+  })
+
+  it('Gemini: url with type "http" is streamable HTTP, url alone is SSE', () => {
+    expect(entryToConfig('gemini', { url: 'https://x', type: 'http' }).sse).toBe(false)
+    expect(entryToConfig('gemini', { url: 'https://x' }).sse).toBe(true)
   })
 })

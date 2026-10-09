@@ -60,7 +60,8 @@
     "signIn": {
       "pane": "Connexion : {{name}}",
       "other": "Connectez-vous à « {{name}} » depuis un panneau {{agent}} (avec sa propre commande MCP), ou définissez la clé d'API du serveur.",
-      "claude": "Dans un panneau Claude Code, tapez /mcp, choisissez « {{name}} » puis Authenticate. Votre navigateur s'ouvre pour vous connecter."
+      "claude": "Dans un panneau Claude Code, tapez /mcp, choisissez « {{name}} » puis Authenticate. Votre navigateur s'ouvre pour vous connecter.",
+      "gemini": "Dans un panneau {{agent}}, tapez /mcp auth {{name}}. Votre navigateur s'ouvre pour vous connecter."
     },
     "hooks": {
       "checkFailed": "Vérification impossible : {{error}}",
@@ -221,7 +222,8 @@
       "vercel": {
         "desc": "Projets, déploiements et journaux sur Vercel."
       }
-    }
+    },
+    "addNotListed": "{{agent}} ne le liste pas."
   },
   "tools": {
     "title": "Outils",
