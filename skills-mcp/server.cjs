@@ -425,7 +425,9 @@ const TOOLS = [
     inputSchema: {
       type: "object",
       properties: {
-        category: { type: "string", description: "Filter by category (optional)" },
+        category: { type: "string", description: "Filter: words that must all appear in the skill's name or description (optional)" },
+        limit: { type: "number", description: "Max skills to return (default 50, max 300)", default: 50 },
+        offset: { type: "number", description: "Skip this many matches, for paging (default 0)", default: 0 },
       },
     },
   },
@@ -472,25 +474,47 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
   tools: TOOLS,
 }));
 
+// DuckDuckGo's HTML results page (its JSON "instant answer" API returns no
+// results for ordinary queries).
 async function handleWebSearch(args) {
   try {
-    const response = await axios.get("https://api.duckduckgo.com/", {
-      params: {
-        q: args.query,
-        format: "json",
-        no_html: 1,
-        skip_disambig: 1,
-      },
-      timeout: 10000,
+    const n = Math.max(1, Math.min(Number(args.numResults) || 8, 25));
+    const response = await axios.get("https://html.duckduckgo.com/html/", {
+      params: { q: args.query },
+      headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) skills-mcp" },
+      timeout: 15000,
     });
-    return {
-      content: [
-        {
-          type: "text",
-          text: JSON.stringify(response.data, null, 2),
-        },
-      ],
+    const html = String(response.data || "");
+    const strip = (t) =>
+      t
+        .replace(/<[^>]+>/g, "")
+        .replace(/&amp;/g, "&")
+        .replace(/&quot;/g, '"')
+        .replace(/&#x27;|&#39;/g, "'")
+        .replace(/&lt;/g, "<")
+        .replace(/&gt;/g, ">")
+        .replace(/\s+/g, " ")
+        .trim();
+    const realUrl = (href) => {
+      const m = /[?&]uddg=([^&]+)/.exec(href);
+      return m ? decodeURIComponent(m[1]) : href.startsWith("//") ? `https:${href}` : href;
     };
+    const results = [];
+    const linkRe = /<a[^>]+class="result__a"[^>]+href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/g;
+    const snippetRe = /<a[^>]+class="result__snippet"[^>]*>([\s\S]*?)<\/a>/g;
+    const snippets = [];
+    let s;
+    while ((s = snippetRe.exec(html))) snippets.push(strip(s[1]));
+    let m;
+    let i = 0;
+    while ((m = linkRe.exec(html)) && results.length < n) {
+      const url = realUrl(m[1]);
+      const snippet = snippets[i++] || "";
+      if (/duckduckgo\.com\/y\.js/.test(url)) continue; // ads
+      results.push({ title: strip(m[2]), url, snippet });
+    }
+    if (!results.length) return { content: [{ type: "text", text: `No results for "${args.query}".` }] };
+    return { content: [{ type: "text", text: JSON.stringify(results, null, 2) }] };
   } catch (error) {
     return {
       content: [
@@ -524,6 +548,7 @@ async function handleFileRead(args) {
 
 async function handleFileWrite(args) {
   try {
+    fs.mkdirSync(path.dirname(args.filePath), { recursive: true });
     fs.writeFileSync(args.filePath, args.content, "utf-8");
     return {
       content: [{ type: "text", text: `File written: ${args.filePath}` }],
@@ -575,23 +600,49 @@ async function handleFileGlob(args) {
   }
 }
 
+// Pure JS: Windows has no grep on node's PATH (every search answered "No
+// matches found"), and building a shell command from the pattern was injectable.
 async function handleFileGrep(args) {
   try {
-    const { execSync } = require("child_process");
-    const include = args.include ? `--include="${args.include}"` : "";
-    const cmd = `grep -r "${args.pattern}" ${include} "${args.path || process.cwd()}"`;
-    const output = execSync(cmd, { encoding: "utf-8", maxBuffer: 1024 * 1024 * 10 });
-    return {
-      content: [{ type: "text", text: output }],
-    };
-  } catch (error) {
-    if (error.status === 1) {
-      return { content: [{ type: "text", text: "No matches found" }] };
+    const glob = require("glob");
+    const root = args.path || process.cwd();
+    let re;
+    try {
+      re = new RegExp(args.pattern);
+    } catch (e) {
+      return { content: [{ type: "text", text: `Grep error: bad regex: ${e.message}` }], isError: true };
     }
-    return {
-      content: [{ type: "text", text: `Grep error: ${error.message}` }],
-      isError: true,
-    };
+    const MAX_MATCHES = 500;
+    const MAX_FILE = 5 * 1024 * 1024;
+    const files = fs.statSync(root).isFile()
+      ? [root]
+      : glob.sync(args.include ? `**/${args.include}` : "**/*", {
+          cwd: root,
+          absolute: true,
+          nodir: true,
+          ignore: ["**/node_modules/**", "**/.git/**"],
+        });
+    const out = [];
+    for (const f of files) {
+      let text;
+      try {
+        if (fs.statSync(f).size > MAX_FILE) continue;
+        text = fs.readFileSync(f, "utf-8");
+      } catch {
+        continue;
+      }
+      if (text.includes("\u0000")) continue; // binary
+      const lines = text.split(/\r?\n/);
+      for (let i = 0; i < lines.length && out.length < MAX_MATCHES; i++) {
+        if (re.test(lines[i])) out.push(`${f}:${i + 1}:${lines[i].slice(0, 300)}`);
+      }
+      if (out.length >= MAX_MATCHES) break;
+    }
+    if (!out.length) return { content: [{ type: "text", text: "No matches found" }] };
+    const more = out.length >= MAX_MATCHES ? `\n(stopped at ${MAX_MATCHES} matches)` : "";
+    return { content: [{ type: "text", text: out.join("\n") + more }] };
+  } catch (error) {
+    return { content: [{ type: "text", text: `Grep error: ${error.message}` }], isError: true };
   }
 }
 
@@ -1026,11 +1077,17 @@ async function handleAntigravitySkillsList(args) {
         }
         return { name: e.name, description };
       });
-    if (args.category) {
-      // Simple category filter based on name patterns
-      return { content: [{ type: "text", text: JSON.stringify(skills.filter((s) => s.name.includes(args.category.toLowerCase())), null, 2) }] };
-    }
-    return { content: [{ type: "text", text: JSON.stringify(skills, null, 2) }] };
+    // Compact and paged: the full list (~670 skills) was 166k characters,
+    // more than an agent's tool output can hold.
+    const words = String(args.category || "").toLowerCase().split(/\s+/).filter(Boolean);
+    const matched = words.length ? skills.filter((s) => words.every((w) => `${s.name} ${s.description}`.toLowerCase().includes(w))) : skills;
+    const limit = Math.max(1, Math.min(Number(args.limit) || 50, 300));
+    const offset = Math.max(0, Number(args.offset) || 0);
+    const page = matched.slice(offset, offset + limit);
+    const lines = page.map((s) => `${s.name}: ${s.description.replace(/^"|"$/g, "").slice(0, 160)}`);
+    const head = `${matched.length} skill(s)${words.length ? ` matching "${words.join(" ")}"` : ""}; showing ${page.length ? offset + 1 : 0}-${offset + page.length}.`;
+    const tail = offset + page.length < matched.length ? `\nMore: call again with offset ${offset + page.length}.` : "";
+    return { content: [{ type: "text", text: `${head}\n${lines.join("\n")}${tail}` }] };
   } catch (error) {
     return { content: [{ type: "text", text: `Antigravity skills list error: ${error.message}` }], isError: true };
   }
