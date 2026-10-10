@@ -72,7 +72,7 @@ import { pageOf } from './browser/pageHost'
 import { paneDropZone, placeLeaf, sidePageFromLeaf, leafFromSidePage, saveSideBrowsers, restoreSideBrowsers, newSidePageId } from './browser/pageMove'
 import { createAgentBrowserTargets, addPageNear } from './browser/agentBrowserTargets'
 import { inheritsAgentSession } from './browser/agentSession'
-import { createAgentTerminalTargets, paneRunsYolo } from './agentTerminal/agentTerminalTargets'
+import { createAgentTerminalTargets, paneRunsYolo, placeNear, ownTerminalOf } from './agentTerminal/agentTerminalTargets'
 import { onTerminalControl, onTerminalLog, forgetTerminal } from './agentTerminal/agentTerminalState'
 import { rulesOfAction } from '../../shared/terminalRules'
 import AgentCommandApproval from './components/AgentCommandApproval.vue'
@@ -4249,6 +4249,7 @@ function workspaceEdgeAt(x, y) {
 }
 
 function movePane(srcId, target) {
+  agentTerminalTargets.touch(srcId)
   const srcWs = wsOfLeaf(srcId)
   const src = findLeaf(srcId)
   if (!srcWs || !src) return
@@ -9318,6 +9319,7 @@ async function enableTerminalAutoApprove() {
 function workspaceRulesKey(ws) {
   return String((ws.remote && `${ws.remote.hostId}:${ws.remote.path}`) || ws.cwd || ws.id || '')
 }
+const makeAgentSplit = (dir, children, sizes) => reactive({ type: 'split', id: newId('split'), dir, sizes, children })
 const agentTerminalTargets = createAgentTerminalTargets({
   enabled: () => settings.agentTerminal !== false,
   workspaces: () => workspaces.value,
@@ -9353,16 +9355,14 @@ const agentTerminalTargets = createAgentTerminalTargets({
     leaf.title = name
     leaf.openedBy = agentLeaf.id
     keepView(leaf, agentLeaf, ws)
-    let last = null
-    forEachLeaf(ws.tree, (l) => l.openedBy === agentLeaf.id && l !== leaf && l.kind !== 'browser' && (last = l))
-    ws.tree = addPageNear(ws.tree, (last || agentLeaf).id, leaf, {
-      dir: last ? 'col' : 'row',
-      mine: (n) => n === leaf || (n.type === 'leaf' && n.kind !== 'browser' && n.openedBy === agentLeaf.id),
-      makeSplit: (dir, children, sizes) => reactive({ type: 'split', id: newId('split'), dir, sizes, children })
-    })
+    // Its first terminal beside it, the next ones stacked under that one
+    // (rows of one area): the agent's pane is not halved again each time.
+    ws.tree = placeNear(ws.tree, agentLeaf.id, leaf, { forEachLeaf, mine: ownTerminalOf(agentLeaf.id), makeSplit: makeAgentSplit })
     refitSoon()
     return leaf
   },
+  // Settings > Agents > Terminals, "Background commands".
+  backgroundMode: () => (settings.agentTerminalBackground === 'each' ? 'each' : 'one'),
   closeTerminal: (id) => closeLeaf(id, { force: true }),
   dismissApprovals: (agentPane) => dismissAgentApprovals(agentPane),
   activeTerminal: () => {
@@ -9437,6 +9437,16 @@ const agentTerminalTargets = createAgentTerminalTargets({
   },
   writePty: (id, data) => window.shellApi.writePty(id, data)
 })
+// The user used an agent's terminal (clicked into it, typed, resized or
+// moved it): it no longer closes by itself when its command ends.
+watch(activeId, (id) => id && agentTerminalTargets.touch(id))
+{
+  const onResized = (e) => {
+    for (const id of (e && e.detail && e.detail.ids) || []) agentTerminalTargets.touch(id)
+  }
+  window.addEventListener('tessel-panes-resized', onResized)
+  onBeforeUnmount(() => window.removeEventListener('tessel-panes-resized', onResized))
+}
 // Settings > Agents > Terminals: the main process applies them too.
 watch(
   () => ({

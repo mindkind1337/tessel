@@ -468,6 +468,12 @@ export function createAgentTerminal({ verify, settings = () => ({ enabled: true 
     if (approved.edited) head.push(`Note: The user manually edited the command to \`${command}\`, and this is the output of running that command instead:`)
     else if (simplified) head.push(`Note: The tool simplified the command to \`${command}\` (Windows PowerShell 5.1 has no &&).`)
     if (approved.rule) head.push(`(${approved.rule})`)
+    // One terminal per agent: its terminal was busy with a command left
+    // running, so this one ran in another terminal (it closes by itself).
+    if (t.busyWith && t.busyWith.id)
+      head.push(
+        `Note: your terminal ${t.busyWith.id} is busy with \`${String(t.busyWith.command || '').slice(0, 120)}\`, so this ran in terminal ${id}. Stop that command with send_to_terminal (keys ["Ctrl+C"]) or kill_terminal when you no longer need it.`
+      )
     const state = r && r.state
     if (state === 'sensitive') {
       throw fail(
@@ -511,7 +517,8 @@ export function createAgentTerminal({ verify, settings = () => ({ enabled: true 
     if (!r || typeof r !== 'object') throw fail('no_terminal', 'Tessel\'s window did not answer with the terminal.')
     const text = truncateOutputKeepingTail(stripAnsi(r.output), MAX_POLL_OUTPUT)
     const state = r.command ? ` (command \`${String(r.command).slice(0, 200)}\`${r.running ? ', still running' : Number.isInteger(r.exitCode) ? `, exit code ${r.exitCode}` : ', ended'})` : ''
-    return { text: `Output of terminal "${r.name}"${state}:\n${text || '(empty)'}` }
+    const gone = r.closed ? ' (the terminal closed after its command ended; this is its last output)' : ''
+    return { text: `Output of terminal "${r.name}"${state}${gone}:\n${text || '(empty)'}` }
   }
 
   async function sendInput(agentPane, args) {

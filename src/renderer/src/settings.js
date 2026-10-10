@@ -86,6 +86,11 @@ export const DEFAULT_SETTINGS = Object.freeze({
   // (on its project's host) without the approval card: it could run them
   // through its own shell tool anyway. Your terminals and other hosts still ask.
   agentTerminalYoloNoAsk: true,
+  // Background commands (async, or left running): 'one' terminal per agent
+  // (its commands share it; one more opens only while a command it left
+  // running holds it) or 'each' (a terminal for each). Either closes an
+  // extra terminal once its command ends, unless you used it.
+  agentTerminalBackground: 'one',
   // Your rules ("Always allow"): key -> true | false | { approve, matchCommandLine }
   // (shared/terminalRules.js); a project's rules ("in this project"): its key -> rules.
   agentTerminalRules: {},
@@ -363,6 +368,7 @@ export function loadSettings(saved) {
       continue
     }
     if (key === 'agentPermissions' && !['manual', 'yolo'].includes(v)) continue
+    if (key === 'agentTerminalBackground' && !['one', 'each'].includes(v)) continue
     if (key === 'projectOpen' && !validProjectOpen(v)) continue
     if (key === 'keepAwake' && !['off', 'agents', 'on'].includes(v)) continue
     if (key === 'promptCacheTtlMs' && ![300000, 3600000].includes(v)) continue

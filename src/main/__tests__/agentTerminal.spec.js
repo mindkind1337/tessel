@@ -670,3 +670,32 @@ describe('agent terminal: an agent pane in Yolo', () => {
     await expect(at.handle(signed('send', { id: OWN.id, command: 'y' }))).rejects.toMatchObject({ code: 'stopped_by_user' })
   })
 })
+
+describe('run_in_terminal: one terminal per agent, its terminal busy', () => {
+  it('says the command ran in another terminal, and how to stop the one left running', async () => {
+    const win = fakeWindow({ target: (p) => ({ ...OWN, id: 'pane-own-2', ...(p.op === 'prepare' ? { isNew: true, busyWith: { id: 'pane-own', name: 'Ada · terminal', command: 'npm run dev' } } : {}) }) })
+    const { at } = make(win, { settings: { autoApprove: false } })
+    const r = await at.handle(signed('run', { command: 'git status', explanation: 'x', goal: 'y', mode: 'sync' }))
+    expect(r.text).toContain('Note: your terminal pane-own is busy with `npm run dev`, so this ran in terminal pane-own-2.')
+    expect(r.text).toContain('kill_terminal')
+  })
+})
+
+describe('get_terminal_output after its terminal closed', () => {
+  it('returns its last output and says the terminal closed', async () => {
+    const win = fakeWindow()
+    const ask = win.ask
+    win.ask = vi.fn(async (method, params) => {
+      if (params.op === 'resolve') return { id: 'pane-own-2', name: 'Ada · terminal 2', kind: 'shell', own: true, closed: true, agentLabel: 'Ada' }
+      if (params.op === 'output') return { name: 'Ada · terminal 2', command: 'npm test', running: false, exitCode: 0, output: 'all done', closed: true }
+      return ask(method, params)
+    })
+    const { at } = make(win)
+    const r = await at.handle(signed('output', { id: 'pane-own-2' }))
+    expect(r.text).toContain('exit code 0')
+    expect(r.text).toContain('the terminal closed after its command ended')
+    expect(r.text).toContain('all done')
+    // Its own terminal: no read card.
+    expect(win.ask.mock.calls.map((c) => c[1].op)).toEqual(['resolve', 'output'])
+  })
+})
