@@ -7171,7 +7171,7 @@ async function publishCurrentTeams({ strict = false } = {}) {
   }
   for (const dir of teamDirsSeen) {
     const cur = await window.shellApi.team.current({ dir, panes: byDir[dir] || {} })
-    if (strict && !cur?.ok) throw new CliRequestError('failed', cur?.error || 'The team map could not be saved.')
+    if (strict && !cur?.ok) throw new CliRequestError('failed', cur?.error || t('app.cli.teamMapFailed', 'The team map could not be saved.'))
     // Retired by another Tessel window that did not know about it yet: set
     // up again on the next round.
     for (const id of (cur && cur.lost) || []) {
@@ -7179,7 +7179,7 @@ async function publishCurrentTeams({ strict = false } = {}) {
       delete channelBoxes[id]
     }
     const res = await window.shellApi.team.retire({ dir, liveTeamIds: teams.value.filter((t) => channelDir(t) === dir).map((t) => t.id) })
-    if (strict && !res?.ok) throw new CliRequestError('failed', res?.error || 'The team map could not be saved.')
+    if (strict && !res?.ok) throw new CliRequestError('failed', res?.error || t('app.cli.teamMapFailed', 'The team map could not be saved.'))
     // A retired channel is set up again from scratch if its team comes back
     // (Undo after Ungroup): forget what this session knew about it.
     for (const id of (res && res.retired) || []) {

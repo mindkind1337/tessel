@@ -756,7 +756,15 @@
       "noModelChoice": "Tessel ne peut pas choisir le modèle de cet agent.",
       "unknownModel": "Modèle inconnu « {{model}} ». Disponibles : {{list}}",
       "unknownEffort": "Effort inconnu « {{effort}} » pour {{model}}. Disponibles : {{list}}",
-      "noEffort": "{{model}} n'a pas de choix d'effort."
+      "noEffort": "{{model}} n'a pas de choix d'effort.",
+      "unknownPane": "Ce panneau n'est pas dans cette fenêtre.",
+      "notAgentPane": "Seul un panneau d'agent peut créer une équipe.",
+      "paneProjectMismatch": "Le projet demandé n'est pas le projet local du panneau de l'agent.",
+      "alreadyInTeam": "Cet agent fait déjà partie d'une équipe.",
+      "teamNameTaken": "Une équipe porte déjà ce nom.",
+      "teamFailed": "Tessel n'a pas pu créer l'équipe.",
+      "teamCreated": "Équipe créée : {{team}}",
+      "teamMapFailed": "La carte de l'équipe n'a pas pu être enregistrée."
     },
     "chat": {
       "title": "Claude (chat)",
