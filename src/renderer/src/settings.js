@@ -82,6 +82,10 @@ export const DEFAULT_SETTINGS = Object.freeze({
   agentTerminalAutoApprove: false,
   agentTerminalAutoApproveWarned: false,
   agentTerminalIgnoreDefaultRules: false,
+  // An agent pane running in Yolo runs its commands in its own terminals
+  // (on its project's host) without the approval card: it could run them
+  // through its own shell tool anyway. Your terminals and other hosts still ask.
+  agentTerminalYoloNoAsk: true,
   // Your rules ("Always allow"): key -> true | false | { approve, matchCommandLine }
   // (shared/terminalRules.js); a project's rules ("in this project"): its key -> rules.
   agentTerminalRules: {},

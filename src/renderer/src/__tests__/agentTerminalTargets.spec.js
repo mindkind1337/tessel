@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { reactive } from 'vue'
-import { createAgentTerminalTargets } from '../agentTerminal/agentTerminalTargets'
+import { createAgentTerminalTargets, paneRunsYolo } from '../agentTerminal/agentTerminalTargets'
 import { fakeTerminal } from './fakeTerminal'
 
 function forEachLeaf(node, fn) {
@@ -302,5 +302,34 @@ describe('security review: the shell of an SSH terminal', () => {
     expect((await ask(targets, { op: 'resolve', terminal: 'pane-srv' })).lang).toBe('unknown')
     termOf('pane-srv').osc('P;Shell=bash')
     expect((await ask(targets, { op: 'resolve', terminal: 'pane-srv' })).lang).toBe('bash')
+  })
+})
+
+describe('security review: the calling pane in Yolo', () => {
+  it('says the calling pane\'s Yolo state, from the pane itself, never from the request', async () => {
+    const { targets, deps, agent } = setup({ quality: 'basic' })
+    deps.agentYolo = (l) => paneRunsYolo(l)
+    expect((await settle(ask(targets, { op: 'prepare', mode: 'sync' }))).agentYolo).toBe(false)
+    // What the agent sends does not count.
+    expect((await settle(ask(targets, { op: 'prepare', mode: 'sync', agentYolo: true, yolo: true }))).agentYolo).toBe(false)
+    agent.launchYolo = true
+    expect(await settle(ask(targets, { op: 'prepare', mode: 'sync' }))).toMatchObject({ own: true, agentYolo: true, projectHost: true })
+    // The user's terminal says it too, but main never skips its card (own: false).
+    expect(await ask(targets, { op: 'resolve', terminal: 'pane-srv' })).toMatchObject({ own: false, agentYolo: true })
+    // Claude Code as root on an SSH host fell back to Accept edits: not Yolo.
+    agent.rootNoYolo = true
+    expect((await settle(ask(targets, { op: 'prepare', mode: 'sync' }))).agentYolo).toBe(false)
+  })
+
+  it('paneRunsYolo: agent launch flags, root fallback, chat posture, worker cap', () => {
+    expect(paneRunsYolo({ kind: 'agent', launchYolo: true })).toBe(true)
+    expect(paneRunsYolo({ kind: 'agent', launchYolo: false })).toBe(false)
+    expect(paneRunsYolo({ kind: 'agent' })).toBe(false)
+    expect(paneRunsYolo({ kind: 'agent', launchYolo: true, rootNoYolo: true })).toBe(false)
+    expect(paneRunsYolo({ kind: 'chat', chatPermissions: 'yolo' })).toBe(true)
+    expect(paneRunsYolo({ kind: 'chat', chatPermissions: 'manual' })).toBe(false)
+    expect(paneRunsYolo({ kind: 'chat', chatPermissions: 'yolo', maxPermissions: 'manual' })).toBe(false)
+    expect(paneRunsYolo({ kind: 'shell', launchYolo: true })).toBe(false)
+    expect(paneRunsYolo(null)).toBe(false)
   })
 })

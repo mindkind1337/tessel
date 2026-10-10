@@ -756,7 +756,8 @@
       "stopped": "L’agent ne peut plus taper dans ce terminal.",
       "used": "Commandes d’agents ({{count}})",
       "using": "{{agent}} utilise ce terminal",
-      "read": "a lu ce terminal"
+      "read": "a lu ce terminal",
+      "yolo": "Yolo, sans demander"
     }
   },
   "floating": {

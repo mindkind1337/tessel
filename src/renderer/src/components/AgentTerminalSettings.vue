@@ -81,6 +81,18 @@ async function setAutoApprove(e) {
       <p class="set-row set-hint" data-test="settings-terminal-log">{{ logText }}</p>
       <label class="set-row">
         <div class="set-label">
+          {{ t('settings.agents.terminalYoloNoAsk', 'Agents in Yolo run commands in their own terminal without asking') }}
+          <span class="set-hint">{{
+            t(
+              'settings.agents.terminalYoloNoAskHint',
+              'An agent started in Yolo can already run anything with its own shell tool, so its commands in its own terminal (on this computer or its project\'s SSH host) run without the approval card. They are still logged and shown on the terminal\'s badge. Your terminals, other SSH hosts and passwords still ask; Stop still works.'
+            )
+          }}</span>
+        </div>
+        <input v-model="settings.agentTerminalYoloNoAsk" type="checkbox" class="set-switch" data-setting="agentTerminalYoloNoAsk" />
+      </label>
+      <label class="set-row">
+        <div class="set-label">
           {{ t('settings.agents.terminalAutoApprove', 'Let rules approve commands') }}
           <span class="set-hint">{{
             t(

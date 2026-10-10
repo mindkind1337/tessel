@@ -206,3 +206,36 @@ describe('security review: the commands log is documented', () => {
     w.unmount()
   })
 })
+
+describe('agents in Yolo: their own terminal without asking', () => {
+  it('a switch in Settings > Agents > Terminals, on by default', async () => {
+    const { mount } = await import('@vue/test-utils')
+    const { settings, DEFAULT_SETTINGS } = await import('../settings')
+    expect(DEFAULT_SETTINGS.agentTerminalYoloNoAsk).toBe(true)
+    const { default: S } = await import('../components/AgentTerminalSettings.vue')
+    const w = mount(S, { global: { provide: { askConfirm: async () => true } } })
+    const box = w.find('[data-setting="agentTerminalYoloNoAsk"]')
+    expect(box.exists()).toBe(true)
+    expect(box.element.closest('label').textContent).toContain('Agents in Yolo run commands in their own terminal without asking')
+    const before = settings.agentTerminalYoloNoAsk
+    await box.setValue(false)
+    expect(settings.agentTerminalYoloNoAsk).toBe(false)
+    settings.agentTerminalYoloNoAsk = before
+    w.unmount()
+  })
+
+  it('the window sends it to the main process and tells it the calling pane\'s Yolo state', async () => {
+    const fs = await import('fs')
+    const { join } = await import('path')
+    const app = fs.readFileSync(join(__dirname, '..', 'App.vue'), 'utf8').replace(/\r\n/g, '\n')
+    expect(app).toContain("yoloOwn: settings.agentTerminalYoloNoAsk !== false,")
+    expect(app).toContain('agentYolo: (leaf) => paneRunsYolo(leaf),')
+  })
+
+  it('the badge marks a command run without asking', async () => {
+    const { onTerminalLog, terminalLog } = await import('../agentTerminal/agentTerminalState')
+    onTerminalLog({ paneId: 'p-yolo', at: 1, agent: 'Ada', kind: 'run', text: 'npm test', yolo: true })
+    onTerminalLog({ paneId: 'p-yolo', at: 2, agent: 'Ada', kind: 'run', text: 'ls' })
+    expect(terminalLog['p-yolo'].map((r) => r.yolo)).toEqual([true, false])
+  })
+})

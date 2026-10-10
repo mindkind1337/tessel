@@ -46,6 +46,7 @@ export const ASYNC_IDLE_MS = 3000
 //   workspaces() -> [ws]; forEachLeaf(tree, fn)
 //   getPane(id) -> the pane's API (TerminalPane.vue) | null
 //   paneLabel(leaf), hostLabel(hostId), agentName(leaf)
+//   agentYolo(agentLeaf) -> bool       the agent's pane runs in Yolo (paneRunsYolo)
 //   userTyping(id) -> bool
 //   hosts() -> [{ id, label, connected }]   SSH hosts whose shared connection is signed in
 //   createTerminal({ agentLeaf, ws, hostId, number }) -> Promise<leaf | null>  (named "Ada · terminal")
@@ -58,6 +59,19 @@ export const ASYNC_IDLE_MS = 3000
 //   stoppedNotice({ agentLeaf, agentLabel, leaf, name })
 //   writePty(id, data)
 //   sleep(ms)
+// Does this agent pane run in Yolo, from how Tessel launched it (never from
+// anything the agent says)? A terminal agent: started with its Yolo flags
+// (launchYolo: the pane's own choice, Yolo folders, Settings > Agents), not
+// Claude Code fallen back to Accept edits as root on an SSH host. A chat: its
+// permissions now are Yolo (they follow its mode switches), never a worker
+// capped to Ask first.
+export function paneRunsYolo(leaf) {
+  if (!leaf || typeof leaf !== 'object') return false
+  if (leaf.kind === 'chat') return leaf.chatPermissions === 'yolo' && leaf.maxPermissions !== 'manual'
+  if (leaf.kind === 'agent') return leaf.launchYolo === true && leaf.rootNoYolo !== true
+  return false
+}
+
 export function createAgentTerminalTargets(deps) {
   const sleep = deps.sleep || ((ms) => new Promise((r) => setTimeout(r, ms)))
   // Terminals agents used: pane id -> { owner (agent pane, when its own), hostId,
@@ -139,6 +153,9 @@ export function createAgentTerminalTargets(deps) {
       exited: !!l.exited,
       ready: !!pane,
       own: ownBy(l.id, agentLeaf.id),
+      // The calling agent's pane runs in Yolo (its own terminals then run
+      // without a card, src/main/agentTerminal.js).
+      agentYolo: typeof deps.agentYolo === 'function' ? deps.agentYolo(agentLeaf) === true : false,
       // On the host of the agent's project (this computer for a local project)?
       projectHost: (l.remoteHostId || null) === ((agentWs.remote && agentWs.remote.hostId) || null),
       ...shellOf(l)

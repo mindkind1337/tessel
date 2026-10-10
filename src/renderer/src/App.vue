@@ -72,7 +72,7 @@ import { pageOf } from './browser/pageHost'
 import { paneDropZone, placeLeaf, sidePageFromLeaf, leafFromSidePage, saveSideBrowsers, restoreSideBrowsers, newSidePageId } from './browser/pageMove'
 import { createAgentBrowserTargets, addPageNear } from './browser/agentBrowserTargets'
 import { inheritsAgentSession } from './browser/agentSession'
-import { createAgentTerminalTargets } from './agentTerminal/agentTerminalTargets'
+import { createAgentTerminalTargets, paneRunsYolo } from './agentTerminal/agentTerminalTargets'
 import { onTerminalControl, onTerminalLog, forgetTerminal } from './agentTerminal/agentTerminalState'
 import { rulesOfAction } from '../../shared/terminalRules'
 import AgentCommandApproval from './components/AgentCommandApproval.vue'
@@ -9326,6 +9326,8 @@ const agentTerminalTargets = createAgentTerminalTargets({
   paneLabel,
   hostLabel: (id) => remoteHostLabel(id),
   agentName: (leaf) => programLabel(leaf),
+  // From the pane's own launch state (Tessel's), never from the agent's request.
+  agentYolo: (leaf) => paneRunsYolo(leaf),
   userTyping: (id) => userIsTyping(id),
   hosts: () => remoteHostsState.targets.map((h) => ({ id: h.id, label: h.label || h.host, connected: hostShared(h.id) })),
   // A terminal of the agent's own, next to it, without taking the screen or the keyboard.
@@ -9441,6 +9443,7 @@ watch(
     enabled: settings.agentTerminal !== false,
     autoApprove: settings.agentTerminalAutoApprove === true,
     ignoreDefaults: settings.agentTerminalIgnoreDefaultRules === true,
+    yoloOwn: settings.agentTerminalYoloNoAsk !== false,
     userRules: JSON.parse(JSON.stringify(settings.agentTerminalRules || {})),
     workspaceRules: JSON.parse(JSON.stringify(settings.agentTerminalWorkspaceRules || {}))
   }),

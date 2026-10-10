@@ -571,3 +571,102 @@ describe('security review: an unknown remote shell', () => {
     expect(win.ops()).toContain('approve')
   })
 })
+
+describe('agent terminal: an agent pane in Yolo', () => {
+  // agentYolo: the window's answer, from how Tessel launched the calling pane.
+  const YOLO = { ...OWN, agentYolo: true, projectHost: true }
+  const on = { yoloOwn: true }
+
+  it('runs its commands in its own terminal with no card, logged and shown on the badge as Yolo', async () => {
+    const dir = fs.mkdtempSync(join(os.tmpdir(), 'tessel-term-'))
+    const logFile = join(dir, 'agent-terminal.log')
+    const win = fakeWindow({ target: YOLO })
+    const { at, sent } = make(win, { logFile, settings: on })
+    // No rule allows it ("rm" and an unknown shape): still no card in Yolo.
+    const r = await at.handle(signed('run', { command: 'rm -rf build; npm run build', explanation: 'x', goal: 'y', mode: 'sync' }))
+    expect(r.text).toContain('hello')
+    expect(win.ops()).toEqual(['host', 'prepare', 'run'])
+    expect(win.calls.find((c) => c.op === 'run').command).toBe('rm -rf build; npm run build')
+    expect(sent.find(([ch]) => ch === 'terminal:agentLog')[1]).toMatchObject({ paneId: OWN.id, kind: 'run', text: 'rm -rf build; npm run build', yolo: true })
+    expect(sent.some(([ch, p]) => ch === 'terminal:agentControl' && p.active && p.paneId === OWN.id)).toBe(true)
+    expect(JSON.parse(fs.readFileSync(logFile, 'utf8').trim())).toMatchObject({ pane: OWN.id, approval: 'yolo' })
+    fs.rmSync(dir, { recursive: true, force: true })
+  })
+
+  it('its own terminal on the project\'s SSH host: no card either', async () => {
+    const win = fakeWindow({ target: { ...YOLO, lang: 'unknown', shellKind: 'ssh', host: 'prod', projectHost: true } })
+    const { at } = make(win, { settings: on })
+    await at.handle(signed('run', { command: 'systemctl restart app', explanation: 'x', goal: 'y', mode: 'sync' }))
+    expect(win.ops()).not.toContain('approve')
+  })
+
+  it('send_to_terminal in its own terminal: no card; a password question still goes to the user', async () => {
+    const win = fakeWindow({ target: YOLO })
+    const { at } = make(win, { settings: on })
+    await at.handle(signed('send', { id: OWN.id, command: 'y' }))
+    expect(win.ops()).toEqual(['resolve', 'send'])
+    const win2 = fakeWindow({ target: { ...YOLO, cursorLine: '[sudo] password for me: ' } })
+    const b = make(win2, { settings: on })
+    await expect(b.at.handle(signed('send', { id: OWN.id, command: 'hunter2' }))).rejects.toMatchObject({ code: 'needs_user_input' })
+    expect(win2.ops()).not.toContain('send')
+    const win3 = fakeWindow({ target: YOLO, run: { state: 'sensitive', output: 'Password:', prompt: 'Password:' } })
+    const c = make(win3, { settings: on })
+    await expect(c.at.handle(signed('run', { command: 'sudo ls', explanation: 'x', goal: 'y', mode: 'sync' }))).rejects.toMatchObject({ code: 'needs_user_input' })
+  })
+
+  it('a pane not in Yolo still gets the card', async () => {
+    const win = fakeWindow({ target: { ...YOLO, agentYolo: false } })
+    const { at } = make(win, { settings: on })
+    await at.handle(signed('run', { command: 'npm run build', explanation: 'x', goal: 'y', mode: 'sync' }))
+    expect(win.ops()).toEqual(['host', 'prepare', 'approve', 'run'])
+  })
+
+  it('nothing the agent sends makes it Yolo', async () => {
+    // The pipe refuses arguments it does not know.
+    expect(() => signed('run', { command: 'npm run build', explanation: 'x', goal: 'y', mode: 'sync', agentYolo: true })).toThrow(/not valid/)
+    // Only the window's answer counts.
+    const win = fakeWindow({ target: { ...OWN, projectHost: true } })
+    const { at } = make(win, { settings: on })
+    await at.handle(signed('run', { command: 'npm run build', explanation: 'x', goal: 'y', mode: 'sync' }))
+    expect(win.ops()).toContain('approve')
+  })
+
+  it('the setting off brings the cards back (and the window never saying it counts as off)', async () => {
+    const win = fakeWindow({ target: YOLO })
+    const { at } = make(win, { settings: { yoloOwn: false } })
+    await at.handle(signed('run', { command: 'npm run build', explanation: 'x', goal: 'y', mode: 'sync' }))
+    await at.handle(signed('send', { id: OWN.id, command: 'y' }))
+    expect(win.calls.filter((c) => c.op === 'approve').map((c) => c.card.kind)).toEqual(['command', 'send'])
+    const win2 = fakeWindow({ target: YOLO })
+    const b = make(win2)
+    await b.at.handle(signed('run', { command: 'npm run build', explanation: 'x', goal: 'y', mode: 'sync' }))
+    expect(win2.ops()).toContain('approve')
+  })
+
+  it('the user\'s terminal still needs approval, for running, sending and reading', async () => {
+    const win = fakeWindow({ target: { ...USER, agentYolo: true, projectHost: true }, approve: { allow: true, remember: 'once' } })
+    const { at } = make(win, { settings: on })
+    await at.handle(signed('run', { id: USER.id, command: 'ls', explanation: 'x', goal: 'y', mode: 'sync' }))
+    await at.handle(signed('send', { id: USER.id, keys: ['Enter'] }))
+    await at.handle(signed('output', { id: USER.id }))
+    expect(win.calls.filter((c) => c.op === 'approve').map((c) => c.card.kind)).toEqual(['pane', 'pane', 'read'])
+  })
+
+  it('another SSH host still asks: the host, then each command', async () => {
+    const REMOTE = { ...YOLO, id: 'pane-remote', host: 'other', lang: 'bash', shellKind: 'ssh', projectHost: false }
+    const win = fakeWindow({ target: REMOTE, approve: (p) => ({ allow: true, remember: p.card.kind === 'host' ? 'pane' : 'once' }) })
+    const { at } = make(win, { settings: on })
+    await at.handle(signed('run', { command: 'ls', explanation: 'x', goal: 'y', mode: 'sync', host: 'other' }))
+    await at.handle(signed('send', { id: REMOTE.id, command: 'y' }))
+    expect(win.calls.filter((c) => c.op === 'approve').map((c) => c.card.kind)).toEqual(['host', 'command', 'send'])
+  })
+
+  it('Stop still works in its own terminal', async () => {
+    const win = fakeWindow({ target: YOLO })
+    const { at } = make(win, { settings: on })
+    await at.handle(signed('run', { command: 'ls', explanation: 'x', goal: 'y', mode: 'sync' }))
+    expect(at.stop(OWN.id)).toBe(true)
+    await expect(at.handle(signed('run', { id: OWN.id, command: 'ls', explanation: 'x', goal: 'y', mode: 'sync' }))).rejects.toMatchObject({ code: 'stopped_by_user' })
+    await expect(at.handle(signed('send', { id: OWN.id, command: 'y' }))).rejects.toMatchObject({ code: 'stopped_by_user' })
+  })
+})
