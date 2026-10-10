@@ -233,9 +233,10 @@ function browserParams(params) {
 }
 
 // An agent's terminal tool (teamMcp/server.cjs): its pane, the operation,
-// flat arguments (strings, numbers, booleans; "keys" a list of key names)
+// flat arguments (strings, numbers, booleans; "keys" a list of key names;
+// open_terminal's kind, agent, name and count)
 // and the pane's signature. Who may do what is decided by agentTerminal.js.
-const TERMINAL_ARG_KEYS = new Set(['id', 'command', 'explanation', 'goal', 'mode', 'isBackground', 'timeout', 'host', 'waitForOutput', 'keys', 'all', 'lines'])
+const TERMINAL_ARG_KEYS = new Set(['id', 'command', 'explanation', 'goal', 'mode', 'isBackground', 'timeout', 'host', 'waitForOutput', 'keys', 'all', 'lines', 'kind', 'agent', 'name', 'count'])
 // A command of 8 KB (control characters 6 bytes each in JSON) and its texts.
 export const MAX_TERMINAL_ARGS_BYTES = 64 * 1024
 function terminalParams(params) {

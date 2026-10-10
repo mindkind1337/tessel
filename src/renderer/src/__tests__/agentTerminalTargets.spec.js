@@ -66,7 +66,14 @@ function setup({ typing = false, quality = 'none', respond = true, mode = undefi
     stoppedNotice: vi.fn(),
     writePty: vi.fn(),
     sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
-    ...(mode ? { backgroundMode: () => mode } : {})
+    ...(mode ? { backgroundMode: () => mode } : {}),
+    agentList: () => [
+      { id: 'claude', name: 'Claude Code' },
+      { id: 'codex', name: 'Codex CLI' },
+      { id: 'opencode', name: 'OpenCode' }
+    ],
+    openPolicy: vi.fn(() => ({ skipApproval: false, max: 4 })),
+    openPanes: vi.fn(async ({ kind, agent, count }) => Array.from({ length: count }, (_, i) => leaf(`pane-open-${i + 1}`, kind === 'agent' ? 'agent' : 'shell', { paneName: `${agent || 'shell'} ${i + 1}` })))
   }
   const targets = createAgentTerminalTargets(deps)
   return { targets, deps, ws, terms, termOf, agent, shell, peer }
@@ -513,6 +520,60 @@ describe('agent terminals: a terminal opened for a background command closes whe
     expect(app).toContain('function movePane(srcId, target) {\n  agentTerminalTargets.touch(srcId)')
     const split = fs.readFileSync(join(__dirname, '..', 'components', 'SplitNode.vue'), 'utf8')
     expect(split).toContain("new CustomEvent('tessel-panes-resized'")
+  })
+})
+
+describe('open_terminal: panes for the user', () => {
+  it('kind agent with no agent: the same agent as the caller', async () => {
+    const { targets, deps } = setup()
+    // Codex asks: Codex opens.
+    const info = await targets.handle({ agent: 'pane-codex', op: 'openInfo', kind: 'agent' })
+    expect(info).toMatchObject({ kind: 'agent', agentId: 'codex', agentName: 'Codex CLI', skipApproval: false, max: 4, host: null })
+    const r = await targets.handle({ agent: 'pane-codex', op: 'open', kind: 'agent', count: 2 })
+    expect(deps.openPanes).toHaveBeenCalledWith(expect.objectContaining({ kind: 'agent', agent: 'codex', count: 2, hostId: null }))
+    expect(deps.openPanes.mock.calls[0][0].agentLeaf.id).toBe('pane-codex')
+    expect(r.panes.map((p) => p.id)).toEqual(['pane-open-1', 'pane-open-2'])
+    // Claude asks: Claude.
+    expect(await ask(targets, { op: 'openInfo', kind: 'agent' })).toMatchObject({ agentId: 'claude' })
+    // Another agent when named; a shell.
+    expect(await ask(targets, { op: 'openInfo', kind: 'agent', agentId: 'OpenCode' })).toMatchObject({ agentId: 'opencode' })
+    expect(await ask(targets, { op: 'openInfo', kind: 'shell' })).toMatchObject({ kind: 'shell', agentId: null })
+    await expect(ask(targets, { op: 'openInfo', kind: 'agent', agentId: 'nope' })).rejects.toMatchObject({ code: 'agent_not_found' })
+    await expect(ask(targets, { op: 'openInfo', kind: 'browser' })).rejects.toMatchObject({ code: 'invalid_argument' })
+  })
+
+  it('at most 4, or the lead\'s workers limit', async () => {
+    const { targets, deps } = setup()
+    await ask(targets, { op: 'open', kind: 'shell', count: 9 })
+    expect(deps.openPanes.mock.calls[0][0].count).toBe(4)
+    deps.openPolicy.mockReturnValue({ skipApproval: true, max: 2 })
+    expect(await ask(targets, { op: 'openInfo', kind: 'shell' })).toMatchObject({ skipApproval: true, max: 2 })
+    await ask(targets, { op: 'open', kind: 'shell', count: 3 })
+    expect(deps.openPanes.mock.calls[1][0].count).toBe(2)
+  })
+
+  it('in a project on an SSH host: there', async () => {
+    const { targets, deps } = setup({ remote: { hostId: 'ssh-res', path: '/srv/app' } })
+    expect(await ask(targets, { op: 'openInfo', kind: 'agent' })).toMatchObject({ host: 'resources', hostId: 'ssh-res' })
+    await ask(targets, { op: 'open', kind: 'agent' })
+    expect(deps.openPanes).toHaveBeenCalledWith(expect.objectContaining({ hostId: 'ssh-res', count: 1 }))
+  })
+
+  it('its card is shown from the agent\'s pane (no terminal yet)', async () => {
+    const { targets, deps } = setup()
+    const r = await ask(targets, { op: 'approve', terminal: 'open:pane-ada', card: { kind: 'open', open: { kind: 'agent', count: 1 } } })
+    expect(r).toMatchObject({ allow: true })
+    expect(deps.approve.mock.calls[0][0]).toMatchObject({ kind: 'open', leaf: { id: 'pane-ada' } })
+    // The other SSH host's card too.
+    expect(await ask(targets, { op: 'approve', terminal: 'host:ssh-res', card: { kind: 'host' } })).toMatchObject({ allow: true })
+  })
+
+  it('the window opens them as the user\'s own panes, stacked beside the agent (App.vue)', async () => {
+    const fs = await import('fs')
+    const { join } = await import('path')
+    const app = fs.readFileSync(join(__dirname, '..', 'App.vue'), 'utf8').replace(/\r\n/g, '\n')
+    expect(app).toContain('const leaf = await createLeaf(selectedShell.value, def, ws.cwd, worktree, wsLeafOpts(ws, {}))')
+    expect(app).toContain("ws.tree = placeNear(ws.tree, agentLeaf.id, leaf, { forEachLeaf, mine: (l) => l.openedNear === agentLeaf.id, makeSplit: makeAgentSplit })")
   })
 })
 

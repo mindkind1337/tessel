@@ -48,6 +48,8 @@ export const AUTO_CLOSE_MS = 3000
 // The last output of an agent's terminal that closed stays readable
 // (get_terminal_output) this long.
 export const CLOSED_KEEP_MS = 10 * 60 * 1000
+// Panes open_terminal opens in one call.
+export const MAX_OPEN_PANES = 4
 // Settings > Agents > Terminals, "Background commands": 'one' (default): one
 // terminal per agent, for its commands left running too; 'each': a terminal
 // for each command left running.
@@ -89,6 +91,9 @@ export const ownTerminalOf = (agentId) => (l) => l.kind !== 'browser' && l.opene
 //   writePty(id, data)
 //   sleep(ms)
 //   backgroundMode() -> 'one' | 'each'   (Settings > Agents > Terminals)
+//   agentList() -> [{ id, name }]   the agents open_terminal may open
+//   openPolicy(agentLeaf) -> { skipApproval, max }   a team lead whose workers start without asking
+//   openPanes({ agentLeaf, ws, kind, agent, name, count, hostId }) -> Promise<[leaf]>
 //   now() -> ms
 // Does this agent pane run in Yolo, from how Tessel launched it (never from
 // anything the agent says)? A terminal agent: started with its Yolo flags
@@ -578,6 +583,24 @@ export function createAgentTerminalTargets(deps) {
       return { ...describe(own.leaf, own.ws, ws, agentLeaf), own: true, agentLabel, isNew: own.isNew, ...(own.busyWith ? { busyWith: own.busyWith } : {}) }
     }
 
+    // A card about no terminal yet: another SSH host ("host:<id>"), panes to
+    // open ("open:<agent pane>"); shown from the agent's own pane.
+    if (req.op === 'approve' && typeof req.terminal === 'string' && /^(host|open):/.test(req.terminal))
+      return plainAnswer(await deps.approve({ ...req.card, agentLeaf, agentLabel, leaf: agentLeaf, name: agentLabel, ws }))
+
+    // open_terminal: what would open (the main process asks the user first).
+    if (req.op === 'openInfo') return { agentLabel, ...openPlan(agentLeaf, ws, req) }
+    if (req.op === 'open') {
+      const plan = openPlan(agentLeaf, ws, req)
+      const count = Math.min(plan.max, Math.max(1, Math.round(Number(req.count) || 1)))
+      const label = String(req.name || '')
+        .replace(/[\u0000-\u001f\u007f]/g, ' ')
+        .trim()
+        .slice(0, 60)
+      const leaves = await deps.openPanes({ agentLeaf, ws, kind: plan.kind, agent: plan.agentId, name: label, count, hostId: plan.hostId })
+      return { agentLabel, kind: plan.kind, agentName: plan.agentName, host: plan.host, panes: (leaves || []).filter(Boolean).map((l) => ({ id: l.id, name: deps.paneLabel(l) })) }
+    }
+
     // A terminal of its own that closed (auto-closed, killed): its last output.
     const kept = req.op === 'output' || (req.op === 'resolve' && req.read) ? keptFor(agentLeaf.id, req.terminal) : null
     if (kept && req.op === 'resolve') return { id: String(req.terminal).trim(), name: kept.name, kind: 'shell', own: true, closed: true, agentLabel }
@@ -672,6 +695,30 @@ export function createAgentTerminalTargets(deps) {
       action: r && r.action ? JSON.parse(JSON.stringify(r.action)) : null,
       remember: r && r.remember === 'pane' ? 'pane' : 'once'
     }
+  }
+
+  // open_terminal: which panes, from the request and the caller. kind
+  // 'agent' with no agent named: the caller's own agent (OpenCode opens
+  // OpenCode). In the caller's project, on its SSH host when it is there.
+  function openPlan(agentLeaf, ws, req) {
+    const kind = req.kind === 'shell' ? 'shell' : req.kind === 'agent' || req.kind == null ? 'agent' : null
+    if (!kind) throw refuse('invalid_argument', '"kind" must be "agent" (an agent session) or "shell" (a plain terminal).') // i18n-ignore
+    let agentId = null
+    let agentName = null
+    if (kind === 'agent') {
+      const list = typeof deps.agentList === 'function' ? deps.agentList() : []
+      const want = String(req.agentId || agentLeaf.agentId || 'claude')
+        .trim()
+        .toLowerCase()
+      const hit = list.find((a) => String(a.id).toLowerCase() === want || String(a.name || '').toLowerCase() === want)
+      if (!hit) throw refuse('agent_not_found', `No agent "${want.slice(0, 40)}" in Tessel. Agents: ${list.map((a) => a.id).join(', ') || 'none'}.`) // i18n-ignore
+      agentId = hit.id
+      agentName = hit.name || hit.id
+    }
+    const policy = (typeof deps.openPolicy === 'function' && deps.openPolicy(agentLeaf)) || {}
+    const max = Math.min(MAX_OPEN_PANES, Math.max(1, Number.isInteger(policy.max) ? policy.max : MAX_OPEN_PANES))
+    const hostId = ws.remote ? ws.remote.hostId : null
+    return { kind, agentId, agentName, hostId, host: hostId ? deps.hostLabel(hostId) : null, skipApproval: policy.skipApproval === true, max }
   }
 
   return {

@@ -18,6 +18,7 @@
 //                            drive Tessel's built-in browser pages of my own
 //                            project (see "Browser tools" below)
 //   run_in_terminal / get_terminal_output / send_to_terminal / kill_terminal /
+//   open_terminal /
 //   terminal_last_command / terminal_selection / terminal_list
 //                            run commands in terminals (see "Terminal tools")
 //
@@ -1307,7 +1308,23 @@ const TERMINAL_TOOLS = [
     inputSchema: { type: 'object', properties: { all: { type: 'boolean', description: 'Every project, not only yours' } } }
   }
 ]
-const TERMINAL_OPS = { run_in_terminal: 'run', get_terminal_output: 'output', send_to_terminal: 'send', kill_terminal: 'kill', terminal_last_command: 'lastCommand', terminal_selection: 'selection', terminal_list: 'list' }
+TERMINAL_TOOLS.push({
+  name: 'open_terminal',
+  description:
+    'Open panes for the user next to yours in Tessel, in your project (on its SSH host when it is there): kind "agent" opens new sessions of an agent (by default the same agent as you), kind "shell" opens plain terminals. When the user asks you to open terminals or sessions without saying which kind, open the same agent as you, or ask the user if it is unclear. The user approves each call. These are the user\'s panes: to run commands yourself, use your shell tool or run_in_terminal.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      kind: { type: 'string', enum: ['agent', 'shell'], description: '"agent": sessions of an agent; "shell": plain terminals.' },
+      agent: { type: 'string', description: 'Optional, for kind "agent": which agent (its id, like "claude", "codex", "opencode"). Default: the same agent as you.' },
+      name: { type: 'string', description: 'Optional: a name for the panes (at most 60 characters).' },
+      count: { type: 'number', description: 'How many to open, 1 to 4 (default 1).' },
+      explanation: { type: 'string', description: 'Optional: one sentence for the user on why.' }
+    },
+    required: ['kind']
+  }
+})
+const TERMINAL_OPS = { open_terminal: 'open', run_in_terminal: 'run', get_terminal_output: 'output', send_to_terminal: 'send', kill_terminal: 'kill', terminal_last_command: 'lastCommand', terminal_selection: 'selection', terminal_list: 'list' }
 TOOLS.push(...TERMINAL_TOOLS)
 
 // An agent in no team: its workspace's board (.tessel/board/<workspace>),

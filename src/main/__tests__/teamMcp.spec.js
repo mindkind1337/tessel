@@ -191,7 +191,8 @@ describe('Tessel team tools (background messages)', () => {
       'kill_terminal',
       'terminal_last_command',
       'terminal_selection',
-      'terminal_list'
+      'terminal_list',
+      'open_terminal'
     ])
     expect(byId[3].result.content[0].text).toMatch(/Sent to Claude Code/)
     expect(byId[4].result.content[0].text).toMatch(/Codex CLI \(Codex CLI\) \(you\)/)

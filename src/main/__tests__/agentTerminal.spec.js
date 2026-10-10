@@ -699,3 +699,64 @@ describe('get_terminal_output after its terminal closed', () => {
     expect(win.ask.mock.calls.map((c) => c[1].op)).toEqual(['resolve', 'output'])
   })
 })
+
+describe('open_terminal', () => {
+  function openWindow({ plan = {}, approve = { allow: true } } = {}) {
+    const calls = []
+    const ask = vi.fn(async (method, params) => {
+      calls.push(params)
+      if (params.op === 'openInfo')
+        return { agentLabel: 'Ada', kind: params.kind, agentId: params.kind === 'agent' ? params.agentId || 'opencode' : null, agentName: params.kind === 'agent' ? 'OpenCode' : null, host: null, skipApproval: false, max: 4, ...plan }
+      if (params.op === 'approve') return typeof approve === 'function' ? approve(params) : approve
+      if (params.op === 'open') return { panes: Array.from({ length: params.count }, (_, i) => ({ id: `pane-new-${i + 1}`, name: `OpenCode ${i + 1}` })), host: plan.host || null }
+      throw new Error(`unexpected op ${params.op}`)
+    })
+    return { ask, calls, ops: () => calls.map((c) => c.op) }
+  }
+
+  it('asks the user once per call, then opens the caller\'s own agent by default', async () => {
+    const win = openWindow()
+    const { at } = make(win)
+    const r = await at.handle(signed('open', { kind: 'agent', count: 2 }))
+    expect(win.ops()).toEqual(['openInfo', 'approve', 'open'])
+    // No agent named: the window answers with the caller's own.
+    expect(win.calls[0]).toMatchObject({ op: 'openInfo', kind: 'agent', agentId: null })
+    expect(win.calls[1].card).toMatchObject({ kind: 'open', open: { kind: 'agent', agentName: 'OpenCode', count: 2 } })
+    expect(win.calls[1].terminal).toBe(`open:${AGENT}`)
+    expect(win.calls[2]).toMatchObject({ op: 'open', kind: 'agent', agentId: 'opencode', count: 2 })
+    expect(r.text).toContain('Opened 2 OpenCode sessions')
+    expect(r.text).toContain('pane-new-1')
+  })
+
+  it('denied: nothing opens', async () => {
+    const win = openWindow({ approve: { allow: false } })
+    const { at } = make(win)
+    await expect(at.handle(signed('open', { kind: 'shell' }))).rejects.toMatchObject({ code: 'denied' })
+    expect(win.ops()).toEqual(['openInfo', 'approve'])
+  })
+
+  it('a team lead whose workers start without asking: no card, within its workers limit', async () => {
+    const win = openWindow({ plan: { skipApproval: true, max: 2 } })
+    const { at } = make(win)
+    await at.handle(signed('open', { kind: 'agent', count: 2 }))
+    expect(win.ops()).toEqual(['openInfo', 'open'])
+    await expect(at.handle(signed('open', { kind: 'agent', count: 3 }))).rejects.toMatchObject({ code: 'too_many' })
+  })
+
+  it('count is 1 to 4; kind is agent or shell', async () => {
+    const win = openWindow()
+    const { at } = make(win)
+    await expect(at.handle(signed('open', { kind: 'agent', count: 5 }))).rejects.toMatchObject({ code: 'invalid_argument' })
+    await expect(at.handle(signed('open', { kind: 'agent', count: 0 }))).rejects.toMatchObject({ code: 'invalid_argument' })
+    await expect(at.handle(signed('open', { kind: 'browser' }))).rejects.toMatchObject({ code: 'invalid_argument' })
+    expect(win.ops()).toEqual([])
+  })
+
+  it('on the project\'s SSH host: says where', async () => {
+    const win = openWindow({ plan: { host: 'resources' } })
+    const { at } = make(win)
+    const r = await at.handle(signed('open', { kind: 'shell', count: 1 }))
+    expect(win.calls[1].card.open).toMatchObject({ kind: 'shell', host: 'resources' })
+    expect(r.text).toContain('on the SSH host resources')
+  })
+})

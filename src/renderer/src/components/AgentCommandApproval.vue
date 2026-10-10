@@ -26,10 +26,21 @@ let previousFocus = null
 
 // A card for a whole terminal or host (allowed once, or until Tessel restarts).
 const whole = computed(() => ['pane', 'read', 'host'].includes(props.card.kind))
-const editable = computed(() => props.card.kind !== 'send' && !props.card.send && props.card.kind !== 'read' && props.card.kind !== 'host')
-const shown = computed(() => props.card.kind !== 'read' && props.card.kind !== 'host')
+const editable = computed(() => props.card.kind !== 'send' && !props.card.send && !['read', 'host', 'open'].includes(props.card.kind))
+const shown = computed(() => !['read', 'host', 'open'].includes(props.card.kind))
+// open_terminal: what the agent wants to open, beside its pane.
+const openText = computed(() => {
+  const o = props.card.open || {}
+  const what =
+    o.kind === 'shell'
+      ? t('app.agentTerminal.openShells', '{{count}} terminal(s)', { count: o.count || 1 })
+      : t('app.agentTerminal.openAgents', '{{count}} {{agent}} session(s)', { count: o.count || 1, agent: o.agentName || '' })
+  const host = o.host ? t('app.agentTerminal.openHost', 'on the SSH host {{host}}', { host: o.host }) : t('app.agentTerminal.local', 'this computer')
+  return t('app.agentTerminal.openText', 'It will open {{what}} beside its pane, in this project ({{host}}). They are your panes, started like the ones you open.', { what, host })
+})
 const title = computed(() => {
   const c = props.card
+  if (c.kind === 'open') return t('app.agentTerminal.openTitle', '{{agent}} wants to open panes for you', { agent: c.agentLabel })
   if (c.kind === 'read') return t('app.agentTerminal.readTitle', '{{agent}} wants to read the terminal "{{name}}" ({{where}})', { agent: c.agentLabel, name: c.name, where: c.where })
   if (c.kind === 'host') return t('app.agentTerminal.hostTitle', '{{agent}} wants to run commands on the SSH host {{host}}', { agent: c.agentLabel, host: c.host || c.where })
   if (c.kind === 'pane') return t('app.agentTerminal.title', '{{agent}} wants to use the terminal "{{name}}" ({{where}})', { agent: c.agentLabel, name: c.name, where: c.where })
@@ -125,6 +136,9 @@ function trapTab(event) {
       <p v-if="card.goal" class="confirm-text aca-line"><strong>{{ t('app.agentTerminal.goal', 'Goal') }}:</strong> {{ card.goal }}</p>
       <p v-if="whole" class="confirm-text aca-line">
         {{ paneText }}
+      </p>
+      <p v-if="card.kind === 'open'" class="confirm-text aca-line" data-test="agent-open-text">
+        {{ openText }}<template v-if="card.open && card.open.name"> ({{ card.open.name }})</template>
       </p>
       <textarea
         v-if="editable"

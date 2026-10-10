@@ -72,7 +72,7 @@ import { pageOf } from './browser/pageHost'
 import { paneDropZone, placeLeaf, sidePageFromLeaf, leafFromSidePage, saveSideBrowsers, restoreSideBrowsers, newSidePageId } from './browser/pageMove'
 import { createAgentBrowserTargets, addPageNear } from './browser/agentBrowserTargets'
 import { inheritsAgentSession } from './browser/agentSession'
-import { createAgentTerminalTargets, paneRunsYolo, placeNear, ownTerminalOf } from './agentTerminal/agentTerminalTargets'
+import { createAgentTerminalTargets, paneRunsYolo, placeNear, ownTerminalOf, MAX_OPEN_PANES } from './agentTerminal/agentTerminalTargets'
 import { onTerminalControl, onTerminalLog, forgetTerminal } from './agentTerminal/agentTerminalState'
 import { rulesOfAction } from '../../shared/terminalRules'
 import AgentCommandApproval from './components/AgentCommandApproval.vue'
@@ -9363,6 +9363,45 @@ const agentTerminalTargets = createAgentTerminalTargets({
   },
   // Settings > Agents > Terminals, "Background commands".
   backgroundMode: () => (settings.agentTerminalBackground === 'each' ? 'each' : 'one'),
+  agentList: () => agents.value.map((a) => ({ id: a.id, name: a.name })),
+  // A team lead whose workers start without asking (Settings > Orchestration)
+  // opens sessions without the card too, within its workers limit.
+  openPolicy: (leaf) => {
+    const lead = !!(leaf.team && teamById(leaf.team)?.leadId === leaf.id)
+    const skip = lead && settings.orchestrationConfirmWorkers === false
+    return { skipApproval: skip, max: skip ? Math.min(MAX_OPEN_PANES, settings.orchestrationMaxWorkers || 1) : MAX_OPEN_PANES }
+  },
+  // open_terminal: agent sessions or shells beside the agent, in its project
+  // (on its SSH host when it is there), made as the user's own panes are
+  // (createLeaf: the agent's Yolo, model and team rules apply); stacked
+  // together, without taking the screen or the keyboard.
+  async openPanes({ agentLeaf, ws, kind, agent, name, count }) {
+    const def = kind === 'agent' ? agentById(agent) : null
+    const onHost = !!(def && ws.remote && (def.id === 'claude' || def.id === 'codex'))
+    if (kind === 'agent' && (!def || (def.available === false && !onHost))) return []
+    const out = []
+    for (let i = 0; i < count; i++) {
+      if (!workspaces.value.includes(ws) || !findLeafIn(ws.tree, agentLeaf.id)) break
+      // In the agent's worktree grid: the same copy, as a pane split from it.
+      const worktree = viewKey(agentLeaf, ws.cwd) ? (agentLeaf.worktree ? { path: agentLeaf.worktree.path, branch: agentLeaf.worktree.branch } : { path: leafViewPath(agentLeaf), branch: '' }) : null
+      const leaf = await createLeaf(selectedShell.value, def, ws.cwd, worktree, wsLeafOpts(ws, {}))
+      if (!leaf) break
+      if (!workspaces.value.includes(ws) || !findLeafIn(ws.tree, agentLeaf.id)) {
+        window.shellApi.killPty(leaf.id)
+        break
+      }
+      if (name) {
+        leaf.paneName = count > 1 ? `${name} ${i + 1}` : name
+        leaf.title = leaf.paneName
+      }
+      leaf.openedNear = agentLeaf.id
+      keepView(leaf, agentLeaf, ws)
+      ws.tree = placeNear(ws.tree, agentLeaf.id, leaf, { forEachLeaf, mine: (l) => l.openedNear === agentLeaf.id, makeSplit: makeAgentSplit })
+      out.push(leaf)
+    }
+    refitSoon()
+    return out
+  },
   closeTerminal: (id) => closeLeaf(id, { force: true }),
   dismissApprovals: (agentPane) => dismissAgentApprovals(agentPane),
   activeTerminal: () => {
@@ -9383,6 +9422,7 @@ const agentTerminalTargets = createAgentTerminalTargets({
       own: c.own,
       send: !!c.send,
       host: c.host || null,
+      open: c.open || null,
       agentLabel: c.agentLabel,
       name: c.name,
       where,

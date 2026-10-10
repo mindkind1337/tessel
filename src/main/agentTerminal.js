@@ -43,7 +43,9 @@ import { CliError } from './cliServer'
 import { analyzeCommandLine, buildRules, rewritePwshChain, rulesOfAction, cleanRules } from '../shared/terminalRules'
 import { MAX_OUTPUT_LENGTH, MAX_POLL_OUTPUT, truncateLargeOutput, truncateOutputKeepingTail, detectsSensitiveInputPrompt } from '../shared/terminalOutput'
 
-export const TERMINAL_OPS = ['list', 'run', 'output', 'send', 'kill', 'lastCommand', 'selection']
+export const TERMINAL_OPS = ['list', 'run', 'output', 'send', 'kill', 'lastCommand', 'selection', 'open']
+// open_terminal: panes opened in one call.
+export const MAX_OPEN_PANES = 4
 export const MAX_COMMAND_BYTES = 8 * 1024
 export const MAX_COMMAND_LINES = 50
 export const MAX_TEXT = 1000
@@ -286,8 +288,9 @@ export function createAgentTerminal({ verify, settings = () => ({ enabled: true 
     writes.set(agentPane, list)
   }
 
-  function writeLog(entry) {
-    send('terminal:agentLog', entry)
+  // toWindow false: the log file only (not a terminal's badge).
+  function writeLog(entry, toWindow = true) {
+    if (toWindow) send('terminal:agentLog', entry)
     if (!logFile) return
     try {
       try {
@@ -369,6 +372,7 @@ export function createAgentTerminal({ verify, settings = () => ({ enabled: true 
     })
     allowedNow()
     if (stopped.has(key(agentPane, t.id))) throw fail('stopped_by_user', `The user stopped you from using "${t.name}".`)
+    if (c.kind === 'open' && (!answer || answer.allow !== true)) throw fail('denied', 'The user declined opening these panes. Do not ask again unless they do.')
     if (!answer || answer.allow !== true) throw fail('denied', `The user skipped this ${c.kind === 'send' ? 'input' : 'command'}${t.own ? '' : ` in "${t.name}"`}. Do not run it again unless they ask.`)
     return answer
   }
@@ -519,6 +523,42 @@ export function createAgentTerminal({ verify, settings = () => ({ enabled: true 
     const state = r.command ? ` (command \`${String(r.command).slice(0, 200)}\`${r.running ? ', still running' : Number.isInteger(r.exitCode) ? `, exit code ${r.exitCode}` : ', ended'})` : ''
     const gone = r.closed ? ' (the terminal closed after its command ended; this is its last output)' : ''
     return { text: `Output of terminal "${r.name}"${state}${gone}:\n${text || '(empty)'}` }
+  }
+
+  // open_terminal: agent sessions or plain shells for the user, beside the
+  // agent in its project (on its SSH host when it is there). The user allows
+  // each call on a card, unless the agent is a team lead whose workers start
+  // without asking (then within the workers limit). Each call is logged.
+  async function openPanes(agentPane, args) {
+    const kind = args.kind == null || args.kind === '' ? 'agent' : String(args.kind)
+    if (kind !== 'agent' && kind !== 'shell') throw fail('invalid_argument', '"kind" must be "agent" (a session of an agent) or "shell" (a plain terminal).')
+    const count = args.count == null || args.count === '' ? 1 : Number(args.count)
+    if (!Number.isInteger(count) || count < 1 || count > MAX_OPEN_PANES) throw fail('invalid_argument', `"count" must be 1 to ${MAX_OPEN_PANES}.`)
+    const name = args.name == null ? '' : String(args.name).trim()
+    if (name.length > 60 || /[\u0000-\u001f\u007f]/.test(name)) throw fail('invalid_argument', '"name" is at most 60 characters, on one line.')
+    const agentId = kind === 'agent' && args.agent != null && args.agent !== '' ? String(args.agent).trim().slice(0, 60) : null
+    if (!mayOpen(agentPane)) throw fail('rate_limited', 'You opened too many panes lately: wait a minute.')
+    const plan = await ask('terminalTarget', { agent: agentPane, op: 'openInfo', kind, agentId })
+    if (!plan || typeof plan !== 'object') throw fail('no_terminal', 'Tessel\'s window did not answer.')
+    const max = Math.min(MAX_OPEN_PANES, Math.max(1, Number(plan.max) || 1))
+    if (count > max) throw fail('too_many', `At most ${max} at a time (the user's limit for starting agents).`)
+    const what = plan.kind === 'agent' ? String(plan.agentName || plan.agentId || 'agent') : 'shell'
+    const agentLabel = String(plan.agentLabel || 'agent')
+    if (plan.skipApproval !== true) {
+      const open = { kind: plan.kind, agentName: plan.kind === 'agent' ? what : null, count, name, host: plan.host || null }
+      await card(agentPane, { id: `open:${agentPane}`, name: agentLabel, own: false }, { kind: 'open', command: '', open, explanation: String(args.explanation || '').slice(0, MAX_TEXT), goal: '', info: null, disclaimers: [], actions: [] })
+    }
+    allowedNow()
+    rateLimit(agentPane)
+    for (let i = 0; i < count; i++) opened(agentPane)
+    writeLog({ at: now(), paneId: agentPane, paneName: agentLabel, agent: agentLabel, agentPane, kind: 'open', text: `${count} x ${what}${name ? ` "${name}"` : ''}` }, false)
+    const r = await ask('terminalTarget', { agent: agentPane, op: 'open', kind: plan.kind, agentId: plan.agentId || null, name, count }, { timeoutMs: 120000 })
+    const panes = (r && Array.isArray(r.panes) ? r.panes : []).filter((p) => p && typeof p.id === 'string')
+    if (!panes.length) throw fail('open_failed', `Tessel could not open ${what === 'shell' ? 'a terminal' : what}.`)
+    const where = r.host ? ` on the SSH host ${r.host}` : ''
+    const list = panes.map((p) => `"${String(p.name || p.id).slice(0, 80)}" (id ${p.id})`).join(', ')
+    const kindText = plan.kind === 'agent' ? `${what} session${panes.length > 1 ? 's' : ''}` : `terminal${panes.length > 1 ? 's' : ''}`
+    return { text: `Opened ${panes.length} ${kindText} for the user beside your pane${where}: ${list}. They are the user's panes: do not run commands in them; for your own commands use your shell tool or run_in_terminal.` }
   }
 
   async function sendInput(agentPane, args) {
@@ -675,6 +715,7 @@ export function createAgentTerminal({ verify, settings = () => ({ enabled: true 
       if (op === 'send') return await sendInput(pane, args)
       if (op === 'kill') return await kill(pane, args)
       if (op === 'lastCommand') return await lastCommand(pane)
+      if (op === 'open') return await openPanes(pane, args)
       return await selection(pane)
     } catch (err) {
       if (err instanceof CliError) throw err
