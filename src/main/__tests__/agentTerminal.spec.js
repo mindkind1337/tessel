@@ -694,7 +694,7 @@ describe('the tools tell agents when a terminal helps', () => {
     expect(open.description).toContain('without saying which kind, open the same agent as you, or ask the user if it is unclear')
     expect(open.inputSchema.properties.kind.enum).toEqual(['agent', 'shell'])
     expect(mcp.TERMINAL_OPS.open_terminal).toBe('open')
-    expect(mcp.VERSION).toBe('1.11.4')
+    expect(mcp.VERSION).toBe('1.11.5')
   })
 })
 

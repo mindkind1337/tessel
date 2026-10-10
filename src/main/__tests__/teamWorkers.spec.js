@@ -65,7 +65,7 @@ describe('worker tools', () => {
   it('the tools are listed with their schemas', () => {
     const tools = Object.fromEntries(mcp.TOOLS.map((t) => [t.name, t]))
     expect(tools.team_worker_start.inputSchema.required).toEqual(['agent', 'task', 'brief'])
-    expect(tools.team_worker_start.inputSchema.properties.agent.enum).toEqual(['claude', 'codex', 'gemini', 'qwen'])
+    expect(tools.team_worker_start.inputSchema.properties.agent.enum).toEqual(['claude', 'codex', 'gemini', 'qwen', 'opencode'])
     expect(tools.team_worker_start.inputSchema.properties.isolation.enum).toEqual(['worktree', 'project'])
     expect(tools.team_worker_start.inputSchema.properties.model.type).toBe('string')
     expect(tools.team_worker_start.inputSchema.properties.effort.type).toBe('string')
@@ -76,7 +76,7 @@ describe('worker tools', () => {
     expect(tools.team_heartbeat.inputSchema.properties.phase.enum).toEqual(['investigating', 'implementing', 'reviewing', 'waiting'])
     for (const t of mcp.TOOLS) expect(t.description.length).toBeGreaterThan(20)
     // A new tools API: running agents are told to restart for it.
-    expect(mcp.VERSION).toBe('1.11.4')
+    expect(mcp.VERSION).toBe('1.11.5')
   })
 
   it('team_worker_start: sent to Tessel, waits for its answer', async () => {

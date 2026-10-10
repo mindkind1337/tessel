@@ -81,7 +81,7 @@ describe('request lines', () => {
 
 describe('validateParams', () => {
   it('knows exactly the offered methods', () => {
-    expect(METHODS).toEqual(['ping', 'focus', 'open', 'new', 'status', 'task.add', 'usage', 'browser', 'terminal'])
+    expect(METHODS).toEqual(['ping', 'focus', 'open', 'new', 'status', 'task.add', 'usage', 'browser', 'terminal', 'team-mgmt'])
     expect(() => validateParams('write', {})).toThrow(/Unknown request/)
     expect(() => validateParams('worker.start', {})).toThrow(/Unknown request/)
   })
@@ -142,6 +142,33 @@ describe('validateParams', () => {
     expect(validateParams('task.add', { title: 'a', note: 'n'.repeat(9000) }).note).toHaveLength(4000)
     expect(() => validateParams('task.add', { title: ' \n ' })).toThrow(/title/)
     expect(() => validateParams('task.add', { title: 'a', note: 5 })).toThrow()
+  })
+
+  it('team-mgmt: validates an optional pane argument against the requesting pane', () => {
+    const request = { pane: 'pane-1-aaaaaa', op: 'bootstrap' }
+    expect(validateParams('team-mgmt', { ...request, args: { pane: request.pane } }).args.pane).toBe(request.pane)
+    for (const pane of ['', null, 5, 'bad pane', '../pane', 'x'.repeat(101), 'pane-2-other']) {
+      expect(() => validateParams('team-mgmt', { ...request, args: { pane } })).toThrow()
+    }
+  })
+
+  it('team-mgmt: create or bootstrap, with a pane and its signature', () => {
+    const v = validateParams('team-mgmt', { pane: 'pane-1-aaaaaa', op: 'bootstrap', args: { teamName: '  Team-5  ', projectDir: 'C:\\work' }, auth: null })
+    expect(v).toEqual({ pane: 'pane-1-aaaaaa', op: 'bootstrap', args: { teamName: '  Team-5  ', projectDir: 'C:\\work' }, auth: { nonce: '', at: 0, mac: '' } })
+    expect(validateParams('team-mgmt', { pane: 'pane-1-aaaaaa', op: 'create', args: { teamName: 'T' }, auth: { nonce: 'n', at: 1, mac: 'm' } }).op).toBe('create')
+    // No arguments at all: a team with its own generated name.
+    expect(validateParams('team-mgmt', { pane: 'pane-1-aaaaaa', op: 'bootstrap', args: {}, auth: null }).args).toEqual({})
+    expect(() => validateParams('team-mgmt', { pane: 'pane-1-aaaaaa', op: 'boot', args: {} })).toThrow()
+    expect(() => validateParams('team-mgmt', { pane: 'pane-1-aaaaaa', op: 'bootstrap', args: { nope: 1 } })).toThrow()
+    expect(() => validateParams('team-mgmt', { pane: 'pane-1-aaaaaa', op: 'bootstrap', args: { teamName: 5 } })).toThrow()
+    // Display names are not channel directory names. Validation preserves
+    // the signed bytes, including spaces and punctuation.
+    expect(() => validateParams('team-mgmt', { pane: 'pane-1-aaaaaa', op: 'bootstrap', args: { teamName: 'a\nb' } })).toThrow(/control characters/)
+    for (const teamName of ['Team Live Test', 'a/b', '  Équipe test  ', 'x'.repeat(60)])
+      expect(validateParams('team-mgmt', { pane: 'pane-1-aaaaaa', op: 'bootstrap', args: { teamName } }).args.teamName).toBe(teamName)
+    expect(() => validateParams('team-mgmt', { pane: 'pane-1-aaaaaa', op: 'bootstrap', args: { teamName: 'x'.repeat(61) } })).toThrow(/60 characters/)
+    expect(() => validateParams('team-mgmt', { pane: 'pane-1-aaaaaa', op: 'bootstrap', args: { projectDir: 'relative' } })).toThrow()
+    expect(validateParams('team-mgmt', { pane: 'pane-1-aaaaaa', op: 'bootstrap', args: { teamName: 'Team_5.dev-fix' } }).args.teamName).toBe('Team_5.dev-fix')
   })
 })
 

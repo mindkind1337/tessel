@@ -32,6 +32,7 @@ function setup(over = {}) {
     },
     agentState: (id) => (id === 'a' ? 'working' : null),
     addCard: vi.fn(({ title }) => ({ id: 't1', title })),
+    createTeam: vi.fn(async ({ pane }) => ({ teamId: 'team-test', lead: { id: pane, num: 3 }, inbox: 'inbox' })),
     notify: vi.fn(),
     ...over
   }
@@ -114,6 +115,45 @@ describe('createCliRequests', () => {
     const { r, deps } = setup()
     expect(await r.handle({ method: 'addTask', params: { title: 'Docs', note: 'n', cwd: 'C:\\work\\app\\lib' } })).toEqual({ id: 't1', title: 'Docs', project: 'lib' })
     expect(deps.addCard).toHaveBeenCalledWith({ title: 'Docs', note: 'n', ws: expect.objectContaining({ id: 'w2' }) })
+  })
+
+  it('createTeam forwards the caller and requested project even when another project is active', async () => {
+    const { r, deps } = setup()
+    const result = await r.handle({ method: 'createTeam', params: { cwd: 'C:\\work\\app\\lib', teamName: 'Test', pane: 'pane-3-caller' } })
+    expect(deps.createTeam).toHaveBeenCalledWith({ dir: 'C:\\work\\app\\lib', teamName: 'Test', pane: 'pane-3-caller' })
+    expect(result).toEqual({ teamId: 'team-test', lead: { id: 'pane-3-caller', num: 3 }, inbox: 'inbox' })
+  })
+
+  it('createTeam propagates failures and refuses without a local project', async () => {
+    const failure = new Error('Could not create lead inbox')
+    const { r } = setup({ createTeam: vi.fn().mockRejectedValue(failure) })
+    await expect(r.handle({ method: 'createTeam', params: { pane: 'a' } })).rejects.toBe(failure)
+    const none = setup({ currentWs: () => null, workspaces: () => [] })
+    await expect(none.r.handle({ method: 'createTeam', params: { pane: 'a', cwd: 'Z:\\missing' } })).rejects.toMatchObject({ code: 'no_project' })
+    expect(none.deps.createTeam).not.toHaveBeenCalled()
+  })
+
+  it('createTeam never falls back to the active project for an unknown explicit folder', async () => {
+    const { r, deps } = setup()
+    await expect(r.handle({ method: 'createTeam', params: { cwd: 'Z:\\missing', pane: 'a' } })).rejects.toMatchObject({ code: 'no_project' })
+    expect(deps.createTeam).not.toHaveBeenCalled()
+  })
+
+  it('createTeam without a project lets the renderer locate the caller’s workspace', async () => {
+    const { r, deps } = setup()
+    await r.handle({ method: 'createTeam', params: { pane: 'a' } })
+    expect(deps.createTeam).toHaveBeenCalledWith({ dir: null, teamName: null, pane: 'a' })
+  })
+
+  it('concurrent bootstrap retries share the pending creation', async () => {
+    let finish
+    const { r, deps } = setup({ createTeam: vi.fn(() => new Promise((resolve) => { finish = resolve })) })
+    const first = r.handle({ method: 'createTeam', params: { pane: 'a' } })
+    const second = r.handle({ method: 'createTeam', params: { pane: 'a' } })
+    await Promise.resolve()
+    expect(deps.createTeam).toHaveBeenCalledTimes(1)
+    finish({ teamId: 'one-team' })
+    expect(await first).toEqual(await second)
   })
 
   it('unknown requests are refused', async () => {

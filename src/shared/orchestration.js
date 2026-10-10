@@ -16,7 +16,7 @@ import { sessionOptionLaunchText } from './agentSessionOptions'
 
 // Agents that can be started as workers: their CLI takes a first prompt on
 // its command line (see workerLaunchArgs), so nothing is typed into them.
-export const WORKER_AGENTS = ['claude', 'codex', 'gemini', 'qwen']
+export const WORKER_AGENTS = ['claude', 'codex', 'gemini', 'qwen', 'opencode']
 
 // Settings > Orchestration (Orca's defaults: 4 at a time, depth 1).
 export const MAX_CONCURRENT_DEFAULT = 4
@@ -217,6 +217,7 @@ export function workerLaunchArgs(agentId, launchOptions, { ownArgs = '', models 
     if (!/^[A-Za-z0-9 .,:_-]{1,300}$/.test(prompt)) return ''
     if (agentId === 'claude' || agentId === 'codex') args.push(`"${prompt}"`)
     else if (agentId === 'gemini' || agentId === 'qwen') args.push(`-i "${prompt}"`)
+    else if (agentId === 'opencode') args.push(`--prompt "${prompt}"`)
   }
   return args.length ? ` ${args.join(' ')}` : ''
 }

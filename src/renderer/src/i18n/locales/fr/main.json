@@ -753,6 +753,7 @@
       "tooLarge": "La demande est trop grande.",
       "badRequest": "Ce n'est pas une demande de la commande tessel.",
       "badParams": "Les paramètres de la demande ne sont pas valides.",
+      "badTeamDisplayName": "Le nom de l'équipe doit contenir de 1 à 60 caractères, sans caractères de contrôle.",
       "badNumber": "{{name}} doit être un nombre entier positif.",
       "badPath": "Ce n'est pas un chemin local complet : {{path}}",
       "badId": "Identifiant de {{name}} non valide : {{value}}",
