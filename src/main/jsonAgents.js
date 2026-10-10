@@ -231,8 +231,9 @@ export function teamToolsEntry(agent, scriptPath, node = findNode()) {
   const stdio = { transport: 'stdio', command: node, args: [scriptPath] }
   // OpenCode puts {env:…} values into the file as raw text before reading it
   // as JSON: a Windows path (backslashes) would break the whole file. Only
-  // the pane id (no backslash) goes that way; the project folder is found
-  // from the folder OpenCode runs in.
+  // the pane id and secret (no backslash) go that way; the rest of the
+  // pane's variables (TESSEL_PROJECT_DIR...) reach the server anyway, as
+  // OpenCode starts a local server with its own environment plus these.
   if (agent === 'opencode') return configToEntry(agent, { ...stdio, env: { TESSEL_PANE_ID: '{env:TESSEL_PANE_ID}', TESSEL_TEAM_SECRET: '{env:TESSEL_TEAM_SECRET}' } })
   // Kimi, Copilot and Cline hand their whole environment (the pane's) to the
   // server; Cline never expands $VAR in env values, so none is written.

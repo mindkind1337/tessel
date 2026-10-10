@@ -6121,7 +6121,13 @@ async function startTask(spec, opts = {}) {
   const ws = opts.ws || currentWs.value
   if (!ws || !spec || !spec.title) return { error: 'no workspace' }
   if (opts.expectedCwd && (!workspaces.value.includes(ws) || ws.cwd !== opts.expectedCwd)) return { error: t('app.task.folderChanged', 'The workspace folder changed. No agent was started.') }
-  const task = addTask({ title: spec.title, wsId: ws.id })
+  // Taking a card nobody is doing any more (a lead's "revive"): keep the card
+  // that is already there instead of minting a second one for the same work,
+  // so the stranded one stops costing the team a slot (LEAD_MAX_ACTIVE).
+  const existing = spec.cardId ? boardTasks.value.find((t) => t.id === spec.cardId) : null
+  if (spec.cardId && (!existing || existing.column === 'done'))
+    return { error: `no card "${spec.cardId}" to take back` } // i18n-ignore
+  const task = existing || addTask({ title: spec.title, wsId: ws.id })
   updateTask(task.id, {
     brief: spec.brief || '',
     column: 'doing',
@@ -6901,6 +6907,49 @@ async function runLeadRequest(team, lead, req) {
     return `Started "${req.title}" (task id ${res.task.id}) with ${paneLabel(res.leaf)}${res.task.worktree ? ` on branch ${res.task.worktree.branch}` : ''}.` // i18n-ignore
   }
   if (req.action === 'message') return runMemberMessage(team, lead, req)
+  if (req.action === 'revive') {
+    // A card nobody is doing: its agent's pane closed. Look among the cards
+    // that are in progress, not only the ones in review, because that is where
+    // a stranded card sits.
+    const inProgress = boardTasks.filter((t) => t.teamId === team.id && (t.column === 'doing' || t.column === 'review'))
+    const found = findTaskRef(inProgress, req.task)
+    const stranded = found.task
+    if (!stranded) {
+      if (found.error) return `Not taken back: ${found.error}.` // i18n-ignore
+      return (
+        `No task of your team is stranded under "${req.task}".` + // i18n-ignore
+        (inProgress.length ? ` In progress: ${inProgress.map((t) => `${t.id} "${t.title}"`).join(', ')}.` : '') // i18n-ignore
+      )
+    }
+    // Only take back what nobody is doing: a live teammate already on the card
+    // means it is not stranded, and taking it would move work under them.
+    const live = teamMembers(team.id)
+    const addr = String(stranded.assignee || '').trim()
+    const legacy = /^#(\d{1,3})$/.exec(addr)
+    const owned = addr ? (legacy ? live.some((m) => m.num === Number(legacy[1])) : live.some((m) => (m.paneName || '') === addr)) : false
+    if (owned) return `Not taken back: ${stranded.id} "${stranded.title}" is already being done.` // i18n-ignore
+    let spec
+    if (req.num != null || (req.name && resolveAgentAddress(teamMembers(team.id), req.name))) {
+      const m = req.name ? resolveAgentAddress(teamMembers(team.id), req.name) : member(req.num)
+      if (!m) return `Not taken back "${req.title}": unknown agent. Valid names: ${teamMembers(team.id).map((m) => m.paneName).join(', ')}.` // i18n-ignore
+      spec = { title: stranded.title, brief: req.brief || stranded.brief, agent: { kind: 'pane', id: m.id }, isolated: false, cardId: stranded.id }
+    } else {
+      if (lead.remoteHostId || (ws && ws.remote)) return `Not taken back "${req.title}": a lead on an SSH host can only give tasks to its teammates.` // i18n-ignore
+      const kind = taskAgentKinds.value.find((a) => a.id === req.kind)
+      if (!kind) return `Not taken back "${req.title}": unknown agent kind "${req.kind}". Use one of: ${taskAgentKinds.value.map((a) => a.id).join(', ')}.` // i18n-ignore
+      if (req.ownCopy) {
+        const info = ws && ws.cwd ? await window.shellApi.gitInfo(ws.cwd) : null
+        if (!info || !info.isRepo || !info.hasCommits) {
+          const why = !ws || !ws.cwd ? 'the workspace has no project folder' : !info || !info.isRepo ? 'the project folder is not a git repository' : 'it has no commits yet'
+          return `Not taken back "${req.title}": ${why}, so the new agent cannot have its own copy. Add "own_copy": false to let it work in the project folder instead.` // i18n-ignore
+        }
+      }
+      spec = { title: stranded.title, brief: req.brief || stranded.brief, agent: { kind: 'new', id: kind.id }, isolated: req.ownCopy, cardId: stranded.id }
+    }
+    const res = await startTask(spec, { ws, roomy: true, teamId: team.id })
+    if (!res || res.error) return `Not taken back "${stranded.title}": ${(res && res.error) || 'unknown error'}.` // i18n-ignore
+    return `Took back "${stranded.title}" (task id ${res.task.id}) with ${paneLabel(res.leaf)}${res.task.worktree ? ` on branch ${res.task.worktree.branch}` : ''}.` // i18n-ignore
+  }
   const inReview = boardTasks.filter((t) => t.teamId === team.id && t.column === 'review')
   const found = findTaskRef(inReview, req.task)
   const task = found.task
@@ -7103,7 +7152,7 @@ async function pollTeams() {
 // tools trust only this). A project whose teams are all gone gets an empty
 // map, and its old channels are retired.
 const teamDirsSeen = new Set()
-async function publishCurrentTeams() {
+async function publishCurrentTeams({ strict = false } = {}) {
   if (!window.shellApi.team) return
   const byDir = {}
   // Open projects too: after a reload with no team left, a project's old
@@ -7121,6 +7170,7 @@ async function publishCurrentTeams() {
   }
   for (const dir of teamDirsSeen) {
     const cur = await window.shellApi.team.current({ dir, panes: byDir[dir] || {} })
+    if (strict && !cur?.ok) throw new CliRequestError('failed', cur?.error || 'The team map could not be saved.')
     // Retired by another Tessel window that did not know about it yet: set
     // up again on the next round.
     for (const id of (cur && cur.lost) || []) {
@@ -7128,6 +7178,7 @@ async function publishCurrentTeams() {
       delete channelBoxes[id]
     }
     const res = await window.shellApi.team.retire({ dir, liveTeamIds: teams.value.filter((t) => channelDir(t) === dir).map((t) => t.id) })
+    if (strict && !res?.ok) throw new CliRequestError('failed', res?.error || 'The team map could not be saved.')
     // A retired channel is set up again from scratch if its team comes back
     // (Undo after Ungroup): forget what this session knew about it.
     for (const id of (res && res.retired) || []) {
@@ -9216,6 +9267,59 @@ const cliRequests = createCliRequests({
     scheduleTaskSave()
     return task
   },
+  // A team for this agent, with it as the lead. The window creates it in its
+  // own model (createTeam) and publishes the pane-to-team map itself, so a
+  // team asked for by an agent with no team survives the next rewrite.
+  async createTeam({ dir, teamName, pane: paneId }) {
+    // Never substitute another pane: the caller must become the lead.
+    const leaf = paneId ? findLeaf(paneId) : null
+    if (!leaf) throw new CliRequestError('unknown_pane', t('app.cli.unknownPane', 'This pane is not in this window.'))
+    if (!isAgentLeaf(leaf)) throw new CliRequestError('not_agent', t('app.cli.notAgentPane', 'Only an agent pane can create a team.'))
+    const ws = wsOfLeaf(leaf.id)
+    if (!ws || ws.remote || !ws.cwd || (dir && !sameFolder(ws.cwd, dir)))
+      throw new CliRequestError('no_project', t('app.cli.paneProjectMismatch', 'The requested project is not the agent pane’s local project.'))
+    const existing = leaf.team ? teamById(leaf.team) : null
+    if (leaf.team && existing?.leadId !== leaf.id)
+      throw new CliRequestError('already_in_team', t('app.cli.alreadyInTeam', 'This agent already belongs to a team.'))
+    const name = String(teamName || '').trim().slice(0, 60)
+    if (!existing && name && teams.value.some((team) => team.name === name))
+      throw new CliRequestError('team_name_taken', t('app.cli.teamNameTaken', 'A team with this name already exists.'))
+    const team = existing || createTeam([leaf.id], { name, announce: false })
+    if (!team) throw new CliRequestError('failed', t('app.cli.teamFailed', 'Tessel could not create the team.'))
+    try {
+      if (existing) {
+        // A lost reply is safe to retry, including recreating a missing inbox.
+        if (!await assignLeadInbox(team, leaf)) throw new CliRequestError('failed', t('app.cli.teamFailed', 'Tessel could not create the team.'))
+      } else await changeTeamLead(team.id, leaf.id)
+      if (team.leadId !== leaf.id || leaf.team !== team.id || !team.inboxes?.[leaf.id])
+        throw new CliRequestError('failed', t('app.cli.teamFailed', 'Tessel could not create the team.'))
+      await publishCurrentTeams({ strict: true })
+      scheduleSave()
+      if (!existing) {
+        tellTeam(team.id, null, { welcome: true })
+        showToast(t('app.cli.teamCreated', 'Team created: {{team}}', { team: team.name }), { timeout: 5000 })
+      }
+      return { teamId: team.id, name: team.name, lead: { id: leaf.id, num: leaf.num }, inbox: inboxPathFor(teamDir(team.id), team.inboxes[leaf.id]) }
+    } catch (error) {
+      if (!existing) {
+        try { dropInbox(team, leaf.id, ws.cwd) } catch { /* model rollback must still complete */ }
+        if (leaf.team === team.id) {
+          leaf.team = null
+          logMembership(leaf, null)
+        }
+        teams.value = teams.value.filter((t) => t.id !== team.id)
+        delete channelSigs[team.id]
+        delete channelBoxes[team.id]
+        scheduleSave()
+        // The first map write may have failed before this window recorded
+        // ownership, so retire this newly-created channel explicitly too.
+        try { await window.shellApi.channel.ensure({ dir: ws.cwd, teamId: team.id, members: [] }) } catch { /* retried by normal cleanup */ }
+        // Best effort disk cleanup; preserve the original error for the caller.
+        await publishCurrentTeams().catch(() => {})
+      }
+      throw error
+    }
+  },
   notify: (text) => showToast(text, { timeout: 5000 })
 })
 // The agents' browser tools (src/main/agentBrowser.js): which page of the
@@ -10090,7 +10194,7 @@ watch(
   }
 )
 
-function createTeam(leafIds) {
+function createTeam(leafIds, { name = null, announce = true } = {}) {
   const ids = (leafIds || []).filter((id) => isAgentLeaf(findLeaf(id)) && !findLeaf(id).team)
   if (!ids.length) return null
   const names = new Set(teams.value.map((t) => t.name))
@@ -10102,7 +10206,7 @@ function createTeam(leafIds) {
   while (names.has(teamName(n)) || numbers.has(String(n))) n++
   const used = new Set(teams.value.map((x) => x.color))
   const color = TEAM_COLORS.find((c) => !used.has(c)) || TEAM_COLORS[n % TEAM_COLORS.length]
-  const team = { id: newId('team'), name: teamName(n), color }
+  let team = { id: newId('team'), name: name || teamName(n), color }
   teams.value.push(team)
   // Agents taken from another team: that team hears they left.
   const leftFrom = new Map()
@@ -10113,6 +10217,7 @@ function createTeam(leafIds) {
     logMembership(leaf, team.id)
   }
   pruneTeams()
+  team = teamById(team.id)
   for (const [oldId, names] of leftFrom) {
     if (teamById(oldId)) tellTeam(oldId, `${names.join(', ')} left the team.`) // i18n-ignore
   }
@@ -10124,7 +10229,7 @@ function createTeam(leafIds) {
     name: team.name,
     detail: ids.map((id) => findLeaf(id)?.title).join(', ')
   })
-  tellTeam(team.id, null, { welcome: true })
+  if (announce) tellTeam(team.id, null, { welcome: true })
   return team
 }
 

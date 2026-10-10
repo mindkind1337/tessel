@@ -54,6 +54,29 @@ export function parseLeadRequest(data) {
     if (num == null && !validAgentName(to)) return { ok: false, error: 'a message needs "to": "Ada", "team" or "lead"' }
     return { ok: true, action, to: 'one', num, text, ...(num == null ? { name: to } : {}) }
   }
+  // Take back a card nobody is doing any more: a teammate's pane closed while
+  // its card sat in "doing" or "review", and no lead request could attach a new
+  // agent to that card. Asking for a "task" mints a NEW card, so the same work
+  // then exists twice and the stranded one keeps costing a slot forever.
+  if (action === 'revive') {
+    const task = str(data.task, MAX_TITLE)
+    if (!task) return { ok: false, error: '"revive" needs the "task" id (or its title)' }
+    const agent = str(String(data.agent == null ? '' : data.agent), 60)
+    const num = paneNum(agent)
+    const kind = num == null && /^[a-z0-9_-]{1,40}$/i.test(agent) ? agent.toLowerCase() : null
+    if (num == null && !validAgentName(agent) && !kind) return { ok: false, error: 'a reviving task needs an "agent": a teammate like "Ada", or an agent kind like "codex"' }
+    return {
+      ok: true,
+      action,
+      task,
+      title: task,
+      num,
+      kind,
+      ...(num == null ? { name: agent } : {}),
+      brief: str(data.brief, MAX_TEXT),
+      ownCopy: data.own_copy !== false
+    }
+  }
   if (action === 'approve' || action === 'changes') {
     const task = str(data.task, MAX_TITLE)
     if (!task) return { ok: false, error: `"${action}" needs the "task" id (or its title)` }
@@ -61,7 +84,7 @@ export function parseLeadRequest(data) {
     if (action === 'changes' && !text) return { ok: false, error: '"changes" needs a "text" saying what to change' }
     return { ok: true, action, task, text }
   }
-  return { ok: false, error: `unknown action "${action || '(none)'}": use task, message, approve or changes` }
+  return { ok: false, error: `unknown action "${action || '(none)'}": use task, message, approve, changes or revive` }
 }
 
 // Find the task a lead means: its id first, then its exact title, then the

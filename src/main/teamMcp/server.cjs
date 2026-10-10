@@ -60,6 +60,12 @@ const remoteTag = () => (isRemote() ? `[from an agent on ${remoteHost()}] ` : ''
 
 // --- Finding my team and me ---------------------------------------------------
 
+// Where this agent works: the folder Tessel gave it, or the current one. Used
+// when a team is created (it is the project the team belongs to).
+function projectDir() {
+  return process.env.TESSEL_PROJECT_DIR || process.cwd()
+}
+
 function candidateDirs(start) {
   const out = []
   const add = (d) => d && !out.includes(d) && out.push(d)
@@ -621,7 +627,7 @@ async function ask(ctx, args, signal = null) {
 // answer, Tessel writes <team>/answers/<rid>.json, which the tool waits for.
 // The rules (who may, how many at once, how deep, the user's confirmation)
 // are Tessel's (src/shared/orchestration.js); this only checks the shape.
-const WORKER_AGENTS = ['claude', 'codex', 'gemini', 'qwen']
+const WORKER_AGENTS = ['claude', 'codex', 'gemini', 'qwen', 'opencode']
 const HEARTBEAT_PHASES = ['investigating', 'implementing', 'reviewing', 'waiting']
 const ANSWER_WAIT_S = 30
 const FLAG_VALUE = /^[A-Za-z0-9._:[\]-]{1,60}$/
@@ -868,6 +874,32 @@ const TOOLS = [
     }
   },
   {
+    name: 'team_create',
+    description:
+      'Create a new Tessel team with this agent as the lead, when you are not in a team yet (the same as team_bootstrap). Returns the team id; the team gets its own task board.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        teamName: { type: 'string', description: 'Optional: a name for the team (default: auto-generated)' },
+        projectDir: { type: 'string', description: 'Optional: project folder for the team (default: current folder)' }
+      },
+      required: []
+    }
+  },
+  {
+    name: 'team_bootstrap',
+    description:
+      'Bootstrap a new Tessel team from scratch when you are NOT in any team. Creates a new team channel with you as the lead. Works without any existing team context. Use this to bootstrap a team from scratch.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        teamName: { type: 'string', description: 'Optional: a name for the team (default: auto-generated)' },
+        projectDir: { type: 'string', description: 'Optional: project folder for the team (default: current folder)' }
+      },
+      required: []
+    }
+  },
+  {
     name: 'team_ask',
     description:
       'Ask one teammate a question and wait for the answer (they reply with team_send and reply_to). Waits up to wait_seconds (default 50); with no answer by then the question stays open: call team_ask again with "resume" set to its id to keep waiting, never ask again.',
@@ -982,6 +1014,13 @@ const TOOLS = [
     inputSchema: { type: 'object', properties: { ...ME_ARG } }
   }
 ]
+
+// --- Team management tools -----------------------------------------------------------
+// Create a team, etc. Uses the same CLI pipe as browser/terminal tools.
+const TEAM_MGMT_TEAM_KEY = 'team-mgmt'
+// Longer than Tessel's own wait for its window (cliBridge, 30 s): giving up
+// first would report a failure for a team the window then creates.
+const TEAM_MGMT_TIMEOUT_MS = 45000
 
 // --- Browser tools ------------------------------------------------------------------
 // Tessel's built-in browser, driven the way Orca's agents drive theirs
@@ -1098,6 +1137,38 @@ async function browserTool(op, args, deps = { runtimes: browserRuntimes, call: p
     }
     last = r && r.error ? r.error : { message: 'Tessel could not do it.' }
     // Another Tessel (the installed app and the dev build): it does not know this pane.
+    if (last.code === 'unknown_pane' || last.code === 'not_running' || last.code === 'unknown_method') continue
+    break
+  }
+  return { text: `${last.message || 'Tessel could not do it.'}${last.code ? ` [${last.code}]` : ''}`, isError: true }
+}
+
+// The arguments as Tessel reads them, signed by this pane (team key "team-mgmt").
+// The secret is the pane's own (TESSEL_TEAM_SECRET), not a team's: a pane has
+// it before it is in any team, so even the request that creates one is signed.
+function teamMgmtRequest(op, args) {
+  const clean = {}
+  for (const [k, v] of Object.entries(args || {})) if (k !== 'me' && v !== null && v !== undefined && v !== '') clean[k] = v
+  const pane = String(process.env.TESSEL_PANE_ID || '')
+  const nonce = crypto.randomBytes(18).toString('base64url')
+  const at = Date.now()
+  const mac = crypto
+    .createHmac('sha256', Buffer.from(teamSecret(), 'hex'))
+    .update(canonical({ pane, team: TEAM_MGMT_TEAM_KEY, body: { op, args: clean, nonce, at } }))
+    .digest('hex')
+  return { pane, op, args: clean, auth: { nonce, at, mac } }
+}
+
+async function teamMgmtTool(op, args, deps = { runtimes: browserRuntimes, call: pipeCall }) {
+  if (!process.env.TESSEL_PANE_ID || !teamSecret())
+    return { text: 'The team management tools work only in an agent Tessel started: restart this agent from Tessel (right-click its pane, Restart).', isError: true }
+  const runtimes = deps.runtimes()
+  if (!runtimes.length) return { text: 'Tessel is not running (or is too old for the team management tools).', isError: true }
+  let last = null
+  for (const rt of runtimes) {
+    const r = await deps.call(rt, 'team-mgmt', teamMgmtRequest(op, args), TEAM_MGMT_TIMEOUT_MS)
+    if (r && r.ok) return { text: String(r.result?.text || 'Done.') }
+    last = r && r.error ? r.error : { message: 'Tessel could not do it.' }
     if (last.code === 'unknown_pane' || last.code === 'not_running' || last.code === 'unknown_method') continue
     break
   }
@@ -1341,6 +1412,11 @@ function callTool(name, args = {}, signal = null) {
   // The browser and terminal tools need no team: only this pane's identity.
   if (BROWSER_OPS[name]) return browserTool(BROWSER_OPS[name], args)
   if (TERMINAL_OPS[name]) return terminalTool(TERMINAL_OPS[name], args)
+  // Creating a team is how an agent stops being alone: it runs before the team
+  // is looked for, since there is none yet when it is called.
+  // team_create is the same tool under the name an agent tends to guess.
+  if (name === 'team_bootstrap' || name === 'team_create')
+    return teamMgmtTool('bootstrap', { teamName: args.teamName, projectDir: args.projectDir || projectDir() })
   let ctx = locate(args.me)
   // Alone (no team): the board tools use the workspace's board.
   if (ctx.error && BOARD_TOOLS.includes(name)) ctx = boardLocate() || ctx
@@ -2143,4 +2219,4 @@ if (require.main === module) {
   }
 }
 
-module.exports = { browserTool, browserRequest, browserRuntimes, BROWSER_TOOLS, terminalTool, terminalRequest, TERMINAL_TOOLS, TERMINAL_OPS, sanitizeAsk, ASK_LIMITS, PERMISSION_MODES, MODE_PROVIDERS, taskRequest, locate, readInbox, send, members, handle, candidateDirs, ackPath, markRead, unread, listTasks, addTask, moveTask, reportTask, gateTask, ask, groupTargets, listWorkers, listGates, TOOLS, VERSION, AGENT_STATUS_AGENTS, statusEvent }
+module.exports = { browserTool, browserRequest, browserRuntimes, BROWSER_TOOLS, terminalTool, terminalRequest, TERMINAL_TOOLS, TERMINAL_OPS, teamMgmtTool, teamMgmtRequest, sanitizeAsk, ASK_LIMITS, PERMISSION_MODES, MODE_PROVIDERS, taskRequest, locate, readInbox, send, members, handle, candidateDirs, ackPath, markRead, unread, listTasks, addTask, moveTask, reportTask, gateTask, ask, groupTargets, listWorkers, listGates, TOOLS, VERSION, AGENT_STATUS_AGENTS, statusEvent }

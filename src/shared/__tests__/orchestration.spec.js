@@ -19,6 +19,14 @@ import {
 } from '../orchestration'
 
 describe('orchestration requests', () => {
+  it('accepts OpenCode workers and supplies their initial instructions at launch', () => {
+    const request = parseWorkerRequest({ action: 'worker-start', agent: 'opencode', title: 'Review', brief: 'Review the change.' })
+    expect(request).toMatchObject({ agent: 'opencode', title: 'Review', brief: 'Review the change.', isolation: 'worktree' })
+    expect(request.error).toBeUndefined()
+    expect(workerLaunchArgs(request.agent, { initialPrompt: WORKER_START_PROMPT })).toBe(` --prompt "${WORKER_START_PROMPT}"`)
+    expect(workerLaunchArgs(request.agent, { initialPrompt: 'bad $(command)' })).toBe('')
+  })
+
   it('worker-start: agent, title, brief, isolation, model/effort, after', () => {
     expect(
       parseWorkerRequest({ action: 'worker-start', rid: 'r-abc-123456', agent: 'Codex', title: ' Fix  the cart ', brief: 'Do it. Run npm test.', model: 'gpt-5.5', effort: 'high', deps: ['task-1-1', 'task-1-1'] })

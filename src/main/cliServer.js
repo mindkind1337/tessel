@@ -41,7 +41,7 @@ export const MAX_IN_FLIGHT = 8
 // never hold the ones the other requests need.
 export const MAX_TERMINAL_IN_FLIGHT = 32
 export const MAX_TERMINAL_PER_PANE = 3
-export const METHODS = ['ping', 'focus', 'open', 'new', 'status', 'task.add', 'usage', 'browser', 'terminal']
+export const METHODS = ['ping', 'focus', 'open', 'new', 'status', 'task.add', 'usage', 'browser', 'terminal', 'team-mgmt']
 
 const TOKEN_RE = /^[0-9a-f]{64}$/
 const MAX_PATH = 1024
@@ -201,6 +201,35 @@ export function validateParams(method, params = {}) {
       return browserParams(params)
     case 'terminal':
       return terminalParams(params)
+    case 'team-mgmt': {
+      // The team management tool (teamMcp/server.cjs): its pane, the op
+      // ("create" or "bootstrap"), flat arguments and the pane's signature.
+      // Who may do what is decided by the team channel and the lead inbox.
+      const MGMT_ARG_KEYS = new Set(['teamName', 'projectDir', 'pane'])
+      const bad = () => invalid(t('main.cli.badParams', 'The request’s parameters are not valid.'))
+      const { pane, op, args, auth } = params
+      if (typeof pane !== 'string' || !/^[A-Za-z0-9][\w.:-]{0,99}$/.test(pane)) throw bad()
+      if (op !== 'create' && op !== 'bootstrap') throw bad()
+      const a = args == null ? {} : args
+      if (typeof a !== 'object' || Array.isArray(a)) throw bad()
+      const clean = {}
+      for (const [k, v] of Object.entries(a)) {
+        if (!MGMT_ARG_KEYS.has(k)) throw bad()
+        if (k === 'pane' && (typeof v !== 'string' || !/^[A-Za-z0-9][\w.:-]{0,99}$/.test(v) || v !== pane)) throw bad()
+        if (v === null || v === undefined || v === '') continue
+        if (typeof v !== 'string') throw bad()
+        if (k === 'teamName' && (!v.trim() || v.length > 60 || /[\u0000-\u001f\u007f]/.test(v)))
+          throw invalid(t('main.cli.badTeamDisplayName', 'Use a team name of 1 to 60 characters without control characters.'))
+        if (k === 'projectDir' && !validAbsolutePath(v)) throw bad()
+        // Preserve signed bytes; display-name trimming happens after auth.
+        clean[k] = v
+      }
+      // Both operations use the per-pane secret, present before a team exists.
+      // The handler verifies the MAC and rejects absent/invalid signatures.
+      const sig = auth == null ? { nonce: '', at: 0, mac: '' } : auth
+      if (typeof sig !== 'object' || Array.isArray(sig) || typeof sig.nonce !== 'string' || typeof sig.mac !== 'string' || !Number.isFinite(sig.at)) throw bad()
+      return { pane, op, args: clean, auth: { nonce: sig.nonce.slice(0, 80), at: sig.at, mac: sig.mac.slice(0, 128) } }
+    }
     default:
       throw new CliError('unknown_method', t('main.cli.unknownMethod', 'Unknown request: {{method}}', { method: String(method).slice(0, 40) }))
   }

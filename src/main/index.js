@@ -120,7 +120,7 @@ import { createAgentStateRulesFile } from './agentStateRulesFile'
 import { OVERRIDE_FILE_NAME } from '../shared/agentStateRules'
 import { createPortScanner } from './workspacePorts'
 import { createResourceCollector } from './resourceUsage'
-import { newTeamSecret, setTeamSecret, revokeTeamSecret, verifyRequest } from './teamAuth'
+import { newTeamSecret, setTeamSecret, revokeTeamSecret, teamSecretOf, verifyRequest } from './teamAuth'
 import { publishTeamTasks, forgetPublishedTasks, takeTeamRequests, finishTeamRequests, releaseTeamRequests, messageStatuses, writeBoardPanes, toolsAlive, writeRoster, writeTeamAnswer, publishWorkers } from './teamTasks'
 import {
   writeServerScript,
@@ -4215,7 +4215,34 @@ const cliHandlers = {
   'task.add': async (params) => cliBridge.ask('addTask', params),
   usage: async () => accountUsage.usage(),
   browser: async (params) => agentBrowser.handle(params),
-  terminal: async (params, opts) => agentTerminal.handle(params, opts)
+  terminal: async (params, opts) => agentTerminal.handle(params, opts),
+  'team-mgmt': async (params) => {
+    const { pane, op, args = {}, auth } = params || {}
+    const paneId = typeof pane === 'string' ? pane : ''
+    // A pane this Tessel did not start (another Tessel's, or none): the agent
+    // tries the next running Tessel.
+    if (!paneId || !teamSecretOf(paneId)) throw new CliError('unknown_pane', 'This pane was not started by this Tessel.')
+    // Signed by the pane's own secret (it has one before it is in any team):
+    // no agent can make another pane a lead. Replays are refused.
+    const v = verifyRequest({ op, args, auth }, paneId, 'team-mgmt')
+    if (!v || v.unsigned) throw new CliError('unauthorized', 'This request is not signed by a pane Tessel started: restart the agent from Tessel.')
+    if (v.error) throw new CliError(/no team secret/.test(v.error) ? 'unknown_pane' : 'unauthorized', `Refused: ${v.error}.`)
+    // "create" and "bootstrap" are one thing: a team with the caller as lead.
+    if (op !== 'bootstrap' && op !== 'create')
+      throw new CliError('unknown_method', `Unknown team-mgmt op: ${String(op).slice(0, 40)}`)
+    // The window creates the team: it owns the pane-to-team map and rewrites it
+    // from its own state, so a team made here behind its back would be erased.
+    // A failed window request must remain a failed request.
+    const res = await cliBridge.ask('createTeam', { cwd: args.projectDir, teamName: args.teamName || '', pane: paneId })
+    if (!res?.teamId || res.lead?.id !== paneId || !res.inbox)
+      throw new CliError('failed', 'The team and its lead inbox could not be created.')
+    return {
+      text: `Team "${res.teamId}" is ready. You are its lead (num ${res.lead.num}) and your lead inbox is set up. Split the work with team_task_add, then start workers with team_worker_start.`,
+      teamId: res.teamId,
+      lead: res.lead,
+      inbox: res.inbox
+    }
+  },
 }
 const cliServer = createCliServer({
   userData: app.getPath('userData'),

@@ -62,6 +62,7 @@ export function folderName(p) {
 //   shellFor(id) -> shell id | null; openPane({ ws, agent, shellId, sessionOptions }) -> leaf
 //   focusPane(id); paneLabel(leaf); forEachLeaf(tree, fn); agentState(leafId) -> state
 //   addCard({ title, note, ws }) -> task; notify(text)
+//   createTeam({ dir, teamName, pane }) -> { teamId, lead, inbox, ... }
 export function createCliRequests(deps) {
   // The project the folder is in (the deepest one), a local one.
   function projectFor(p) {
@@ -154,11 +155,28 @@ export function createCliRequests(deps) {
   function addTask({ title, note, cwd }) {
     const ws = projectOrCurrent(cwd)
     const task = deps.addCard({ title, note: note || '', ws })
-    deps.notify(t('app.cli.cardAdded', 'Card added from the command line: {{title}}', { title }))
+    deps.notify(t('app.cli.cardAdded', 'Card added from the command line: {{title}}', { title: task.title }))
     return { id: task.id, title: task.title, project: ws ? ws.name : null }
   }
 
-  const METHODS = { openProject, openFile, newPane, status, addTask }
+  // A team for this agent, with it as the lead: the one thing a team tool
+  // asks for before there is a team to be in. It goes through the window
+  // (deps.createTeam -> preload team.create), because the window owns the
+  // pane-to-team map: it rewrites it from its own state, so a team made
+  // behind its back would be erased again.
+  const teamCreations = new Map()
+  function createTeam({ teamName, cwd, pane }) {
+    const ws = cwd ? projectFor(cwd) : null
+    if (cwd && !ws) throw new CliRequestError('no_project', t('app.cli.noProject', 'No project is open in Tessel. Open one first (tessel open <folder>).'))
+    // A retry while the first request is still running shares its outcome.
+    if (teamCreations.has(pane)) return teamCreations.get(pane)
+    const pending = Promise.resolve().then(() => deps.createTeam({ dir: ws?.cwd || null, teamName: teamName || null, pane }))
+      .finally(() => teamCreations.delete(pane))
+    teamCreations.set(pane, pending)
+    return pending
+  }
+
+  const METHODS = { openProject, openFile, newPane, status, addTask, createTeam }
 
   // -> the result, or throws CliRequestError.
   async function handle(req) {

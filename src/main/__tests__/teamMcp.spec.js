@@ -6,6 +6,7 @@ import { spawn } from 'child_process'
 import { createRequire } from 'module'
 import { ensureTeamChannel, pollTeamChannel } from '../teamChannel'
 import { takeTeamAcks } from '../teamAcks'
+import { requestMac } from '../teamAuth'
 import { writeCurrentTeams, retireOldTeams, addNotices } from '../teamNotices'
 import { publishTeamTasks, takeTeamRequests, finishTeamRequests, messageStatuses, writeBoardPanes, toolsAlive } from '../teamTasks'
 
@@ -164,6 +165,8 @@ describe('Tessel team tools (background messages)', () => {
       'team_task_move',
       'team_task_done',
       'team_task_gate',
+      'team_create',
+      'team_bootstrap',
       'team_ask',
       'team_worker_start',
       'team_worker_list',
@@ -1087,6 +1090,97 @@ describe('the team tools say they are running', () => {
       fs.rmSync(dir, { recursive: true, force: true })
     }
   }, 20000)
+})
+
+describe('bootstrap a team with no team yet', () => {
+  let dir
+  const PANE = 'pane-9-lead00'
+  const call = (name, args = {}) => mcp.handle({ id: 1, method: 'tools/call', params: { name, arguments: args } })
+  const text = (r) => r.content[0].text
+  const SECRET = 'ab'.repeat(32)
+  const as = (pane) => {
+    process.env.TESSEL_PANE_ID = pane
+    process.env.TESSEL_PROJECT_DIR = dir
+    process.env.TESSEL_TEAM_SECRET = SECRET
+    return mcp.locate()
+  }
+  const fakeTessel = (sent) => ({
+    runtimes: () => [{ pipe: 'x', token: 't' }],
+    call: async (_rt, method, params, timeoutMs) => {
+      sent.push({ method, params, timeoutMs })
+      return { ok: true, result: { text: 'Team "team-abc" is ready. You are its lead (num 1).' } }
+    }
+  })
+  beforeEach(() => {
+    dir = fs.mkdtempSync(join(os.tmpdir(), 'tessel-boot-'))
+    ensureTeamChannel({ dir, teamId: 'other-team', members: [{ id: 'pane-1-aaaaaa', num: 1, title: 'Codex CLI' }] })
+    writeCurrentTeams({ dir, panes: { 'pane-1-aaaaaa': { team: 'other-team', num: 1 } } })
+  })
+  afterEach(() => {
+    delete process.env.TESSEL_PANE_ID
+    delete process.env.TESSEL_PROJECT_DIR
+    delete process.env.TESSEL_TEAM_SECRET
+    fs.rmSync(dir, { recursive: true, force: true })
+  })
+
+  it('creates the team with this pane as lead, with no team to be in', async () => {
+    // No team for this pane: the board tools refuse, but team_bootstrap must
+    // still work (the pane's own secret is not a team's).
+    as(PANE)
+    expect(await call('team_tasks')).toHaveProperty('isError', true)
+    // It runs before the team is looked for, so it is not the "not in a team"
+    // answer: it reaches Tessel. The answer depends on what is running there
+    // (a pipe a unit test does not have, or a Tessel that rejected it).
+    const r = await call('team_bootstrap', { teamName: 'Team 5' })
+    expect(r.isError).toBe(true)
+    expect(text(r)).not.toMatch(/no longer in a Tessel team/)
+  })
+
+  it('names the team itself when none is given', async () => {
+    // The pipe round-trip: Tessel's side played by the test.
+    as(PANE)
+    const sent = []
+    const out = await mcp.teamMgmtTool('bootstrap', { projectDir: 'C:\\work' }, fakeTessel(sent))
+    expect(out.isError).toBeUndefined()
+    expect(out.text).toMatch(/Team "team-abc" is ready/)
+    expect(sent).toHaveLength(1)
+    expect(sent[0].method).toBe('team-mgmt')
+    expect(sent[0].params).toMatchObject({
+      op: 'bootstrap',
+      args: { projectDir: 'C:\\work' },
+      pane: PANE
+    })
+    // Signed by the pane's own secret, like the browser and terminal tools.
+    const { pane, op, args, auth } = sent[0].params
+    expect(auth.mac).toBe(requestMac(SECRET, pane, 'team-mgmt', { op, args, nonce: auth.nonce, at: auth.at }))
+    // It waits longer than Tessel waits for its window (cliBridge, 30 s).
+    expect(sent[0].timeoutMs).toBeGreaterThan(30000)
+  })
+
+  it('team_create is the same tool, reachable with no team', async () => {
+    as(PANE)
+    const r = await call('team_create', { teamName: 'Team 5' })
+    expect(r.isError).toBe(true)
+    expect(text(r)).not.toMatch(/no longer in a Tessel team|not in a Tessel team/)
+    const create = mcp.TOOLS.find((t) => t.name === 'team_create')
+    expect(Object.keys(create.inputSchema.properties).sort()).toEqual(['projectDir', 'teamName'])
+  })
+
+  it('refuses without a pane Tessel started', async () => {
+    delete process.env.TESSEL_PANE_ID
+    const r = await call('team_bootstrap', { teamName: 'Team 5' })
+    expect(r.isError).toBe(true)
+    expect(text(r)).toMatch(/restart this agent from Tessel/)
+  })
+
+  it('refuses without the pane secret (nothing unsigned is sent)', async () => {
+    as(PANE)
+    delete process.env.TESSEL_TEAM_SECRET
+    const sent = []
+    const r = await mcp.teamMgmtTool('bootstrap', { projectDir: 'C:\\work' }, fakeTessel(sent))
+    expect(r.isError).toBe(true)
+    expect(sent).toHaveLength(0)
+  })
 })
 
 describe('an agent on an SSH host (TESSEL_REMOTE=1)', () => {
