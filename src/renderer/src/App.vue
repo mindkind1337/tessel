@@ -646,7 +646,7 @@ async function openWorkerChat({ ws, agent, worktree, model, effort, coordinator 
   const split = (orig) => reactive({ type: 'split', id: newId('split'), dir: (target && target.dir) || 'row', sizes: [50, 50], children: [orig, leaf] })
   if (target && target.id) ws.tree = replaceNode(ws.tree, target.id, split)
   else ws.tree = ws.tree ? split(ws.tree) : leaf
-  if (!ws.activeId) ws.activeId = leaf.id
+  if (!ws.activeId) showActive(ws, leaf.id)
   else if (keep && findLeaf(keep)) ws.activeId = keep
   numberPanes()
   refitSoon()
@@ -1988,7 +1988,7 @@ async function splitLeaf(
     ws.tree = ws.tree
       ? reactive({ type: 'split', id: newId('split'), dir, sizes: [50, 50], children: opts.before ? [leaf, ws.tree] : [ws.tree, leaf] })
       : leaf
-    ws.activeId = leaf.id
+    showActive(ws, leaf.id)
     return leaf
   }
   ws.tree = replaceNode(ws.tree, leafId, (orig) =>
@@ -2001,7 +2001,7 @@ async function splitLeaf(
       children: opts.before ? [leaf, orig] : [orig, leaf]
     })
   )
-  ws.activeId = leaf.id
+  showActive(ws, leaf.id)
   return leaf
 }
 
@@ -2197,6 +2197,13 @@ const maximizedId = ref(null)
 
 function toggleMaximize(id) {
   maximizedId.value = maximizedId.value === id ? null : id
+}
+
+// Make a pane the active one in its workspace. In the workspace on screen, a
+// maximized pane gives its place to it: full screen stays, on the new pane.
+function showActive(ws, id) {
+  ws.activeId = id
+  if (ws.id === currentWsId.value && maximizedId.value && maximizedId.value !== id) maximizedId.value = id
 }
 
 // --- Agent Task Board (kanban side panel) ----------------------------------
@@ -3000,7 +3007,7 @@ async function launch({ kind, id, sessionOptions = null }, targetId = activeId.v
     const leaf = await createLeaf(shellId, agent, ws.cwd, worktree, wsLeafOpts(ws, { sessionOptions }))
     if (leaf) {
       ws.tree = leaf
-      ws.activeId = leaf.id
+      showActive(ws, leaf.id)
     }
     return
   }
@@ -3014,7 +3021,7 @@ async function launch({ kind, id, sessionOptions = null }, targetId = activeId.v
   const leaf = await createLeaf(shellId, agent, ws.cwd, worktree, wsLeafOpts(ws, { sessionOptions }))
   if (leaf) {
     ws.tree = leaf
-    ws.activeId = leaf.id
+    showActive(ws, leaf.id)
   }
 }
 
@@ -3052,7 +3059,7 @@ async function openPaneBelow(shellId, agent = null, opts = {}) {
   const leaf = await createLeaf(shellId, agent, ws.cwd, null, wsLeafOpts(ws, opts))
   if (leaf) {
     ws.tree = leaf
-    ws.activeId = leaf.id
+    showActive(ws, leaf.id)
   }
   return leaf
 }
@@ -3298,7 +3305,7 @@ async function resumeSession(s) {
     const leaf = await createLeaf(selectedShell.value, agent, opts.cwd, null, opts)
     if (leaf) {
       ws.tree = leaf
-      ws.activeId = leaf.id
+      showActive(ws, leaf.id)
     }
   }
 }
@@ -3331,7 +3338,7 @@ async function continueAgyFromIde(s) {
     leaf = await createLeaf(selectedShell.value, agent, opts.cwd, null, opts)
     if (leaf) {
       ws.tree = leaf
-      ws.activeId = leaf.id
+      showActive(ws, leaf.id)
     }
   }
   if (!leaf) showToast(t('sessionHistory.agyContinue.startFailed', "Couldn't start Antigravity CLI for this conversation."), { kind: 'error' })
@@ -3526,7 +3533,7 @@ function sendToPane(fromId, toId, mode, text = '') {
   } else {
     target.paste(text)
   }
-  if (ws) ws.activeId = toId
+  if (ws) showActive(ws, toId)
   if (to)
     showToast(
       mode === 'review' ? t('app.send.askedReview', 'Asked {{pane}} to review.', { pane: paneLabel(to) }) : t('app.send.sent', 'Sent to {{pane}}.', { pane: paneLabel(to) }),
@@ -3871,11 +3878,12 @@ function restartActive() {
 function focusPane(paneId) {
   const ws = wsOfLeaf(paneId)
   if (!ws) return
+  // A pane is maximized (full screen): the one you go to takes its place, in
+  // this worktree's grid, another's, or another workspace (whose switch
+  // restores the pane first).
+  const wasMax = !!maximizedId.value
   selectWorkspace(ws.id)
-  // Another worktree's grid comes up: a pane maximized in the one you leave
-  // is restored.
-  const from = findLeafIn(ws.tree, ws.activeId)
-  if (maximizedId.value && maximizedId.value !== paneId && from && viewKey(from, ws.cwd) !== viewKey(findLeafIn(ws.tree, paneId), ws.cwd)) maximizedId.value = null
+  if (wasMax && maximizedId.value !== paneId) maximizedId.value = paneId
   ws.activeId = paneId
   clearAttention(paneId)
   readForPane(paneId)
@@ -5194,7 +5202,7 @@ async function openCard({ wsId, path, isMain }) {
       const leaf = await createLeaf(selectedShell.value, null, null, null, opts)
       if (leaf && wsById(wsId)) {
         ws.tree = leaf
-        ws.activeId = leaf.id
+        showActive(ws, leaf.id)
       }
       return
     }
@@ -5220,7 +5228,7 @@ async function openCard({ wsId, path, isMain }) {
     const leaf = await createLeaf(selectedShell.value, null, isMain ? ws.cwd : path, worktree, isMain ? wsLeafOpts(ws) : {})
     if (leaf && wsById(wsId)) {
       ws.tree = leaf
-      ws.activeId = leaf.id
+      showActive(ws, leaf.id)
     }
     return
   }
@@ -6180,12 +6188,20 @@ async function startTask(spec, opts = {}) {
     }
     const target =
       opts.roomy && ws.tree ? largestLeaf(ws.tree).id : ws.activeId && findLeaf(ws.activeId) ? ws.activeId : null
+    // A lead's agent (opts.teamId) starts in the background: the pane you are
+    // in, and one maximized, stay as they were.
+    const keep = ws.activeId
+    const max = maximizedId.value
     leaf = target
       ? await splitLeaf(target, opts.roomy ? largestLeaf(ws.tree).dir : 'row', agent, selectedShell.value, worktree)
       : await createLeaf(selectedShell.value, agent, ws.cwd, worktree, wsLeafOpts(ws))
     if (leaf && !target) {
       ws.tree = leaf
-      ws.activeId = leaf.id
+      showActive(ws, leaf.id)
+    }
+    if (leaf && opts.teamId) {
+      if (keep && findLeaf(keep)) ws.activeId = keep
+      if (max && maximizedId.value === leaf.id) maximizedId.value = findLeaf(max) ? max : null
     }
     fresh = true
   }
@@ -8981,6 +8997,9 @@ async function makeTaskCopy(ws, title) {
 async function openBackgroundAgentPane({ ws, agent, worktree, launchOptions, automationLaunch = null }) {
   if (!workspaces.value.includes(ws)) return null
   const keep = ws.activeId
+  // A pane maximized there stays so (splitLeaf gives full screen to the new
+  // pane); full screen ends if that pane closed meanwhile.
+  const max = maximizedId.value
   const target = ws.tree ? largestLeaf(ws.tree) : null
   const extra = { launchOptions, ...(automationLaunch ? { automationLaunch } : {}) }
   const leaf =
@@ -8992,6 +9011,7 @@ async function openBackgroundAgentPane({ ws, agent, worktree, launchOptions, aut
     ws.tree = leaf
     ws.activeId = leaf.id
   } else if (keep && findLeaf(keep)) ws.activeId = keep
+  if (max && maximizedId.value === leaf.id) maximizedId.value = findLeaf(max) ? max : null
   numberPanes()
   return leaf
 }

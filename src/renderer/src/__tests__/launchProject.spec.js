@@ -18,7 +18,8 @@ function setup() {
     worktreeSettings: () => ({}), showToast: vi.fn(), t: (_, english) => english,
     makeWorkspace: () => ({ id: 'new' }), workspaces: { value: [origin, other] },
     selectWorkspace: vi.fn(), wsLeafOpts: ws => ({ remote: ws.remote }),
-    createLeaf: vi.fn(async () => ({ id: 'new-pane' }))
+    createLeaf: vi.fn(async () => ({ id: 'new-pane' })),
+    showActive: (ws, id) => { ws.activeId = id }
   }
   vm.createContext(ctx)
   vm.runInContext(launcher + '\nthis.launch = launch', ctx)

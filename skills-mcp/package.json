@@ -1,0 +1,22 @@
+{
+  "name": "skills-mcp-server",
+  "version": "1.0.0",
+  "description": "MCP server providing skill tools for Tessel agents",
+  "main": "server.cjs",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node server.cjs",
+    "test": "node test-server.cjs"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "axios": "^1.7.0",
+    "adm-zip": "^0.5.16",
+    "tar": "^7.4.0",
+    "pdf-parse": "^1.1.1",
+    "sharp": "^0.33.5",
+    "js-yaml": "^4.1.0",
+    "@iarna/toml": "^3.0.0",
+    "glob": "^11.0.0"
+  }
+}
