@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { reactive } from 'vue'
-import { createAgentTerminalTargets } from '../agentTerminal/agentTerminalTargets'
+import { createAgentTerminalTargets, paneRunsYolo, placeNear, ownTerminalOf, AUTO_CLOSE_MS, CLOSED_KEEP_MS } from '../agentTerminal/agentTerminalTargets'
 import { fakeTerminal } from './fakeTerminal'
 
 function forEachLeaf(node, fn) {
@@ -9,14 +9,14 @@ function forEachLeaf(node, fn) {
   node.children.forEach((c) => forEachLeaf(c, fn))
 }
 
-function setup({ typing = false, quality = 'none', respond = true } = {}) {
+function setup({ typing = false, quality = 'none', respond = true, mode = undefined, remote = null } = {}) {
   const leaf = (id, kind, extra = {}) => ({ type: 'leaf', id, kind, paneName: extra.paneName || id, num: extra.num, shellId: 'pwsh', ...extra })
   const agent = leaf('pane-ada', 'agent', { paneName: 'Ada', num: 1, agentId: 'claude' })
   const shell = leaf('pane-srv', 'shell', { paneName: 'fivem-afterlife', num: 2, remoteHostId: 'ssh-res', shellId: 'pwsh' })
   const peer = leaf('pane-codex', 'agent', { paneName: 'Codex', num: 3, agentId: 'codex' })
   const chat = leaf('pane-chat', 'chat', { paneName: 'Chat', num: 4 })
   const browser = leaf('pane-web', 'browser', { paneName: 'Web' })
-  const ws = { id: 'w1', name: 'proj', cwd: 'C:\\proj', tree: { type: 'split', children: [agent, shell, peer, chat, browser] } }
+  const ws = { id: 'w1', name: 'proj', cwd: 'C:\\proj', remote, tree: { type: 'split', children: [agent, shell, peer, chat, browser] } }
   const other = { id: 'w2', name: 'other', cwd: 'C:\\other', tree: { type: 'split', children: [leaf('pane-x', 'shell', { paneName: 'build', num: 1 })] } }
   const terms = new Map()
   const termOf = (id) => {
@@ -65,7 +65,15 @@ function setup({ typing = false, quality = 'none', respond = true } = {}) {
     toast: vi.fn(),
     stoppedNotice: vi.fn(),
     writePty: vi.fn(),
-    sleep: (ms) => new Promise((r) => setTimeout(r, ms))
+    sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
+    ...(mode ? { backgroundMode: () => mode } : {}),
+    agentList: () => [
+      { id: 'claude', name: 'Claude Code' },
+      { id: 'codex', name: 'Codex CLI' },
+      { id: 'opencode', name: 'OpenCode' }
+    ],
+    openPolicy: vi.fn(() => ({ skipApproval: false, max: 4 })),
+    openPanes: vi.fn(async ({ kind, agent, count }) => Array.from({ length: count }, (_, i) => leaf(`pane-open-${i + 1}`, kind === 'agent' ? 'agent' : 'shell', { paneName: `${agent || 'shell'} ${i + 1}` })))
   }
   const targets = createAgentTerminalTargets(deps)
   return { targets, deps, ws, terms, termOf, agent, shell, peer }
@@ -142,9 +150,17 @@ describe('agent terminals: its own', () => {
     expect(termOf('pane-own-1').sent.at(-1)).toBe(' git status')
     const p2 = await settle(ask(targets, { op: 'prepare', mode: 'sync' }))
     expect(p2).toMatchObject({ id: 'pane-own-1', isNew: false })
-    // async: a new one.
+    // One terminal per agent (the default): async too, while it is free.
     const p3 = await settle(ask(targets, { op: 'prepare', mode: 'async' }))
-    expect(p3).toMatchObject({ id: 'pane-own-2', isNew: true })
+    expect(p3).toMatchObject({ id: 'pane-own-1', isNew: false })
+    expect(deps.createTerminal).toHaveBeenCalledTimes(1)
+  })
+
+  it('a terminal each: an async command opens a new one', async () => {
+    const { targets, deps } = setup({ quality: 'basic', mode: 'each' })
+    await settle(ask(targets, { op: 'prepare', mode: 'sync' }))
+    const p = await settle(ask(targets, { op: 'prepare', mode: 'async' }))
+    expect(p).toMatchObject({ id: 'pane-own-2', isNew: true })
     expect(deps.createTerminal).toHaveBeenCalledTimes(2)
   })
 
@@ -188,6 +204,9 @@ describe('agent terminals: its own', () => {
     expect(deps.notifyAgent.mock.calls[0][1]).not.toContain('building')
     expect(deps.notifyAgent.mock.calls[0][1]).toContain('Command: npm run build')
     expect(deps.notifyAgent.mock.calls[0][1]).toContain('get_terminal_output with id="pane-own-1"')
+    // Its reused sync terminal stays.
+    await vi.advanceTimersByTimeAsync(AUTO_CLOSE_MS + 1000)
+    expect(deps.closeTerminal).not.toHaveBeenCalled()
   })
 
   it('a password question: the user is told, nothing is sent', async () => {
@@ -302,5 +321,287 @@ describe('security review: the shell of an SSH terminal', () => {
     expect((await ask(targets, { op: 'resolve', terminal: 'pane-srv' })).lang).toBe('unknown')
     termOf('pane-srv').osc('P;Shell=bash')
     expect((await ask(targets, { op: 'resolve', terminal: 'pane-srv' })).lang).toBe('bash')
+  })
+})
+
+describe('security review: the calling pane in Yolo', () => {
+  it('says the calling pane\'s Yolo state, from the pane itself, never from the request', async () => {
+    const { targets, deps, agent } = setup({ quality: 'basic' })
+    deps.agentYolo = (l) => paneRunsYolo(l)
+    expect((await settle(ask(targets, { op: 'prepare', mode: 'sync' }))).agentYolo).toBe(false)
+    // What the agent sends does not count.
+    expect((await settle(ask(targets, { op: 'prepare', mode: 'sync', agentYolo: true, yolo: true }))).agentYolo).toBe(false)
+    agent.launchYolo = true
+    expect(await settle(ask(targets, { op: 'prepare', mode: 'sync' }))).toMatchObject({ own: true, agentYolo: true, projectHost: true })
+    // The user's terminal says it too, but main never skips its card (own: false).
+    expect(await ask(targets, { op: 'resolve', terminal: 'pane-srv' })).toMatchObject({ own: false, agentYolo: true })
+    // Claude Code as root on an SSH host fell back to Accept edits: not Yolo.
+    agent.rootNoYolo = true
+    expect((await settle(ask(targets, { op: 'prepare', mode: 'sync' }))).agentYolo).toBe(false)
+  })
+
+  it('paneRunsYolo: agent launch flags, root fallback, chat posture, worker cap', () => {
+    expect(paneRunsYolo({ kind: 'agent', launchYolo: true })).toBe(true)
+    expect(paneRunsYolo({ kind: 'agent', launchYolo: false })).toBe(false)
+    expect(paneRunsYolo({ kind: 'agent' })).toBe(false)
+    expect(paneRunsYolo({ kind: 'agent', launchYolo: true, rootNoYolo: true })).toBe(false)
+    expect(paneRunsYolo({ kind: 'chat', chatPermissions: 'yolo' })).toBe(true)
+    expect(paneRunsYolo({ kind: 'chat', chatPermissions: 'manual' })).toBe(false)
+    expect(paneRunsYolo({ kind: 'chat', chatPermissions: 'yolo', maxPermissions: 'manual' })).toBe(false)
+    expect(paneRunsYolo({ kind: 'shell', launchYolo: true })).toBe(false)
+    expect(paneRunsYolo(null)).toBe(false)
+  })
+})
+
+// The shell's prompt after the init line (respond: false).
+async function prepared(targets, termOf, req, id) {
+  const p = ask(targets, { op: 'prepare', ...req })
+  await vi.advanceTimersByTimeAsync(1000)
+  termOf(id).osc('A')
+  termOf(id).osc('B')
+  return settle(p, 5000)
+}
+// A command left running in `id` (async): its banner, then quiet.
+async function leftRunning(targets, termOf, id, command) {
+  const run = ask(targets, { op: 'run', terminal: id, command, mode: 'async', timeoutMs: 20000 })
+  await vi.advanceTimersByTimeAsync(1500)
+  const t = termOf(id)
+  t.print(` ${command}\n`)
+  t.osc('C')
+  t.print('running...')
+  return settle(run, 5000)
+}
+function finish(t) {
+  t.print('\nall done\n')
+  t.osc('D;0')
+  t.osc('A')
+  t.print('PS C:\\p> ')
+}
+
+describe('agent terminals: placed in the grid', () => {
+  const makeSplit = (dir, children, sizes) => ({ type: 'split', id: `split-${dir}-${children.map((c) => c.id).join('+')}`, dir, sizes, children })
+  const own = (id) => ({ type: 'leaf', id, kind: 'shell', openedBy: 'pane-ada' })
+  it('the second terminal goes under the first, not splitting the agent again', () => {
+    const agent = { type: 'leaf', id: 'pane-ada', kind: 'agent' }
+    const other = { type: 'leaf', id: 'pane-x', kind: 'shell' }
+    let tree = { type: 'split', id: 'root', dir: 'row', sizes: [50, 50], children: [other, agent] }
+    const opts = { forEachLeaf, mine: ownTerminalOf('pane-ada'), makeSplit }
+    const t1 = own('t1')
+    tree = placeNear(tree, 'pane-ada', t1, opts)
+    // The first one: beside the agent.
+    expect(tree.children[1]).toMatchObject({ dir: 'row', sizes: [50, 50] })
+    expect(tree.children[1].children.map((c) => c.id)).toEqual(['pane-ada', 't1'])
+    const t2 = own('t2')
+    tree = placeNear(tree, 'pane-ada', t2, opts)
+    // The second: under the first, in the same area; the agent keeps its half.
+    const pair = tree.children[1]
+    expect(pair.sizes).toEqual([50, 50])
+    expect(pair.children[0].id).toBe('pane-ada')
+    expect(pair.children[1]).toMatchObject({ type: 'split', dir: 'col', sizes: [50, 50] })
+    expect(pair.children[1].children.map((c) => c.id)).toEqual(['t1', 't2'])
+    const t3 = own('t3')
+    tree = placeNear(tree, 'pane-ada', t3, opts)
+    // The third: one more equal row there.
+    const rows = tree.children[1].children[1]
+    expect(rows.children.map((c) => c.id)).toEqual(['t1', 't2', 't3'])
+    expect(rows.sizes.map((x) => Math.round(x))).toEqual([33, 33, 33])
+    expect(tree.children[1].children[0].id).toBe('pane-ada')
+    expect(tree.children[0].id).toBe('pane-x')
+  })
+
+  it('the window places its terminals with it (App.vue)', async () => {
+    const fs = await import('fs')
+    const { join } = await import('path')
+    const app = fs.readFileSync(join(__dirname, '..', 'App.vue'), 'utf8').replace(/\r\n/g, '\n')
+    expect(app).toContain('ws.tree = placeNear(ws.tree, agentLeaf.id, leaf, { forEachLeaf, mine: ownTerminalOf(agentLeaf.id), makeSplit: makeAgentSplit })')
+  })
+})
+
+describe('agent terminals: one per agent (the default) and background commands', () => {
+  it('a dev server holding its terminal never blocks the next command: one more terminal, the agent told why', async () => {
+    const { targets, deps, termOf } = setup({ quality: 'basic', respond: false })
+    expect(await prepared(targets, termOf, { mode: 'sync' }, 'pane-own-1')).toMatchObject({ id: 'pane-own-1', isNew: true })
+    // async: the same terminal, it is free.
+    expect(await prepared(targets, termOf, { mode: 'async' }, 'pane-own-1')).toMatchObject({ id: 'pane-own-1', isNew: false })
+    expect(await leftRunning(targets, termOf, 'pane-own-1', 'npm run dev')).toMatchObject({ state: 'background', id: 'pane-own-1' })
+    // A sync command now: not queued behind the server.
+    const p = await prepared(targets, termOf, { mode: 'sync' }, 'pane-own-2')
+    expect(p).toMatchObject({ id: 'pane-own-2', isNew: true, busyWith: { id: 'pane-own-1', command: 'npm run dev' } })
+    expect(deps.createTerminal).toHaveBeenCalledTimes(2)
+    // That second one is reused for the next sync commands (it is free).
+    expect(await prepared(targets, termOf, { mode: 'sync' }, 'pane-own-2')).toMatchObject({ id: 'pane-own-2', isNew: false })
+    expect(deps.createTerminal).toHaveBeenCalledTimes(2)
+  })
+
+  it('its one terminal stays when its command ends', async () => {
+    const { targets, deps, termOf } = setup({ quality: 'basic', respond: false })
+    await prepared(targets, termOf, { mode: 'async' }, 'pane-own-1')
+    await leftRunning(targets, termOf, 'pane-own-1', 'npm run build -- --watch')
+    finish(termOf('pane-own-1'))
+    await vi.advanceTimersByTimeAsync(10000 + AUTO_CLOSE_MS)
+    expect(deps.notifyAgent).toHaveBeenCalledTimes(1)
+    expect(deps.closeTerminal).not.toHaveBeenCalled()
+  })
+})
+
+describe('agent terminals: a terminal opened for a background command closes when it ends', () => {
+  async function background(opts = {}) {
+    const env = setup({ quality: 'basic', respond: false, mode: 'each', ...opts })
+    const { targets, termOf } = env
+    await prepared(targets, termOf, { mode: 'async' }, 'pane-own-1')
+    await leftRunning(targets, termOf, 'pane-own-1', 'npm test')
+    return env
+  }
+
+  it('closes after its command ended, its output still readable with get_terminal_output', async () => {
+    const { targets, deps, termOf } = await background()
+    finish(termOf('pane-own-1'))
+    await vi.advanceTimersByTimeAsync(10000)
+    expect(deps.notifyAgent.mock.calls[0][1]).toContain('closes by itself')
+    await vi.advanceTimersByTimeAsync(AUTO_CLOSE_MS)
+    expect(deps.closeTerminal).toHaveBeenCalledWith('pane-own-1')
+    // get_terminal_output: the main process resolves it, then reads it.
+    expect(await ask(targets, { op: 'resolve', terminal: 'pane-own-1', read: true })).toMatchObject({ id: 'pane-own-1', own: true, closed: true })
+    const out = await ask(targets, { op: 'output', terminal: 'pane-own-1' })
+    expect(out).toMatchObject({ closed: true, command: 'npm test', running: false, exitCode: 0 })
+    expect(out.output).toContain('all done')
+    // Typing there: it is gone, and says so.
+    await expect(ask(targets, { op: 'resolve', terminal: 'pane-own-1' })).rejects.toMatchObject({ code: 'terminal_closed' })
+    // Kept for a while only.
+    await vi.advanceTimersByTimeAsync(CLOSED_KEEP_MS)
+    await expect(ask(targets, { op: 'output', terminal: 'pane-own-1' })).rejects.toMatchObject({ code: 'terminal_not_found' })
+  })
+
+  it('stays when the user typed in it', async () => {
+    const { deps, termOf } = await background()
+    termOf('pane-own-1').type()
+    finish(termOf('pane-own-1'))
+    await vi.advanceTimersByTimeAsync(10000 + AUTO_CLOSE_MS * 2)
+    expect(deps.notifyAgent).toHaveBeenCalledTimes(1)
+    expect(deps.closeTerminal).not.toHaveBeenCalled()
+  })
+
+  it('stays when the user clicked into it, resized or moved it (the window says so)', async () => {
+    const { targets, deps, termOf } = await background()
+    targets.touch('pane-own-1')
+    finish(termOf('pane-own-1'))
+    await vi.advanceTimersByTimeAsync(10000 + AUTO_CLOSE_MS * 2)
+    expect(deps.closeTerminal).not.toHaveBeenCalled()
+  })
+
+  it('a touch during the short wait still keeps it', async () => {
+    const { targets, deps, termOf } = await background()
+    finish(termOf('pane-own-1'))
+    for (let i = 0; i < 100 && !deps.notifyAgent.mock.calls.length; i++) await vi.advanceTimersByTimeAsync(100)
+    expect(deps.notifyAgent).toHaveBeenCalledTimes(1)
+    targets.touch('pane-own-1')
+    await vi.advanceTimersByTimeAsync(AUTO_CLOSE_MS * 2)
+    expect(deps.closeTerminal).not.toHaveBeenCalled()
+  })
+
+  it('without shell integration it never closes (quiet is not an end)', async () => {
+    const { targets, deps, termOf } = setup({ quality: 'none', respond: false, mode: 'each' })
+    await settle(ask(targets, { op: 'prepare', mode: 'async' }))
+    const t = termOf('pane-own-1')
+    const run = ask(targets, { op: 'run', terminal: 'pane-own-1', command: 'npm run dev', mode: 'async' })
+    await vi.advanceTimersByTimeAsync(1500)
+    t.print(' npm run dev\nready\nPS C:\\p> ')
+    expect((await settle(run, 30000)).strategy).toBe('none')
+    await vi.advanceTimersByTimeAsync(60000)
+    expect(deps.closeTerminal).not.toHaveBeenCalled()
+  })
+
+  it('the window sends clicks, resizes and moves (App.vue, SplitNode.vue)', async () => {
+    const fs = await import('fs')
+    const { join } = await import('path')
+    const app = fs.readFileSync(join(__dirname, '..', 'App.vue'), 'utf8').replace(/\r\n/g, '\n')
+    expect(app).toContain('watch(activeId, (id) => id && agentTerminalTargets.touch(id))')
+    expect(app).toContain("window.addEventListener('tessel-panes-resized', onResized)")
+    expect(app).toContain('function movePane(srcId, target) {\n  agentTerminalTargets.touch(srcId)')
+    const split = fs.readFileSync(join(__dirname, '..', 'components', 'SplitNode.vue'), 'utf8')
+    expect(split).toContain("new CustomEvent('tessel-panes-resized'")
+  })
+})
+
+describe('open_terminal: panes for the user', () => {
+  it('kind agent with no agent: the same agent as the caller', async () => {
+    const { targets, deps } = setup()
+    // Codex asks: Codex opens.
+    const info = await targets.handle({ agent: 'pane-codex', op: 'openInfo', kind: 'agent' })
+    expect(info).toMatchObject({ kind: 'agent', agentId: 'codex', agentName: 'Codex CLI', skipApproval: false, max: 4, host: null })
+    const r = await targets.handle({ agent: 'pane-codex', op: 'open', kind: 'agent', count: 2 })
+    expect(deps.openPanes).toHaveBeenCalledWith(expect.objectContaining({ kind: 'agent', agent: 'codex', count: 2, hostId: null }))
+    expect(deps.openPanes.mock.calls[0][0].agentLeaf.id).toBe('pane-codex')
+    expect(r.panes.map((p) => p.id)).toEqual(['pane-open-1', 'pane-open-2'])
+    // Claude asks: Claude.
+    expect(await ask(targets, { op: 'openInfo', kind: 'agent' })).toMatchObject({ agentId: 'claude' })
+    // Another agent when named; a shell.
+    expect(await ask(targets, { op: 'openInfo', kind: 'agent', agentId: 'OpenCode' })).toMatchObject({ agentId: 'opencode' })
+    expect(await ask(targets, { op: 'openInfo', kind: 'shell' })).toMatchObject({ kind: 'shell', agentId: null })
+    await expect(ask(targets, { op: 'openInfo', kind: 'agent', agentId: 'nope' })).rejects.toMatchObject({ code: 'agent_not_found' })
+    await expect(ask(targets, { op: 'openInfo', kind: 'browser' })).rejects.toMatchObject({ code: 'invalid_argument' })
+  })
+
+  it('at most 4, or the lead\'s workers limit', async () => {
+    const { targets, deps } = setup()
+    await ask(targets, { op: 'open', kind: 'shell', count: 9 })
+    expect(deps.openPanes.mock.calls[0][0].count).toBe(4)
+    deps.openPolicy.mockReturnValue({ skipApproval: true, max: 2 })
+    expect(await ask(targets, { op: 'openInfo', kind: 'shell' })).toMatchObject({ skipApproval: true, max: 2 })
+    await ask(targets, { op: 'open', kind: 'shell', count: 3 })
+    expect(deps.openPanes.mock.calls[1][0].count).toBe(2)
+  })
+
+  it('in a project on an SSH host: there', async () => {
+    const { targets, deps } = setup({ remote: { hostId: 'ssh-res', path: '/srv/app' } })
+    expect(await ask(targets, { op: 'openInfo', kind: 'agent' })).toMatchObject({ host: 'resources', hostId: 'ssh-res' })
+    await ask(targets, { op: 'open', kind: 'agent' })
+    expect(deps.openPanes).toHaveBeenCalledWith(expect.objectContaining({ hostId: 'ssh-res', count: 1 }))
+  })
+
+  it('its card is shown from the agent\'s pane (no terminal yet)', async () => {
+    const { targets, deps } = setup()
+    const r = await ask(targets, { op: 'approve', terminal: 'open:pane-ada', card: { kind: 'open', open: { kind: 'agent', count: 1 } } })
+    expect(r).toMatchObject({ allow: true })
+    expect(deps.approve.mock.calls[0][0]).toMatchObject({ kind: 'open', leaf: { id: 'pane-ada' } })
+    // The other SSH host's card too.
+    expect(await ask(targets, { op: 'approve', terminal: 'host:ssh-res', card: { kind: 'host' } })).toMatchObject({ allow: true })
+  })
+
+  it('the window opens them as the user\'s own panes, stacked beside the agent (App.vue)', async () => {
+    const fs = await import('fs')
+    const { join } = await import('path')
+    const app = fs.readFileSync(join(__dirname, '..', 'App.vue'), 'utf8').replace(/\r\n/g, '\n')
+    expect(app).toContain('const leaf = await createLeaf(selectedShell.value, def, ws.cwd, worktree, wsLeafOpts(ws, {}))')
+    expect(app).toContain("ws.tree = placeNear(ws.tree, agentLeaf.id, leaf, { forEachLeaf, mine: (l) => l.openedNear === agentLeaf.id, makeSplit: makeAgentSplit })")
+  })
+})
+
+describe('Settings > Agents > Terminals: background commands', () => {
+  it('one terminal per agent by default, a terminal each on request', async () => {
+    const { mount } = await import('@vue/test-utils')
+    const { settings, DEFAULT_SETTINGS, loadSettings } = await import('../settings')
+    expect(DEFAULT_SETTINGS.agentTerminalBackground).toBe('one')
+    const { default: S } = await import('../components/AgentTerminalSettings.vue')
+    const w = mount(S, { global: { provide: { askConfirm: async () => true } } })
+    const row = w.find('[data-test="settings-terminal-background"]')
+    expect(row.exists()).toBe(true)
+    expect(row.text()).toContain('Background commands')
+    expect(w.find('[data-setting="agentTerminalBackground"]').exists()).toBe(true)
+    w.unmount()
+    {
+      const before = settings.agentTerminalBackground
+      loadSettings({ agentTerminalBackground: 'bogus' })
+      expect(settings.agentTerminalBackground).toBe(before)
+      loadSettings({ agentTerminalBackground: 'each' })
+      expect(settings.agentTerminalBackground).toBe('each')
+      settings.agentTerminalBackground = before
+    }
+    const fs = await import('fs')
+    const { join } = await import('path')
+    const app = fs.readFileSync(join(__dirname, '..', 'App.vue'), 'utf8').replace(/\r\n/g, '\n')
+    expect(app).toContain("backgroundMode: () => (settings.agentTerminalBackground === 'each' ? 'each' : 'one'),")
+    const fr = JSON.parse(fs.readFileSync(join(__dirname, '..', 'i18n', 'locales', 'fr', 'settings.json'), 'utf8').replace(/^\uFEFF/, ''))
+    expect(fr.settings.agents.terminalBackgroundOne).toBe('Un terminal par agent')
   })
 })

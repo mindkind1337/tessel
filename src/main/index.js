@@ -2870,7 +2870,7 @@ ipcMain.handle('terminal:agentSettings', (event, opts) => {
   const rulesOf = (v) => (v && typeof v === 'object' && !Array.isArray(v) ? v : {})
   const ws = {}
   for (const [k, v] of Object.entries(rulesOf(o.workspaceRules)).slice(0, 500)) if (typeof k === 'string' && k.length <= 2000) ws[k] = rulesOf(v)
-  agentTerminalSettings = { enabled: o.enabled === true, autoApprove: o.autoApprove === true, ignoreDefaults: o.ignoreDefaults === true, userRules: rulesOf(o.userRules), workspaceRules: ws }
+  agentTerminalSettings = { enabled: o.enabled === true, autoApprove: o.autoApprove === true, ignoreDefaults: o.ignoreDefaults === true, userRules: rulesOf(o.userRules), workspaceRules: ws, yoloOwn: o.yoloOwn === true }
   if (!agentTerminalSettings.enabled) agentTerminal.releaseAll()
   return true
 })

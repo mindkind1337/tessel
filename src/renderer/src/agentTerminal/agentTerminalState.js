@@ -8,7 +8,7 @@ export const LOG_KEEP = 50
 
 // paneId -> { agent, agentPane } while an agent uses it
 export const terminalControl = reactive({})
-// paneId -> [{ at, agent, kind: 'run' | 'keys' | 'read', text }]
+// paneId -> [{ at, agent, kind: 'run' | 'keys' | 'read', text, yolo }] (yolo: ran without a card, its agent in Yolo)
 export const terminalLog = reactive({})
 
 export function onTerminalControl(ev) {
@@ -20,7 +20,7 @@ export function onTerminalControl(ev) {
 export function onTerminalLog(ev) {
   if (!ev || typeof ev.paneId !== 'string') return
   const list = terminalLog[ev.paneId] || (terminalLog[ev.paneId] = [])
-  list.push({ at: Number(ev.at) || Date.now(), agent: String(ev.agent || '').slice(0, 60), kind: ev.kind === 'keys' || ev.kind === 'read' ? ev.kind : 'run', text: String(ev.text || '').slice(0, 2000) })
+  list.push({ at: Number(ev.at) || Date.now(), agent: String(ev.agent || '').slice(0, 60), kind: ev.kind === 'keys' || ev.kind === 'read' ? ev.kind : 'run', text: String(ev.text || '').slice(0, 2000), yolo: ev.yolo === true })
   if (list.length > LOG_KEEP) list.splice(0, list.length - LOG_KEEP)
 }
 

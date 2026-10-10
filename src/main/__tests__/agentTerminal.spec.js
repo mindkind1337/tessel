@@ -571,3 +571,219 @@ describe('security review: an unknown remote shell', () => {
     expect(win.ops()).toContain('approve')
   })
 })
+
+describe('agent terminal: an agent pane in Yolo', () => {
+  // agentYolo: the window's answer, from how Tessel launched the calling pane.
+  const YOLO = { ...OWN, agentYolo: true, projectHost: true }
+  const on = { yoloOwn: true }
+
+  it('runs its commands in its own terminal with no card, logged and shown on the badge as Yolo', async () => {
+    const dir = fs.mkdtempSync(join(os.tmpdir(), 'tessel-term-'))
+    const logFile = join(dir, 'agent-terminal.log')
+    const win = fakeWindow({ target: YOLO })
+    const { at, sent } = make(win, { logFile, settings: on })
+    // No rule allows it ("rm" and an unknown shape): still no card in Yolo.
+    const r = await at.handle(signed('run', { command: 'rm -rf build; npm run build', explanation: 'x', goal: 'y', mode: 'sync' }))
+    expect(r.text).toContain('hello')
+    expect(win.ops()).toEqual(['host', 'prepare', 'run'])
+    expect(win.calls.find((c) => c.op === 'run').command).toBe('rm -rf build; npm run build')
+    expect(sent.find(([ch]) => ch === 'terminal:agentLog')[1]).toMatchObject({ paneId: OWN.id, kind: 'run', text: 'rm -rf build; npm run build', yolo: true })
+    expect(sent.some(([ch, p]) => ch === 'terminal:agentControl' && p.active && p.paneId === OWN.id)).toBe(true)
+    expect(JSON.parse(fs.readFileSync(logFile, 'utf8').trim())).toMatchObject({ pane: OWN.id, approval: 'yolo' })
+    fs.rmSync(dir, { recursive: true, force: true })
+  })
+
+  it('its own terminal on the project\'s SSH host: no card either', async () => {
+    const win = fakeWindow({ target: { ...YOLO, lang: 'unknown', shellKind: 'ssh', host: 'prod', projectHost: true } })
+    const { at } = make(win, { settings: on })
+    await at.handle(signed('run', { command: 'systemctl restart app', explanation: 'x', goal: 'y', mode: 'sync' }))
+    expect(win.ops()).not.toContain('approve')
+  })
+
+  it('send_to_terminal in its own terminal: no card; a password question still goes to the user', async () => {
+    const win = fakeWindow({ target: YOLO })
+    const { at } = make(win, { settings: on })
+    await at.handle(signed('send', { id: OWN.id, command: 'y' }))
+    expect(win.ops()).toEqual(['resolve', 'send'])
+    const win2 = fakeWindow({ target: { ...YOLO, cursorLine: '[sudo] password for me: ' } })
+    const b = make(win2, { settings: on })
+    await expect(b.at.handle(signed('send', { id: OWN.id, command: 'hunter2' }))).rejects.toMatchObject({ code: 'needs_user_input' })
+    expect(win2.ops()).not.toContain('send')
+    const win3 = fakeWindow({ target: YOLO, run: { state: 'sensitive', output: 'Password:', prompt: 'Password:' } })
+    const c = make(win3, { settings: on })
+    await expect(c.at.handle(signed('run', { command: 'sudo ls', explanation: 'x', goal: 'y', mode: 'sync' }))).rejects.toMatchObject({ code: 'needs_user_input' })
+  })
+
+  it('a pane not in Yolo still gets the card', async () => {
+    const win = fakeWindow({ target: { ...YOLO, agentYolo: false } })
+    const { at } = make(win, { settings: on })
+    await at.handle(signed('run', { command: 'npm run build', explanation: 'x', goal: 'y', mode: 'sync' }))
+    expect(win.ops()).toEqual(['host', 'prepare', 'approve', 'run'])
+  })
+
+  it('nothing the agent sends makes it Yolo', async () => {
+    // The pipe refuses arguments it does not know.
+    expect(() => signed('run', { command: 'npm run build', explanation: 'x', goal: 'y', mode: 'sync', agentYolo: true })).toThrow(/not valid/)
+    // Only the window's answer counts.
+    const win = fakeWindow({ target: { ...OWN, projectHost: true } })
+    const { at } = make(win, { settings: on })
+    await at.handle(signed('run', { command: 'npm run build', explanation: 'x', goal: 'y', mode: 'sync' }))
+    expect(win.ops()).toContain('approve')
+  })
+
+  it('the setting off brings the cards back (and the window never saying it counts as off)', async () => {
+    const win = fakeWindow({ target: YOLO })
+    const { at } = make(win, { settings: { yoloOwn: false } })
+    await at.handle(signed('run', { command: 'npm run build', explanation: 'x', goal: 'y', mode: 'sync' }))
+    await at.handle(signed('send', { id: OWN.id, command: 'y' }))
+    expect(win.calls.filter((c) => c.op === 'approve').map((c) => c.card.kind)).toEqual(['command', 'send'])
+    const win2 = fakeWindow({ target: YOLO })
+    const b = make(win2)
+    await b.at.handle(signed('run', { command: 'npm run build', explanation: 'x', goal: 'y', mode: 'sync' }))
+    expect(win2.ops()).toContain('approve')
+  })
+
+  it('the user\'s terminal still needs approval, for running, sending and reading', async () => {
+    const win = fakeWindow({ target: { ...USER, agentYolo: true, projectHost: true }, approve: { allow: true, remember: 'once' } })
+    const { at } = make(win, { settings: on })
+    await at.handle(signed('run', { id: USER.id, command: 'ls', explanation: 'x', goal: 'y', mode: 'sync' }))
+    await at.handle(signed('send', { id: USER.id, keys: ['Enter'] }))
+    await at.handle(signed('output', { id: USER.id }))
+    expect(win.calls.filter((c) => c.op === 'approve').map((c) => c.card.kind)).toEqual(['pane', 'pane', 'read'])
+  })
+
+  it('another SSH host still asks: the host, then each command', async () => {
+    const REMOTE = { ...YOLO, id: 'pane-remote', host: 'other', lang: 'bash', shellKind: 'ssh', projectHost: false }
+    const win = fakeWindow({ target: REMOTE, approve: (p) => ({ allow: true, remember: p.card.kind === 'host' ? 'pane' : 'once' }) })
+    const { at } = make(win, { settings: on })
+    await at.handle(signed('run', { command: 'ls', explanation: 'x', goal: 'y', mode: 'sync', host: 'other' }))
+    await at.handle(signed('send', { id: REMOTE.id, command: 'y' }))
+    expect(win.calls.filter((c) => c.op === 'approve').map((c) => c.card.kind)).toEqual(['host', 'command', 'send'])
+  })
+
+  it('Stop still works in its own terminal', async () => {
+    const win = fakeWindow({ target: YOLO })
+    const { at } = make(win, { settings: on })
+    await at.handle(signed('run', { command: 'ls', explanation: 'x', goal: 'y', mode: 'sync' }))
+    expect(at.stop(OWN.id)).toBe(true)
+    await expect(at.handle(signed('run', { id: OWN.id, command: 'ls', explanation: 'x', goal: 'y', mode: 'sync' }))).rejects.toMatchObject({ code: 'stopped_by_user' })
+    await expect(at.handle(signed('send', { id: OWN.id, command: 'y' }))).rejects.toMatchObject({ code: 'stopped_by_user' })
+  })
+})
+
+describe('the tools tell agents when a terminal helps', () => {
+  it('instructions: their own shell tool for quick commands, run_in_terminal only when it helps', () => {
+    const instructions = mcp.handle({ id: 1, method: 'initialize' }).instructions
+    expect(instructions).toContain('For quick shell commands, use your own shell tool.')
+    expect(instructions).toContain(
+      "Use run_in_terminal only when it helps: a long-running process that must stay up (a dev server, a watcher), a command the user should see, or a command on your project's SSH host when you are not on it"
+    )
+    expect(instructions).not.toContain('To run shell commands, use run_in_terminal')
+    // Opening sessions: open_terminal, the same agent by default.
+    expect(instructions).toContain('run_in_terminal runs commands, it does not open sessions for the user')
+    expect(instructions).toContain('open the same agent as you, or ask them if it is unclear')
+  })
+
+  it('run_in_terminal and open_terminal say it too', () => {
+    const run = mcp.TERMINAL_TOOLS.find((t) => t.name === 'run_in_terminal')
+    expect(run.description).toContain('for quick commands, use your own shell tool instead')
+    expect(run.description).toContain("a long-running process that must stay up (a dev server, a watcher), a command the user should see, or a command on the project's SSH host when you are not on it")
+    expect(run.description).toContain('it does not open sessions or terminals for the user')
+    const open = mcp.TERMINAL_TOOLS.find((t) => t.name === 'open_terminal')
+    expect(open.description).toContain('by default the same agent as you')
+    expect(open.description).toContain('without saying which kind, open the same agent as you, or ask the user if it is unclear')
+    expect(open.inputSchema.properties.kind.enum).toEqual(['agent', 'shell'])
+    expect(mcp.TERMINAL_OPS.open_terminal).toBe('open')
+    expect(mcp.VERSION).toBe('1.11.4')
+  })
+})
+
+describe('run_in_terminal: one terminal per agent, its terminal busy', () => {
+  it('says the command ran in another terminal, and how to stop the one left running', async () => {
+    const win = fakeWindow({ target: (p) => ({ ...OWN, id: 'pane-own-2', ...(p.op === 'prepare' ? { isNew: true, busyWith: { id: 'pane-own', name: 'Ada · terminal', command: 'npm run dev' } } : {}) }) })
+    const { at } = make(win, { settings: { autoApprove: false } })
+    const r = await at.handle(signed('run', { command: 'git status', explanation: 'x', goal: 'y', mode: 'sync' }))
+    expect(r.text).toContain('Note: your terminal pane-own is busy with `npm run dev`, so this ran in terminal pane-own-2.')
+    expect(r.text).toContain('kill_terminal')
+  })
+})
+
+describe('get_terminal_output after its terminal closed', () => {
+  it('returns its last output and says the terminal closed', async () => {
+    const win = fakeWindow()
+    const ask = win.ask
+    win.ask = vi.fn(async (method, params) => {
+      if (params.op === 'resolve') return { id: 'pane-own-2', name: 'Ada · terminal 2', kind: 'shell', own: true, closed: true, agentLabel: 'Ada' }
+      if (params.op === 'output') return { name: 'Ada · terminal 2', command: 'npm test', running: false, exitCode: 0, output: 'all done', closed: true }
+      return ask(method, params)
+    })
+    const { at } = make(win)
+    const r = await at.handle(signed('output', { id: 'pane-own-2' }))
+    expect(r.text).toContain('exit code 0')
+    expect(r.text).toContain('the terminal closed after its command ended')
+    expect(r.text).toContain('all done')
+    // Its own terminal: no read card.
+    expect(win.ask.mock.calls.map((c) => c[1].op)).toEqual(['resolve', 'output'])
+  })
+})
+
+describe('open_terminal', () => {
+  function openWindow({ plan = {}, approve = { allow: true } } = {}) {
+    const calls = []
+    const ask = vi.fn(async (method, params) => {
+      calls.push(params)
+      if (params.op === 'openInfo')
+        return { agentLabel: 'Ada', kind: params.kind, agentId: params.kind === 'agent' ? params.agentId || 'opencode' : null, agentName: params.kind === 'agent' ? 'OpenCode' : null, host: null, skipApproval: false, max: 4, ...plan }
+      if (params.op === 'approve') return typeof approve === 'function' ? approve(params) : approve
+      if (params.op === 'open') return { panes: Array.from({ length: params.count }, (_, i) => ({ id: `pane-new-${i + 1}`, name: `OpenCode ${i + 1}` })), host: plan.host || null }
+      throw new Error(`unexpected op ${params.op}`)
+    })
+    return { ask, calls, ops: () => calls.map((c) => c.op) }
+  }
+
+  it('asks the user once per call, then opens the caller\'s own agent by default', async () => {
+    const win = openWindow()
+    const { at } = make(win)
+    const r = await at.handle(signed('open', { kind: 'agent', count: 2 }))
+    expect(win.ops()).toEqual(['openInfo', 'approve', 'open'])
+    // No agent named: the window answers with the caller's own.
+    expect(win.calls[0]).toMatchObject({ op: 'openInfo', kind: 'agent', agentId: null })
+    expect(win.calls[1].card).toMatchObject({ kind: 'open', open: { kind: 'agent', agentName: 'OpenCode', count: 2 } })
+    expect(win.calls[1].terminal).toBe(`open:${AGENT}`)
+    expect(win.calls[2]).toMatchObject({ op: 'open', kind: 'agent', agentId: 'opencode', count: 2 })
+    expect(r.text).toContain('Opened 2 OpenCode sessions')
+    expect(r.text).toContain('pane-new-1')
+  })
+
+  it('denied: nothing opens', async () => {
+    const win = openWindow({ approve: { allow: false } })
+    const { at } = make(win)
+    await expect(at.handle(signed('open', { kind: 'shell' }))).rejects.toMatchObject({ code: 'denied' })
+    expect(win.ops()).toEqual(['openInfo', 'approve'])
+  })
+
+  it('a team lead whose workers start without asking: no card, within its workers limit', async () => {
+    const win = openWindow({ plan: { skipApproval: true, max: 2 } })
+    const { at } = make(win)
+    await at.handle(signed('open', { kind: 'agent', count: 2 }))
+    expect(win.ops()).toEqual(['openInfo', 'open'])
+    await expect(at.handle(signed('open', { kind: 'agent', count: 3 }))).rejects.toMatchObject({ code: 'too_many' })
+  })
+
+  it('count is 1 to 4; kind is agent or shell', async () => {
+    const win = openWindow()
+    const { at } = make(win)
+    await expect(at.handle(signed('open', { kind: 'agent', count: 5 }))).rejects.toMatchObject({ code: 'invalid_argument' })
+    await expect(at.handle(signed('open', { kind: 'agent', count: 0 }))).rejects.toMatchObject({ code: 'invalid_argument' })
+    await expect(at.handle(signed('open', { kind: 'browser' }))).rejects.toMatchObject({ code: 'invalid_argument' })
+    expect(win.ops()).toEqual([])
+  })
+
+  it('on the project\'s SSH host: says where', async () => {
+    const win = openWindow({ plan: { host: 'resources' } })
+    const { at } = make(win)
+    const r = await at.handle(signed('open', { kind: 'shell', count: 1 }))
+    expect(win.calls[1].card.open).toMatchObject({ kind: 'shell', host: 'resources' })
+    expect(r.text).toContain('on the SSH host resources')
+  })
+})

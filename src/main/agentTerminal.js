@@ -30,6 +30,12 @@
 //   badge, and a log file in Tessel's data folder).
 // - A question for a secret (a password...) is never answered by an agent:
 //   needs_user_input, and the user is told.
+// - An agent pane Tessel started in Yolo (the window says so from the pane's
+//   own launch state, never from what the agent sends) runs its commands in
+//   its own terminals on its project's host without a card, while "Agents in
+//   Yolo run commands in their own terminal without asking" is on: it could
+//   run them through its own shell tool anyway. Each is logged as approved
+//   ones are. The user's terminals, another host and Stop still ask.
 import fs from 'fs'
 import { join } from 'path'
 import crypto from 'crypto'
@@ -37,7 +43,9 @@ import { CliError } from './cliServer'
 import { analyzeCommandLine, buildRules, rewritePwshChain, rulesOfAction, cleanRules } from '../shared/terminalRules'
 import { MAX_OUTPUT_LENGTH, MAX_POLL_OUTPUT, truncateLargeOutput, truncateOutputKeepingTail, detectsSensitiveInputPrompt } from '../shared/terminalOutput'
 
-export const TERMINAL_OPS = ['list', 'run', 'output', 'send', 'kill', 'lastCommand', 'selection']
+export const TERMINAL_OPS = ['list', 'run', 'output', 'send', 'kill', 'lastCommand', 'selection', 'open']
+// open_terminal: panes opened in one call.
+export const MAX_OPEN_PANES = 4
 export const MAX_COMMAND_BYTES = 8 * 1024
 export const MAX_COMMAND_LINES = 50
 export const MAX_TEXT = 1000
@@ -184,7 +192,7 @@ function steering(id, hung) {
 
 // deps:
 //   verify(body, paneId) -> { ok } | { unsigned } | { error }   (teamAuth, team key "terminal")
-//   settings() -> { enabled, autoApprove, ignoreDefaults, userRules, workspaceRules }
+//   settings() -> { enabled, autoApprove, ignoreDefaults, userRules, workspaceRules, yoloOwn }
 //   ask(method, params, opts)  the window (cliBridge): 'terminalTarget'
 //   busyOf(ids) -> Promise<{ id: bool | null }>   (local shells: a program running under it)
 //   send(channel, payload)     to the window: 'terminal:agentControl', 'terminal:agentLog'
@@ -280,8 +288,9 @@ export function createAgentTerminal({ verify, settings = () => ({ enabled: true 
     writes.set(agentPane, list)
   }
 
-  function writeLog(entry) {
-    send('terminal:agentLog', entry)
+  // toWindow false: the log file only (not a terminal's badge).
+  function writeLog(entry, toWindow = true) {
+    if (toWindow) send('terminal:agentLog', entry)
     if (!logFile) return
     try {
       try {
@@ -289,7 +298,7 @@ export function createAgentTerminal({ verify, settings = () => ({ enabled: true 
       } catch {
         // no log yet
       }
-      fsImpl.appendFileSync(logFile, `${JSON.stringify({ at: new Date(entry.at).toISOString(), agent: entry.agent, agentPane: entry.agentPane, pane: entry.paneId, paneName: entry.paneName, kind: entry.kind, text: entry.text })}\n`)
+      fsImpl.appendFileSync(logFile, `${JSON.stringify({ at: new Date(entry.at).toISOString(), agent: entry.agent, agentPane: entry.agentPane, pane: entry.paneId, paneName: entry.paneName, kind: entry.kind, text: entry.text, ...(entry.yolo ? { approval: 'yolo' } : {}) })}\n`)
     } catch (err) {
       warn(`log not written: ${err.message}`)
     }
@@ -363,12 +372,20 @@ export function createAgentTerminal({ verify, settings = () => ({ enabled: true 
     })
     allowedNow()
     if (stopped.has(key(agentPane, t.id))) throw fail('stopped_by_user', `The user stopped you from using "${t.name}".`)
+    if (c.kind === 'open' && (!answer || answer.allow !== true)) throw fail('denied', 'The user declined opening these panes. Do not ask again unless they do.')
     if (!answer || answer.allow !== true) throw fail('denied', `The user skipped this ${c.kind === 'send' ? 'input' : 'command'}${t.own ? '' : ` in "${t.name}"`}. Do not run it again unless they ask.`)
     return answer
   }
 
+  // Its own terminal on its project's host, the agent's pane in Yolo (the
+  // window's answer, from how Tessel launched that pane) and the setting on:
+  // no card.
+  function yoloOwn(t) {
+    return conf().yoloOwn === true && t.own === true && t.agentYolo === true && t.projectHost !== false
+  }
+
   // May this command run in this terminal? Asks the user when needed.
-  // -> { command (maybe edited by the user), edited, rule }
+  // -> { command (maybe edited by the user), edited, rule, yolo }
   async function mayRun(agentPane, t, command, args) {
     writable(t)
     notStopped(agentPane, t)
@@ -382,6 +399,7 @@ export function createAgentTerminal({ verify, settings = () => ({ enabled: true 
     const analysis = analyzeCommandLine(command, { lang, rules, session, enabled: !!s.autoApprove && !elsewhere })
     const base = { kind: 'command', command, explanation: String(args.explanation || '').slice(0, MAX_TEXT), goal: String(args.goal || '').slice(0, MAX_TEXT), info: analysis.info, disclaimers: analysis.disclaimers, own: !!t.own }
     if (t.own) {
+      if (yoloOwn(t)) return { command, edited: false, rule: null, yolo: true }
       if (analysis.isAutoApproved) return { command, edited: false, rule: analysis.info }
       const answer = await card(agentPane, t, { ...base, actions: elsewhere ? [] : analysis.actions })
       applyAction(agentPane, t, answer.action)
@@ -445,7 +463,7 @@ export function createAgentTerminal({ verify, settings = () => ({ enabled: true 
     allowedNow()
     notStopped(agentPane, t)
     controlled(t.id, agentPane, t.agentLabel)
-    writeLog({ at: now(), paneId: t.id, paneName: t.name, agent: t.agentLabel, agentPane, kind: 'run', text: command })
+    writeLog({ at: now(), paneId: t.id, paneName: t.name, agent: t.agentLabel, agentPane, kind: 'run', text: command, ...(approved.yolo ? { yolo: true } : {}) })
     const r = await ask('terminalTarget', { agent: agentPane, op: 'run', terminal: t.id, command, mode, timeoutMs }, { timeoutMs: timeoutMs + 60000 })
     controlled(t.id, agentPane, t.agentLabel)
     const id = t.id
@@ -454,6 +472,12 @@ export function createAgentTerminal({ verify, settings = () => ({ enabled: true 
     if (approved.edited) head.push(`Note: The user manually edited the command to \`${command}\`, and this is the output of running that command instead:`)
     else if (simplified) head.push(`Note: The tool simplified the command to \`${command}\` (Windows PowerShell 5.1 has no &&).`)
     if (approved.rule) head.push(`(${approved.rule})`)
+    // One terminal per agent: its terminal was busy with a command left
+    // running, so this one ran in another terminal (it closes by itself).
+    if (t.busyWith && t.busyWith.id)
+      head.push(
+        `Note: your terminal ${t.busyWith.id} is busy with \`${String(t.busyWith.command || '').slice(0, 120)}\`, so this ran in terminal ${id}. Stop that command with send_to_terminal (keys ["Ctrl+C"]) or kill_terminal when you no longer need it.`
+      )
     const state = r && r.state
     if (state === 'sensitive') {
       throw fail(
@@ -497,7 +521,44 @@ export function createAgentTerminal({ verify, settings = () => ({ enabled: true 
     if (!r || typeof r !== 'object') throw fail('no_terminal', 'Tessel\'s window did not answer with the terminal.')
     const text = truncateOutputKeepingTail(stripAnsi(r.output), MAX_POLL_OUTPUT)
     const state = r.command ? ` (command \`${String(r.command).slice(0, 200)}\`${r.running ? ', still running' : Number.isInteger(r.exitCode) ? `, exit code ${r.exitCode}` : ', ended'})` : ''
-    return { text: `Output of terminal "${r.name}"${state}:\n${text || '(empty)'}` }
+    const gone = r.closed ? ' (the terminal closed after its command ended; this is its last output)' : ''
+    return { text: `Output of terminal "${r.name}"${state}${gone}:\n${text || '(empty)'}` }
+  }
+
+  // open_terminal: agent sessions or plain shells for the user, beside the
+  // agent in its project (on its SSH host when it is there). The user allows
+  // each call on a card, unless the agent is a team lead whose workers start
+  // without asking (then within the workers limit). Each call is logged.
+  async function openPanes(agentPane, args) {
+    const kind = args.kind == null || args.kind === '' ? 'agent' : String(args.kind)
+    if (kind !== 'agent' && kind !== 'shell') throw fail('invalid_argument', '"kind" must be "agent" (a session of an agent) or "shell" (a plain terminal).')
+    const count = args.count == null || args.count === '' ? 1 : Number(args.count)
+    if (!Number.isInteger(count) || count < 1 || count > MAX_OPEN_PANES) throw fail('invalid_argument', `"count" must be 1 to ${MAX_OPEN_PANES}.`)
+    const name = args.name == null ? '' : String(args.name).trim()
+    if (name.length > 60 || /[\u0000-\u001f\u007f]/.test(name)) throw fail('invalid_argument', '"name" is at most 60 characters, on one line.')
+    const agentId = kind === 'agent' && args.agent != null && args.agent !== '' ? String(args.agent).trim().slice(0, 60) : null
+    if (!mayOpen(agentPane)) throw fail('rate_limited', 'You opened too many panes lately: wait a minute.')
+    const plan = await ask('terminalTarget', { agent: agentPane, op: 'openInfo', kind, agentId })
+    if (!plan || typeof plan !== 'object') throw fail('no_terminal', 'Tessel\'s window did not answer.')
+    const max = Math.min(MAX_OPEN_PANES, Math.max(1, Number(plan.max) || 1))
+    if (count > max) throw fail('too_many', `At most ${max} at a time (the user's limit for starting agents).`)
+    const what = plan.kind === 'agent' ? String(plan.agentName || plan.agentId || 'agent') : 'shell'
+    const agentLabel = String(plan.agentLabel || 'agent')
+    if (plan.skipApproval !== true) {
+      const open = { kind: plan.kind, agentName: plan.kind === 'agent' ? what : null, count, name, host: plan.host || null }
+      await card(agentPane, { id: `open:${agentPane}`, name: agentLabel, own: false }, { kind: 'open', command: '', open, explanation: String(args.explanation || '').slice(0, MAX_TEXT), goal: '', info: null, disclaimers: [], actions: [] })
+    }
+    allowedNow()
+    rateLimit(agentPane)
+    for (let i = 0; i < count; i++) opened(agentPane)
+    writeLog({ at: now(), paneId: agentPane, paneName: agentLabel, agent: agentLabel, agentPane, kind: 'open', text: `${count} x ${what}${name ? ` "${name}"` : ''}` }, false)
+    const r = await ask('terminalTarget', { agent: agentPane, op: 'open', kind: plan.kind, agentId: plan.agentId || null, name, count }, { timeoutMs: 120000 })
+    const panes = (r && Array.isArray(r.panes) ? r.panes : []).filter((p) => p && typeof p.id === 'string')
+    if (!panes.length) throw fail('open_failed', `Tessel could not open ${what === 'shell' ? 'a terminal' : what}.`)
+    const where = r.host ? ` on the SSH host ${r.host}` : ''
+    const list = panes.map((p) => `"${String(p.name || p.id).slice(0, 80)}" (id ${p.id})`).join(', ')
+    const kindText = plan.kind === 'agent' ? `${what} session${panes.length > 1 ? 's' : ''}` : `terminal${panes.length > 1 ? 's' : ''}`
+    return { text: `Opened ${panes.length} ${kindText} for the user beside your pane${where}: ${list}. They are the user's panes: do not run commands in them; for your own commands use your shell tool or run_in_terminal.` }
   }
 
   async function sendInput(agentPane, args) {
@@ -534,7 +595,10 @@ export function createAgentTerminal({ verify, settings = () => ({ enabled: true 
     // commands in this session" covers it. The user's terminals: their approval.
     const s = conf()
     const k = key(agentPane, t.id)
-    if (t.own) {
+    const yolo = t.own && yoloOwn(t)
+    if (yolo) {
+      // In Yolo: no card for its own terminal (a secret's question was refused above).
+    } else if (t.own) {
       if (!(s.autoApprove && sessionOf(agentPane).allowAll)) await card(agentPane, t, { kind: 'send', command: shown, own: true, explanation: '', goal: '', info: null, disclaimers: [], actions: [{ kind: 'session' }] }).then((a) => applyAction(agentPane, t, a.action))
     } else if (!approvedPanes.has(k)) {
       const a = await card(agentPane, t, { kind: 'pane', command: shown, own: false, explanation: '', goal: '', info: null, disclaimers: [], actions: [], userTerminal: true, send: true })
@@ -544,7 +608,7 @@ export function createAgentTerminal({ verify, settings = () => ({ enabled: true 
     allowedNow()
     notStopped(agentPane, t)
     controlled(t.id, agentPane, t.agentLabel)
-    writeLog({ at: now(), paneId: t.id, paneName: t.name, agent: t.agentLabel, agentPane, kind: mode === 'keys' ? 'keys' : 'run', text: shown })
+    writeLog({ at: now(), paneId: t.id, paneName: t.name, agent: t.agentLabel, agentPane, kind: mode === 'keys' ? 'keys' : 'run', text: shown, ...(yolo ? { yolo: true } : {}) })
     const r = await ask('terminalTarget', { agent: agentPane, op: 'send', terminal: t.id, mode, data, waitForOutput: args.waitForOutput === true }, { timeoutMs: 60000 })
     const recent = stripAnsi(r && r.output)
     const cancelNote =
@@ -651,6 +715,7 @@ export function createAgentTerminal({ verify, settings = () => ({ enabled: true 
       if (op === 'send') return await sendInput(pane, args)
       if (op === 'kill') return await kill(pane, args)
       if (op === 'lastCommand') return await lastCommand(pane)
+      if (op === 'open') return await openPanes(pane, args)
       return await selection(pane)
     } catch (err) {
       if (err instanceof CliError) throw err

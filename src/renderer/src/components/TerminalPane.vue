@@ -3050,7 +3050,7 @@ const paneMenuBindings = computed(() => ({
         <div v-if="agentLogOpen" class="pane-agent-term-log" role="list" data-test="pane-agent-terminal-list" @click.stop>
           <div v-if="!agentRuns.length" class="pane-agent-term-empty">{{ t('pane.agentTerminal.noLog', 'Nothing run yet') }}</div>
           <div v-for="(r, i) in agentRuns.slice().reverse()" :key="i" class="pane-agent-term-row" role="listitem">
-            <span class="pane-agent-term-meta">{{ agentRunTime(r.at) }} · {{ r.agent }}{{ r.kind === 'keys' ? ` · ${t('pane.agentTerminal.keys', 'keys')}` : r.kind === 'read' ? ` · ${t('pane.agentTerminal.read', 'read this terminal')}` : '' }}</span>
+            <span class="pane-agent-term-meta">{{ agentRunTime(r.at) }} · {{ r.agent }}{{ r.kind === 'keys' ? ` · ${t('pane.agentTerminal.keys', 'keys')}` : r.kind === 'read' ? ` · ${t('pane.agentTerminal.read', 'read this terminal')}` : '' }}{{ r.yolo ? ` · ${t('pane.agentTerminal.yolo', 'Yolo, not asked')}` : '' }}</span>
             <code v-if="r.text" class="pane-agent-term-cmd">{{ r.text }}</code>
           </div>
         </div>

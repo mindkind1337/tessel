@@ -8,6 +8,7 @@ import { computed, inject } from 'vue'
 import { t } from '../i18n'
 import { settings } from '../settings'
 import { isRegexKey } from '../../../shared/terminalRules'
+import ThemedSelect from './ui/ThemedSelect.vue'
 
 const askConfirm = inject('askConfirm', null)
 
@@ -79,6 +80,33 @@ async function setAutoApprove(e) {
         <input v-model="settings.agentTerminal" type="checkbox" class="set-switch" data-setting="agentTerminal" />
       </label>
       <p class="set-row set-hint" data-test="settings-terminal-log">{{ logText }}</p>
+      <label class="set-row">
+        <div class="set-label">
+          {{ t('settings.agents.terminalYoloNoAsk', 'Agents in Yolo run commands in their own terminal without asking') }}
+          <span class="set-hint">{{
+            t(
+              'settings.agents.terminalYoloNoAskHint',
+              'An agent started in Yolo can already run anything with its own shell tool, so its commands in its own terminal (on this computer or its project\'s SSH host) run without the approval card. They are still logged and shown on the terminal\'s badge. Your terminals, other SSH hosts and passwords still ask; Stop still works.'
+            )
+          }}</span>
+        </div>
+        <input v-model="settings.agentTerminalYoloNoAsk" type="checkbox" class="set-switch" data-setting="agentTerminalYoloNoAsk" />
+      </label>
+      <div class="set-row" data-test="settings-terminal-background">
+        <label class="set-label" for="settings-agent-terminal-background">
+          {{ t('settings.agents.terminalBackground', 'Background commands') }}
+          <span class="set-hint">{{
+            t(
+              'settings.agents.terminalBackgroundHint',
+              'One terminal per agent: an agent runs all its commands in its terminal. While a command it left running (a dev server) holds it, its next command opens one more terminal, which closes once its command ends. A terminal each: each command left running gets a terminal of its own, which closes once the command ends. A terminal you click into, type in, resize or move stays open.'
+            )
+          }}</span>
+        </label>
+        <ThemedSelect id="settings-agent-terminal-background" v-model="settings.agentTerminalBackground" class="set-select" data-setting="agentTerminalBackground">
+          <option value="one">{{ t('settings.agents.terminalBackgroundOne', 'One terminal per agent') }}</option>
+          <option value="each">{{ t('settings.agents.terminalBackgroundEach', 'A terminal each') }}</option>
+        </ThemedSelect>
+      </div>
       <label class="set-row">
         <div class="set-label">
           {{ t('settings.agents.terminalAutoApprove', 'Let rules approve commands') }}

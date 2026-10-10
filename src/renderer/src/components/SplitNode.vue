@@ -30,6 +30,15 @@ function notifyLayoutChange() {
   })
 }
 
+// The user resized the panes on both sides of divider `i` (an agent's
+// terminal then stays open, App.vue).
+function userResized(i) {
+  const ids = []
+  const walk = (n) => (n.type === 'leaf' ? ids.push(n.id) : (n.children || []).forEach(walk))
+  for (const c of props.node.children.slice(i, i + 2)) walk(c)
+  window.dispatchEvent(new CustomEvent('tessel-panes-resized', { detail: { ids } }))
+}
+
 // Drag the divider that sits between child `i` and child `i+1`. We move the
 // boundary by adjusting only that adjacent pair, keeping their combined size
 // constant — so other panes in the row/column stay put.
@@ -49,6 +58,7 @@ function onDividerKey(e, i) {
   if (a < 5 || b < 5) return
   sizes[i] = a
   sizes[i + 1] = b
+  userResized(i)
   // A worktree's view of a split: the split itself takes the move.
   writeViewSizes(props.node)
   notifyLayoutChange()
@@ -66,6 +76,7 @@ function startDrag(e, i) {
   const b0 = sizes[i + 1]
   const pairSum = a0 + b0
   dragIndex.value = i
+  userResized(i)
 
   const move = (ev) => {
     const pos = isRow ? ev.clientX : ev.clientY

@@ -72,7 +72,7 @@ import { pageOf } from './browser/pageHost'
 import { paneDropZone, placeLeaf, sidePageFromLeaf, leafFromSidePage, saveSideBrowsers, restoreSideBrowsers, newSidePageId } from './browser/pageMove'
 import { createAgentBrowserTargets, addPageNear } from './browser/agentBrowserTargets'
 import { inheritsAgentSession } from './browser/agentSession'
-import { createAgentTerminalTargets } from './agentTerminal/agentTerminalTargets'
+import { createAgentTerminalTargets, paneRunsYolo, placeNear, ownTerminalOf, MAX_OPEN_PANES } from './agentTerminal/agentTerminalTargets'
 import { onTerminalControl, onTerminalLog, forgetTerminal } from './agentTerminal/agentTerminalState'
 import { rulesOfAction } from '../../shared/terminalRules'
 import AgentCommandApproval from './components/AgentCommandApproval.vue'
@@ -4249,6 +4249,7 @@ function workspaceEdgeAt(x, y) {
 }
 
 function movePane(srcId, target) {
+  agentTerminalTargets.touch(srcId)
   const srcWs = wsOfLeaf(srcId)
   const src = findLeaf(srcId)
   if (!srcWs || !src) return
@@ -9422,6 +9423,7 @@ async function enableTerminalAutoApprove() {
 function workspaceRulesKey(ws) {
   return String((ws.remote && `${ws.remote.hostId}:${ws.remote.path}`) || ws.cwd || ws.id || '')
 }
+const makeAgentSplit = (dir, children, sizes) => reactive({ type: 'split', id: newId('split'), dir, sizes, children })
 const agentTerminalTargets = createAgentTerminalTargets({
   enabled: () => settings.agentTerminal !== false,
   workspaces: () => workspaces.value,
@@ -9430,6 +9432,8 @@ const agentTerminalTargets = createAgentTerminalTargets({
   paneLabel,
   hostLabel: (id) => remoteHostLabel(id),
   agentName: (leaf) => programLabel(leaf),
+  // From the pane's own launch state (Tessel's), never from the agent's request.
+  agentYolo: (leaf) => paneRunsYolo(leaf),
   userTyping: (id) => userIsTyping(id),
   hosts: () => remoteHostsState.targets.map((h) => ({ id: h.id, label: h.label || h.host, connected: hostShared(h.id) })),
   // A terminal of the agent's own, next to it, without taking the screen or the keyboard.
@@ -9455,15 +9459,52 @@ const agentTerminalTargets = createAgentTerminalTargets({
     leaf.title = name
     leaf.openedBy = agentLeaf.id
     keepView(leaf, agentLeaf, ws)
-    let last = null
-    forEachLeaf(ws.tree, (l) => l.openedBy === agentLeaf.id && l !== leaf && l.kind !== 'browser' && (last = l))
-    ws.tree = addPageNear(ws.tree, (last || agentLeaf).id, leaf, {
-      dir: last ? 'col' : 'row',
-      mine: (n) => n === leaf || (n.type === 'leaf' && n.kind !== 'browser' && n.openedBy === agentLeaf.id),
-      makeSplit: (dir, children, sizes) => reactive({ type: 'split', id: newId('split'), dir, sizes, children })
-    })
+    // Its first terminal beside it, the next ones stacked under that one
+    // (rows of one area): the agent's pane is not halved again each time.
+    ws.tree = placeNear(ws.tree, agentLeaf.id, leaf, { forEachLeaf, mine: ownTerminalOf(agentLeaf.id), makeSplit: makeAgentSplit })
     refitSoon()
     return leaf
+  },
+  // Settings > Agents > Terminals, "Background commands".
+  backgroundMode: () => (settings.agentTerminalBackground === 'each' ? 'each' : 'one'),
+  agentList: () => agents.value.map((a) => ({ id: a.id, name: a.name })),
+  // A team lead whose workers start without asking (Settings > Orchestration)
+  // opens sessions without the card too, within its workers limit.
+  openPolicy: (leaf) => {
+    const lead = !!(leaf.team && teamById(leaf.team)?.leadId === leaf.id)
+    const skip = lead && settings.orchestrationConfirmWorkers === false
+    return { skipApproval: skip, max: skip ? Math.min(MAX_OPEN_PANES, settings.orchestrationMaxWorkers || 1) : MAX_OPEN_PANES }
+  },
+  // open_terminal: agent sessions or shells beside the agent, in its project
+  // (on its SSH host when it is there), made as the user's own panes are
+  // (createLeaf: the agent's Yolo, model and team rules apply); stacked
+  // together, without taking the screen or the keyboard.
+  async openPanes({ agentLeaf, ws, kind, agent, name, count }) {
+    const def = kind === 'agent' ? agentById(agent) : null
+    const onHost = !!(def && ws.remote && (def.id === 'claude' || def.id === 'codex'))
+    if (kind === 'agent' && (!def || (def.available === false && !onHost))) return []
+    const out = []
+    for (let i = 0; i < count; i++) {
+      if (!workspaces.value.includes(ws) || !findLeafIn(ws.tree, agentLeaf.id)) break
+      // In the agent's worktree grid: the same copy, as a pane split from it.
+      const worktree = viewKey(agentLeaf, ws.cwd) ? (agentLeaf.worktree ? { path: agentLeaf.worktree.path, branch: agentLeaf.worktree.branch } : { path: leafViewPath(agentLeaf), branch: '' }) : null
+      const leaf = await createLeaf(selectedShell.value, def, ws.cwd, worktree, wsLeafOpts(ws, {}))
+      if (!leaf) break
+      if (!workspaces.value.includes(ws) || !findLeafIn(ws.tree, agentLeaf.id)) {
+        window.shellApi.killPty(leaf.id)
+        break
+      }
+      if (name) {
+        leaf.paneName = count > 1 ? `${name} ${i + 1}` : name
+        leaf.title = leaf.paneName
+      }
+      leaf.openedNear = agentLeaf.id
+      keepView(leaf, agentLeaf, ws)
+      ws.tree = placeNear(ws.tree, agentLeaf.id, leaf, { forEachLeaf, mine: (l) => l.openedNear === agentLeaf.id, makeSplit: makeAgentSplit })
+      out.push(leaf)
+    }
+    refitSoon()
+    return out
   },
   closeTerminal: (id) => closeLeaf(id, { force: true }),
   dismissApprovals: (agentPane) => dismissAgentApprovals(agentPane),
@@ -9485,6 +9526,7 @@ const agentTerminalTargets = createAgentTerminalTargets({
       own: c.own,
       send: !!c.send,
       host: c.host || null,
+      open: c.open || null,
       agentLabel: c.agentLabel,
       name: c.name,
       where,
@@ -9539,12 +9581,23 @@ const agentTerminalTargets = createAgentTerminalTargets({
   },
   writePty: (id, data) => window.shellApi.writePty(id, data)
 })
+// The user used an agent's terminal (clicked into it, typed, resized or
+// moved it): it no longer closes by itself when its command ends.
+watch(activeId, (id) => id && agentTerminalTargets.touch(id))
+{
+  const onResized = (e) => {
+    for (const id of (e && e.detail && e.detail.ids) || []) agentTerminalTargets.touch(id)
+  }
+  window.addEventListener('tessel-panes-resized', onResized)
+  onBeforeUnmount(() => window.removeEventListener('tessel-panes-resized', onResized))
+}
 // Settings > Agents > Terminals: the main process applies them too.
 watch(
   () => ({
     enabled: settings.agentTerminal !== false,
     autoApprove: settings.agentTerminalAutoApprove === true,
     ignoreDefaults: settings.agentTerminalIgnoreDefaultRules === true,
+    yoloOwn: settings.agentTerminalYoloNoAsk !== false,
     userRules: JSON.parse(JSON.stringify(settings.agentTerminalRules || {})),
     workspaceRules: JSON.parse(JSON.stringify(settings.agentTerminalWorkspaceRules || {}))
   }),
