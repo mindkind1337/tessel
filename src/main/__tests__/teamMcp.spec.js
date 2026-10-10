@@ -1130,6 +1130,10 @@ describe('an agent on an SSH host (TESSEL_REMOTE=1)', () => {
     expect(instructions).toMatch(/browser_snapshot/)
     expect(instructions).toMatch(/run_in_terminal/)
     expect(instructions).toMatch(/You run on an SSH host/)
+    // The same wording on when a terminal helps.
+    expect(instructions).toContain('For quick shell commands, use your own shell tool.')
+    expect(instructions).toContain("or a command on your project's SSH host when you are not on it")
+    expect(names).toContain('open_terminal')
   })
 
   it('its messages and reports say which host they come from', () => {

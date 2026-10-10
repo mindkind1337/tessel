@@ -671,6 +671,33 @@ describe('agent terminal: an agent pane in Yolo', () => {
   })
 })
 
+describe('the tools tell agents when a terminal helps', () => {
+  it('instructions: their own shell tool for quick commands, run_in_terminal only when it helps', () => {
+    const instructions = mcp.handle({ id: 1, method: 'initialize' }).instructions
+    expect(instructions).toContain('For quick shell commands, use your own shell tool.')
+    expect(instructions).toContain(
+      "Use run_in_terminal only when it helps: a long-running process that must stay up (a dev server, a watcher), a command the user should see, or a command on your project's SSH host when you are not on it"
+    )
+    expect(instructions).not.toContain('To run shell commands, use run_in_terminal')
+    // Opening sessions: open_terminal, the same agent by default.
+    expect(instructions).toContain('run_in_terminal runs commands, it does not open sessions for the user')
+    expect(instructions).toContain('open the same agent as you, or ask them if it is unclear')
+  })
+
+  it('run_in_terminal and open_terminal say it too', () => {
+    const run = mcp.TERMINAL_TOOLS.find((t) => t.name === 'run_in_terminal')
+    expect(run.description).toContain('for quick commands, use your own shell tool instead')
+    expect(run.description).toContain("a long-running process that must stay up (a dev server, a watcher), a command the user should see, or a command on the project's SSH host when you are not on it")
+    expect(run.description).toContain('it does not open sessions or terminals for the user')
+    const open = mcp.TERMINAL_TOOLS.find((t) => t.name === 'open_terminal')
+    expect(open.description).toContain('by default the same agent as you')
+    expect(open.description).toContain('without saying which kind, open the same agent as you, or ask the user if it is unclear')
+    expect(open.inputSchema.properties.kind.enum).toEqual(['agent', 'shell'])
+    expect(mcp.TERMINAL_OPS.open_terminal).toBe('open')
+    expect(mcp.VERSION).toBe('1.11.4')
+  })
+})
+
 describe('run_in_terminal: one terminal per agent, its terminal busy', () => {
   it('says the command ran in another terminal, and how to stop the one left running', async () => {
     const win = fakeWindow({ target: (p) => ({ ...OWN, id: 'pane-own-2', ...(p.op === 'prepare' ? { isNew: true, busyWith: { id: 'pane-own', name: 'Ada · terminal', command: 'npm run dev' } } : {}) }) })

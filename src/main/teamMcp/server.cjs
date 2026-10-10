@@ -39,7 +39,7 @@ const path = require('path')
 const crypto = require('crypto')
 const { randomUUID } = crypto
 
-const VERSION = '1.11.3'
+const VERSION = '1.11.4'
 const MAX_TEXT = 6000
 
 // --- An agent on an SSH host --------------------------------------------------
@@ -1220,7 +1220,11 @@ async function terminalTool(op, args, deps = { runtimes: browserRuntimes, call: 
 
 const TERMINAL_ID = { type: 'string', description: 'The terminal ID returned by run_in_terminal (or from terminal_list).' }
 const RUN_DESCRIPTION = [
-  'Run a shell command in a terminal of your own in Tessel (a visible pane next to yours that the user can watch), preserving environment variables, working directory and other context across sync commands. On Windows it is PowerShell: chain commands with ; (Windows PowerShell 5.1 has no &&). On an SSH host it is the host\'s shell (bash): use && to chain commands. The user approves each command before it runs, unless their rules allow it; they may edit it.',
+  'Run a shell command in a terminal of your own in Tessel (a visible pane next to yours that the user can watch), preserving environment variables, working directory and other context across sync commands.',
+  '',
+  'When to use it: for quick commands, use your own shell tool instead. Use run_in_terminal only when it helps: a long-running process that must stay up (a dev server, a watcher), a command the user should see, or a command on the project\'s SSH host when you are not on it. It runs commands; it does not open sessions or terminals for the user (that is open_terminal).',
+  '',
+  'On Windows it is PowerShell: chain commands with ; (Windows PowerShell 5.1 has no &&). On an SSH host it is the host\'s shell (bash): use && to chain commands. The user approves each command before it runs, unless their rules allow it; they may edit it.',
   '',
   'Command Execution:',
   '- Never create a sub-shell (eg. bash -c "command" or powershell -c "command") unless explicitly asked',
@@ -1229,7 +1233,7 @@ const RUN_DESCRIPTION = [
   '',
   'Execution Mode:',
   "- mode='sync' (strongly preferred): waits for the command to complete and returns its full output inline. Use for ALL one-shot commands (builds, tests, installs, compilation, scripts). Omit timeout.",
-  "- mode='async': waits for an initial idle/output signal, then returns a terminal ID and output snapshot while the process keeps running in its own terminal. Use ONLY for processes that must keep running (servers, watchers, daemons).",
+  "- mode='async': waits for an initial idle/output signal, then returns a terminal ID and output snapshot while the process keeps running in your terminal (another one when yours is busy). Use ONLY for processes that must keep running (servers, watchers, daemons).",
   '- Sync output is final: do NOT call get_terminal_output afterward unless the result says the command was moved to background, timed out, or needs input.',
   '- A command still running after the timeout (at most 120000 ms) keeps running; you get its terminal ID. When an async command or a timed-out sync command finishes, you are notified in your team inbox (when its shell reports command ends). Do NOT poll or sleep to wait for completion.',
   '',
@@ -1407,7 +1411,7 @@ function callTool(name, args = {}, signal = null) {
 }
 
 const INSTRUCTIONS =
-  'You work in Tessel: the user follows everything you do on its task board, so keep it up to date yourself, without being asked. Add a card (team_task_add) for every piece of work the moment you start it (what the user asks, each step you decide to take, each task you give a teammate), and move your cards as they go (team_task_move: "done" as soon as one is finished). Only a quick question or a short answer needs no card. If you are in a team, call team_inbox when you start and after each step to read messages from teammates, answer them with team_send, and never ask the user to pass messages between agents. To work together: give a teammate a card (team_task_add, with "after" when it must wait for other cards), finish work you were given with team_task_done and a short report, ask one teammate and wait for the answer with team_ask, ask the user to decide with team_task_gate, and send to groups like "@codex" or "@idle"; team_members shows who is idle. A team lead can also coordinate workers: start new agents in new panes with team_worker_start (one per independent piece of work), follow them with team_worker_list and team_worker_read, and stop or release them; a worker reports with team_worker_done and sends team_heartbeat while it works. To check a web page (your dev server, a UI change), use the built-in browser of Tessel with the browser_* tools: browser_pages or browser_open, then browser_snapshot to read the page with element refs (@e1), browser_click / browser_fill / browser_type / browser_press by ref, and browser_snapshot again after the page changes or navigates; browser_wait instead of sleeping, browser_console for errors, browser_screenshot to see it. The user sees an Agent badge on the page and can stop you. To run shell commands, use run_in_terminal: it runs them in a terminal of your own next to your pane (on your project SSH host when it is there) and the user approves each command; terminal_list shows the other terminals of the user, which you can read with get_terminal_output.'
+  'You work in Tessel: the user follows everything you do on its task board, so keep it up to date yourself, without being asked. Add a card (team_task_add) for every piece of work the moment you start it (what the user asks, each step you decide to take, each task you give a teammate), and move your cards as they go (team_task_move: "done" as soon as one is finished). Only a quick question or a short answer needs no card. If you are in a team, call team_inbox when you start and after each step to read messages from teammates, answer them with team_send, and never ask the user to pass messages between agents. To work together: give a teammate a card (team_task_add, with "after" when it must wait for other cards), finish work you were given with team_task_done and a short report, ask one teammate and wait for the answer with team_ask, ask the user to decide with team_task_gate, and send to groups like "@codex" or "@idle"; team_members shows who is idle. A team lead can also coordinate workers: start new agents in new panes with team_worker_start (one per independent piece of work), follow them with team_worker_list and team_worker_read, and stop or release them; a worker reports with team_worker_done and sends team_heartbeat while it works. To check a web page (your dev server, a UI change), use the built-in browser of Tessel with the browser_* tools: browser_pages or browser_open, then browser_snapshot to read the page with element refs (@e1), browser_click / browser_fill / browser_type / browser_press by ref, and browser_snapshot again after the page changes or navigates; browser_wait instead of sleeping, browser_console for errors, browser_screenshot to see it. The user sees an Agent badge on the page and can stop you. For quick shell commands, use your own shell tool. Use run_in_terminal only when it helps: a long-running process that must stay up (a dev server, a watcher), a command the user should see, or a command on your project\'s SSH host when you are not on it; it runs in a terminal of your own next to your pane and the user approves each command. terminal_list shows the user\'s other terminals, which you can read with get_terminal_output. run_in_terminal runs commands, it does not open sessions for the user: to open terminals or sessions for the user, use open_terminal, and when they do not say which kind, open the same agent as you, or ask them if it is unclear.'
 // On an SSH host: the same tools, and where they run.
 const REMOTE_INSTRUCTIONS =
   INSTRUCTIONS +
