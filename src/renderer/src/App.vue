@@ -7626,8 +7626,8 @@ async function switchToTerminal(leafId) {
       ...(sessionOptions ? { sessionOptions } : {}),
       // The terminal follows Settings (Yolo, Yolo folders) like a new one;
       // a chat known to ask first, or a worker capped by its coordinator,
-      // keeps asking first. OpenCode's terminal has no such switch.
-      ...(old.agentId !== 'opencode' && (old.chatPermissions === 'manual' || old.maxPermissions === 'manual') ? { permissions: 'manual' } : {}),
+      // keeps asking first.
+      ...(old.chatPermissions === 'manual' || old.maxPermissions === 'manual' ? { permissions: 'manual' } : {}),
       // Claude Code: the chat's own mode (Ask, Accept edits, Plan), never
       // its default for new sessions (which may be auto).
       ...(old.agentId === 'claude' ? { permissionMode: old.chatPermissionMode || 'default' } : {}),

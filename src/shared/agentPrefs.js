@@ -12,6 +12,8 @@ export const YOLO_ARGS = {
   codex: '--dangerously-bypass-approvals-and-sandbox',
   gemini: '--yolo',
   qwen: '--approval-mode yolo',
+  // OpenCode's TUI: auto-approves what its config does not explicitly deny.
+  opencode: '--auto',
   copilot: '--yolo',
   cline: '--auto-approve true',
   kimi: '--yolo',
