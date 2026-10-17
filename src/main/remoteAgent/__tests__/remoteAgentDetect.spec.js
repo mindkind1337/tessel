@@ -319,7 +319,7 @@ describe.skipIf(!gitSh())('__t_agents on a POSIX sh (fake ssh)', () => {
   // Stock macOS and BusyBox have no `timeout` command: the time limits are
   // the shell's own (a watchdog that ends the probe and what it started).
   it('a login shell that never ends (its .profile hangs), with no timeout command: given up after a few seconds, the rest still found, the answer partial', async () => {
-    expect(prelude('0'.repeat(32))).not.toMatch(/\btimeout\s+["$\d]/)
+    expect(prelude('0'.repeat(32))).not.toMatch(/(?<![-\w])timeout\s+["$\d]/) // the command, not curl's --connect-timeout
     dir = fs.mkdtempSync(join(os.tmpdir(), 'tessel-agents-'))
     const home = posixPath(dir)
     tool(join(dir, '.local', 'bin', 'agy'))

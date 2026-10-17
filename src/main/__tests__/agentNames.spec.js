@@ -48,6 +48,18 @@ describe('named team addresses', () => {
     delete process.env.TESSEL_PANE_ID
     expect(mcp.locate('ada', dir).meId).toBe('pane-a')
   })
+  it('messages sent in the same millisecond arrive in the order they were sent', () => {
+    const ctx = mcp.locate()
+    const realNow = Date.now
+    Date.now = () => 1792187218012
+    try {
+      for (const n of [1, 2, 3, 4, 5]) expect(mcp.send(ctx, 'Bohr', `Message ${n}`).ok).toBe(true)
+    } finally {
+      Date.now = realNow
+    }
+    const res = pollTeamChannel({ dir, teamId: 'team-a' })
+    expect(res.deliveries.filter((m) => m.toId === 'pane-b').map((m) => m.text)).toEqual(['Message 1', 'Message 2', 'Message 3', 'Message 4', 'Message 5'])
+  })
   it('rejects unknown, partial and ambiguous names with valid names, before writing', () => {
     const ctx = mcp.locate()
     expect(mcp.send(ctx, 'Bo', 'Bad').error).toMatch(/Valid names: Ada, Bohr/)

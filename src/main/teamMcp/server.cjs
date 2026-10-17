@@ -335,7 +335,7 @@ function send(ctx, to, text, replyTo, extra = null) {
   }
   const box = path.join(ctx.root, 'outbox', ctx.me.token)
   fs.mkdirSync(box, { recursive: true })
-  const name = `mcp-${Date.now()}-${process.pid}-${Math.random().toString(36).slice(2, 8)}`
+  const name = `mcp-${orderedStamp()}`
   const max = MAX_TEXT - remoteTag().length
   if (body.length > max)
     return { error: `The message is too long (${body.length} characters, at most ${max}): nothing was sent. Split it in several messages.` }
@@ -440,11 +440,21 @@ function openAnswer(ctx, rid, sealed) {
   }
 }
 
+// A file name part that sorts in the order this process wrote its files.
+// Tessel reads an outbox (and the requests folder) sorted by name: two
+// messages sent in the same millisecond were ordered by a random suffix,
+// so the second could be delivered first. A counter now breaks the tie.
+let stampSeq = 0
+function orderedStamp() {
+  stampSeq = (stampSeq + 1) % 1e6
+  return `${Date.now()}-${process.pid}-${String(stampSeq).padStart(6, '0')}-${Math.random().toString(36).slice(2, 8)}`
+}
+
 function taskRequest(ctx, data) {
   const folder = path.join(ctx.root, 'requests')
   fs.mkdirSync(folder, { recursive: true })
   const safeId = String(ctx.meId).replace(/[^A-Za-z0-9._-]/g, '_')
-  const name = `${safeId}__${Date.now()}-${process.pid}-${Math.random().toString(36).slice(2, 8)}`
+  const name = `${safeId}__${orderedStamp()}`
   fs.writeFileSync(path.join(folder, `${name}.tmp`), JSON.stringify(signed(ctx, data)))
   fs.renameSync(path.join(folder, `${name}.tmp`), path.join(folder, `${name}.json`))
 }
