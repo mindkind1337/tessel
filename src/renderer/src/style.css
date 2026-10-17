@@ -550,6 +550,12 @@ body.popup-open .toolbar {
   inset: 0;
   z-index: 100;
 }
+/* Meanwhile the workspace is its own stacking layer, so the toolbar's menus
+   (usage, notifications, Live Share: z-index 60) open over the maximized
+   pane, not under it. */
+.workspace:has(.pane.maximized) {
+  isolation: isolate;
+}
 /* A maximized pane can show a browser page through its page area (drawn in
    a layer under the panes): the other panes and the dividers are hidden so
    nothing shows through it. Their terminals keep running. Only in its own
