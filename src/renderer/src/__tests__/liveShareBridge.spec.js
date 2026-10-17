@@ -30,4 +30,12 @@ describe('liveShareBridge', () => {
     expect(bridge.start).toBe(bridge.start)
     expect(plainBridge(null)).toBe(null)
   })
+  it('works on a frozen object like the one contextBridge exposes (a Proxy threw there)', () => {
+    const exposed = Object.freeze({ onHost: vi.fn((fn) => fn), start: vi.fn((arg) => structuredClone(arg)), nested: Object.freeze({ ping: vi.fn(() => 'pong') }) })
+    const bridge = plainBridge(exposed)
+    const listener = () => {}
+    expect(bridge.onHost(listener)).toBe(listener)
+    expect(bridge.start({ invite: { ...ref({ rights: { type: true } }).value } })).toEqual({ invite: { rights: { type: true } } })
+    expect(bridge.nested.ping()).toBe('pong')
+  })
 })
