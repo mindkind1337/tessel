@@ -90,9 +90,11 @@ import { paneDropZone, placeLeaf, sidePageFromLeaf, leafFromSidePage, saveSideBr
 import { createAgentBrowserTargets, addPageNear } from './browser/agentBrowserTargets'
 import { inheritsAgentSession, inheritsGuestSession } from './browser/agentSession'
 import { createAgentTerminalTargets, paneRunsYolo, placeNear, ownTerminalOf, MAX_OPEN_PANES } from './agentTerminal/agentTerminalTargets'
+import { createAgentAccountTargets, AgentAccountError } from './agentAccounts'
 import { onTerminalControl, onTerminalLog, forgetTerminal } from './agentTerminal/agentTerminalState'
 import { rulesOfAction } from '../../shared/terminalRules'
 import AgentCommandApproval from './components/AgentCommandApproval.vue'
+import AgentAccountApproval from './components/AgentAccountApproval.vue'
 import GitHubDialog from './components/GitHubDialog.vue'
 import LinearDialog from './components/LinearDialog.vue'
 import { createExternalIssueStarter } from './externalIssues'
@@ -2655,21 +2657,27 @@ setOpenPanesSource(() => {
 })
 // Settings > Where you're signed in: the agent panes open now (where each
 // runs and on which account), and Switch (Restart on that account).
-provide('accountPanes', {
-  list: () => {
-    const out = []
-    forEachWsLeaf((l) => {
+// The agents' account tools (agentAccounts.js) use the same list, with each
+// pane's project.
+function accountPaneList() {
+  const out = []
+  for (const ws of workspaces.value) {
+    const project = String(ws.name || '')
+    forEachLeaf(ws.tree, (l) => {
       if (l.kind === 'chat') {
         // A chat on an SSH host: its login there (never switched from here).
         const onHost = isRemotePath(l.cwd) ? parseRemotePath(l.cwd) : null
-        if (onHost) out.push({ id: l.id, kind: 'chat', name: l.paneName || l.title || l.agentId, agentId: l.agentId, remoteHostId: onHost.hostId, hostAccount: l.hostAccount, accountId: l.accountId })
+        if (onHost) out.push({ id: l.id, kind: 'chat', name: l.paneName || l.title || l.agentId, agentId: l.agentId, remoteHostId: onHost.hostId, hostAccount: l.hostAccount, accountId: l.accountId, project })
         return
       }
       if (l.kind !== 'agent' || !l.agentCommand || l.notConnected) return
-      out.push({ id: l.id, kind: 'agent', name: l.paneName || l.title || l.agentId, agentId: l.agentId, remoteHostId: l.remoteHostId || null, hostAccount: l.hostAccount, accountId: l.accountId, detected: !!l.detected })
+      out.push({ id: l.id, kind: 'agent', name: l.paneName || l.title || l.agentId, agentId: l.agentId, remoteHostId: l.remoteHostId || null, hostAccount: l.hostAccount, accountId: l.accountId, detected: !!l.detected, project })
     })
-    return out
-  },
+  }
+  return out
+}
+provide('accountPanes', {
+  list: accountPaneList,
   switchTo: (leafId, accountId) => restartOnAccount(leafId, accountId)
 })
 onMounted(() => refreshAccountChoices())
@@ -4655,6 +4663,9 @@ async function restartOnAccount(leafId, accountId) {
   }
   if (ok === false && findLeaf(leafId) === leaf)
     showToast(t('app.restart.failed', '{{name}} could not be restarted: its terminal did not stop. Try again.', { name: leaf.paneName || leaf.title }), { kind: 'error', timeout: 8000 })
+  // What happened, for an agent's account tool (true: restarted; null: it
+  // could not start again, already said).
+  return ok
 }
 
 // A pane on an SSH host: which config folder its agent really runs on (its
@@ -10760,18 +10771,21 @@ const approvalCard = ref(null) // { card, resolve }
 let agentApprovals = Promise.resolve()
 // Agents whose tool call went away: their waiting cards are answered no.
 const droppedApprovals = new Map() // agent pane -> time
-function askAgentApproval(card, agentPane = null) {
-  const until = Date.now() + AGENT_APPROVAL_MS
+// opts.ms: its own time (an account switch: 2 minutes). Not answered in
+// time: { allow: false, timedOut: true }.
+function askAgentApproval(card, agentPane = null, { ms = AGENT_APPROVAL_MS } = {}) {
+  const until = Date.now() + ms
   const asked = Date.now()
   const dropped = () => agentPane && (droppedApprovals.get(agentPane) || 0) >= asked
   const run = async () => {
     while ((confirmState.value || approvalCard.value) && Date.now() < until && !dropped()) await new Promise((r) => setTimeout(r, 300))
-    if (Date.now() >= until || dropped()) return { allow: false }
+    if (dropped()) return { allow: false }
+    if (Date.now() >= until) return { allow: false, timedOut: true }
     return new Promise((resolve) => {
       const entry = { card, resolve, agentPane }
       approvalCard.value = entry
       setTimeout(() => {
-        if (approvalCard.value === entry) answerAgentApproval({ allow: false })
+        if (approvalCard.value === entry) answerAgentApproval({ allow: false, timedOut: true })
       }, Math.max(1000, until - Date.now()))
     })
   }
@@ -10966,6 +10980,59 @@ const agentTerminalTargets = createAgentTerminalTargets({
   },
   writePty: (id, data) => window.shellApi.writePty(id, data)
 })
+// The agents' account tools (src/main/agentAccounts.js): the accounts and
+// the panes on each, and a switch checked as Switch panes… checks it, asked
+// on one card (AgentAccountApproval.vue) and run with Restart on <account>.
+const agentAccountTargets = createAgentAccountTargets({
+  async places() {
+    const api = window.shellApi
+    // Tessel's own check of the Claude subscriptions first (at most once a
+    // minute; the last result otherwise), not waited for long.
+    if (api.accounts && typeof api.accounts.checkPlans === 'function')
+      await Promise.race([api.accounts.checkPlans().catch(() => null), new Promise((r) => setTimeout(r, 10000))])
+    const res = api.signedIn ? await api.signedIn.places() : null
+    if (!res || !res.ok) throw new AgentAccountError('failed', 'Tessel could not read its accounts now. Try again.') // i18n-ignore
+    return res.places || []
+  },
+  panes: () => accountPaneList(),
+  // Any pane, by id or by its one name: to tell the agent why it cannot move.
+  findPane(ref) {
+    let hit = null
+    const named = []
+    forEachWsLeaf((l) => {
+      if (l.id === ref) hit = l
+      else if (String(l.paneName || l.title || '').toLowerCase() === String(ref).toLowerCase()) named.push(l)
+    })
+    const l = hit || (named.length === 1 ? named[0] : null)
+    return l ? { name: paneLabel(l) || l.id, kind: l.kind, notConnected: !!l.notConnected, runs: !!l.agentCommand } : null
+  },
+  requester(id) {
+    const leaf = findLeaf(id)
+    return leaf && (leaf.kind === 'agent' || leaf.kind === 'chat') ? { label: paneLabel(leaf) } : null
+  },
+  agentName: (id) => (agentById(id) && agentById(id).name) || String(id || ''),
+  hostLabel: (id) => remoteHostLabel(id),
+  paneState(id) {
+    const leaf = findLeaf(id)
+    return leaf ? (leaf.kind === 'chat' ? chatPaneState(leaf) : paneState(leaf)) : null
+  },
+  approve: (card, agentPane, opts) => askAgentApproval(card, agentPane, opts),
+  dismiss: (agentPane) => dismissAgentApprovals(agentPane),
+  // The pane menu's Restart on <account>, as it is.
+  async restart(id, accountId) {
+    if (restartingLeaves.has(id)) return 'busy'
+    const ok = await restartOnAccount(id, accountId)
+    return ok === true ? 'ok' : ok === null ? 'not_started' : 'failed'
+  },
+  switched({ agentLabel, account, count }) {
+    showToast(
+      count === 1
+        ? t('app.agentAccounts.switchedOne', '1 pane restarts on {{account}} (asked by {{agent}}).', { account, agent: agentLabel })
+        : t('app.agentAccounts.switched', '{{count}} panes restart on {{account}} (asked by {{agent}}).', { count, account, agent: agentLabel }),
+      { timeout: 8000 }
+    )
+  }
+})
 // The user used an agent's terminal (clicked into it, typed, resized or
 // moved it): it no longer closes by itself when its command ends.
 watch(activeId, (id) => id && agentTerminalTargets.touch(id))
@@ -11034,7 +11101,9 @@ function startCliRequests() {
           ? agentBrowserTargets.handle(req.params || {})
           : req.method === 'terminalTarget'
             ? agentTerminalTargets.handle(req.params || {})
-            : cliRequests.handle(req)
+            : req.method === 'accountTarget'
+              ? agentAccountTargets.handle(req.params || {})
+              : cliRequests.handle(req)
       msg = { id: req.id, ok: true, result: await handled }
     } catch (err) {
       msg = { id: req.id, ok: false, error: { code: (err && err.code) || 'failed', message: (err && err.message) || '' } }
@@ -13587,8 +13656,14 @@ onBeforeUnmount(() => {
       @close="cookieImportOpen = false"
     />
 
+    <AgentAccountApproval
+      v-if="approvalCard && approvalCard.card.kind === 'accounts'"
+      :key="approvalCard.card.token"
+      :card="approvalCard.card"
+      @answer="answerAgentApproval"
+    />
     <AgentCommandApproval
-      v-if="approvalCard"
+      v-if="approvalCard && approvalCard.card.kind !== 'accounts'"
       :key="approvalCard.card.command + approvalCard.card.kind"
       :card="approvalCard.card"
       @answer="answerAgentApproval"

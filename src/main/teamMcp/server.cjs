@@ -21,6 +21,10 @@
 //   open_terminal /
 //   terminal_last_command / terminal_selection / terminal_list
 //                            run commands in terminals (see "Terminal tools")
+//   account_list / account_switch_panes
+//                            the agents' sign-in accounts, and panes moved
+//                            to another one once the user allows it (see
+//                            "Account tools")
 //
 // Tessel stays the only writer of the channel's state.json: this server only
 // reads it, sends by dropping a file into my outbox (Tessel takes it in), and
@@ -39,7 +43,7 @@ const path = require('path')
 const crypto = require('crypto')
 const { randomUUID } = crypto
 
-const VERSION = '1.11.7'
+const VERSION = '1.11.8'
 const MAX_TEXT = 6000
 
 // --- An agent on an SSH host --------------------------------------------------
@@ -1091,16 +1095,20 @@ function browserRuntimes() {
   return out
 }
 
-function pipeCall(rt, method, params, timeoutMs = BROWSER_TIMEOUT_MS) {
+// signal (optional): aborted when the client cancels the tool call; the
+// connection closes, and Tessel drops what it was asking the user for it.
+function pipeCall(rt, method, params, timeoutMs = BROWSER_TIMEOUT_MS, signal = null) {
   const net = require('net')
   return new Promise((resolve) => {
     let buf = ''
     let done = false
     let sock = null
+    const onAbort = () => finish({ ok: false, error: { code: 'cancelled', message: 'The request was cancelled.' } })
     const finish = (v) => {
       if (done) return
       done = true
       clearTimeout(timer)
+      if (signal) signal.removeEventListener('abort', onAbort)
       try {
         if (sock) sock.destroy()
       } catch {
@@ -1109,6 +1117,10 @@ function pipeCall(rt, method, params, timeoutMs = BROWSER_TIMEOUT_MS) {
       resolve(v)
     }
     const timer = setTimeout(() => finish({ ok: false, error: { code: 'timeout', message: 'Tessel did not answer in time.' } }), timeoutMs)
+    if (signal) {
+      if (signal.aborted) return onAbort()
+      signal.addEventListener('abort', onAbort, { once: true })
+    }
     sock = net.createConnection(rt.pipe)
     sock.setEncoding('utf8')
     sock.on('error', (err) => finish({ ok: false, error: { code: 'not_running', message: `Tessel is not reachable (${err.code || err.message}).` } }))
@@ -1425,6 +1437,85 @@ TERMINAL_TOOLS.push({
 const TERMINAL_OPS = { open_terminal: 'open', run_in_terminal: 'run', get_terminal_output: 'output', send_to_terminal: 'send', kill_terminal: 'kill', terminal_last_command: 'lastCommand', terminal_selection: 'selection', terminal_list: 'list' }
 TOOLS.push(...TERMINAL_TOOLS)
 
+// --- Account tools -------------------------------------------------------------------
+// account_list and account_switch_panes: the agents' sign-in accounts Tessel
+// knows, and panes moved to another one, as the user does with Switch
+// panes… (src/main/agentAccounts.js). Each request goes over the tessel
+// command's pipe signed with this pane's team secret (team key "accounts").
+// A switch waits for the user's Allow on a card in Tessel's window: nothing
+// sent here can answer it.
+const ACCOUNTS_TEAM_KEY = 'accounts'
+// The user has 2 minutes to answer, then each pane takes a few seconds to
+// restart (at most 20 panes; Tessel gives each one up to 45 s).
+const ACCOUNTS_TIMEOUT_MS = 20 * 60 * 1000
+const ACCOUNT_ARG_KEYS = ['panes', 'account', 'explanation']
+
+// Only the known arguments, as Tessel reads them ("panes" a list of names or
+// ids; one text is split at its commas), signed by this pane.
+function accountsRequest(op, args) {
+  const clean = {}
+  for (const k of ACCOUNT_ARG_KEYS) {
+    const v = args ? args[k] : undefined
+    if (v === null || v === undefined || v === '') continue
+    if (k === 'panes') {
+      const list = Array.isArray(v) ? v : String(v).split(/[,\n]/)
+      const panes = list.map((x) => String(x == null ? '' : x).trim()).filter(Boolean).slice(0, 50)
+      if (panes.length) clean.panes = panes
+      continue
+    }
+    clean[k] = String(v)
+  }
+  const pane = String(process.env.TESSEL_PANE_ID || '')
+  const nonce = crypto.randomBytes(18).toString('base64url')
+  const at = Date.now()
+  const mac = crypto
+    .createHmac('sha256', Buffer.from(teamSecret(), 'hex'))
+    .update(canonical({ pane, team: ACCOUNTS_TEAM_KEY, body: { op, args: clean, nonce, at } }))
+    .digest('hex')
+  return { pane, op, args: clean, auth: { nonce, at, mac } }
+}
+
+async function accountsTool(op, args, signal = null, deps = { runtimes: browserRuntimes, call: pipeCall }) {
+  if (!process.env.TESSEL_PANE_ID || !teamSecret())
+    return { text: 'The account tools work only in an agent Tessel started: restart this agent from Tessel (right-click its pane, Restart).', isError: true }
+  const runtimes = deps.runtimes()
+  if (!runtimes.length) return { text: 'Tessel is not running (or is too old for the account tools).', isError: true }
+  let last = null
+  for (const rt of runtimes) {
+    const r = await deps.call(rt, 'accounts', accountsRequest(op, args), ACCOUNTS_TIMEOUT_MS, signal)
+    if (r && r.ok) return { text: String((r.result && r.result.text) || 'Done.') }
+    last = r && r.error ? r.error : { message: 'Tessel could not do it.' }
+    if (last.code === 'unknown_pane' || last.code === 'not_running' || last.code === 'unknown_method') continue
+    break
+  }
+  return { text: `${last.message || 'Tessel could not do it.'}${last.code ? ` [${last.code}]` : ''}`, isError: true }
+}
+
+const ACCOUNT_TOOLS = [
+  {
+    name: 'account_list',
+    description:
+      'List the sign-in accounts of the agents that Tessel knows, as Settings > AI provider accounts > Where you\'re signed in shows them: Claude Code and Codex on this computer, and on the SSH hosts and WSL distros as Tessel last read them. For each account: its id (for account_switch_panes), its email, its plan and subscription status (from Tessel\'s own check with Anthropic, not the login file, which still names a canceled plan), where it is signed in, and the panes using it (name, id, project, agent, host). Read-only: never a token or a credential file. To move panes to another account, use account_switch_panes.',
+    inputSchema: { type: 'object', properties: {} }
+  },
+  {
+    name: 'account_switch_panes',
+    description:
+      'Restart panes on another sign-in account, as the user does with Switch panes… (Settings > AI provider accounts > Where you\'re signed in) or Restart on <account> (a pane\'s menu): each pane restarts in place, with its name and team; Claude Code resumes its conversation, Codex (on an SSH host) starts a new one, since a Codex conversation stays with its account. Give the panes (names or ids, see account_list) and the account (its id from account_list, or its email). Each pane must be an agent pane of that account\'s agent (Claude Code panes to a Claude account, Codex panes to a Codex account) on a machine where the account is signed in (this computer, or that SSH host); an account whose subscription Tessel found canceled, unpaid or free is refused. The user sees one card in Tessel\'s window naming each pane, its project, the agent and the account (email and plan), and chooses Allow or Refuse: nothing restarts before Allow, and no answer in 2 minutes counts as Refuse. Do not ask again after a Refuse unless the user asks you to. A pane in the middle of a turn restarts all the same (its turn stops), as with the user\'s own switch. If your own pane is in the list, it restarts last, a few seconds after this answer reaches you.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        panes: { type: 'array', items: { type: 'string' }, description: 'The panes to move: their names or ids (1 to 20). A name several panes share is refused: give the id.' },
+        account: { type: 'string', description: 'The account to move them to: its id from account_list (or its email).' },
+        explanation: { type: 'string', description: 'Optional: one sentence for the user on why.' }
+      },
+      required: ['panes', 'account']
+    }
+  }
+]
+const ACCOUNT_OPS = { account_list: 'list', account_switch_panes: 'switch' }
+TOOLS.push(...ACCOUNT_TOOLS)
+
 // An agent in no team: its workspace's board (.tessel/board/<workspace>),
 // from the panes.<window>.json files Tessel writes (fresh ones only).
 function boardLocate(start) {
@@ -1456,6 +1547,7 @@ function callTool(name, args = {}, signal = null) {
   // The browser and terminal tools need no team: only this pane's identity.
   if (BROWSER_OPS[name]) return browserTool(BROWSER_OPS[name], args)
   if (TERMINAL_OPS[name]) return terminalTool(TERMINAL_OPS[name], args)
+  if (ACCOUNT_OPS[name]) return accountsTool(ACCOUNT_OPS[name], args, signal)
   // Creating a team is how an agent stops being alone: it runs before the team
   // is looked for, since there is none yet when it is called.
   // team_create is the same tool under the name an agent tends to guess.
@@ -2331,4 +2423,4 @@ if (require.main === module) {
   }
 }
 
-module.exports = { browserTool, browserRequest, browserRuntimes, BROWSER_TOOLS, terminalTool, terminalRequest, TERMINAL_TOOLS, TERMINAL_OPS, teamMgmtTool, teamMgmtRequest, sanitizeAsk, ASK_LIMITS, PERMISSION_MODES, MODE_PROVIDERS, taskRequest, locate, readInbox, send, members, handle, candidateDirs, ackPath, markRead, unread, listTasks, addTask, moveTask, reportTask, gateTask, ask, groupTargets, listWorkers, listGates, TOOLS, VERSION, AGENT_STATUS_AGENTS, statusEvent }
+module.exports = { browserTool, browserRequest, browserRuntimes, BROWSER_TOOLS, terminalTool, terminalRequest, TERMINAL_TOOLS, TERMINAL_OPS, accountsTool, accountsRequest, ACCOUNT_TOOLS, ACCOUNT_OPS, teamMgmtTool, teamMgmtRequest, sanitizeAsk, ASK_LIMITS, PERMISSION_MODES, MODE_PROVIDERS, taskRequest, locate, readInbox, send, members, handle, candidateDirs, ackPath, markRead, unread, listTasks, addTask, moveTask, reportTask, gateTask, ask, groupTargets, listWorkers, listGates, TOOLS, VERSION, AGENT_STATUS_AGENTS, statusEvent }

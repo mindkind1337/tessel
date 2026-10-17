@@ -19,8 +19,10 @@
 // a file, open a terminal or agent pane, focus the window, list the panes,
 // add a card to the task board, read the usage, and (method "browser") an
 // agent's browser tool (agentBrowser.js: signed by the agent's own pane,
-// checked there), and (method "terminal") an agent's terminal tool
-// (agentTerminal.js: signed the same way; what it types, the user approves).
+// checked there), (method "terminal") an agent's terminal tool
+// (agentTerminal.js: signed the same way; what it types, the user approves),
+// and (method "accounts") an agent's account tool (agentAccounts.js: signed
+// the same way; a switch, the user allows in the window).
 // Nothing else types into a terminal, answers a confirmation, or controls
 // orchestration workers.
 import crypto from 'crypto'
@@ -41,7 +43,7 @@ export const MAX_IN_FLIGHT = 8
 // never hold the ones the other requests need.
 export const MAX_TERMINAL_IN_FLIGHT = 32
 export const MAX_TERMINAL_PER_PANE = 3
-export const METHODS = ['ping', 'focus', 'open', 'new', 'status', 'task.add', 'usage', 'browser', 'terminal', 'team-mgmt']
+export const METHODS = ['ping', 'focus', 'open', 'new', 'status', 'task.add', 'usage', 'browser', 'terminal', 'accounts', 'team-mgmt']
 
 const TOKEN_RE = /^[0-9a-f]{64}$/
 const MAX_PATH = 1024
@@ -201,6 +203,8 @@ export function validateParams(method, params = {}) {
       return browserParams(params)
     case 'terminal':
       return terminalParams(params)
+    case 'accounts':
+      return accountsParams(params)
     case 'team-mgmt': {
       // The team management tool (teamMcp/server.cjs): its pane, the op
       // ("create" or "bootstrap"), flat arguments and the pane's signature.
@@ -288,6 +292,34 @@ function terminalParams(params) {
     clean[k] = v
   }
   if (Buffer.byteLength(JSON.stringify(clean), 'utf8') > MAX_TERMINAL_ARGS_BYTES) throw new CliError('too_large', t('main.cli.tooLarge', 'The request is too large.'))
+  if (!auth || typeof auth !== 'object' || Array.isArray(auth) || typeof auth.nonce !== 'string' || typeof auth.mac !== 'string' || !Number.isFinite(auth.at)) throw bad()
+  return { pane, op, args: clean, auth: { nonce: auth.nonce.slice(0, 80), at: auth.at, mac: auth.mac.slice(0, 128) } }
+}
+
+// An agent's account tool (teamMcp/server.cjs): its pane, the operation
+// ("list" or "switch"), the panes (a list of names or ids), the account and
+// an explanation, and the pane's signature. Nothing else is taken: no answer
+// to the user's card can come this way. Who may do what is decided by
+// agentAccounts.js and the window.
+export const MAX_ACCOUNT_PANES = 50
+function accountsParams(params) {
+  const bad = () => invalid(t('main.cli.badParams', 'The request’s parameters are not valid.'))
+  const { pane, op, args, auth } = params
+  if (typeof pane !== 'string' || !/^[A-Za-z0-9][\w.:-]{0,99}$/.test(pane)) throw bad()
+  if (op !== 'list' && op !== 'switch') throw bad()
+  const a = args == null ? {} : args
+  if (typeof a !== 'object' || Array.isArray(a)) throw bad()
+  const clean = {}
+  for (const [k, v] of Object.entries(a)) {
+    if (v === null || v === undefined) continue
+    if (k === 'panes') {
+      if (!Array.isArray(v) || v.length > MAX_ACCOUNT_PANES || v.some((x) => typeof x !== 'string' || x.length > 200)) throw bad()
+      clean.panes = v.slice()
+    } else if (k === 'account' || k === 'explanation') {
+      if (typeof v !== 'string' || v.length > (k === 'account' ? 300 : 2000)) throw bad()
+      clean[k] = v
+    } else throw bad()
+  }
   if (!auth || typeof auth !== 'object' || Array.isArray(auth) || typeof auth.nonce !== 'string' || typeof auth.mac !== 'string' || !Number.isFinite(auth.at)) throw bad()
   return { pane, op, args: clean, auth: { nonce: auth.nonce.slice(0, 80), at: auth.at, mac: auth.mac.slice(0, 128) } }
 }
@@ -393,12 +425,13 @@ export function createCliServer({
       if (nl < 0) return
       const line = buf.slice(0, nl)
       const busy = () => finish(encodeReply({ ok: false, error: { code: 'busy', message: t('main.cli.busy', 'Tessel is busy with other commands. Try again.') } }))
-      // A terminal tool's request (its pane read before anything is checked:
-      // only to count it; handleRequestLine checks it all).
+      // A terminal or account tool's request, which may wait for the user
+      // (its pane read before anything is checked: only to count it;
+      // handleRequestLine checks it all).
       let pane = null
       try {
         const req = parseRequestLine(line)
-        if (req.method === 'terminal') pane = typeof req.params.pane === 'string' ? req.params.pane.slice(0, 100) : ''
+        if (req.method === 'terminal' || req.method === 'accounts') pane = typeof req.params.pane === 'string' ? req.params.pane.slice(0, 100) : ''
       } catch {
         pane = null
       }

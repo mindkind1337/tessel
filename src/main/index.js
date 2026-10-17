@@ -79,6 +79,7 @@ import { createFileTokens } from './cookieImport/fileTokens'
 import { createImportHistory } from './cookieImport/history'
 import { createAgentBrowser } from './agentBrowser'
 import { createAgentTerminal } from './agentTerminal'
+import { createAgentAccounts } from './agentAccounts'
 import { createChatSessions } from './chat/sessions'
 import { remoteSpawnAvailable, remoteSpawnFor } from './chat/remoteProcess'
 import { remoteSessionDetails, remoteTranscriptExists } from './chat/remoteTranscripts'
@@ -3596,6 +3597,15 @@ ipcMain.handle('terminal:agentSettings', (event, opts) => {
   if (!agentTerminalSettings.enabled) agentTerminal.releaseAll()
   return true
 })
+// Agents moving panes to another sign-in account (agentAccounts.js): the
+// account tools of teamMcp/server.cjs, over the tessel command's pipe
+// ('accounts' below), each request signed by its pane's team secret; the
+// window checks a switch, asks the user on a card and restarts the panes.
+const agentAccounts = createAgentAccounts({
+  verify: (body, paneId) => verifyRequest(body, paneId, 'accounts'),
+  ask: (method, params, opts) => cliBridge.ask(method, params, opts),
+  log
+})
 // The Stop on a terminal's "<agent> is using this terminal" badge.
 ipcMain.handle('terminal:agentStop', (event, paneId) => {
   if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents) return false
@@ -5255,6 +5265,7 @@ const cliHandlers = {
   usage: async () => accountUsage.usage(),
   browser: async (params) => agentBrowser.handle(params),
   terminal: async (params, opts) => agentTerminal.handle(params, opts),
+  accounts: async (params, opts) => agentAccounts.handle(params, opts),
   'team-mgmt': async (params) => {
     const { pane, op, args = {}, auth } = params || {}
     const paneId = typeof pane === 'string' ? pane : ''

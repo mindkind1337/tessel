@@ -24,6 +24,7 @@ const SKIPPED_FILES = {
   'agentBrowserInput.js': 'answers to the agents’ browser tools',
   'agentBrowserSnapshot.js': 'page snapshots read by agents',
   'agentTerminal.js': 'answers to the agents’ terminal tools',
+  'agentAccounts.js': 'answers to the agents’ account tools',
   'ptyHost.js': 'terminal host protocol (a separate process)',
   'ptyClient.js': 'terminal host protocol',
   'agentStateStore.js': 'internal status store errors, never shown',
