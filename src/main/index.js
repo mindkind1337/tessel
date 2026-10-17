@@ -357,8 +357,12 @@ if (process.platform === 'win32') app.setAppUserModelId(APP_ID)
 const log = createLogger({ dir: join(app.getPath('userData'), 'logs') })
 
 // When this process started (the startup line in the log, pty:reconcile),
-// and when it reached the terminal host.
+// when its code had run (a dev build just rebuilt is read slowly the first
+// time: the antivirus checks the new file), when it held the instance lock
+// with the app ready, and when it reached the terminal host.
 const processStartedAt = Date.now() - Math.round(process.uptime() * 1000)
+let mainCodeLoadedAt = 0
+let runningAt = 0
 let hostConnectedAt = 0
 
 // How long each IPC handler holds this process (ipcTiming.js): a long one is
@@ -805,9 +809,10 @@ let toolDirs = null
 // Python's user scripts folder (where pip --user puts kimi, aider...), asked
 // once in the background: python and the py launcher.
 let pythonDirs = []
+let pythonDirsRead = Promise.resolve()
 if (process.platform === 'win32') {
   const ask = "import sysconfig, os; print(sysconfig.get_path('scripts', os.name + '_user'))"
-  Promise.all([runQuiet('python', ['-c', ask], { timeout: 15000 }), runQuiet('py', ['-3', '-c', ask], { timeout: 15000 })]).then(
+  pythonDirsRead = Promise.all([runQuiet('python', ['-c', ask], { timeout: 15000 }), runQuiet('py', ['-3', '-c', ask], { timeout: 15000 })]).then(
     (res) => {
       pythonDirs = [...new Set(res.filter((r) => r.ok).map((r) => r.stdout.trim()).filter(Boolean))]
       toolDirs = null
@@ -883,6 +888,20 @@ async function getAgents(custom = []) {
       }))
   )
   return [...(await agentCache), ...extra]
+}
+// The agent list, looked up as soon as this copy runs (at start, below)
+// rather than when the window first asks: the window waits for it before it
+// restores the layout, and its where.exe takes about 1.5 s for the 40-odd
+// agent commands. Only once the PATH from Windows and Python's scripts
+// folder are known, so the list is the one the window would have got.
+let agentListReadyAt = 0
+function warmAgentList() {
+  Promise.all([freshPathRead, pythonDirsRead.catch(() => {})])
+    .then(() => getAgents())
+    .then(() => {
+      if (!agentListReadyAt) agentListReadyAt = Date.now()
+    })
+    .catch(() => {})
 }
 
 function defaultShell() {
@@ -4001,6 +4020,34 @@ function paneExited(id, exitCode, signal, pid) {
 // Live Share (liveShare.js): this Tessel's screen shared with guests, or the
 // host's panes shown here when this Tessel joined a session.
 let liveShare = null
+// The terminal host is reached as soon as this copy runs (at start, below),
+// usually before the window's page has loaded. What the connection tells the
+// window waits for that page, which only listens once loaded: ssh's
+// questions (asked again by the sync on connecting) and an agent's missing
+// tools on a host. Terminal output does not wait: each pane's re-attach
+// answer brings its screen, and its end. Only the first page is waited for.
+let pageLoaded = false
+let pageLoadedAt = 0
+const beforePage = []
+const WINDOW_EVENTS = new Set(['ssh-prompt', 'ssh-prompt-done', 'remote-tools'])
+function afterPageLoad(fn) {
+  if (pageLoaded) return fn()
+  // Bounded: a page that never loads does not make this grow for good.
+  if (beforePage.length < 500) beforePage.push(fn)
+}
+function pageDidLoad() {
+  if (pageLoaded) return
+  pageLoaded = true
+  pageLoadedAt = Date.now()
+  for (const fn of beforePage.splice(0)) {
+    try {
+      fn()
+    } catch {
+      /* one listener's failure never stops the others */
+    }
+  }
+}
+
 const host = createPtyClient({
   pipe: hostPipe,
   token: hostToken(),
@@ -4024,16 +4071,24 @@ const host = createPtyClient({
   },
   // ssh2 connections, channels and questions (ssh/sshRemote.js).
   onEvent: (msg) => {
-    // The tunnel could not give a pane's agent its tools (remote-tools).
-    if (msg && msg.op === 'remote-tools') return remoteToolsMissing(msg)
-    sshRemote.onEvent(msg)
+    const handle = () => {
+      // The tunnel could not give a pane's agent its tools (remote-tools).
+      if (msg && msg.op === 'remote-tools') return remoteToolsMissing(msg)
+      sshRemote.onEvent(msg)
+    }
+    // Channels and connection states go on at once (the window reads the
+    // states when it loads); what is shown in the window waits for its page.
+    if (msg && WINDOW_EVENTS.has(msg.op)) afterPageLoad(handle)
+    else handle()
   },
   onConnected: (h) => {
     if (!hostConnectedAt) hostConnectedAt = Date.now()
     hostPtysAtConnect = h && Array.isArray(h.ptys) ? h.ptys : []
-    void sshRemote.onConnected()
+    afterPageLoad(() => void sshRemote.onConnected())
   },
   onLost: () => {
+    // What this connection said for the page is void with it.
+    beforePage.length = 0
     sshRemote.onLost()
     if (quitting) return
     log.error('pty', 'lost the connection to the terminal host')
@@ -4487,8 +4542,9 @@ async function createSshPane(opts, target, spec, shell, startedAt) {
 }
 
 // The re-attaches since this process started, for the startup line in the
-// log (pty:reconcile): how many, how long the host took, how much was sent.
-const attachStats = { count: 0, hostMs: 0, slowest: 0, chars: 0, sent: 0, firstAt: 0, lastAt: 0 }
+// log (pty:reconcile): how many, how long the host took, how much was sent,
+// the longest an answer waited for its agent state.
+const attachStats = { count: 0, hostMs: 0, slowest: 0, chars: 0, sent: 0, firstAt: 0, lastAt: 0, registerWait: 0 }
 
 // Re-attach to a terminal that kept running in the host (after a restart,
 // crash or reload). Returns its recent output to replay.
@@ -4543,6 +4599,7 @@ async function attached(id, res, asked, probe = false) {
   if (res.agentProvider && res.agentLaunchToken && !res.exited) {
     // Not longer than ATTACH_REGISTER_WAIT_MS: it then goes on by itself.
     let waited = null
+    const registering = Date.now()
     try {
       await Promise.race([
         agentStateStore.register({ paneId: id, provider: res.agentProvider, launchToken: res.agentLaunchToken, startedAt: res.agentStartedAt }),
@@ -4552,6 +4609,7 @@ async function attached(id, res, asked, probe = false) {
       /* renderer shows unknown until an observation can be read */
     } finally {
       clearTimeout(waited)
+      if (!probe) attachStats.registerWait = Math.max(attachStats.registerWait, Date.now() - registering)
     }
   }
   return {
@@ -4569,18 +4627,22 @@ async function attached(id, res, asked, probe = false) {
     remoteHostId: res.remoteHostId || null
   }
 }
-// One line in the log once the window has restored its layout: when the
-// terminal host answered, the re-attaches, and the IPC handlers that held
-// this process longest since it started (ipcTiming.js).
+// One line in the log once the window has restored its layout: when this
+// process's steps were done (its code, the instance lock, the agent list, the
+// window's page), when the terminal host answered, the re-attaches, and the
+// IPC handlers that held this process longest since it started (ipcTiming.js).
 function logStartupMain() {
   const sec = (ms) => `${(ms / 1000).toFixed(1)} s`
   const mb = (n) => `${(n / 1048576).toFixed(1)} MB`
+  // A step's time since this process started ('?': not done yet).
+  const at = (t) => (t ? sec(t - processStartedAt) : '?')
   const a = attachStats
   const attach = a.count
-    ? `${a.count} terminal(s) re-attached in ${sec(a.lastAt - a.firstAt)} (host ${Math.round(a.hostMs / a.count)} ms each on average, slowest ${a.slowest} ms; ${mb(a.chars)} of screens, ${mb(a.sent)} sent to the window)`
+    ? `${a.count} terminal(s) re-attached in ${sec(a.lastAt - a.firstAt)}, the first asked at ${at(a.firstAt)} (host ${Math.round(a.hostMs / a.count)} ms each on average, slowest ${a.slowest} ms; agent states waited for up to ${a.registerWait} ms; ${mb(a.chars)} of screens, ${mb(a.sent)} sent to the window)`
     : 'no terminal re-attached'
+  const steps = `main code loaded at ${at(mainCodeLoadedAt)}, running at ${at(runningAt)} (instance lock, app ready), agent list at ${at(agentListReadyAt)}, page loaded at ${at(pageLoadedAt)}`
   const connected = hostConnectedAt ? `terminal host connected ${sec(hostConnectedAt - processStartedAt)} after start` : 'terminal host not connected'
-  log.info('app', `startup: ${connected}; ${attach}; window restored ${sec(Date.now() - processStartedAt)} after start; IPC that held this process longest: ${ipcTiming.busiest(6) || 'none'}`)
+  log.info('app', `startup: ${steps}; ${connected}; ${attach}; window restored ${sec(Date.now() - processStartedAt)} after start; IPC that held this process longest: ${ipcTiming.busiest(6) || 'none'}`)
 }
 // What the window keeps of a pane's output (ptyStore.js), so no more is sent:
 // an older terminal host sends its whole history. Cut at a line start (never
@@ -4982,6 +5044,8 @@ function createWindow() {
     60000
   )
   loadPage().catch((err) => log.error('window', `the page did not load: ${err.message}`)).finally(() => clearTimeout(slowLoad))
+  // Its listeners are there: what the terminal host said for it goes now.
+  win.webContents.on('did-finish-load', pageDidLoad)
 
   mainWindow.webContents.on('render-process-gone', (_event, details) => {
     logCrashContext(`renderer gone: reason=${details.reason} exitCode=${details.exitCode}`)
@@ -5374,6 +5438,7 @@ async function acquireInstanceLock() {
   return got
 }
 
+mainCodeLoadedAt = Date.now()
 Promise.all([acquireInstanceLock(), app.whenReady()]).then(([gotInstanceLock]) => {
   if (!gotInstanceLock) {
     // Quit without touching the terminal host: it belongs to the running copy.
@@ -5401,6 +5466,13 @@ Promise.all([acquireInstanceLock(), app.whenReady()]).then(([gotInstanceLock]) =
     'app',
     `started v${app.getVersion()} (${app.isPackaged ? 'installed' : 'dev'}) electron ${process.versions.electron} node ${process.versions.node} ${process.platform} ${os.release()} ${os.arch()}`
   )
+  runningAt = Date.now()
+  // The terminal host now, while the window loads, rather than at the
+  // window's first re-attach (after its page, its agent list and its layout:
+  // seconds later). Its hello, or its start when it is not running, is done
+  // by then. What the connection says for the window waits for its page.
+  host.ensure().catch((err) => log.warn('pty', `terminal host not reached at start: ${err.message}`))
+  warmAgentList()
   ensureDevShortcut()
   createWindow()
   updater.start()
