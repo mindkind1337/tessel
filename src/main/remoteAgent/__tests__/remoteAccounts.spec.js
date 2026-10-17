@@ -981,10 +981,15 @@ describe.skipIf(!gitSh())('a folder after a fresh /login, as Claude Code 2.1 lea
     const a = spawn(sh, [`${home}/bin/claude`], { env, stdio: 'ignore' })
     const b = spawn(sh, [`${home}/bin/claude`], { env: off, stdio: 'ignore' })
     try {
-      await new Promise((r) => setTimeout(r, 800))
       const s = await open(dir)
-      // All the panes in one pass.
-      const all = parsePaneProcesses((await s.run('__t_acctpane', ['pane-acct1', 'claude', 'pane-acct2', 'claude', 'pane-gone9', 'claude'], { cap: 8192, timeoutMs: 30000 })).out.toString('utf8'))
+      // All the panes in one pass. The two processes may take a while to show
+      // under load (a full run): asked again until both are seen, at most 10 s.
+      const scan = async () => parsePaneProcesses((await s.run('__t_acctpane', ['pane-acct1', 'claude', 'pane-acct2', 'claude', 'pane-gone9', 'claude'], { cap: 8192, timeoutMs: 30000 })).out.toString('utf8'))
+      let all = await scan()
+      for (let tries = 0; tries < 33 && (all.panes['pane-acct1']?.found !== 'yes' || all.panes['pane-acct2']?.found !== 'yes'); tries++) {
+        await new Promise((r) => setTimeout(r, 300))
+        all = await scan()
+      }
       expect(all.home).toBe(home)
       expect(all.panes['pane-acct1']).toEqual({ found: 'yes', dir: `${home}/.tessel-server/accounts/claude/bd93c7f5566d` })
       expect(folderIdOf('claude', all.panes['pane-acct1'].dir, all.home)).toBe('bd93c7f5566d')
