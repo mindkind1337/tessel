@@ -29,6 +29,7 @@ import LsInvitations from './liveshare/LsInvitations.vue'
 import LsPeople from './liveshare/LsPeople.vue'
 import LsAccess from './liveshare/LsAccess.vue'
 import LsTrusted from './liveshare/LsTrusted.vue'
+import { plainBridge } from '../liveShareBridge'
 
 const props = defineProps({
   open: { type: Boolean, default: false },
@@ -49,7 +50,9 @@ const props = defineProps({
 // (liveShareWindow.js showAsk puts their prompt first).
 const emit = defineEmits(['close', 'toggle-project', 'review-guest'])
 
-const api = window.shellApi && window.shellApi.liveShare
+// Plain arguments only (liveShareBridge.js): the first invitation lives in a
+// ref, and a reactive object makes the call throw before it is sent.
+const api = plainBridge(window.shellApi && window.shellApi.liveShare)
 const OFF_HOST = { state: 'off', projectIds: [], invites: [], guests: [], offline: [], trusted: [], presence: [], progress: null, error: null, settings: { hideIgnored: true }, actions: [] }
 const OFF_GUEST = { state: 'off', host: null, panes: [], projects: [], reason: null, rights: null, code: null, agents: null }
 const SECTIONS = ['overview', 'invites', 'people', 'access', 'trusted']
@@ -246,8 +249,10 @@ async function startSharing() {
       section.value = 'overview'
       nextTick(() => card.value?.querySelector('[data-test^="ls-first-copy-"]')?.focus())
     }
-  } catch {
-    hostError.value = t('liveShare.share.failed', 'Sharing could not start.')
+  } catch (err) {
+    // Say why: the bare sentence hid a call that never reached the main process.
+    const why = err && err.message ? String(err.message).slice(0, 200) : ''
+    hostError.value = why ? t('liveShare.share.failedWhy', 'Sharing could not start: {{error}}', { error: why }) : t('liveShare.share.failed', 'Sharing could not start.')
   }
   busy.value = false
 }

@@ -83,6 +83,7 @@ import { LS_TEXT_SIZES } from './liveShareFit'
 import { setLshareAccess, endLshareSession, forgetLshareAccess } from './liveShareGuestAccess'
 import { COLUMNS } from '../../shared/taskModel'
 import { createLiveShareFeeds } from './liveShareWindowFeeds'
+import { plainBridge } from './liveShareBridge'
 
 // Typing shown on a pane is main's (typed in the last 3 s, said again every
 // 4 s while it goes on and when it ends); one main never said the end of (a
@@ -200,7 +201,18 @@ function columnName(column) {
 // activityRev() (liveShareWindowFeeds.js).
 const OFF_HOST = () => ({ state: 'off', projectIds: [], invites: [], guests: [], offline: [], trusted: [], presence: [], progress: null, error: null })
 export function createLiveShareWindow(deps) {
-  const api = () => (window.shellApi && window.shellApi.liveShare) || null
+  // Plain arguments only (liveShareBridge.js): a reactive object sent as is
+  // makes the call throw before it reaches the main process.
+  let bridged = null
+  let bridgedFrom = null
+  const api = () => {
+    const raw = (window.shellApi && window.shellApi.liveShare) || null
+    if (raw !== bridgedFrom) {
+      bridgedFrom = raw
+      bridged = plainBridge(raw)
+    }
+    return bridged
+  }
   const state = reactive({
     host: OFF_HOST(),
     guest: { state: 'off', host: null, session: null, panes: [], projects: [], reason: null, rights: null, code: null, chat: false, chats: [], agents: null },

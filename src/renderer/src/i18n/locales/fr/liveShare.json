@@ -29,6 +29,7 @@
       "stop": "Arrêter le partage",
       "cancel": "Annuler",
       "failed": "Le partage n'a pas pu démarrer.",
+      "failedWhy": "Le partage n'a pas pu démarrer : {{error}}",
       "preparing": "Préparation du tunnel Cloudflare…",
       "downloading": "Téléchargement du tunnel Cloudflare… {{percent}} %",
       "starting": "Démarrage…",

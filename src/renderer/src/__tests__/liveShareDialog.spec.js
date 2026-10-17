@@ -127,6 +127,31 @@ describe('LiveShareDialog: before sharing', () => {
     wrapper.unmount()
   })
 
+  it('sends plain data, as Electron copies it (the first invitation is reactive: Start sharing threw "could not be cloned")', async () => {
+    // Electron's IPC copies arguments with the structured clone, which refuses Vue's proxies.
+    api.start.mockImplementation(async (arg) => {
+      structuredClone(arg)
+      return { ok: false, error: 'No internet.' }
+    })
+    const wrapper = await open(PROJECTS)
+    await wrapper.find('[data-test="ls-first-toggle"]').trigger('click')
+    await flushPromises()
+    await wrapper.find('[data-test="ls-start"]').trigger('click')
+    await flushPromises()
+    expect(api.start).toHaveBeenCalledTimes(1)
+    expect(wrapper.find('[data-test="ls-host-error"]').text()).toBe('No internet.')
+    wrapper.unmount()
+  })
+
+  it('a start that throws says why, not only that it failed', async () => {
+    api.start.mockRejectedValue(new Error('An object could not be cloned.'))
+    const wrapper = await open(PROJECTS)
+    await wrapper.find('[data-test="ls-start"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('[data-test="ls-host-error"]').text()).toBe('Sharing could not start: An object could not be cloned.')
+    wrapper.unmount()
+  })
+
   it('invitations and people need a share (an empty state says so); trusted people do not', async () => {
     const wrapper = await open(PROJECTS)
     await wrapper.find('[data-test="ls-section-invites"]').trigger('click')
