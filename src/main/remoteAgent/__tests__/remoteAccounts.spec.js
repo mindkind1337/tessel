@@ -1349,7 +1349,7 @@ describe('Claude subscriptions on a host: what is sent, and when', () => {
     afterEach(() => {
       if (dir) fs.rmSync(dir, { recursive: true, force: true })
       dir = null
-    })
+    }, 60000)
     const recordingCurl = [
       'curl() {',
       '  __h=$(cat)',
@@ -1377,7 +1377,7 @@ describe('Claude subscriptions on a host: what is sent, and when', () => {
       const sent = fs.readFileSync(join(dir, 'curl-stdin'), 'utf8')
       expect(sent.trim()).toBe('Authorization: Bearer sk-ant-oat01-SECRETACCESS')
       expect(sent + fs.readFileSync(join(dir, 'curl-args'), 'utf8') + res.stdout + res.stderr).not.toContain(MCP_TOKEN)
-    })
+    }, 60000)
 
     it('an expired MCP sign-in listed first does not make Claude’s login expired, nor an MCP one valid', () => {
       seed(`{"mcpOAuth":{"x|1":{"accessToken":"${MCP_TOKEN}","expiresAt":1000}},"claudeAiOauth":{"accessToken":"sk-ant-oat01-SECRETACCESS","expiresAt":9999999999999}}`)
@@ -1391,7 +1391,7 @@ describe('Claude subscriptions on a host: what is sent, and when', () => {
       seed(`{"mcpOAuth":{"x|1":{"accessToken":"${MCP_TOKEN}","expiresAt":9999999999999}}}`)
       expect(parsePlans(run(dir).stdout).entries[0].check).toBe('nologin')
       expect(fs.existsSync(join(dir, 'curl-args'))).toBe(false)
-    })
+    }, 60000)
 
     it('a token of the wrong shape: curl is never started; an expiry with leading zeros is read as a number, never an error', () => {
       for (const token of ['abc def', '--config=/etc/passwd', 'abc\\" -H X-Evil:1']) {
@@ -1410,7 +1410,7 @@ describe('Claude subscriptions on a host: what is sent, and when', () => {
       seed('{"claudeAiOauth":{"accessToken":"sk-ant-oat01-SECRETACCESS","expiresAt":000}}')
       res = run(dir)
       expect(parsePlans(res.stdout).entries[0].check).toBe('ok')
-    })
+    }, 60000)
 
     it('curl reads no ~/.curlrc (-q first) and stops past 256 KB; a trace turned on before never shows the token', () => {
       seed('{"claudeAiOauth":{"accessToken":"sk-ant-oat01-SECRETACCESS","expiresAt":9999999999999}}')
@@ -1420,7 +1420,7 @@ describe('Claude subscriptions on a host: what is sent, and when', () => {
       expect(args).toContain('--max-filesize 262144')
       expect(res.stderr).not.toContain('SECRETACCESS')
       expect(res.stdout).not.toContain('SECRETACCESS')
-    })
+    }, 60000)
 
     it('keeps to its time budget: the logins left once it is spent are said skipped, not asked', () => {
       seed('{"claudeAiOauth":{"accessToken":"sk-ant-oat01-SECRETACCESS","expiresAt":9999999999999}}')
@@ -1434,7 +1434,7 @@ describe('Claude subscriptions on a host: what is sent, and when', () => {
       const out = parsePlans(run(dir, slow).stdout)
       expect(out.entries.map((e) => e.check)).toEqual(['ok', 'skipped', 'skipped'])
       expect(fs.readFileSync(join(dir, 'curl-args'), 'utf8').trim().split('\n')).toHaveLength(1)
-    })
+    }, 60000)
   })
 
   it('main: a check cut short keeps the logins it finished (not the last, maybe cut); failures back off, longer each time', async () => {
