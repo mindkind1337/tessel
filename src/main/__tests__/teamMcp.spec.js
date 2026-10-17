@@ -618,6 +618,8 @@ describe('setting up the team tools', () => {
     expect(t).toContain(`command = '${NODE}'`)
     expect(t).toContain('env_vars = ["TESSEL_PANE_ID", "TESSEL_PROJECT_DIR", "TESSEL_TEAM_SECRET"]')
     expect(t).toContain('default_tools_approval_mode = "approve"')
+    // A tool that waits for the user (an account switch) outlasts Codex's 60 s default.
+    expect(t).toContain('tool_timeout_sec = 1200')
     expect(await installCodexServer(script, async () => ({ ok: true }), home, { node: NODE })).toEqual({ changed: false })
     // A quoted key is ours too: replaced, not duplicated; refused = untouched.
     fs.writeFileSync(join(home, '.codex', 'config.toml'), 'model = "x"\n[mcp_servers."tessel-team"]\ncommand = "old"\n[mcp_servers."tessel-team".env]\nA = "1"\n[other]\nk = 1\n')

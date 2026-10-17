@@ -30,7 +30,7 @@ const SECRET_RE = /^[a-f0-9]{64}$/
 const NONCE_RE = /^[A-Za-z0-9_-]{16,64}$/
 const MAX_AGE_MS = 10 * 60 * 1000 // a request older than this is refused
 const MAX_SKEW_MS = 2 * 60 * 1000 // ... and one from the future
-const MAX_NONCES = 20000
+export const MAX_NONCES = 20000
 
 const secrets = new Map() // pane id -> secret (hex)
 // Anti-replay: each nonce is bound to the one request file that carried it
@@ -97,11 +97,15 @@ export function verifyRequest(data, paneId, teamKey, now = Date.now(), file = nu
   if (now - auth.at > MAX_AGE_MS || auth.at - now > MAX_SKEW_MS) return { error: 'the request is too old (or from the future)' }
   const want = requestMac(secret, paneId, teamKey, { ...body, nonce: auth.nonce, at: auth.at })
   if (!sameHex(auth.mac, want)) return { error: 'the request signature does not match its pane' }
+  // Only expired nonces go (the oldest first): one still fresh is never
+  // dropped to make room, or its request could be replayed. Full of fresh
+  // ones: new requests wait (refused) until some expire.
   for (const [n, e] of seen) {
-    if (e.until > now && seen.size <= MAX_NONCES) break
+    if (e.until > now) break
     seen.delete(n)
     if (byFile.get(e.fileKey) === n) byFile.delete(e.fileKey)
   }
+  if (!seen.has(auth.nonce) && seen.size >= MAX_NONCES) return { error: 'too many signed requests in the last minutes: try again in a few minutes' }
   const fileKey = `${teamKey}|${file && file.name ? file.name : ''}`
   const key = `${fileKey}|${paneId}|${file && file.hash ? file.hash : ''}`
   const had = seen.get(auth.nonce)

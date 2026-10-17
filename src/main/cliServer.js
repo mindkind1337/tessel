@@ -301,7 +301,11 @@ function terminalParams(params) {
 // an explanation, and the pane's signature. Nothing else is taken: no answer
 // to the user's card can come this way. Who may do what is decided by
 // agentAccounts.js and the window.
-export const MAX_ACCOUNT_PANES = 50
+// The same limits as the tool's own (teamMcp/server.cjs) and the window's.
+export const MAX_ACCOUNT_PANES = 20
+export const MAX_ACCOUNT_REF = 120
+export const MAX_ACCOUNT_ID = 254
+export const MAX_ACCOUNT_EXPLANATION = 300
 function accountsParams(params) {
   const bad = () => invalid(t('main.cli.badParams', 'The request’s parameters are not valid.'))
   const { pane, op, args, auth } = params
@@ -313,10 +317,10 @@ function accountsParams(params) {
   for (const [k, v] of Object.entries(a)) {
     if (v === null || v === undefined) continue
     if (k === 'panes') {
-      if (!Array.isArray(v) || v.length > MAX_ACCOUNT_PANES || v.some((x) => typeof x !== 'string' || x.length > 200)) throw bad()
+      if (!Array.isArray(v) || v.length > MAX_ACCOUNT_PANES || v.some((x) => typeof x !== 'string' || x.length > MAX_ACCOUNT_REF)) throw bad()
       clean.panes = v.slice()
     } else if (k === 'account' || k === 'explanation') {
-      if (typeof v !== 'string' || v.length > (k === 'account' ? 300 : 2000)) throw bad()
+      if (typeof v !== 'string' || v.length > (k === 'account' ? MAX_ACCOUNT_ID : MAX_ACCOUNT_EXPLANATION)) throw bad()
       clean[k] = v
     } else throw bad()
   }
@@ -409,10 +413,12 @@ export function createCliServer({
     // The command went away: its handler is told, its place is freed.
     let release = null
     const aborter = new AbortController()
+    // Its place is freed when its handler is done (below), not when the
+    // command goes: a handler told to stop may still be finishing, and the
+    // same pane must not start more meanwhile.
     sock.on('close', () => {
       done = true
       aborter.abort()
-      if (release) release()
     })
     sock.on('data', (chunk) => {
       if (done) return

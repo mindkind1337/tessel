@@ -216,6 +216,17 @@ const AWAKE_MODES = computed(() => [
           </div>
           <input id="settings-agent-browser" v-model="settings.agentBrowser" type="checkbox" class="set-switch" data-setting="agentBrowser" />
         </div>
+        <div class="set-row">
+          <div class="set-label">
+            <label for="settings-agent-accounts">{{ t('settings.agents.accounts', 'Let agents move panes to another account') }}</label>
+            <span class="set-hint">{{ t('settings.agents.accountsShort', 'Restart panes on another sign-in, as Switch panes does; you allow each switch') }}</span>
+            <details class="set-more">
+              <summary>{{ t('settings.common.learnMore', 'Learn more') }}</summary>
+              <p>{{ t('settings.agents.accountsHint', 'Agents can list the sign-in accounts Tessel knows (emails, plans, the panes on each; never a token) and ask to restart panes on another one, for example when a subscription ended. Each switch shows a card naming the panes, their projects and the account: nothing restarts before you choose Allow, and no answer in 2 minutes counts as Refuse. An agent on an SSH host sees only that host\'s sign-ins and the panes of its own project there. Off: agents get neither the list nor the switch.') }}</p>
+            </details>
+          </div>
+          <input id="settings-agent-accounts" v-model="settings.agentAccounts" type="checkbox" class="set-switch" data-setting="agentAccounts" />
+        </div>
       </div>
     </div>
 

@@ -7,15 +7,19 @@
 // Microsoft Corporation: src/vs/workbench/contrib/chat/browser/widget/
 // chatContentParts/toolInvocationParts/chatTerminalToolConfirmationSubPart.ts).
 // For one of the user's own terminals: Allow in this terminal, this time, or
-// Deny. The keyboard starts on Skip: an Enter typed for something else never
-// allows a command.
+// Deny. The keyboard starts on Skip, and the Allow buttons are armed only a
+// moment after the card shows (approvalArming.js): a click or an Enter typed
+// for something else never allows a command.
 import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
 import { t } from '../i18n'
+import { useApprovalArming, ARM_MS } from './approvalArming'
 
 const props = defineProps({
   // { kind: 'command' | 'pane' | 'send', command, explanation, goal, info,
   //   disclaimers, actions, own, userTerminal, send, agentLabel, name, where, folder }
-  card: { type: Object, required: true }
+  card: { type: Object, required: true },
+  // How long the Allow buttons stay unusable once shown (tests: 0).
+  armMs: { type: Number, default: ARM_MS }
 })
 const emit = defineEmits(['answer', 'configure'])
 const text = ref(String(props.card.command || ''))
@@ -23,6 +27,7 @@ const menuOpen = ref(false)
 const skipEl = ref(null)
 const dialog = ref(null)
 let previousFocus = null
+const { armed, press, mayAllow } = useApprovalArming(props.armMs)
 
 // A card for a whole terminal or host (allowed once, or until Tessel restarts).
 const whole = computed(() => ['pane', 'read', 'host'].includes(props.card.kind))
@@ -91,6 +96,11 @@ const rows = computed(() => Math.min(20, Math.max(3, lineCount.value)))
 const linesText = computed(() => t('app.agentTerminal.lines', '{{count}} lines: read them all before allowing.', { count: lineCount.value }))
 const actions = computed(() => (Array.isArray(props.card.actions) ? props.card.actions : []))
 
+// An Allow button's click: only once armed, pressed on it.
+function allowWith(event, value) {
+  if (!mayAllow(event)) return
+  answer(value)
+}
 function answer(value) {
   menuOpen.value = false
   if (!value) return emit('answer', { allow: false })
@@ -162,11 +172,11 @@ function trapTab(event) {
           {{ whole ? t('app.agentTerminal.deny', 'Deny') : t('app.agentTerminal.skip', 'Skip') }}
         </button>
         <template v-if="whole">
-          <button class="confirm-btn" data-test="agent-command-once" @click="answer({ remember: 'once' })">{{ t('app.agentTerminal.allowOnce', 'Allow this time') }}</button>
-          <button class="confirm-btn primary danger" data-test="agent-command-allow" @click="answer({ remember: 'pane' })">{{ allowWholeLabel }}</button>
+          <button class="confirm-btn" data-test="agent-command-once" :disabled="!armed" @pointerdown="press" @click="allowWith($event, { remember: 'once' })">{{ t('app.agentTerminal.allowOnce', 'Allow this time') }}</button>
+          <button class="confirm-btn primary danger" data-test="agent-command-allow" :disabled="!armed" @pointerdown="press" @click="allowWith($event, { remember: 'pane' })">{{ allowWholeLabel }}</button>
         </template>
         <div v-else class="aca-split">
-          <button class="confirm-btn primary" data-test="agent-command-allow" @click="answer({ remember: 'once' })">{{ t('app.agentTerminal.allow', 'Allow') }}</button>
+          <button class="confirm-btn primary" data-test="agent-command-allow" :disabled="!armed" @pointerdown="press" @click="allowWith($event, { remember: 'once' })">{{ t('app.agentTerminal.allow', 'Allow') }}</button>
           <button
             v-if="actions.length"
             class="confirm-btn primary aca-more"
@@ -178,7 +188,7 @@ function trapTab(event) {
             ▾
           </button>
           <div v-if="menuOpen" class="aca-menu" role="menu" data-test="agent-command-menu">
-            <button v-for="(a, i) in actions" :key="i" role="menuitem" class="aca-item" @click="answer({ action: a, remember: 'once' })">{{ actionLabel(a) }}</button>
+            <button v-for="(a, i) in actions" :key="i" role="menuitem" class="aca-item" :disabled="!armed" @pointerdown="press" @click="allowWith($event, { action: a, remember: 'once' })">{{ actionLabel(a) }}</button>
             <button role="menuitem" class="aca-item aca-configure" @click="(menuOpen = false), emit('configure')">{{ t('app.agentTerminal.configure', 'Configure auto approve…') }}</button>
           </div>
         </div>

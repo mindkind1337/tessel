@@ -64,6 +64,11 @@ export const DEFAULT_SETTINGS = Object.freeze({
   // (the browser_* tools, src/main/agentBrowser.js); each page shows an
   // Agent badge with a Stop button while one does. On, as in Orca.
   agentBrowser: true,
+  // Agents may move panes to another sign-in account (account_list and
+  // account_switch_panes, src/main/agentAccounts.js): each switch asks you
+  // on a card first; an agent on an SSH host only for its own host and
+  // project. Off: no account tools.
+  agentAccounts: true,
   // Agent-opened browser pages use a separate session, so the sites the user
   // imported cookies into (Settings > Browser) stay signed in only for the
   // user, not for agents using the browser tools. Off: agents share the one

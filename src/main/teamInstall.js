@@ -461,7 +461,10 @@ export function codexTable(scriptPath, node) {
     `env_vars = ["TESSEL_PANE_ID", "TESSEL_PROJECT_DIR", "TESSEL_TEAM_SECRET"]\n` +
     // Only the team tools run without asking (they read and send team
     // messages); every other tool and command keeps Codex's own approvals.
-    `default_tools_approval_mode = "approve"\n`
+    `default_tools_approval_mode = "approve"\n` +
+    // Some tools wait for the user (an account switch's card: 2 minutes,
+    // then the restarts) or a teammate: past Codex's own 60 s.
+    `tool_timeout_sec = 1200\n`
   )
 }
 

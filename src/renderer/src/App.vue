@@ -2663,15 +2663,16 @@ function accountPaneList() {
   const out = []
   for (const ws of workspaces.value) {
     const project = String(ws.name || '')
+    const wsId = ws.id
     forEachLeaf(ws.tree, (l) => {
       if (l.kind === 'chat') {
         // A chat on an SSH host: its login there (never switched from here).
         const onHost = isRemotePath(l.cwd) ? parseRemotePath(l.cwd) : null
-        if (onHost) out.push({ id: l.id, kind: 'chat', name: l.paneName || l.title || l.agentId, agentId: l.agentId, remoteHostId: onHost.hostId, hostAccount: l.hostAccount, accountId: l.accountId, project })
+        if (onHost) out.push({ id: l.id, kind: 'chat', name: l.paneName || l.title || l.agentId, agentId: l.agentId, remoteHostId: onHost.hostId, hostAccount: l.hostAccount, accountId: l.accountId, project, wsId })
         return
       }
       if (l.kind !== 'agent' || !l.agentCommand || l.notConnected) return
-      out.push({ id: l.id, kind: 'agent', name: l.paneName || l.title || l.agentId, agentId: l.agentId, remoteHostId: l.remoteHostId || null, hostAccount: l.hostAccount, accountId: l.accountId, detected: !!l.detected, project })
+      out.push({ id: l.id, kind: 'agent', name: l.paneName || l.title || l.agentId, agentId: l.agentId, remoteHostId: l.remoteHostId || null, hostAccount: l.hostAccount, accountId: l.accountId, detected: !!l.detected, project, wsId })
     })
   }
   return out
@@ -10767,18 +10768,41 @@ watch(
 // open (an agent never cancels the user's own question); Skip when the user
 // does not answer in time.
 const AGENT_APPROVAL_MS = 5 * 60 * 1000 - 5000
+// A pause between two cards: a second click meant for the first never lands
+// on the next one (its Allow is armed later still, approvalArming.js).
+const APPROVAL_GAP_MS = 400
 const approvalCard = ref(null) // { card, resolve }
-let agentApprovals = Promise.resolve()
+let approvalClosedAt = 0
+// Two lines of cards for the one place on screen: the terminal tools' cards
+// first; an account switch's card (agentAccounts.js) waits while one of
+// them waits, and the time a terminal card waits behind an account card is
+// not counted against it.
+const approvalLanes = { terminal: Promise.resolve(), accounts: Promise.resolve() }
+let terminalCardsWaiting = 0
 // Agents whose tool call went away: their waiting cards are answered no.
 const droppedApprovals = new Map() // agent pane -> time
-// opts.ms: its own time (an account switch: 2 minutes). Not answered in
-// time: { allow: false, timedOut: true }.
+// opts.ms: its own time (an account switch: 2 minutes or less). Not
+// answered in time: { allow: false, timedOut: true }.
 function askAgentApproval(card, agentPane = null, { ms = AGENT_APPROVAL_MS } = {}) {
-  const until = Date.now() + ms
+  const lane = card && card.kind === 'accounts' ? 'accounts' : 'terminal'
+  let until = Date.now() + ms
   const asked = Date.now()
   const dropped = () => agentPane && (droppedApprovals.get(agentPane) || 0) >= asked
+  let waiting = lane === 'terminal'
+  if (waiting) terminalCardsWaiting++
+  const doneWaiting = () => {
+    if (waiting) terminalCardsWaiting--
+    waiting = false
+  }
+  const busy = () => confirmState.value || approvalCard.value || Date.now() - approvalClosedAt < APPROVAL_GAP_MS || (lane === 'accounts' && terminalCardsWaiting > 0)
   const run = async () => {
-    while ((confirmState.value || approvalCard.value) && Date.now() < until && !dropped()) await new Promise((r) => setTimeout(r, 300))
+    while (busy() && Date.now() < until && !dropped()) {
+      const behindAccount = lane === 'terminal' && approvalCard.value && approvalCard.value.card && approvalCard.value.card.kind === 'accounts'
+      const t0 = Date.now()
+      await new Promise((r) => setTimeout(r, 100))
+      if (behindAccount) until += Date.now() - t0
+    }
+    doneWaiting()
     if (dropped()) return { allow: false }
     if (Date.now() >= until) return { allow: false, timedOut: true }
     return new Promise((resolve) => {
@@ -10789,8 +10813,9 @@ function askAgentApproval(card, agentPane = null, { ms = AGENT_APPROVAL_MS } = {
       }, Math.max(1000, until - Date.now()))
     })
   }
-  const p = agentApprovals.then(run, run)
-  agentApprovals = p.catch(() => null)
+  const p = approvalLanes[lane].then(run, run)
+  p.finally(doneWaiting).catch(() => null)
+  approvalLanes[lane] = p.catch(() => null)
   return p
 }
 function dismissAgentApprovals(agentPane) {
@@ -10800,6 +10825,7 @@ function dismissAgentApprovals(agentPane) {
 function answerAgentApproval(answer) {
   const entry = approvalCard.value
   approvalCard.value = null
+  if (entry) approvalClosedAt = Date.now()
   if (entry) entry.resolve(answer || { allow: false })
 }
 // An "Allow ..." rule needs auto approve on: the one-time warning first (as
@@ -10984,6 +11010,8 @@ const agentTerminalTargets = createAgentTerminalTargets({
 // the panes on each, and a switch checked as Switch panes… checks it, asked
 // on one card (AgentAccountApproval.vue) and run with Restart on <account>.
 const agentAccountTargets = createAgentAccountTargets({
+  // Settings > Agents > Let agents move panes to another account.
+  enabled: () => settings.agentAccounts !== false,
   async places() {
     const api = window.shellApi
     // Tessel's own check of the Claude subscriptions first (at most once a
@@ -11006,9 +11034,14 @@ const agentAccountTargets = createAgentAccountTargets({
     const l = hit || (named.length === 1 ? named[0] : null)
     return l ? { name: paneLabel(l) || l.id, kind: l.kind, notConnected: !!l.notConnected, runs: !!l.agentCommand } : null
   },
+  // Who asks: from the window's own panes, never from the agent's words (an
+  // agent on an SSH host: its pane's host, its workspace).
   requester(id) {
     const leaf = findLeaf(id)
-    return leaf && (leaf.kind === 'agent' || leaf.kind === 'chat') ? { label: paneLabel(leaf) } : null
+    if (!leaf || (leaf.kind !== 'agent' && leaf.kind !== 'chat')) return null
+    const ws = wsOfLeaf(id)
+    const onHost = leaf.kind === 'chat' && isRemotePath(leaf.cwd) ? parseRemotePath(leaf.cwd) : null
+    return { label: paneLabel(leaf), project: ws ? String(ws.name || '') : '', wsId: ws ? ws.id : null, hostId: leaf.remoteHostId || (onHost && onHost.hostId) || null, agentId: leaf.agentId || null }
   },
   agentName: (id) => (agentById(id) && agentById(id).name) || String(id || ''),
   hostLabel: (id) => remoteHostLabel(id),

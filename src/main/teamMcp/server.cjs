@@ -1449,22 +1449,33 @@ const ACCOUNTS_TEAM_KEY = 'accounts'
 // restart (at most 20 panes; Tessel gives each one up to 45 s).
 const ACCOUNTS_TIMEOUT_MS = 20 * 60 * 1000
 const ACCOUNT_ARG_KEYS = ['panes', 'account', 'explanation']
+// What Tessel takes (cliServer.js, the window): more is refused here, said plainly.
+const ACCOUNT_LIMITS = { panes: 20, ref: 120, account: 254, explanation: 300 }
 
 // Only the known arguments, as Tessel reads them ("panes" a list of names or
-// ids; one text is split at its commas), signed by this pane.
-function accountsRequest(op, args) {
+// ids; one text is split at its commas).
+function accountsArgs(args) {
   const clean = {}
   for (const k of ACCOUNT_ARG_KEYS) {
     const v = args ? args[k] : undefined
     if (v === null || v === undefined || v === '') continue
     if (k === 'panes') {
       const list = Array.isArray(v) ? v : String(v).split(/[,\n]/)
-      const panes = list.map((x) => String(x == null ? '' : x).trim()).filter(Boolean).slice(0, 50)
+      const panes = list.map((x) => String(x == null ? '' : x).trim()).filter(Boolean)
       if (panes.length) clean.panes = panes
       continue
     }
     clean[k] = String(v)
   }
+  return clean
+}
+
+// Signed by this pane, never past Tessel's limits (accountsTool says so first).
+function accountsRequest(op, args) {
+  const clean = accountsArgs(args)
+  if (clean.panes) clean.panes = clean.panes.slice(0, ACCOUNT_LIMITS.panes).map((p) => p.slice(0, ACCOUNT_LIMITS.ref))
+  if (clean.account) clean.account = clean.account.slice(0, ACCOUNT_LIMITS.account)
+  if (clean.explanation) clean.explanation = clean.explanation.slice(0, ACCOUNT_LIMITS.explanation)
   const pane = String(process.env.TESSEL_PANE_ID || '')
   const nonce = crypto.randomBytes(18).toString('base64url')
   const at = Date.now()
@@ -1475,9 +1486,21 @@ function accountsRequest(op, args) {
   return { pane, op, args: clean, auth: { nonce, at, mac } }
 }
 
+// The arguments over Tessel's limits -> what to fix, or null.
+function accountsArgsError(args) {
+  const a = accountsArgs(args)
+  if (a.panes && a.panes.length > ACCOUNT_LIMITS.panes) return `At most ${ACCOUNT_LIMITS.panes} panes at a time: ask for the others in another call.`
+  if (a.panes && a.panes.some((p) => p.length > ACCOUNT_LIMITS.ref)) return `A pane name or id is at most ${ACCOUNT_LIMITS.ref} characters: give the pane's id (see account_list).`
+  if (a.account && a.account.length > ACCOUNT_LIMITS.account) return `"account" is at most ${ACCOUNT_LIMITS.account} characters: give the sign-in id from account_list.`
+  if (a.explanation && a.explanation.length > ACCOUNT_LIMITS.explanation) return `"explanation" is at most ${ACCOUNT_LIMITS.explanation} characters: one sentence for the user.`
+  return null
+}
+
 async function accountsTool(op, args, signal = null, deps = { runtimes: browserRuntimes, call: pipeCall }) {
   if (!process.env.TESSEL_PANE_ID || !teamSecret())
     return { text: 'The account tools work only in an agent Tessel started: restart this agent from Tessel (right-click its pane, Restart).', isError: true }
+  const tooBig = accountsArgsError(args)
+  if (tooBig) return { text: tooBig, isError: true }
   const runtimes = deps.runtimes()
   if (!runtimes.length) return { text: 'Tessel is not running (or is too old for the account tools).', isError: true }
   let last = null
@@ -1495,19 +1518,19 @@ const ACCOUNT_TOOLS = [
   {
     name: 'account_list',
     description:
-      'List the sign-in accounts of the agents that Tessel knows, as Settings > AI provider accounts > Where you\'re signed in shows them: Claude Code and Codex on this computer, and on the SSH hosts and WSL distros as Tessel last read them. For each account: its id (for account_switch_panes), its email, its plan and subscription status (from Tessel\'s own check with Anthropic, not the login file, which still names a canceled plan), where it is signed in, and the panes using it (name, id, project, agent, host). Read-only: never a token or a credential file. To move panes to another account, use account_switch_panes.',
+      'List the sign-ins of the agents that Tessel knows, by account, as Settings > AI provider accounts > Where you\'re signed in shows them: Claude Code and Codex on this computer, and on the SSH hosts and WSL distros as Tessel last read them. For each account its email; for each of its sign-ins: its id (for account_switch_panes), where it is (this PC\'s own sign-in, an account added in Tessel, a folder on an SSH host), its organization, its plan and subscription status (from Tessel\'s own check with Anthropic, not the login file, which still names a canceled plan), and the panes using it (name, id, project, agent, host). Read-only: never a token or a credential file. An agent on an SSH host sees only that host\'s sign-ins and its own project\'s panes there. To move panes to another account, use account_switch_panes. The user can turn these tools off (Settings > Agents).',
     inputSchema: { type: 'object', properties: {} }
   },
   {
     name: 'account_switch_panes',
     description:
-      'Restart panes on another sign-in account, as the user does with Switch panes… (Settings > AI provider accounts > Where you\'re signed in) or Restart on <account> (a pane\'s menu): each pane restarts in place, with its name and team; Claude Code resumes its conversation, Codex (on an SSH host) starts a new one, since a Codex conversation stays with its account. Give the panes (names or ids, see account_list) and the account (its id from account_list, or its email). Each pane must be an agent pane of that account\'s agent (Claude Code panes to a Claude account, Codex panes to a Codex account) on a machine where the account is signed in (this computer, or that SSH host); an account whose subscription Tessel found canceled, unpaid or free is refused. The user sees one card in Tessel\'s window naming each pane, its project, the agent and the account (email and plan), and chooses Allow or Refuse: nothing restarts before Allow, and no answer in 2 minutes counts as Refuse. Do not ask again after a Refuse unless the user asks you to. A pane in the middle of a turn restarts all the same (its turn stops), as with the user\'s own switch. If your own pane is in the list, it restarts last, a few seconds after this answer reaches you.',
+      'Restart panes on another sign-in account, as the user does with Switch panes… (Settings > AI provider accounts > Where you\'re signed in) or Restart on <account> (a pane\'s menu): each pane restarts in place, with its name and team; Claude Code resumes its conversation, Codex (on an SSH host) starts a new one, since a Codex conversation stays with its account. Give the panes (names or ids, see account_list) and the sign-in to move them to: its id from account_list (an email works only when that account has a single sign-in a pane can use on the pane\'s machine; else you are asked to choose one by id). Each pane must be an agent pane of that sign-in\'s agent (Claude Code panes to a Claude account, Codex panes to a Codex account) on the sign-in\'s own machine (this computer, or that SSH host); a sign-in whose subscription Tessel found canceled, unpaid or free is refused. An agent on an SSH host may move only its own project\'s panes on that host. The user sees one card in Tessel\'s window naming who asks, each pane with its project, the agent, the account (email, organization, plan) and the sign-in, and chooses Allow or Refuse: nothing restarts before Allow, and no answer in 2 minutes counts as Refuse. One request at a time; after a Refuse or no answer, wait 2 minutes, and do not ask again unless the user asks you to (the user can also stop your requests until Tessel restarts). A pane in the middle of a turn restarts all the same (its turn stops), as with the user\'s own switch. If your own pane is in the list, it restarts last, a few seconds after this answer reaches you.',
     inputSchema: {
       type: 'object',
       properties: {
         panes: { type: 'array', items: { type: 'string' }, description: 'The panes to move: their names or ids (1 to 20). A name several panes share is refused: give the id.' },
-        account: { type: 'string', description: 'The account to move them to: its id from account_list (or its email).' },
-        explanation: { type: 'string', description: 'Optional: one sentence for the user on why.' }
+        account: { type: 'string', description: 'The sign-in to move them to: its id from account_list. An email works when that account has a single sign-in a pane can use on the pane\'s machine.' },
+        explanation: { type: 'string', description: 'Optional: one sentence for the user on why (at most 300 characters).' }
       },
       required: ['panes', 'account']
     }

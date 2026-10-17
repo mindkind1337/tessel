@@ -356,16 +356,31 @@ describe('security review: terminal requests cannot starve the pipe', () => {
     server.stop()
   })
 
-  it('the client going away cancels its terminal request and frees its place', async () => {
-    let signal = null
-    const { server, token, open } = await setup({ terminal: (_p, opts) => ((signal = opts && opts.signal), new Promise(() => {})) })
-    const sock = open(termLine(token, 'pane-a'))
-    await vi.waitFor(() => expect(signal).toBeTruthy())
-    expect(signal.aborted).toBe(false)
-    sock.emit('close')
-    expect(signal.aborted).toBe(true)
-    // Its place is free again.
-    for (let i = 0; i < MAX_TERMINAL_PER_PANE; i++) open(termLine(token, 'pane-a'))
+  it('the client going away cancels its terminal request; its place is freed once the handler is over', async () => {
+    const signals = []
+    const finish = []
+    // A handler that stops when told, a moment later (as the real ones do).
+    const handler = (_p, opts) =>
+      new Promise((resolve, reject) => {
+        signals.push(opts && opts.signal)
+        finish.push(() => reject(new Error('cancelled')))
+      })
+    const { server, token, open } = await setup({ terminal: handler, accounts: handler })
+    const socks = []
+    for (let i = 0; i < MAX_TERMINAL_PER_PANE; i++) socks.push(open(termLine(token, 'pane-a')))
+    await vi.waitFor(() => expect(signals.length).toBe(MAX_TERMINAL_PER_PANE))
+    socks[0].emit('close')
+    expect(signals[0].aborted).toBe(true)
+    // Not over yet: the pane still has no free place (an account request counts with them).
+    const early = open(line({ token, method: 'accounts', params: { pane: 'pane-a', op: 'list', args: {}, auth: { nonce: 'n'.repeat(20), at: 1, mac: 'x' } } }))
+    await vi.waitFor(() => expect(early.end).toHaveBeenCalled())
+    expect(JSON.parse(early.answer).error.code).toBe('busy')
+    // Over: its place is free again.
+    finish[0]()
+    await new Promise((r) => setTimeout(r, 0))
+    const next = open(termLine(token, 'pane-a'))
+    await vi.waitFor(() => expect(signals.length).toBe(MAX_TERMINAL_PER_PANE + 1))
+    expect(next.end).not.toHaveBeenCalled()
     server.stop()
   })
 })

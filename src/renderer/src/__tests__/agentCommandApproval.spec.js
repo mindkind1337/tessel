@@ -1,4 +1,5 @@
-import { describe, it, expect, afterEach } from 'vitest'
+import { describe, it, expect, afterEach, vi } from 'vitest'
+import { nextTick } from 'vue'
 import { mount, flushPromises } from '@vue/test-utils'
 import AgentCommandApproval from '../components/AgentCommandApproval.vue'
 
@@ -10,7 +11,7 @@ describe('the approval card', () => {
   })
   const open = (card) => {
     wrapper = mount(AgentCommandApproval, {
-      props: { card: { kind: 'command', command: 'npm test', explanation: 'Runs the tests', goal: 'Check', own: true, agentLabel: 'Ada', name: 'Ada · terminal', where: 'this computer', disclaimers: [], actions: [], ...card } },
+      props: { card: { kind: 'command', command: 'npm test', explanation: 'Runs the tests', goal: 'Check', own: true, agentLabel: 'Ada', name: 'Ada · terminal', where: 'this computer', disclaimers: [], actions: [], ...card }, armMs: 0 },
       attachTo: document.body
     })
     return wrapper
@@ -63,7 +64,7 @@ describe('the approval card', () => {
 
 describe('security review: the read card', () => {
   it('asks to read a terminal: Deny, this time, or this terminal', async () => {
-    const w = mount(AgentCommandApproval, { props: { card: { kind: 'read', command: '', own: false, agentLabel: 'Ada', name: 'srv', where: 'this computer', disclaimers: [], actions: [] } }, attachTo: document.body })
+    const w = mount(AgentCommandApproval, { props: { card: { kind: 'read', command: '', own: false, agentLabel: 'Ada', name: 'srv', where: 'this computer', disclaimers: [], actions: [] }, armMs: 0 }, attachTo: document.body })
     expect(w.text()).toContain('Ada wants to read the terminal "srv" (this computer)')
     expect(w.find('[data-test="agent-command-text"]').exists()).toBe(false)
     await w.find('[data-test="agent-command-allow"]').trigger('click')
@@ -79,5 +80,38 @@ describe('security review: the whole command is seen', () => {
     expect(Number(w.find('[data-test="agent-command-text"]').attributes('rows'))).toBeGreaterThanOrEqual(8)
     expect(w.find('[data-test="agent-command-lines"]').text()).toContain('8 lines')
     w.unmount()
+  })
+})
+
+describe('security review: a click meant for something else never allows', () => {
+  it('Allow is armed only a moment after the card shows, and again after the window comes back', async () => {
+    vi.useFakeTimers()
+    try {
+      const w = mount(AgentCommandApproval, { props: { card: { kind: 'command', command: 'npm test', own: true, agentLabel: 'Ada', name: 'n', where: 'w', disclaimers: [], actions: [] } }, attachTo: document.body })
+      const allow = () => w.find('[data-test="agent-command-allow"]')
+      await nextTick()
+      expect(allow().attributes('disabled')).toBeDefined()
+      await allow().trigger('click')
+      expect(w.emitted('answer')).toBeUndefined()
+      vi.advanceTimersByTime(800)
+      await nextTick()
+      expect(allow().attributes('disabled')).toBeUndefined()
+      window.dispatchEvent(new Event('focus'))
+      await nextTick()
+      expect(allow().attributes('disabled')).toBeDefined()
+      vi.advanceTimersByTime(800)
+      await nextTick()
+      // A mouse click counts only when pressed on the button itself.
+      allow().element.dispatchEvent(new MouseEvent('click', { detail: 1, bubbles: true }))
+      await nextTick()
+      expect(w.emitted('answer')).toBeUndefined()
+      await allow().trigger('pointerdown')
+      allow().element.dispatchEvent(new MouseEvent('click', { detail: 1, bubbles: true }))
+      await nextTick()
+      expect(w.emitted('answer')[0][0]).toMatchObject({ allow: true })
+      w.unmount()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })
