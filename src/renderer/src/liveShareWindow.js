@@ -804,9 +804,18 @@ export function createLiveShareWindow(deps) {
   // (an agent pane of a host whose Tessel does not share conversations yet:
   // the chat view says so) or null (no chat button).
   const chatEntry = (id) => (state.guest.chats || []).find((c) => c.id === id) || null
+  // 'unavailable': the host says why it has none (chatWhy: 'ssh' | 'agent' |
+  // 'none'); the button shows, off, and says it.
   function chatOf(p) {
-    if (state.guest.chat) return chatEntry(p.id) ? 'shared' : null
+    if (state.guest.chat) {
+      const c = chatEntry(p.id)
+      return c ? (c.reason ? 'unavailable' : 'shared') : null
+    }
     return p.kind === 'agent' && GUEST_CHAT_AGENTS.includes(p.agentId) ? 'old-host' : null
+  }
+  const chatWhy = (p) => {
+    const c = state.guest.chat ? chatEntry(p.id) : null
+    return c && c.reason ? c.reason : null
   }
   // Your view of a pane: your choice, else its terminal (the chat when it has
   // none).
@@ -909,7 +918,7 @@ export function createLiveShareWindow(deps) {
         sessionId: null,
         // The host's pane: its project, its size (the terminal shows it at
         // that size), what it runs there, and whether you may type in it.
-        liveShare: { session, project: p.project || null, cols: p.cols || 0, rows: p.rows || 0, kind: p.kind, agentId: p.agentId || null, canType: may('type'), host: state.guest.host || '', terminal: true, chat: chatOf(p), view: 'terminal', textSize: textSizes.get(p.id) || 'fit' },
+        liveShare: { session, project: p.project || null, cols: p.cols || 0, rows: p.rows || 0, kind: p.kind, agentId: p.agentId || null, canType: may('type'), host: state.guest.host || '', terminal: true, chat: chatOf(p), chatWhy: chatWhy(p), view: 'terminal', textSize: textSizes.get(p.id) || 'fit' },
         // A new terminal here each time the host's pane starts again (or the
         // connection came back): SplitNode's key.
         gen: p.gen || 0,
@@ -919,7 +928,7 @@ export function createLiveShareWindow(deps) {
         broadcast: false
       })
       leaf.attached = true
-      leaf.liveShare.view = leaf.liveShare.chat ? viewOf(p.id, true) : 'terminal'
+      leaf.liveShare.view = leaf.liveShare.chat && leaf.liveShare.chat !== 'unavailable' ? viewOf(p.id, true) : 'terminal'
       guestLeaves.set(p.id, leaf)
       applyAll(session)
     } finally {
@@ -1032,7 +1041,8 @@ export function createLiveShareWindow(deps) {
         leaf.liveShare.canType = may('type')
         // Its chat (the host may start or stop sharing its conversation).
         leaf.liveShare.chat = chatOf(p)
-        leaf.liveShare.view = leaf.liveShare.chat ? viewOf(p.id, true) : 'terminal'
+        leaf.liveShare.chatWhy = chatWhy(p)
+        leaf.liveShare.view = leaf.liveShare.chat && leaf.liveShare.chat !== 'unavailable' ? viewOf(p.id, true) : 'terminal'
         if ((p.gen || 0) !== (leaf.gen || 0)) {
           if (!attaching.has(p.id)) reattachGuestPane(p, leaf, s.session)
         } else if (p.project && leaf.liveShare.project !== p.project) leaf.liveShare.project = p.project
@@ -1448,7 +1458,7 @@ export function createLiveShareWindow(deps) {
   function setGuestView(id, view) {
     const leaf = guestLeaves.get(id)
     if (!leaf || !leaf.liveShare || (view !== 'chat' && view !== 'terminal')) return false
-    if (view === 'chat' && !leaf.liveShare.chat) return false
+    if (view === 'chat' && (!leaf.liveShare.chat || leaf.liveShare.chat === 'unavailable')) return false
     leaf.liveShare.view = view
     views.set(id, view)
     return true

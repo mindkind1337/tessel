@@ -193,12 +193,23 @@ describe('Live Share conversations: the host’s agent panes, a guest’s chat p
           leaf('pane-3', { kind: 'agent', agentId: 'claude' }),
           leaf('pane-4', { kind: 'agent', agentId: 'aider', sessionId: UUID })
         ]),
-        leaf('pane-5', { kind: 'agent', agentId: 'claude', sessionId: UUID, remoteHostId: 'h1', cwd: 'ssh://h1/home/x' })
+        leaf('pane-5', { kind: 'agent', agentId: 'claude', sessionId: UUID, remoteHostId: 'ssh-h1', cwd: 'ssh://ssh-h1/home/x/app', remotePath: '/home/x' }),
+        leaf('pane-6', { kind: 'agent', agentId: 'antigravity', sessionId: UUID, remoteHostId: 'ssh-h1', cwd: 'ssh://ssh-h1/home/x' }),
+        leaf('pane-7', { kind: 'agent', agentId: 'codex', sessionId: UUID, remoteHostId: 'ssh-h1', detected: true }),
+        leaf('pane-8', { kind: 'shell', title: 'PowerShell' })
       ])
     }
     expect(hostChatsFromWorkspace(ws)).toEqual([
       { id: 'pane-1', agentId: 'claude', sessionId: UUID, accountId: 'acct-1', terminal: true, title: '', roots: ['C:\\work\\site\\app', 'C:\\work\\site'] },
-      { id: 'pane-2', agentId: 'codex', sessionId: UUID, terminal: false, title: 'Codex chat', roots: ['C:\\work\\site'] }
+      { id: 'pane-2', agentId: 'codex', sessionId: UUID, terminal: false, title: 'Codex chat', roots: ['C:\\work\\site'] },
+      // No conversation yet; an agent Tessel does not read: listed with why.
+      { id: 'pane-3', agentId: 'claude', terminal: true, title: '', reason: 'none' },
+      { id: 'pane-4', agentId: 'aider', terminal: true, title: '', reason: 'agent' },
+      // On an SSH host: Claude Code and Codex are read there (the roots are the host's);
+      // another agent, or one only detected in a shell, says it cannot be read from the server.
+      { id: 'pane-5', agentId: 'claude', sessionId: UUID, hostId: 'ssh-h1', terminal: true, title: '', roots: ['/home/x/app', '/home/x'] },
+      { id: 'pane-6', agentId: 'antigravity', terminal: true, title: '', reason: 'ssh' },
+      { id: 'pane-7', agentId: 'codex', terminal: true, title: '', reason: 'ssh' }
     ])
     expect(hostChatsFromWorkspace(null)).toEqual([])
   })

@@ -121,6 +121,20 @@ describe('shareChat: what a guest gets of a conversation', () => {
       { id: 'pane-1', agentId: 'claude', sessionId: UUID, accountId: 'acct-1', terminal: true, title: '', roots: ['C:\\work\\site'] },
       { id: 'pane-4', agentId: 'codex', sessionId: UUID, accountId: undefined, terminal: false, title: 'Codex', roots: [] }
     ])
+    // An agent on an SSH host (Claude Code, Codex: valid host and session), and a pane that only says why it has none.
+    expect(
+      cleanHostChats([
+        { id: 'a', agentId: 'claude', sessionId: UUID, hostId: 'ssh-1a2b', roots: ['/home/me/app'] },
+        { id: 'b', agentId: 'antigravity', sessionId: UUID, hostId: 'ssh-1a2b' },
+        { id: 'c', agentId: 'claude', sessionId: UUID, hostId: '../evil' },
+        { id: 'd', agentId: 'antigravity', reason: 'ssh', hostId: 'ssh-1a2b', sessionId: 'x', roots: ['/secret'] },
+        { id: 'e', agentId: 'aider', reason: 'bogus' },
+        { id: 'f', agentId: 'bash!', reason: 'agent' }
+      ])
+    ).toEqual([
+      { id: 'a', agentId: 'claude', sessionId: UUID, hostId: 'ssh-1a2b', terminal: true, title: '', roots: ['/home/me/app'] },
+      { id: 'd', agentId: 'antigravity', reason: 'ssh', terminal: true, title: '', roots: [] }
+    ])
   })
 })
 
@@ -373,13 +387,13 @@ describe('registerLiveShare: a guest looks at a host’s agent pane as a chat', 
     { id: 'pane-2-chat', agentId: 'codex', sessionId: UUID, terminal: false, title: 'Codex chat', roots: ['C:\\work\\site'] }
   ]
 
-  async function sharedAndJoined({ reader = fakeReader(), projects = ['ws-1'], chatRetry = {} } = {}) {
+  async function sharedAndJoined({ reader = fakeReader(), projects = ['ws-1'], chatRetry = {}, hostChats = chats } = {}) {
     const host = fakeMain({ chatViews: reader.factory, chatRetry })
     const guest = fakeMain()
     mains.push(host, guest)
     const started = await host.handle['liveShare:start'](null, { name: 'Cedric', projects: ['ws-1', 'ws-2'] })
     host.on['liveShare:layouts'](null, [
-      { id: 'ws-1', layout: { project: 'site', tree, activeId: 'pane-1-cc' }, chats },
+      { id: 'ws-1', layout: { project: 'site', tree, activeId: 'pane-1-cc' }, chats: hostChats },
       { id: 'ws-2', layout: { project: 'other', tree: leaf('pane-9-cc'), activeId: null }, chats: [{ id: 'pane-9-cc', agentId: 'claude', sessionId: UUID, terminal: true, roots: [] }] }
     ])
     await guest.handle['liveShare:join'](null, { invite: started.invites[0].code, name: 'Alex' })
@@ -423,6 +437,29 @@ describe('registerLiveShare: a guest looks at a host’s agent pane as a chat', 
     await guest.handle['liveShare:chatWatch'](null, { id: 'pane-ls1-2-chat', on: false })
     await until(() => reader.closed.length)
     expect(reader.closed).toEqual(['tv-1'])
+  })
+
+  it('an agent on an SSH host: read over the connection, the guest gets the same smaller copy and never where it is', async () => {
+    const hostChats = [{ id: 'pane-1-cc', agentId: 'claude', sessionId: UUID, hostId: 'ssh-1a2b', terminal: true, title: '', roots: ['/home/me/app'] }]
+    const { guest, reader, joined } = await sharedAndJoined({ hostChats })
+    expect(joined.chats).toEqual([{ id: 'pane-ls1-1-cc', project: 'ws-1', title: 'Claude Code', agentId: 'claude', accent: null, terminal: true }])
+    expect(JSON.stringify(guest.sent)).not.toContain('ssh-1a2b')
+    expect(JSON.stringify(guest.sent)).not.toContain('/home/me')
+    expect((await guest.handle['liveShare:chatWatch'](null, { id: 'pane-ls1-1-cc', on: true })).ok).toBe(true)
+    await until(() => guest.last('liveShare:chat'))
+    // The reader is asked for the host's file by SSH host, never a local path or account.
+    expect(reader.opened).toEqual([{ agent: 'claude', sessionId: UUID, hostId: 'ssh-1a2b' }])
+  })
+
+  it('a pane with no conversation to send is listed with why; watching it gets "unavailable", nothing is read', async () => {
+    const hostChats = [{ id: 'pane-1-cc', agentId: 'antigravity', terminal: true, reason: 'ssh', sessionId: UUID, hostId: 'ssh-1a2b', roots: ['/home/me'] }]
+    const { guest, reader, joined } = await sharedAndJoined({ hostChats })
+    expect(joined.chats).toEqual([{ id: 'pane-ls1-1-cc', project: 'ws-1', title: 'Claude Code', agentId: 'antigravity', accent: null, terminal: true, reason: 'ssh' }])
+    await guest.handle['liveShare:chatWatch'](null, { id: 'pane-ls1-1-cc', on: true })
+    const got = await until(() => guest.last('liveShare:chat'))
+    expect(got).toMatchObject({ id: 'pane-ls1-1-cc', ok: false, code: 'unavailable' })
+    expect(reader.opened).toEqual([])
+    expect(JSON.stringify(guest.sent)).not.toContain('ssh-1a2b')
   })
 
   it('only the projects the guest sees; a project taken away closes the reader at once', async () => {

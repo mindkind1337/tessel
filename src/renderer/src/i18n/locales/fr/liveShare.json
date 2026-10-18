@@ -197,6 +197,9 @@
       "showChatLabel": "Votre vue : afficher le chat",
       "readOnly": "Lecture seule : la conversation de {{host}}, seulement sur votre écran",
       "backToTerminal": "Afficher le terminal",
+      "whySsh": "La conversation de cet agent ne peut pas être lue depuis le serveur SSH",
+      "whyAgent": "La conversation de cet agent ne peut pas être lue par Tessel",
+      "whyNone": "Pas encore de conversation à montrer : elle commence au premier message",
       "oldHost": "Le Tessel de {{host}} ne partage pas encore les conversations : il faut une version plus récente de Tessel. Le terminal montre toujours tout.",
       "noTerminal": "{{host}} a ce panneau en mode chat : il n'a pas de terminal à montrer. Sa conversation s'affiche en chat.",
       "showChatButton": "Afficher le chat"

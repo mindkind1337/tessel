@@ -11,7 +11,7 @@
 // when the guest's window has a leaf for it.
 import { reactive } from 'vue'
 import { workspaceViews } from './paneViews'
-import { isRemotePath } from '../../shared/remotePath.js'
+import { isRemotePath, parseRemotePath } from '../../shared/remotePath.js'
 
 const VIEWS = ['editor', 'browser', 'chat']
 
@@ -67,13 +67,25 @@ export function hostLayoutFromWorkspace(ws, maximizedId = null) {
 // transcriptView.js TRANSCRIPT_VIEW_AGENTS): their panes' conversations can
 // be shown to guests.
 export const GUEST_CHAT_AGENTS = ['claude', 'openclaude', 'codex', 'cursor', 'antigravity', 'grok', 'omp']
+// On an SSH host only these (src/main/chat/remoteTranscripts.js): the host's
+// own chat view reads the same two there.
+export const GUEST_REMOTE_CHAT_AGENTS = ['claude', 'codex']
 const isLocalDir = (p) => typeof p === 'string' && !!p && !isRemotePath(p)
+// A folder on an SSH host, as its own path (guests' chats name files by it).
+const hostDir = (p) => {
+  const parsed = typeof p === 'string' ? parseRemotePath(p) : null
+  return parsed && parsed.path.startsWith('/') ? parsed.path : null
+}
 
 // The agent panes of the project's view on screen whose conversation guests
 // can look at as a chat: a terminal agent, or a pane in chat mode (terminal:
-// false), of this computer, whose conversation is known. Where it is (the
-// agent, its session, its account) and the project's folders (paths outside
-// them are hidden from guests) are for the host's main only.
+// false), whose conversation is known: of this computer, or of an SSH host
+// (Claude Code, Codex: read over the connection, as the host's own chat view
+// does). Where it is (the agent, its session, its account or SSH host) and the
+// project's folders (paths outside them are hidden from guests) are for the
+// host's main only. A terminal agent with no conversation to send is listed
+// too, with the reason (reason: 'ssh' | 'agent' | 'none'), so the guest's chat
+// button says why it cannot open instead of being missing.
 export function hostChatsFromWorkspace(ws) {
   if (!ws) return []
   const out = []
@@ -81,15 +93,25 @@ export function hostChatsFromWorkspace(ws) {
     if (!n) return
     if (n.type !== 'leaf') return (n.children || []).forEach(walk)
     const chat = n.kind === 'chat'
-    if (!(n.kind === 'agent' || chat) || !GUEST_CHAT_AGENTS.includes(n.agentId) || typeof n.sessionId !== 'string' || !n.sessionId) return
-    // An agent on an SSH host: its conversation is the host's, not shown.
-    if (n.remoteHostId || (typeof n.cwd === 'string' && isRemotePath(n.cwd))) return
-    const roots = [n.startDir, n.cwd, n.projectDir, n.worktree && n.worktree.path, ws.cwd].filter(isLocalDir)
+    if (!(n.kind === 'agent' || chat) || typeof n.agentId !== 'string') return
+    const remote = !!(n.remoteHostId || (typeof n.cwd === 'string' && isRemotePath(n.cwd)))
+    const readable = remote ? !n.detected && GUEST_REMOTE_CHAT_AGENTS.includes(n.agentId) && typeof n.remoteHostId === 'string' : GUEST_CHAT_AGENTS.includes(n.agentId)
+    const known = typeof n.sessionId === 'string' && !!n.sessionId
+    if (!readable || !known) {
+      // A pane in chat mode is a chat already; only terminals get the note.
+      if (chat) return
+      out.push({ id: n.id, agentId: n.agentId, terminal: true, title: '', reason: !readable ? (remote ? 'ssh' : 'agent') : 'none' })
+      return
+    }
+    const roots = remote
+      ? [hostDir(n.cwd), hostDir(n.startDir), hostDir(n.projectDir), n.remotePath, ws.remote && ws.remote.path].filter((p) => typeof p === 'string' && p.startsWith('/'))
+      : [n.startDir, n.cwd, n.projectDir, n.worktree && n.worktree.path, ws.cwd].filter(isLocalDir)
     out.push({
       id: n.id,
       agentId: n.agentId,
       sessionId: n.sessionId,
-      ...(typeof n.accountId === 'string' || n.accountId === null ? { accountId: n.accountId } : {}),
+      ...(remote ? { hostId: n.remoteHostId } : {}),
+      ...(!remote && (typeof n.accountId === 'string' || n.accountId === null) ? { accountId: n.accountId } : {}),
       terminal: !chat,
       // A pane in chat mode has no name in the layout (only terminals do).
       title: chat ? n.paneName || n.title || '' : '',

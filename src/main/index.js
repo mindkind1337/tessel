@@ -4150,6 +4150,9 @@ liveShare = registerLiveShare({
         return (r && r[agent]) || null
       },
       sessionsDir: () => sessionsDir(),
+      // An agent on an SSH host: its file there, over the host's connection
+      // (the host's own chat view reads it the same way).
+      readAgentFile: (hostId, q) => (remoteHosts.get(hostId) ? remoteFs.readAgentFile(hostId, q) : { ok: false, error: 'unknown host' }), // i18n-ignore
       limits: { bytes: 2 * 1024 * 1024, events: 1000, text: 32 * 1024 }
     })
 })

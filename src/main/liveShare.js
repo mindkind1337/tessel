@@ -106,8 +106,9 @@ import { ensureCloudflared, startTunnel, waitReachable, waitRegistered, tunnelLo
 import { createSessionFile, createKeptFile } from './liveShare/sharePersist.js'
 import { pidRunning as pidAlive } from './processTree.js'
 import { trimBuffer, HOST_BUFFER_BYTES } from './ptyProtocol.js'
-import { guestChatPayload, cleanChatPanes, cleanChatMessage, mergeChatEvents } from './liveShare/shareChat.js'
+import { guestChatPayload, cleanChatPanes, cleanChatMessage, mergeChatEvents, CHAT_REASONS } from './liveShare/shareChat.js'
 import { TRANSCRIPT_VIEW_AGENTS, validViewId } from './chat/transcriptView.js'
+import { validRemoteTranscript } from './chat/remoteTranscripts.js'
 import { TOPICS, subKey } from './liveShare/shareChannel.js'
 import { createShareRequests, SHARE_OPS } from './liveShare/shareRequests.js'
 import { createShareScope, hiddenByName, relFrom, DEFAULT_SHARE_SETTINGS } from './liveShare/shareScope.js'
@@ -188,20 +189,25 @@ export function cleanHostChats(list) {
   const out = []
   for (const c of (Array.isArray(list) ? list : []).slice(0, LAYOUT_PANES)) {
     if (!c || typeof c.id !== 'string' || !/^[\w-]{1,80}$/.test(c.id) || out.some((x) => x.id === c.id)) continue
+    const base = { id: c.id, terminal: c.terminal !== false, title: str(c.title) }
+    // An agent pane with no conversation to send: guests see why.
+    if (CHAT_REASONS.includes(c.reason)) {
+      if (typeof c.agentId === 'string' && /^[\w-]{1,40}$/.test(c.agentId)) out.push({ ...base, agentId: c.agentId, reason: c.reason, roots: [] })
+      continue
+    }
+    // An agent on an SSH host: its file there, read over the connection.
+    if (c.hostId != null) {
+      if (!validRemoteTranscript(c.agentId, c.hostId, c.sessionId)) continue
+      out.push({ ...base, agentId: c.agentId, sessionId: c.sessionId, hostId: c.hostId, roots: cleanHostRoots(c.roots) })
+      continue
+    }
     if (!TRANSCRIPT_VIEW_AGENTS.includes(c.agentId) || !validViewId(c.agentId, c.sessionId)) continue
     const accountId = c.accountId === null || (typeof c.accountId === 'string' && ACCOUNT_ID.test(c.accountId)) ? c.accountId : undefined
-    out.push({
-      id: c.id,
-      agentId: c.agentId,
-      sessionId: c.sessionId,
-      accountId,
-      terminal: c.terminal !== false,
-      title: str(c.title),
-      roots: (Array.isArray(c.roots) ? c.roots : []).filter((r) => typeof r === 'string' && r.length <= 1024).slice(0, 8)
-    })
+    out.push({ ...base, agentId: c.agentId, sessionId: c.sessionId, accountId, roots: cleanHostRoots(c.roots) })
   }
   return out
 }
+const cleanHostRoots = (roots) => (Array.isArray(roots) ? roots : []).filter((r) => typeof r === 'string' && r.length <= 1024).slice(0, 8)
 
 export const defaultShareName = () => {
   try {
@@ -579,7 +585,7 @@ export function registerLiveShare({
       const chats = cleanChatPanes(
         (chatSources.get(id) || [])
           .filter((c) => chatHome.get(c.id) === id)
-          .map((c) => ({ id: c.id, title: (byId.get(c.id) && byId.get(c.id).title) || c.title, agentId: c.agentId, accent: byId.get(c.id) ? byId.get(c.id).accent : null, terminal: c.terminal })),
+          .map((c) => ({ id: c.id, title: (byId.get(c.id) && byId.get(c.id).title) || c.title, agentId: c.agentId, accent: byId.get(c.id) ? byId.get(c.id).accent : null, terminal: c.terminal, reason: c.reason })),
         LAYOUT_PANES
       )
       return { id, layout, panes, chats }
@@ -1042,7 +1048,7 @@ export function registerLiveShare({
   const chatReader = typeof makeChatViews === 'function' ? makeChatViews((channel, msg) => channel === 'transcriptView:event' && onFeedEvent(msg)) : null
   const feeds = new Map() // pane id -> { s, key, viewId, retry, code, tries }
   const feedOfView = new Map() // view id -> pane id
-  const sourceKey = (c) => (c ? `${c.agentId}|${c.sessionId}|${c.accountId === undefined ? '' : String(c.accountId)}` : '')
+  const sourceKey = (c) => (c ? `${c.agentId}|${c.sessionId}|${c.hostId || ''}|${c.reason || ''}|${c.accountId === undefined ? '' : String(c.accountId)}` : '')
   function pushChat(s, id, read) {
     const feed = feeds.get(id)
     // The same "nothing yet" again: not said again.
@@ -1070,7 +1076,9 @@ export function registerLiveShare({
     const feed = { s, key: sourceKey(src), viewId: null, retry: null, code: before ? before.code : null, tries: retry && before ? before.tries + 1 : 0 }
     feeds.set(id, feed)
     if (!src || !chatReader) return pushChat(s, id, { ok: false, code: 'missing' })
-    const q = { agent: src.agentId, sessionId: src.sessionId, paneId: id, ...(src.accountId !== undefined ? { accountId: src.accountId } : {}) }
+    // A pane listed only to say why it has no conversation: nothing to read.
+    if (src.reason) return pushChat(s, id, { ok: false, code: 'unavailable' })
+    const q = src.hostId ? { agent: src.agentId, sessionId: src.sessionId, hostId: src.hostId } : { agent: src.agentId, sessionId: src.sessionId, paneId: id, ...(src.accountId !== undefined ? { accountId: src.accountId } : {}) }
     Promise.resolve()
       .then(() => chatReader.openFromWindow(q))
       .catch(() => null)
@@ -1768,7 +1776,7 @@ export function registerLiveShare({
     [...g.panes.values()].map((p) => ({ id: p.localId, project: p.project, title: p.title, kind: p.kind, agentId: p.agentId, accent: p.accent, cols: p.cols, rows: p.rows, gen: p.gen }))
   // The host's agent panes this guest can look at as a chat (terminal: the
   // host's pane has one; a pane in chat mode has none).
-  const guestChatsList = (g) => [...g.chats.values()].map((e) => ({ id: e.localId, project: e.project, title: e.title, agentId: e.agentId, accent: e.accent, terminal: e.terminal }))
+  const guestChatsList = (g) => [...g.chats.values()].map((e) => ({ id: e.localId, project: e.project, title: e.title, agentId: e.agentId, accent: e.accent, terminal: e.terminal, ...(e.reason ? { reason: e.reason } : {}) }))
   // A project's layout with this window's pane ids (only its own panes are
   // terminals shown here).
   const localLayout = (g, project) => {

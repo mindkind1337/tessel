@@ -468,6 +468,11 @@ export function mergeChatEvents(prev, update) {
 // The host's agent panes a guest can look at as a chat, as the guest gets
 // them: { id, title, agentId, accent, terminal } (terminal: the host's pane
 // has one; a pane in chat mode has none).
+// Why a pane has no conversation to show (the host says it, so the guest's
+// chat button can say it too instead of vanishing): 'ssh' (an agent on an SSH
+// server whose conversation Tessel cannot read there), 'agent' (an agent whose
+// conversation Tessel cannot read), 'none' (it has none yet).
+export const CHAT_REASONS = Object.freeze(['ssh', 'agent', 'none'])
 export function cleanChatPanes(list, max = 64) {
   const out = []
   for (const c of Array.isArray(list) ? list.slice(0, max) : []) {
@@ -477,7 +482,8 @@ export function cleanChatPanes(list, max = 64) {
       title: clip(c.title, 200),
       agentId: typeof c.agentId === 'string' && /^[\w-]{1,40}$/.test(c.agentId) ? c.agentId : null,
       accent: /^#[0-9a-f]{3,8}$/i.test(c.accent || '') ? c.accent : null,
-      terminal: c.terminal !== false
+      terminal: c.terminal !== false,
+      ...(CHAT_REASONS.includes(c.reason) ? { reason: c.reason } : {})
     })
   }
   return out
