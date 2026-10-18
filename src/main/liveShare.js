@@ -342,7 +342,7 @@ function tunnelErrorText(err) {
 // How a joined session's connection can end and be taken up again (the
 // network, the host's Tessel or this one restarting); any other end is final.
 const RECONNECT_REASONS = new Set(['closed', 'error', 'timeout', 'unreachable', 'restarting', 'slow', 'busy'])
-const RECONNECT_FOR_MS = 3 * 60 * 1000
+const RECONNECT_FOR_MS = 30 * 60 * 1000
 const RECONNECT_DELAYS = [1000, 2000, 3000, 5000, 8000, 10000]
 const KEEP_FRESH_MS = 60000
 
@@ -1927,7 +1927,7 @@ export function registerLiveShare({
   }
 
   // The connection dropped: taken up again with the reconnect key, every few
-  // seconds for 3 minutes; the Live Share project stays meanwhile.
+  // seconds for 30 minutes (a host restarting, a PC asleep, a lost network); the Live Share project stays meanwhile.
   function reconnectLater(g) {
     if (joined !== g) return
     const r = g.retry || (g.retry = { since: Date.now(), tries: 0, timer: null })
