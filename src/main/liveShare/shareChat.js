@@ -201,14 +201,27 @@ const PATHS = [
   [new RegExp(`(?:(?<![\\\\/.])[A-Za-z]:\\\\|(?<![\\w\\\\/.])[A-Za-z]:/(?!/))${PATH_BODY}`, 'g'), 'path'],
   // \\server\share\... and //server/share/...
   [new RegExp(`(?<![\\w\\\\/:])(?:\\\\\\\\[^\\s\\\\/]+\\\\|//[^\\s\\\\/]+/)${PATH_BODY}`, 'g'), 'path'],
+  // ///etc/passwd: extra slashes are still the root.
+  [new RegExp(`(?<![\\w\\\\/:.-])/{3,}${PATH_BODY}`, 'g'), 'hide'],
+  // $HOME/..., ${HOME}/...: a home or working folder named by a variable, hidden.
+  [new RegExp(`\\$\\{?(?:HOME|USERPROFILE|PWD|OLDPWD|TMPDIR|XDG_[A-Z_]{1,20})\\}?[\\\\/]${PATH_BODY}`, 'g'), 'hide'],
+  // %USERPROFILE%\...
+  [new RegExp(`%(?:USERPROFILE|HOMEPATH|APPDATA|LOCALAPPDATA|TEMP|TMP)%[\\\\/]${PATH_BODY}`, 'gi'), 'hide'],
   // ~/... and ~user/...: a home folder, hidden.
   [new RegExp(`(?<![\\w\\\\/~.-])~[\\w.-]{0,32}[\\\\/]${PATH_BODY}`, 'g'), 'hide'],
   // ../...: above the folder it was written from, hidden.
   [new RegExp(`(?<![\\w.\\\\/-])\\.\\.[\\\\/]${PATH_BODY}`, 'g'), 'hide'],
   // /two/segments... (one segment, like /compact, is a command, not a path),
   // also after a host (user@host:/home/...) or a flag.
-  [new RegExp(`(?:${START}|(?<=[\\w.-]:))/(?!/)(?:[^\\s"'\`<>|/\\\\]+/)+${PATH_BODY}`, 'g'), 'path']
+  [new RegExp(`(?:${START}|(?<=[\\w.-]:))/(?!/)(?:[^\\s"'\`<>|/\\\\]+/)+${PATH_BODY}`, 'g'), 'path'],
+  // /etc, /root...: one segment is a command (/compact), except a system
+  // folder, hidden.
+  [new RegExp(`(?:${START}|(?<=[\\w.-]:))/(?:etc|root|home|var|proc|sys|usr|opt|srv)(?![\\w.-])`, 'g'), 'hide']
 ]
+// user@host (before a path, or after ssh, scp...): which server it is stays
+// with the host.
+const LOGIN_PATH = /\b[\w.-]{1,64}@[A-Za-z0-9][A-Za-z0-9.-]{0,252}(?=:[\\/~.])/g
+const LOGIN_CMD = /(?<=\b(?:ssh|scp|sftp|rsync|mosh)\b[^\n]{0,200}?\s)[\w.-]{1,64}@[A-Za-z0-9][A-Za-z0-9.-]{0,252}/g
 export function hidePaths(text, roots) {
   let out = str(text)
   if (!roots) return out
@@ -226,7 +239,7 @@ export function hidePaths(text, roots) {
       return rewritePath(p, roots) + tail
     })
   }
-  return out
+  return out.replace(LOGIN_PATH, MASK).replace(LOGIN_CMD, MASK)
 }
 
 // What a guest may read of a text: secrets masked, paths outside the project
@@ -469,10 +482,10 @@ export function mergeChatEvents(prev, update) {
 // them: { id, title, agentId, accent, terminal } (terminal: the host's pane
 // has one; a pane in chat mode has none).
 // Why a pane has no conversation to show (the host says it, so the guest's
-// chat button can say it too instead of vanishing): 'ssh' (an agent on an SSH
-// server whose conversation Tessel cannot read there), 'agent' (an agent whose
-// conversation Tessel cannot read), 'none' (it has none yet).
-export const CHAT_REASONS = Object.freeze(['ssh', 'agent', 'none'])
+// chat button can say it too instead of vanishing): 'agent' (an agent whose
+// conversation Tessel cannot read, here or on an SSH server: a guest is not
+// told which), 'none' (it has none yet).
+export const CHAT_REASONS = Object.freeze(['agent', 'none'])
 export function cleanChatPanes(list, max = 64) {
   const out = []
   for (const c of Array.isArray(list) ? list.slice(0, max) : []) {

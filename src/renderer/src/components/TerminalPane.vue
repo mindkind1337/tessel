@@ -1156,9 +1156,8 @@ const guestChatSource = computed(() => (guestChat.value === 'shared' && ctx.live
 const guestHost = computed(() => (props.node.liveShare && props.node.liveShare.host) || '?')
 const guestChatWhyText = computed(() => {
   const why = props.node.liveShare && props.node.liveShare.chatWhy
-  if (why === 'ssh') return t('liveShare.guestView.whySsh', 'This agent’s conversation can’t be read from the SSH server')
   if (why === 'none') return t('liveShare.guestView.whyNone', 'No conversation to show yet: it starts with the first message')
-  return t('liveShare.guestView.whyAgent', 'This agent’s conversation can’t be read by Tessel')
+  return t('liveShare.guestView.whyAgent', 'This agent’s conversation can’t be read here')
 })
 const guestChatTitle = computed(() =>
   guestChatOff.value

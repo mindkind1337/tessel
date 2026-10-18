@@ -84,7 +84,7 @@ const hostDir = (p) => {
 // does). Where it is (the agent, its session, its account or SSH host) and the
 // project's folders (paths outside them are hidden from guests) are for the
 // host's main only. A terminal agent with no conversation to send is listed
-// too, with the reason (reason: 'ssh' | 'agent' | 'none'), so the guest's chat
+// too, with the reason (reason: 'agent' | 'none'), so the guest's chat
 // button says why it cannot open instead of being missing.
 export function hostChatsFromWorkspace(ws) {
   if (!ws) return []
@@ -100,7 +100,7 @@ export function hostChatsFromWorkspace(ws) {
     if (!readable || !known) {
       // A pane in chat mode is a chat already; only terminals get the note.
       if (chat) return
-      out.push({ id: n.id, agentId: n.agentId, terminal: true, title: '', reason: !readable ? (remote ? 'ssh' : 'agent') : 'none' })
+      out.push({ id: n.id, agentId: n.agentId, terminal: true, title: '', reason: !readable ? 'agent' : 'none' })
       return
     }
     const roots = remote

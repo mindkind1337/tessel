@@ -804,7 +804,7 @@ export function createLiveShareWindow(deps) {
   // (an agent pane of a host whose Tessel does not share conversations yet:
   // the chat view says so) or null (no chat button).
   const chatEntry = (id) => (state.guest.chats || []).find((c) => c.id === id) || null
-  // 'unavailable': the host says why it has none (chatWhy: 'ssh' | 'agent' |
+  // 'unavailable': the host says why it has none (chatWhy: 'agent' |
   // 'none'); the button shows, off, and says it.
   function chatOf(p) {
     if (state.guest.chat) {

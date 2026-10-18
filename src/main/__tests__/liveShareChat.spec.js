@@ -85,6 +85,17 @@ describe('shareChat: what a guest gets of a conversation', () => {
     // Slash commands, web addresses, dates and relative paths stay.
     const roots = cleanRoots(['/home/ada/proj'])
     expect(guestText('/compact then https://example.com/a/b on 10/15/2026 in src/a.js and /home/ada/proj/lib/x.ts', roots, 500)).toBe('/compact then https://example.com/a/b on 10/15/2026 in src/a.js and lib/x.ts')
+    // Extra slashes, folders named by a variable, a system folder alone, and which server a login is.
+    for (const [from, to] of [
+      ['cat ///etc/passwd', 'cat …'],
+      ['cat $HOME/.ssh/id_rsa', 'cat …'],
+      ['cat ${HOME}/.ssh/id_rsa', 'cat …'],
+      ['ls /etc and /root and /var', 'ls … and … and …'],
+      ['scp deploy@prod.example.com:/home/u/a.txt .', 'scp ••••:… .'],
+      ['ssh deploy@prod.example.com ls', 'ssh •••• ls'],
+      ['/compact then /help', '/compact then /help']
+    ])
+      expect(guestText(from, roots, 500)).toBe(to)
     expect(guestText('password=hunter22 Bearer abcdefghijklmnop1234 postgres://u:pw1234@db/x', roots, 500)).toBe('password=•••• Bearer •••• postgres://••••@db/x')
   })
 
@@ -127,13 +138,13 @@ describe('shareChat: what a guest gets of a conversation', () => {
         { id: 'a', agentId: 'claude', sessionId: UUID, hostId: 'ssh-1a2b', roots: ['/home/me/app'] },
         { id: 'b', agentId: 'antigravity', sessionId: UUID, hostId: 'ssh-1a2b' },
         { id: 'c', agentId: 'claude', sessionId: UUID, hostId: '../evil' },
-        { id: 'd', agentId: 'antigravity', reason: 'ssh', hostId: 'ssh-1a2b', sessionId: 'x', roots: ['/secret'] },
+        { id: 'd', agentId: 'antigravity', reason: 'agent', hostId: 'ssh-1a2b', sessionId: 'x', roots: ['/secret'] },
         { id: 'e', agentId: 'aider', reason: 'bogus' },
         { id: 'f', agentId: 'bash!', reason: 'agent' }
       ])
     ).toEqual([
       { id: 'a', agentId: 'claude', sessionId: UUID, hostId: 'ssh-1a2b', terminal: true, title: '', roots: ['/home/me/app'] },
-      { id: 'd', agentId: 'antigravity', reason: 'ssh', terminal: true, title: '', roots: [] }
+      { id: 'd', agentId: 'antigravity', reason: 'agent', terminal: true, title: '', roots: [] }
     ])
   })
 })
@@ -355,7 +366,7 @@ function fakeMain({ chatViews = null, chatRetry = {} } = {}) {
     events: (channel) => m.sent.filter(([c]) => c === channel).map(([, p]) => p),
     last: (channel) => m.events(channel).at(-1)
   }
-  m.api = registerLiveShare({ ipcMain: m.ipcMain, send: m.send, host: m.host, dataDir, queueData: () => {}, sendExit: () => {}, log: { info: () => {} }, kill: vi.fn(), pidRunning: () => true, resume: false, chatViews, chatRetry })
+  m.api = registerLiveShare({ ipcMain: m.ipcMain, send: m.send, host: m.host, dataDir, queueData: () => {}, sendExit: () => {}, log: { info: () => {} }, kill: vi.fn(), pidRunning: () => true, resume: false, chatViews, chatRetry: { lingerMs: 0, opensPerMinute: 1000, ...chatRetry } })
   return m
 }
 // The host's conversation reader (transcriptView.js createTranscriptViews).
@@ -452,14 +463,63 @@ describe('registerLiveShare: a guest looks at a host’s agent pane as a chat', 
   })
 
   it('a pane with no conversation to send is listed with why; watching it gets "unavailable", nothing is read', async () => {
-    const hostChats = [{ id: 'pane-1-cc', agentId: 'antigravity', terminal: true, reason: 'ssh', sessionId: UUID, hostId: 'ssh-1a2b', roots: ['/home/me'] }]
+    const hostChats = [{ id: 'pane-1-cc', agentId: 'antigravity', terminal: true, reason: 'agent', sessionId: UUID, hostId: 'ssh-1a2b', roots: ['/home/me'] }]
     const { guest, reader, joined } = await sharedAndJoined({ hostChats })
-    expect(joined.chats).toEqual([{ id: 'pane-ls1-1-cc', project: 'ws-1', title: 'Claude Code', agentId: 'antigravity', accent: null, terminal: true, reason: 'ssh' }])
+    expect(joined.chats).toEqual([{ id: 'pane-ls1-1-cc', project: 'ws-1', title: 'Claude Code', agentId: 'antigravity', accent: null, terminal: true, reason: 'agent' }])
     await guest.handle['liveShare:chatWatch'](null, { id: 'pane-ls1-1-cc', on: true })
     const got = await until(() => guest.last('liveShare:chat'))
     expect(got).toMatchObject({ id: 'pane-ls1-1-cc', ok: false, code: 'unavailable' })
     expect(reader.opened).toEqual([])
     expect(JSON.stringify(guest.sent)).not.toContain('ssh-1a2b')
+  })
+
+  it('a conversation nobody watches any more stays read for a while: watching again does not read the file again', async () => {
+    const { guest, reader } = await sharedAndJoined({ chatRetry: { lingerMs: 500 } })
+    const id = 'pane-ls1-1-cc'
+    await guest.handle['liveShare:chatWatch'](null, { id, on: true })
+    await until(() => reader.opened.length)
+    await until(() => guest.last('liveShare:chat'))
+    for (let i = 0; i < 5; i++) {
+      await guest.handle['liveShare:chatWatch'](null, { id, on: false })
+      await wait(60)
+      await guest.handle['liveShare:chatWatch'](null, { id, on: true })
+      await wait(60)
+    }
+    expect(reader.opened).toHaveLength(1)
+    expect(reader.closed).toEqual([])
+    // The guest has the conversation again at once, from what was kept.
+    const seen = guest.events('liveShare:chat').length
+    await guest.handle['liveShare:chatWatch'](null, { id, on: false })
+    await wait(60)
+    await guest.handle['liveShare:chatWatch'](null, { id, on: true })
+    await until(() => guest.events('liveShare:chat').length > seen)
+    // Left alone, it is let go after the wait.
+    await guest.handle['liveShare:chatWatch'](null, { id, on: false })
+    await until(() => reader.closed.length, 3000)
+    expect(reader.closed).toEqual(['tv-1'])
+  })
+
+  it('a pane’s reader is opened a few times a minute at most, however the guests switch their chat', async () => {
+    const { guest, reader } = await sharedAndJoined({ chatRetry: { lingerMs: 0, opensPerMinute: 2 } })
+    const id = 'pane-ls1-1-cc'
+    for (let i = 0; i < 6; i++) {
+      await guest.handle['liveShare:chatWatch'](null, { id, on: true })
+      await wait(40)
+      await guest.handle['liveShare:chatWatch'](null, { id, on: false })
+      await wait(40)
+    }
+    expect(reader.opened.length).toBeLessThanOrEqual(2)
+  })
+
+  it('a reader let go for room does not flap forever: it is opened again a few times, then left', async () => {
+    const { guest, reader } = await sharedAndJoined({ chatRetry: { reopenMs: 20, firstMs: 20, maxMs: 40, tries: 2 } })
+    await guest.handle['liveShare:chatWatch'](null, { id: 'pane-ls1-1-cc', on: true })
+    for (let i = 1; i <= 6; i++) {
+      await until(() => reader.opened.length >= i || i > 3, 3000)
+      if (reader.opened.length >= i) reader.send('transcriptView:event', { viewId: `tv-${i}`, ok: false, code: 'closed' })
+      await wait(120)
+    }
+    expect(reader.opened).toHaveLength(3)
   })
 
   it('only the projects the guest sees; a project taken away closes the reader at once', async () => {
@@ -559,7 +619,7 @@ describe('review fixes: what never reaches a guest', () => {
     const g = (x) => guestText(x, roots, 4000)
     expect(g('C:\\Users\\jean claude\\secret\\key.pem and more')).toBe('… and more')
     expect(g('open "C:\\Users\\jean claude\\secret\\key.pem" now')).toBe('open "…" now')
-    expect(g('scp user@host:/home/jean/.ssh/id_rsa .')).toBe('scp user@host:… .')
+    expect(g('scp user@host:/home/jean/.ssh/id_rsa .')).toBe('scp ••••:… .')
     expect(g('gcc -I/home/jean/include')).toBe('gcc -I…')
     expect(g('cl -IC:\\Users\\x\\inc')).toBe('cl -I…')
     expect(g('configure --prefix=/opt/secret/x')).toBe('configure --prefix=…')

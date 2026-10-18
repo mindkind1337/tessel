@@ -206,10 +206,10 @@ describe('Live Share conversations: the host’s agent panes, a guest’s chat p
       { id: 'pane-3', agentId: 'claude', terminal: true, title: '', reason: 'none' },
       { id: 'pane-4', agentId: 'aider', terminal: true, title: '', reason: 'agent' },
       // On an SSH host: Claude Code and Codex are read there (the roots are the host's);
-      // another agent, or one only detected in a shell, says it cannot be read from the server.
+      // another agent, or one only detected in a shell, is listed as one that cannot be read (a guest is not told it is SSH).
       { id: 'pane-5', agentId: 'claude', sessionId: UUID, hostId: 'ssh-h1', terminal: true, title: '', roots: ['/home/x/app', '/home/x'] },
-      { id: 'pane-6', agentId: 'antigravity', terminal: true, title: '', reason: 'ssh' },
-      { id: 'pane-7', agentId: 'codex', terminal: true, title: '', reason: 'ssh' }
+      { id: 'pane-6', agentId: 'antigravity', terminal: true, title: '', reason: 'agent' },
+      { id: 'pane-7', agentId: 'codex', terminal: true, title: '', reason: 'agent' }
     ])
     expect(hostChatsFromWorkspace(null)).toEqual([])
   })

@@ -169,17 +169,14 @@ describe('Live Share guest: the chat button of a host’s agent pane', () => {
   })
 
   it('a host pane with no conversation to send: the button shows, off, with the reason as its tooltip', async () => {
-    const node = await show(guestLeaf({ chat: 'unavailable', chatWhy: 'ssh', agentId: 'antigravity' }))
+    const node = await show(guestLeaf({ chat: 'unavailable', chatWhy: 'agent', agentId: 'antigravity' }))
     const btn = wrapper.find('[data-test="pane-chat-toggle"]')
     expect(btn.exists()).toBe(true)
     expect(btn.attributes('disabled')).toBeDefined()
-    expect(btn.attributes('title')).toBe('This agent’s conversation can’t be read from the SSH server')
+    expect(btn.attributes('title')).toBe('This agent’s conversation can’t be read here')
     await btn.trigger('click')
     expect(ctx.liveShareView).not.toHaveBeenCalled()
     expect(wrapper.find('[data-test="liveshare-chat-view"]').exists()).toBe(false)
-    node.liveShare.chatWhy = 'agent'
-    await nextTick()
-    expect(wrapper.find('[data-test="pane-chat-toggle"]').attributes('title')).toBe('This agent’s conversation can’t be read by Tessel')
     node.liveShare.chatWhy = 'none'
     await nextTick()
     expect(wrapper.find('[data-test="pane-chat-toggle"]').attributes('title')).toContain('No conversation to show yet')

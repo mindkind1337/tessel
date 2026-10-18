@@ -145,6 +145,11 @@ const FEED_RETRY_MS = 5000
 const FEED_RETRY_MAX_MS = 60000
 const FEED_REOPEN_MS = 30000
 const FEED_TRIES = 12
+// A conversation nobody watches any more stays read this long (a guest
+// switching its chat on and off must not read the SSH file again each time),
+// and a pane's reader is opened at most this often a minute.
+const FEED_LINGER_MS = 45000
+const FEED_OPENS_PER_MINUTE = 4
 const ACCOUNT_ID = /^[\w.-]{1,80}$/
 // A guest's view of a project's files: changes go out this often at most,
 // and more paths than this are "read everything again".
@@ -361,7 +366,7 @@ const KEEP_FRESH_MS = 60000
 // running: a second copy starting must not take them). chatViews(send):
 // makes the reader of the conversations guests watch (src/main/chat/
 // transcriptView.js createTranscriptViews, with this send); without it, no
-// guest gets them. chatRetry: { firstMs, maxMs, tries } (tests: FEED_*).
+// guest gets them. chatRetry: { firstMs, maxMs, tries, lingerMs, reopenMs, opensPerMinute } (tests: FEED_*).
 // requestLimits: { keepMs, max } (tests: the requests to open kept).
 // trashItem(path): the Recycle Bin (Electron's shell; without it a guest's
 // delete is refused). watchProject(root, fn) and makeFileWatcher(onChange):
@@ -1051,12 +1056,21 @@ export function registerLiveShare({
   const sourceKey = (c) => (c ? `${c.agentId}|${c.sessionId}|${c.hostId || ''}|${c.reason || ''}|${c.accountId === undefined ? '' : String(c.accountId)}` : '')
   function pushChat(s, id, read) {
     const feed = feeds.get(id)
+    // Nobody watches (it lingers): kept for the next guest, not sent.
+    if (feed && feed.lingering) {
+      if (read.ok) feed.last = read
+      return
+    }
+    if (feed && read.ok) feed.last = read
     // The same "nothing yet" again: not said again.
     if (feed && !read.ok && feed.code === read.code) return
     if (feed) feed.code = read.ok ? null : read.code
     const src = chatSourceOf(s, id)
     s.server?.sendChat(id, guestChatPayload(read, src ? src.roots : []))
   }
+  const reopenMs = chatRetry.reopenMs ?? FEED_REOPEN_MS
+  const lingerMs = chatRetry.lingerMs ?? FEED_LINGER_MS
+  const opensPerMinute = chatRetry.opensPerMinute ?? FEED_OPENS_PER_MINUTE
   const retry = { first: chatRetry.firstMs ?? FEED_RETRY_MS, max: chatRetry.maxMs ?? FEED_RETRY_MAX_MS, tries: chatRetry.tries ?? FEED_TRIES }
   function retryFeed(s, id, feed, ms) {
     clearTimeout(feed.retry)
@@ -1069,13 +1083,59 @@ export function registerLiveShare({
     )
     feed.retry.unref?.()
   }
+  // Opens of a pane's reader in the last minute (kept when a feed closes).
+  const feedOpens = new Map()
+  function openAllowed(id) {
+    const t = Date.now()
+    const recent = (feedOpens.get(id) || []).filter((x) => t - x < 60000)
+    if (recent.length >= opensPerMinute) {
+      feedOpens.set(id, recent)
+      return false
+    }
+    recent.push(t)
+    feedOpens.set(id, recent)
+    if (feedOpens.size > 256) for (const [k, v] of feedOpens) if (!v.some((x) => t - x < 60000)) feedOpens.delete(k)
+    return true
+  }
+  // The first guest watches again, or the reader is let go and opened anew.
+  function watchFeed(s, id) {
+    const feed = feeds.get(id)
+    if (feed && feed.lingering && feed.s === s && feed.viewId && sourceKey(chatSourceOf(s, id)) === feed.key) {
+      clearTimeout(feed.linger)
+      feed.lingering = false
+      feed.linger = null
+      if (feed.last) {
+        feed.code = null
+        pushChat(s, id, feed.last)
+      }
+      return
+    }
+    openFeed(s, id)
+  }
+  function unwatchFeed(id) {
+    const feed = feeds.get(id)
+    if (!feed) return
+    // Nothing open to keep (waiting to retry): let go at once.
+    if (!feed.viewId) return closeFeed(id)
+    feed.lingering = true
+    clearTimeout(feed.linger)
+    feed.linger = setTimeout(() => {
+      if (feeds.get(id) === feed) closeFeed(id)
+    }, lingerMs)
+    feed.linger.unref?.()
+  }
   function openFeed(s, id, { retry = false } = {}) {
     const before = feeds.get(id)
     closeFeed(id)
     const src = chatSourceOf(s, id)
-    const feed = { s, key: sourceKey(src), viewId: null, retry: null, code: before ? before.code : null, tries: retry && before ? before.tries + 1 : 0 }
+    const feed = { s, key: sourceKey(src), viewId: null, retry: null, linger: null, lingering: false, last: null, code: before ? before.code : null, tries: retry && before ? before.tries + 1 : 0, evicted: before ? before.evicted : 0 }
     feeds.set(id, feed)
     if (!src || !chatReader) return pushChat(s, id, { ok: false, code: 'missing' })
+    // Too many reads of this pane lately: busy, tried again later.
+    if (!src.reason && !openAllowed(id)) {
+      pushChat(s, id, { ok: false, code: 'busy' })
+      return retryFeed(s, id, feed, FEED_REOPEN_MS)
+    }
     // A pane listed only to say why it has no conversation: nothing to read.
     if (src.reason) return pushChat(s, id, { ok: false, code: 'unavailable' })
     const q = src.hostId ? { agent: src.agentId, sessionId: src.sessionId, hostId: src.hostId } : { agent: src.agentId, sessionId: src.sessionId, paneId: id, ...(src.accountId !== undefined ? { accountId: src.accountId } : {}) }
@@ -1092,7 +1152,9 @@ export function registerLiveShare({
           return retryFeed(s, id, feed)
         }
         feed.viewId = res.viewId
-        feed.tries = 0
+        // A reader let go for room (evicted) keeps its tries: it cannot
+        // flap forever against the others.
+        if (!feed.evicted) feed.tries = 0
         feedOfView.set(res.viewId, id)
         pushChat(s, id, res)
       })
@@ -1102,6 +1164,7 @@ export function registerLiveShare({
     if (!feed) return
     feeds.delete(id)
     clearTimeout(feed.retry)
+    clearTimeout(feed.linger)
     if (feed.viewId) {
       feedOfView.delete(feed.viewId)
       try {
@@ -1116,11 +1179,14 @@ export function registerLiveShare({
     const feed = id ? feeds.get(id) : null
     if (!feed || feed.viewId !== msg.viewId) return
     if (msg.ok) return pushChat(feed.s, id, msg)
+    // Nobody watches it: no reason to open it again.
+    if (feed.lingering) return closeFeed(id)
     feedOfView.delete(msg.viewId)
     feed.viewId = null
     const given = msg.code === 'closed'
+    if (given) feed.evicted++
     pushChat(feed.s, id, { ok: false, code: given ? 'busy' : 'missing' })
-    retryFeed(feed.s, id, feed, given ? FEED_REOPEN_MS : 0)
+    retryFeed(feed.s, id, feed, given ? reopenMs : 0)
   }
   // The window's panes changed: a conversation that changed (a new session,
   // another account) is read anew for the guests watching it.
@@ -1231,7 +1297,7 @@ export function registerLiveShare({
         chatProject: (id) => chatHomes(s).get(id) || null,
         onChatsWatched: () => sharing === s && pushPresence(),
         onPresence: () => sharing === s && pushPresence(),
-        ...(chatReader ? { chatWatch: (id, on) => (on ? openFeed(s, id) : closeFeed(id)) } : {}),
+        ...(chatReader ? { chatWatch: (id, on) => (on ? watchFeed(s, id) : unwatchFeed(id)) } : {}),
         snapshot,
         // Phase 2's requests and topics (shareChannel.js).
         opInfo: (op) => {

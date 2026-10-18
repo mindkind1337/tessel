@@ -4145,6 +4145,10 @@ liveShare = registerLiveShare({
     createTranscriptViews({
       send: sendView,
       log,
+      // Up to 10 guests with 8 conversations each share these (two guests on
+      // one pane share one view); past it the oldest is let go (liveShare.js
+      // reopens it, within its limits).
+      maxViews: 32,
       homes: async (agent, accountId) => {
         const r = await accountSessions.roots({ agent, accountId })
         return (r && r[agent]) || null
