@@ -149,6 +149,7 @@ export const LSHARE_CODES = Object.freeze([
   'bad-args',
   'bad-path',
   'no-project',
+  'remote-project',
   'forbidden',
   'revoked',
   'not-found',

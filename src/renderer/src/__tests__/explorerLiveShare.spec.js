@@ -145,6 +145,17 @@ describe("a Live Share host's project", () => {
     expect(w.findAll('.explorer-name').map((n) => n.text())).toEqual(['src', 'a.js'])
   })
 
+  it("a project whose files are on the host's SSH server says so calmly: no red error, no Retry", async () => {
+    api({ list: vi.fn(async () => ({ ok: false, code: 'remote-project' })) })
+    await make()
+    const box = w.get('[data-test="explorer-access"]')
+    expect(box.text()).toMatch(/SSH server/)
+    expect(box.text()).not.toMatch(/no longer have access/)
+    expect(box.attributes('data-test')).toBe('explorer-access')
+    expect(w.find('[data-test="panel-error"]').exists()).toBe(false)
+    expect(w.find('[data-test="panel-retry"]').exists()).toBe(false)
+  })
+
   it("a host's Tessel too old to share files says so", async () => {
     api({ list: vi.fn(async () => ({ ok: false, code: 'outdated-host' })) })
     await make()

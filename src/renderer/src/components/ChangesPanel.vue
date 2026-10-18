@@ -63,7 +63,7 @@ import {
 import LucideIcon from './LucideIcon.vue'
 import NotesSendMenu from './NotesSendMenu.vue'
 import { isVirtualPath, isLsharePath } from '../../../shared/liveSharePath'
-import { accessOf, stateOfAnswer, accessStateText, localOnlyText } from '../liveShareGuestAccess'
+import { accessOf, stateOfAnswer, accessStateText, accessStateKind, localOnlyText } from '../liveShareGuestAccess'
 import { t, intlLocale } from '../i18n'
 
 const props = defineProps({
@@ -1255,9 +1255,9 @@ function draftStore() {
       </div>
       <PanelState
         v-else-if="accessState"
-        kind="error"
+        :kind="accessStateKind(accessState)"
         :text="accessText"
-        :retry="!access || access.state === 'ok'"
+        :retry="(!access || access.state === 'ok') && accessState !== 'remote'"
         data-test="changes-access"
         @retry="refreshAll"
       />

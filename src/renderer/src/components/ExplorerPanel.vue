@@ -15,7 +15,7 @@ import { statusMatters, foldersToReload, sameEntries, sameStatus, rememberIgnore
 import { settings } from '../settings'
 import { isRemotePath, remoteHostPath } from '../../../shared/remotePath'
 import { isVirtualPath, isLsharePath, parseLsharePath } from '../../../shared/liveSharePath'
-import { accessOf, stateOfAnswer, accessStateText, localOnlyText } from '../liveShareGuestAccess'
+import { accessOf, stateOfAnswer, accessStateText, accessStateKind, localOnlyText } from '../liveShareGuestAccess'
 import { t } from '../i18n'
 import FileIcon from './FileIcon.vue'
 import Codicon from './Codicon.vue'
@@ -1221,9 +1221,9 @@ function rowTitle(e) {
     </div>
     <PanelState
       v-else-if="accessState"
-      kind="error"
+      :kind="accessStateKind(accessState)"
       :text="accessText"
-      :retry="!access || access.state === 'ok'"
+      :retry="(!access || access.state === 'ok') && accessState !== 'remote'"
       data-test="explorer-access"
       @retry="showRoot"
     />
