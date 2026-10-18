@@ -77,6 +77,8 @@ const PANE_ID = /^[\w-]{1,80}$/
 const AGENT_ID = /^[\w.-]{1,40}$/
 const SESSION_ID = /^[\w.:-]{1,200}$/
 const ACCOUNT_ID = /^[\w.-]{1,80}$/
+// The SSH host a pane runs on (its sub-agents are read there: remoteAgentChildren.js).
+const HOST_ID = /^[0-9A-Za-z_-]{1,100}$/
 const isObj = (v) => !!v && typeof v === 'object' && !Array.isArray(v)
 const str = (v) => (typeof v === 'string' ? v : '')
 // eslint-disable-next-line no-control-regex -- control characters are what it removes
@@ -96,7 +98,7 @@ function hostPane(p, roots) {
   const c = isObj(p.children) ? p.children : null
   const children =
     pane.kind === 'agent' && c && AGENT_ID.test(str(c.agent)) && SESSION_ID.test(str(c.sessionId))
-      ? { agent: c.agent, sessionId: c.sessionId, ...(c.accountId === null || (typeof c.accountId === 'string' && ACCOUNT_ID.test(c.accountId)) ? { accountId: c.accountId } : {}) }
+      ? { agent: c.agent, sessionId: c.sessionId, ...(c.accountId === null || (typeof c.accountId === 'string' && ACCOUNT_ID.test(c.accountId)) ? { accountId: c.accountId } : {}), ...(typeof c.remoteHostId === 'string' && HOST_ID.test(c.remoteHostId) ? { remoteHostId: c.remoteHostId } : {}) }
       : null
   pane.children = !!children
   return { pane, children }

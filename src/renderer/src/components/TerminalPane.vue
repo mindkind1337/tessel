@@ -139,6 +139,22 @@ const guestDot = computed(() => (!guestRuns.value ? null : guestInfo.value.sleep
 const guestIconClass = computed(() => ({ working: 'busy', monitoring: 'monitoring', waiting: 'attention', done: 'attention', unverifiable: 'unknown' })[guestDot.value] || 'idle')
 // Its sub-agents, read on the host (their sessions stay there).
 const guestChildrenSource = computed(() => (guestRuns.value && guestInfo.value.children && ctx.liveShareChildrenSource ? ctx.liveShareChildrenSource(props.node.id) : null))
+// On an SSH host: its sub-agents are read there, over the connection (Claude
+// Code's and Codex's: remoteAgentChildren.js), never in this PC's files, and
+// only while the pane is on screen (off screen, the list it had stays).
+const REMOTE_CHILD_AGENTS = ['claude', 'codex']
+const remoteChildrenSource = computed(() => {
+  const n = props.node
+  if (!n.remoteHostId) return null
+  const query = { agent: n.agentId, sessionId: n.sessionId, remoteHostId: n.remoteHostId }
+  return {
+    read: async () => {
+      if (!REMOTE_CHILD_AGENTS.includes(query.agent) || !window.shellApi.agentChildren) return []
+      if (paneOffScreenNow()) throw new Error('off screen') // i18n-ignore internal
+      return window.shellApi.agentChildren(query)
+    }
+  }
+})
 // The account a Claude Code or Codex pane runs on, when that agent has more
 // than one. On an SSH host: the account the agent there is signed in with
 // (its account folder, or the host's own sign-in; hostAccounts.js), shown
@@ -3747,6 +3763,7 @@ const paneMenuBindings = computed(() => ({
           :session-id="node.sessionId"
           :account-id="node.accountId"
           :parent-idle-since="turnEndedAt"
+          :source="remoteChildrenSource"
           @running="onSubRunning"
         />
         <!-- Live Share guest: a host's agent pane's sub-agents, read on the host -->

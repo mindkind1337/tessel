@@ -28,8 +28,9 @@ const props = defineProps({
   // The list as the pane knows it ([{ id, title, type, model, effort, state,
   // startedAt, endedAt, tokens, lastAt }]), or null to read the agent's files.
   items: { type: Array, default: null },
-  // Another computer's list: { read() -> Promise<[the same rows]> }, or
-  // null to read this computer's files.
+  // Another computer's list (a Live Share host's, or an SSH host's: read
+  // over its connection): { read() -> Promise<[the same rows]> }, or null to
+  // read this computer's files.
   source: { type: Object, default: null }
 })
 

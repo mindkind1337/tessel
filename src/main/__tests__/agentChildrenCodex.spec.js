@@ -147,7 +147,7 @@ describe("a Codex conversation's sub-agents", () => {
   it('reads a turn from its end: started, completed, aborted', () => {
     const t0 = Date.parse('2026-09-28T10:00:00Z')
     expect(summarizeCodexTail([line(ev(t0, { type: 'task_complete' })), line(ev(t0 + 1000, { type: 'task_started' }))])).toMatchObject({ done: false, last: t0 + 1000 })
-    expect(summarizeCodexTail([line(ev(t0, { type: 'task_started' })), line(tokens(t0 + 500, 77)), line(ev(t0 + 1000, { type: 'task_complete' }))])).toEqual({ done: true, last: t0 + 1000, tokens: 77, model: null, effort: null })
+    expect(summarizeCodexTail([line(ev(t0, { type: 'task_started' })), line(tokens(t0 + 500, 77)), line(ev(t0 + 1000, { type: 'task_complete' }))])).toEqual({ done: true, last: t0 + 1000, tokens: 77, model: null, effort: null, decided: true })
     expect(summarizeCodexTail(['{broken', line(ev(t0, { type: 'turn_aborted' }))]).done).toBe(true)
   })
 

@@ -945,7 +945,7 @@ export function registerLiveShare({
     let entry = childReads.get(key)
     if (!entry || Date.now() - entry.at >= CHILDREN_MS) {
       const value = Promise.resolve()
-        .then(() => agentChildren({ agent: spec.agent, sessionId: spec.sessionId, ...(spec.accountId !== undefined ? { accountId: spec.accountId } : {}) }))
+        .then(() => agentChildren({ agent: spec.agent, sessionId: spec.sessionId, ...(spec.accountId !== undefined ? { accountId: spec.accountId } : {}), ...(spec.remoteHostId ? { remoteHostId: spec.remoteHostId } : {}) }))
         .then((list) => guestChildren(list, projectRoots(req.project)))
       entry = { at: Date.now(), value }
       childReads.delete(key)
