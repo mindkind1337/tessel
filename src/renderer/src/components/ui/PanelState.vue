@@ -7,7 +7,7 @@ import { LoaderCircle } from 'lucide-vue-next'
 import { t } from '../../i18n'
 
 defineProps({
-  // 'loading' | 'error'
+  // 'loading' | 'error' | 'info' (a calm note: nothing went wrong)
   kind: { type: String, default: 'loading' },
   // The loading line ("Loading…" when empty) or the error.
   text: { type: String, default: '' },
@@ -28,6 +28,9 @@ const emit = defineEmits(['retry'])
       <LoaderCircle v-if="busy" :size="12" class="ps-spin" aria-hidden="true" />
       {{ t('changes.compare.retry', 'Retry') }}
     </button>
+  </div>
+  <div v-else-if="kind === 'info'" class="ps ps-info" role="status" data-test="panel-info">
+    <p class="ps-msg ps-msg-info" data-test="panel-info-text">{{ text }}</p>
   </div>
   <div v-else class="ps ps-loading" role="status" aria-busy="true" data-test="panel-loading">
     <div class="ps-line">
@@ -80,6 +83,10 @@ const emit = defineEmits(['retry'])
   margin: 0;
   color: var(--danger);
   overflow-wrap: anywhere;
+}
+.ps-msg-info {
+  color: var(--text-dim);
+  line-height: 1.45;
 }
 .ps-retry {
   display: inline-flex;

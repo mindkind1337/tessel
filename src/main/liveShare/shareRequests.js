@@ -150,8 +150,8 @@ const SCM_CODES = [
   ['main.scm.unknownGroup', 'Unknown change group.', 'bad-args'],
   ['main.scm.versionTooLarge', 'This version is too large to compare (over 10 MB).', 'too-large'],
   ['main.scm.noRecycleBin', 'The Recycle Bin is not available.', 'unavailable'],
-  ['main.scm.invalidFolder', 'Invalid folder.', 'no-project'],
-  ['main.scm.folderMissing', 'The folder is missing.', 'no-project'],
+  ['main.scm.invalidFolder', 'Invalid folder.', 'remote-project'],
+  ['main.scm.folderMissing', 'The folder is missing.', 'remote-project'],
   ['main.scm.compareUnavailable', 'Branch compare unavailable', 'unavailable']
 ]
 const scmCodeOf = (error) => {
@@ -1262,12 +1262,16 @@ export function createShareRequests({ scope = createShareScope(), log = null, ig
     if (!spec) return fail('bad-op')
     const a = parseArgs(spec.args, args)
     if (!a) return fail('bad-args')
+    // A project the host shares but whose folder is not one it can read here
+    // (an SSH host's folder, or one that is gone) has no files to give: that
+    // is not a lost access, so the guest is told apart ('no-project' stays
+    // for a project that is not the guest's).
     const rootPath = rootOf(ctx.roots, project)
-    if (!rootPath) return fail('no-project')
+    if (!rootPath) return fail(isShareProjectId(project) ? 'remote-project' : 'no-project')
     const rights = ctx.rights && typeof ctx.rights === 'object' ? ctx.rights : {}
     if (!mayRun(name, rights)) return fail('forbidden')
     const info = scope.root(rootPath)
-    if (!info) return fail('no-project')
+    if (!info) return fail('remote-project')
     const settings = ctx.settings && typeof ctx.settings === 'object' ? ctx.settings : {}
     // The git work it causes counts against the guest's budget.
     const charge = () => (typeof ctx.spend === 'function' ? ctx.spend('git') !== false : true)

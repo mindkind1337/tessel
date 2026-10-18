@@ -4,7 +4,8 @@
       "noAccess": "Vous n'avez plus accès à ce projet.",
       "outdatedHost": "Le Tessel de l'hôte est trop ancien pour cela : l'hôte doit mettre Tessel à jour.",
       "ended": "La session Live Share est terminée.",
-      "localOnly": "Cela ne fonctionne que sur l'ordinateur de l'hôte."
+      "localOnly": "Cela ne fonctionne que sur l'ordinateur de l'hôte.",
+      "remote": "Les fichiers de ce projet sont sur le serveur SSH de l'hôte et ne sont pas partagés avec les invités."
     },
     "toast": {
       "taskConfirm": "{{host}} doit confirmer : cette tâche a sa propre copie du projet, supprimée avec elle.",

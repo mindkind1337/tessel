@@ -1124,10 +1124,11 @@ const paneTabStrips = computed(() => {
       for (const leaf of view.tabs) out[leaf.id] = { leaves: view.tabs, shown: view.shown }
   return out
 })
-// The line of tabs is always there in a project of yours, Terminal first
-// (an editor or a browser closed: its tab goes); a Live Share guest's
-// project shows the host's panes only.
-const tabsAlways = (ws) => !!ws && !liveShare.isGuestWs(ws)
+// The line of tabs is always there, Terminal first (an editor or a browser
+// closed: its tab goes), in a Live Share guest's project too: it holds the
+// same tabs, and a guest's Terminal tab shows the host's panes only (the
+// tab itself has no action beyond showing them).
+const tabsAlways = (ws) => !!ws
 // The last terminal or agent made active in each project (gridLeafFor).
 watch(
   () => workspaces.value.map((w) => w.activeId),
@@ -2541,7 +2542,7 @@ const liveShare = createLiveShareWindow({
 const liveShareOpen = ref(false)
 const liveShareAt = reactive({ tab: 'share', section: 'overview', project: null })
 // The projects you can share (a Live Share project is someone else's).
-const shareableProjects = computed(() => workspaces.value.filter((w) => !w.liveShare).map((w) => ({ id: w.id, name: w.name })))
+const shareableProjects = computed(() => workspaces.value.filter((w) => !w.liveShare).map((w) => ({ id: w.id, name: w.name, noFiles: !!w.remote || !(typeof w.cwd === 'string' && w.cwd) })))
 // The projects you share, by name (a guest asking to join gets the ones you tick).
 const sharedProjectList = computed(() => liveShare.sharedWss().map((w) => ({ id: w.id, name: w.name })))
 // What the sidebar's project menus need: Share in / Remove from Live Share.
@@ -2938,6 +2939,11 @@ function terminalHere(dir) {
 // The side panel's folder: the project's, or for a project on an SSH host its
 // virtual root (ssh://…), which Files, Changes and the editor read over SSH
 // (src/main/remoteFs.js).
+// What the Files header calls a Live Share project: its name (the root ends in the host's raw project id).
+const sideRootTitle = computed(() => {
+  const ws = currentWs.value
+  return ws && ws.liveShare && typeof ws.name === 'string' ? ws.name : ''
+})
 const sideRoot = computed(() => {
   const ws = currentWs.value
   if (!ws) return null
@@ -13433,6 +13439,7 @@ onBeforeUnmount(() => {
           :projects-ready="layoutReady"
           :now="clock"
           :root="sideRoot"
+          :root-title="sideRootTitle"
           :task-source="sideTaskSource"
           :history-source="sideHistorySource"
           :session-source="sideSessionSource"

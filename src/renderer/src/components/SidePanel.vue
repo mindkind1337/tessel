@@ -35,6 +35,8 @@ import { Files, GitBranch, ListChecks, LayoutDashboard, Maximize2, Minimize2, Pl
 const props = defineProps({
   tab: { type: String, default: 'tasks' },
   root: { type: String, default: null },
+  // The folder's name in the Files header when the root's own last part is not it (a Live Share project's root ends in the host's project id).
+  rootTitle: { type: String, default: '' },
   canInsert: { type: Boolean, default: false },
   agentPanes: { type: Array, default: () => [] },
   workspaceId: { type: String, default: null },
@@ -367,6 +369,7 @@ onBeforeUnmount(() => {
         :key="'files:' + remoteRev"
         v-show="current() === 'files'"
         :root="root"
+        :root-title="rootTitle"
         :can-insert="canInsert"
         :open-editors="openEditors"
         :remote-label="remote ? remote.host || '' : ''"

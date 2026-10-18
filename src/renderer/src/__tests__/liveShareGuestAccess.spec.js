@@ -3,7 +3,7 @@
 // (liveShareAccess.js), and the Open Editors' folder of such a file.
 import { describe, it, expect, beforeEach } from 'vitest'
 import { LSHARE_PREFIX, isLsharePath, isVirtualPath, parseLsharePath, lsharePath } from '../../../shared/liveSharePath'
-import { lshareAccess, setLshareAccess, endLshareSession, forgetLshareAccess, accessOf, stateOfAnswer, accessStateText } from '../liveShareGuestAccess'
+import { lshareAccess, setLshareAccess, endLshareSession, forgetLshareAccess, accessOf, stateOfAnswer, accessStateText, accessStateKind } from '../liveShareGuestAccess'
 import { folderLabel } from '../explorer/openEditors'
 
 beforeEach(() => forgetLshareAccess())
@@ -84,6 +84,12 @@ describe("what the host lets the guest do", () => {
     // guestFs.js's own codes for the same.
     expect(stateOfAnswer({ ok: false, code: 'no-project' })).toBe('no-access')
     expect(stateOfAnswer({ ok: false, code: 'bad-op' })).toBe('outdated-host')
+    // A project whose folder is on the host's SSH server: nothing was taken away.
+    expect(stateOfAnswer({ ok: false, code: 'remote-project' })).toBe('remote')
+    expect(accessStateText('remote')).toMatch(/SSH server/)
+    expect(accessStateText('remote')).not.toMatch(/no longer/)
+    expect(accessStateKind('remote')).toBe('info')
+    expect(accessStateKind('no-access')).toBe('error')
     expect(stateOfAnswer({ ok: false, code: 'forbidden' })).toBeNull()
     expect(stateOfAnswer({ ok: false, code: 'constructor' })).toBeNull()
     expect(stateOfAnswer(null)).toBeNull()

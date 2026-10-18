@@ -145,9 +145,11 @@ describe('refusals', () => {
     expect(await requests.handle(null, ctx())).toEqual({ ok: false, code: 'bad-op' })
     for (const path of [root + '\\src\\a.js', 'C:/Windows/win.ini', '../other/b.js', 'src/../../other/b.js', '\\\\localhost\\c$\\x', 'src\\a.js', '', 'a.js::$DATA', 'nul', 7])
       expect(await ask('fs.read', { path }), String(path)).toEqual({ ok: false, code: 'bad-args' })
-    expect(await requests.handle({ op: 'fs.read', project: 'p2', args: { path: 'README.md' } }, ctx())).toEqual({ ok: false, code: 'no-project' })
-    expect(await requests.handle({ op: 'fs.read', project: '__proto__', args: { path: 'README.md' } }, ctx())).toEqual({ ok: false, code: 'no-project' })
-    expect(await requests.handle({ op: 'fs.read', project: 'p1', args: { path: 'README.md' } }, ctx({ roots: { p1: 'ssh://ssh-1/x' } }))).toEqual({ ok: false, code: 'no-project' })
+    expect(await requests.handle({ op: 'fs.read', project: 'p2', args: { path: 'README.md' } }, ctx())).toEqual({ ok: false, code: 'remote-project' })
+    expect(await requests.handle({ op: 'fs.read', project: '__proto__', args: { path: 'README.md' } }, ctx())).toEqual({ ok: false, code: 'remote-project' })
+    // Not a project id at all: not the guest's.
+    expect(await requests.handle({ op: 'fs.read', project: '../x', args: { path: 'README.md' } }, ctx())).toEqual({ ok: false, code: 'no-project' })
+    expect(await requests.handle({ op: 'fs.read', project: 'p1', args: { path: 'README.md' } }, ctx({ roots: { p1: 'ssh://ssh-1/x' } }))).toEqual({ ok: false, code: 'remote-project' })
     expect((await requests.handle({ op: 'fs.read', project: 'p1', args: { path: 'README.md' } }, ctx({ roots: new Map([['p1', root]]) }))).ok).toBe(true)
   })
 

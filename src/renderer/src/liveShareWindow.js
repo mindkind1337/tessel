@@ -1138,6 +1138,7 @@ export function createLiveShareWindow(deps) {
     if (code === 'forbidden' || code === 'revoked') return t('liveShare.taskFail.rights', 'you can no longer manage its tasks.')
     if (code === 'not-found') return t('liveShare.taskFail.missing', 'this task is no longer on its board.')
     if (code === 'not-allowed') return t('liveShare.taskFail.notAllowed', 'this task can no longer be changed that way.')
+    if (code === 'remote-project') return t('liveShare.taskFail.remote', 'the files of this project are on the host’s SSH server and aren’t shared.')
     if (code === 'no-project') return t('liveShare.taskFail.noProject', 'you no longer have access to this project.')
     if (code === 'offline') return t('liveShare.taskFail.offline', 'the connection to the host is down.')
     if (code === 'bad-op') return t('liveShare.taskFail.outdated', 'the host needs to update Tessel.')
@@ -1282,6 +1283,7 @@ export function createLiveShareWindow(deps) {
   }
   function reviewFailText(code) {
     if (code === 'not-found') return t('liveShare.review.notFound', 'This task’s branch could not be read on the host.')
+    if (code === 'remote-project') return t('liveShare.access.remote', 'The files of this project are on the host’s SSH server and aren’t shared with guests.')
     if (code === 'no-project' || code === 'forbidden' || code === 'revoked') return t('liveShare.review.noAccess', 'You no longer have access to this project.')
     if (code === 'bad-op') return t('liveShare.review.outdated', 'The host needs to update Tessel to show this.')
     if (code === 'offline') return t('liveShare.panels.offline', 'the connection to the host is down.')

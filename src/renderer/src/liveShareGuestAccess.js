@@ -14,12 +14,14 @@
 //     git:   stage, unstage, discard, commit
 //     tasks: add, move, edit, delete cards, answer questions
 //     state: 'ok' | 'no-access' (taken away) | 'outdated-host' (the host's
-//            Tessel does not share this) | 'ended' (the session is over)
+//            Tessel does not share this) | 'remote' (the project's folder
+//            is on the host's SSH server: no files to share, nothing lost)
+//            | 'ended' (the session is over)
 import { reactive } from 'vue'
 import { isLsharePath, parseLsharePath } from '../../shared/liveSharePath'
 import { t } from './i18n'
 
-export const ACCESS_STATES = ['ok', 'no-access', 'outdated-host', 'ended']
+export const ACCESS_STATES = ['ok', 'no-access', 'outdated-host', 'remote', 'ended']
 const NONE = Object.freeze({ edit: false, git: false, tasks: false, state: 'ok' })
 
 export const lshareAccess = reactive({})
@@ -55,9 +57,11 @@ export function accessOf(path) {
 
 // A host's answer that says why it refused (guestFs.js codes): the state it
 // means, or null. 'no-project': the project is not this guest's any more;
-// 'bad-op': the host's Tessel does not know the request.
+// 'bad-op': the host's Tessel does not know the request; 'remote-project':
+// the project's folder is not one the host can share (an SSH host's).
 export function stateOfAnswer(res) {
   const code = res && typeof res.code === 'string' ? res.code : ''
+  if (code === 'remote-project') return 'remote'
   if (code === 'no-access' || code === 'no-project') return 'no-access'
   if (code === 'outdated-host' || code === 'bad-op') return 'outdated-host'
   return null
@@ -67,9 +71,14 @@ export function stateOfAnswer(res) {
 export function accessStateText(state) {
   if (state === 'no-access') return t('liveShare.access.noAccess', 'You no longer have access to this project.')
   if (state === 'outdated-host') return t('liveShare.access.outdatedHost', 'The host’s Tessel is too old for this: the host needs to update Tessel.')
+  if (state === 'remote') return t('liveShare.access.remote', 'The files of this project are on the host’s SSH server and aren’t shared with guests.')
   if (state === 'ended') return t('liveShare.access.ended', 'The Live Share session ended.')
   return ''
 }
+
+// How a panel shows that text: 'info' (calm) when nothing was lost,
+// 'error' otherwise.
+export const accessStateKind = (state) => (state === 'remote' ? 'info' : 'error')
 
 // Actions that would run on this computer (reveal, open outside Tessel, a
 // terminal here, VS Code, the PDF window, generating a commit message) mean

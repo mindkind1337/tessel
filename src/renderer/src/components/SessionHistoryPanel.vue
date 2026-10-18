@@ -194,6 +194,7 @@ const hostSubtitle = computed(() => t('sessionHistory.host.subtitle', '{{host}}�
 function hostError(code) {
   const host = (props.source && props.source.host) || '?'
   if (code === 'outdated-host') return t('liveShare.access.outdatedHost', 'The host’s Tessel is too old for this: the host needs to update Tessel.')
+  if (code === 'remote-project') return t('liveShare.access.remote', 'The files of this project are on the host’s SSH server and aren’t shared with guests.')
   if (code === 'no-project' || code === 'forbidden' || code === 'revoked') return t('liveShare.access.noAccess', 'You no longer have access to this project.')
   if (code === 'offline') return t('sessionHistory.host.offline', 'The connection to {{host}} is down.', { host })
   if (code === 'busy') return t('sessionHistory.host.busy', '{{host}}’s Tessel is busy: try again in a moment.', { host })

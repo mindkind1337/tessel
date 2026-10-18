@@ -449,6 +449,7 @@ function tabKeys(event, list, current, set) {
                   <input type="checkbox" :checked="ticked.has(p.id)" :disabled="preparing || lastShared(p)" @change="toggleProject(p, $event)" />
                   <span class="ls-project-name">{{ p.name }}</span>
                 </label>
+                <p v-if="p.noFiles" class="ls-hint ls-project-note" :data-test="'ls-nofiles-' + p.id">{{ t('liveShare.share.noFiles', 'Its files are on an SSH server: guests see its terminals and agents, not its files.') }}</p>
               </li>
             </ul>
             <p v-if="!sharing && !preparing && projects.length && !projectIds.length" class="ls-hint" data-test="ls-need-project">{{ t('liveShare.share.needProject', 'Tick at least one project.') }}</p>
@@ -788,6 +789,9 @@ function tabKeys(event, list, current, set) {
   color: var(--text-dim);
   font-size: 12px;
   line-height: 1.4;
+}
+.ls-project-note {
+  margin: 2px 0 6px 26px;
 }
 .ls-hint-top {
   margin: 0 0 8px;

@@ -206,6 +206,20 @@ describe('the line of tabs, always there', () => {
   })
 })
 
+describe("the line of tabs in a Live Share guest's project", () => {
+  it("is there like the host's, with no launcher under it (a guest starts nothing in the host's project)", () => {
+    const { api, ctx, ws, view } = twoTerminals()
+    ctx.liveShare.isGuestWs = (w) => w === ws
+    expect(api.tabsAlways(ws)).toBe(true)
+    expect(view().tabs).toEqual([])
+    expect(view().shown).toBe('terminal')
+    expect(api.emptyGridShown(ws)).toBe(false)
+    // Showing the Terminal tab is all it does.
+    api.showViewTab(ws, 'terminal')
+    expect(view().shown).toBe('terminal')
+  })
+})
+
 describe('the tabs', () => {
   it('Terminal shows the grid on the terminal last used; a tab shows its pane', async () => {
     const { api, ws, view } = twoTerminals()
