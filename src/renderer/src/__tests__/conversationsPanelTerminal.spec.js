@@ -166,17 +166,17 @@ describe('ConversationsPanel.vue: what was said in the terminals', () => {
     expect(calls[0].from).toBe(Math.floor((NOW - 7 * 24 * 3600 * 1000) / 60000) * 60000)
     const ada1 = thread(w, 'you:p1')
     expect(ada1.find('.sh-group-label').text()).toBe('You and Ada')
-    // In the order said (the latest at the bottom); the message Tessel typed
-    // is there once.
-    expect(texts(ada1)).toEqual(['anything new ..', 'Two trades closed.', 'Read the notes'])
+    // Newest first (the latest at the top); the message Tessel typed is there
+    // once.
+    expect(texts(ada1)).toEqual(['Read the notes', 'Two trades closed.', 'anything new ..'])
     const lines = ada1.findAll('[data-test="cv-line"]')
-    expect(lines[2].find('[data-test="cv-via"]').exists()).toBe(false)
+    expect(lines[0].find('[data-test="cv-via"]').exists()).toBe(false)
     expect(lines[1].find('[data-test="cv-via"]').attributes('title')).toBe(
       'Answered in its terminal'
     )
-    expect(lines[0].find('[data-test="cv-via"]').attributes('title')).toBe('Typed in its terminal')
+    expect(lines[2].find('[data-test="cv-via"]').attributes('title')).toBe('Typed in its terminal')
     expect(lines[1].classes()).toContain('from-agent')
-    expect(lines[0].classes()).toContain('from-you')
+    expect(lines[2].classes()).toContain('from-you')
     expect(w.find('[data-test="cv-count"]').text()).toBe('2 conversations · 4 messages')
     w.unmount()
   })
@@ -192,9 +192,9 @@ describe('ConversationsPanel.vue: what was said in the terminals', () => {
     expect(answer.find('[data-test="cv-model"]').attributes('title')).toContain('claude-opus-5-5')
     expect(answer.find('.cv-caption').classes()).toContain('shown')
     // Your prompt: the model that answered it.
-    expect(lines[0].find('[data-test="cv-model"]').text()).toBe('Opus 5.5 · Extra high')
+    expect(lines[2].find('[data-test="cv-model"]').text()).toBe('Opus 5.5 · Extra high')
     // Unknown: nothing shown.
-    expect(lines[2].find('[data-test="cv-model"]').exists()).toBe(false)
+    expect(lines[0].find('[data-test="cv-model"]').exists()).toBe(false)
     const team = thread(w, 'team:team1')
     expect(team.find('.cv-line-head').text()).toContain('Ada')
     expect(team.find('.cv-line-head [data-test="cv-model"]').exists()).toBe(false)
@@ -268,7 +268,7 @@ describe('ConversationsPanel.vue: what was said in the terminals', () => {
       [`p2~${SID2}`, SID2]
     ])
     expect(last.panes[2]).toMatchObject({ paneId: 'p2', agent: 'codex', hostId: 'ssh-box' })
-    expect(texts(thread(w, 'you:p1'))).toEqual(['Before clear', 'Read the notes', 'After clear'])
+    expect(texts(thread(w, 'you:p1'))).toEqual(['After clear', 'Read the notes', 'Before clear'])
     const bob = thread(w, 'you:p2')
     expect(bob.find('.sh-group-label').text()).toBe('You and Bob')
     expect(texts(bob)).toEqual(['To Bob before he closed'])

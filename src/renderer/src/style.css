@@ -1685,25 +1685,6 @@ body.popup-open .toolbar {
   top: 30px;
 }
 
-/* Live Share: a thin line along the top of a shared project's area (red:
-   you share the project on screen; blue: a host's project, in their
-   session). Nothing on a project that is not shared. It lets clicks
-   through and takes no room from the panes. */
-.workspace-main > .live-line {
-  position: absolute;
-  inset: 0 0 auto 0;
-  z-index: 7;
-  height: 3px;
-  background: var(--danger);
-  pointer-events: none;
-}
-.workspace-main > .live-line.guest {
-  background: var(--accent);
-}
-.workspace-main > .live-line.idle {
-  background: color-mix(in srgb, var(--danger) 55%, transparent);
-}
-
 /* Live Share dialog: the fields and lists its sections share
    (LiveShareDialog.vue, components/liveshare/*). */
 .ls-input {

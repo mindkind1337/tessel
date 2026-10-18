@@ -41,8 +41,8 @@ describe('ConversationsPanel.vue', () => {
     expect(threadKeys(w)).toEqual(['you:p2', 'team:team1', 'you:p1'])
     expect(w.find('[data-test="cv-thread-team:team1"] .sh-group-label').text()).toBe('Team "Team 2"')
     expect(w.find('[data-test="cv-thread-you:p1"] .sh-group-label').text()).toBe('You and Ada')
-    // A thread reads like a chat: oldest at the top, the latest at the bottom.
-    expect(texts(w)).toEqual(['Merge now or wait?', 'Can you review the API?', 'Three days ago', 'Please add the tab', 'Done: the tab is there.'])
+    // A thread's lines run newest first: a new message appears at the top.
+    expect(texts(w)).toEqual(['Merge now or wait?', 'Can you review the API?', 'Done: the tab is there.', 'Please add the tab', 'Three days ago'])
     expect(w.find('[data-test="cv-count"]').text()).toBe('3 conversations · 5 messages')
     // A decision asked of you, a message not read yet: said.
     const notes = w.findAll('[data-test="cv-note"]').map((x) => x.text())
@@ -55,14 +55,14 @@ describe('ConversationsPanel.vue', () => {
     const ada1 = w.find('[data-test="cv-thread-you:p1"]')
     expect(ada1.findAll('[data-test="cv-line"]')[1].classes()).toContain('from-you')
     expect(ada1.findAll('[data-test="cv-line"]')[1].find('[data-test="cv-from"]').exists()).toBe(false)
-    expect(ada1.findAll('[data-test="cv-line"]')[2].classes()).toContain('from-agent')
-    expect(ada1.findAll('[data-test="cv-line"]')[2].find('[data-test="cv-from"]').text()).toBe('Ada · Claude Code')
-    expect(ada1.findAll('[data-test="cv-line"]')[2].find('[data-test="cv-to"]').exists()).toBe(false)
+    expect(ada1.findAll('[data-test="cv-line"]')[0].classes()).toContain('from-agent')
+    expect(ada1.findAll('[data-test="cv-line"]')[0].find('[data-test="cv-from"]').text()).toBe('Ada · Claude Code')
+    expect(ada1.findAll('[data-test="cv-line"]')[0].find('[data-test="cv-to"]').exists()).toBe(false)
     // The sender's logo beside its name, also for a team message whose
     // sender is known by name only (Ada's pane is p1, a Claude Code).
     expect(team.find('[data-test="cv-from"] [data-test="cv-logo"]').exists()).toBe(true)
     expect(team.find('[data-test="cv-from"] [data-test="cv-program"]').text()).toBe('· Claude Code')
-    expect(ada1.findAll('[data-test="cv-line"]')[2].find('[data-test="cv-logo"]').exists()).toBe(true)
+    expect(ada1.findAll('[data-test="cv-line"]')[0].find('[data-test="cv-logo"]').exists()).toBe(true)
     // Each agent's name has a color of its own.
     const color = (el) => el.attributes('style')
     expect(color(team.find('[data-test="cv-from"]'))).toMatch(/color:/)
@@ -83,8 +83,8 @@ describe('ConversationsPanel.vue', () => {
     expect(w.find('[data-test="cv-notices"]').element.tagName).toBe('BUTTON')
     await w.find('[data-test="cv-notices"]').trigger('click')
     expect(w.find('[data-test="cv-notices"]').attributes('aria-pressed')).toBe('true')
-    expect(w.find('[data-test="cv-thread-team:team1"]').findAll('[data-test="cv-text"]').map((x) => x.text())).toEqual(['Can you review the API?', 'Bob joined your team.'])
-    expect(w.find('[data-test="cv-thread-team:team1"]').findAll('[data-test="cv-from"]')[1].text()).toBe('Tessel')
+    expect(w.find('[data-test="cv-thread-team:team1"]').findAll('[data-test="cv-text"]').map((x) => x.text())).toEqual(['Bob joined your team.', 'Can you review the API?'])
+    expect(w.find('[data-test="cv-thread-team:team1"]').findAll('[data-test="cv-from"]')[0].text()).toBe('Tessel')
     w.unmount()
   })
 
@@ -117,15 +117,16 @@ describe('ConversationsPanel.vue', () => {
   it("one speaker's messages to different people: each bubble names its recipients", () => {
     const carl = { title: 'Carl', agentId: 'gemini' }
     const said = (ago, paneId, agent, text) => msg(ago, paneId, agent, { source: 'agent', from: 'Ada', fromPaneId: 'p1', fromAgentId: 'claude', scope: 'team-chat', status: 'read', teamId: 'team1', text })
-    // Ada to Bob, then to Carl a minute later, then to Carl again: Bob's and
-    // Carl's bubbles each say who they went to; Carl's two share one head.
+    // Ada to Bob, then to Carl a minute later, then to Carl again (shown
+    // newest first): Bob's and Carl's bubbles each say who they went to;
+    // Carl's two share one head, above the newer of them.
     const w = make({ events: [said(20 * MIN, 'p2', bob, 'Bob: the API'), said(19 * MIN, 'p3', carl, 'Carl: the docs'), said(18 * MIN, 'p3', carl, 'Carl: and the tests')] })
     const lines = w.find('[data-test="cv-thread-team:team1"]').findAll('[data-test="cv-line"]')
-    expect(lines.map((l) => l.find('[data-test="cv-text"]').text())).toEqual(['Bob: the API', 'Carl: the docs', 'Carl: and the tests'])
-    expect(lines[0].findAll('[data-test="cv-to"]').map((x) => x.text())).toEqual(['Bob'])
-    expect(lines[1].findAll('[data-test="cv-to"]').map((x) => x.text())).toEqual(['Carl'])
-    expect(lines[2].find('[data-test="cv-to"]').exists()).toBe(false)
-    expect(lines.map((l) => l.classes().find((c) => c.startsWith('shape-')))).toEqual(['shape-single', 'shape-first', 'shape-last'])
+    expect(lines.map((l) => l.find('[data-test="cv-text"]').text())).toEqual(['Carl: and the tests', 'Carl: the docs', 'Bob: the API'])
+    expect(lines[0].findAll('[data-test="cv-to"]').map((x) => x.text())).toEqual(['Carl'])
+    expect(lines[1].find('[data-test="cv-to"]').exists()).toBe(false)
+    expect(lines[2].findAll('[data-test="cv-to"]').map((x) => x.text())).toEqual(['Bob'])
+    expect(lines.map((l) => l.classes().find((c) => c.startsWith('shape-')))).toEqual(['shape-first', 'shape-last', 'shape-single'])
     w.unmount()
   })
 
@@ -145,10 +146,10 @@ describe('ConversationsPanel.vue', () => {
     await w.find('[data-test="cv-toggle-you:p1"]').trigger('click')
     expect(ada1().findAll('[data-test="cv-line"]')).toHaveLength(4)
     // Ada's pane is open: her name is a button; Bob's is not.
-    await ada1().findAll('[data-test="cv-line"]')[2].find('[data-test="cv-from"]').trigger('click')
+    await ada1().findAll('[data-test="cv-line"]')[1].find('[data-test="cv-from"]').trigger('click')
     expect(w.emitted('focus-pane')).toEqual([['p1']])
     expect(w.find('[data-test="cv-thread-you:p2"] [data-test="cv-from"]').element.tagName).toBe('SPAN')
-    const longLine = ada1().findAll('[data-test="cv-line"]')[3]
+    const longLine = ada1().findAll('[data-test="cv-line"]')[0]
     expect(longLine.find('[data-test="cv-text"]').classes()).toContain('clamp4')
     await longLine.find('.cv-more').trigger('click')
     expect(longLine.find('[data-test="cv-text"]').classes()).not.toContain('clamp4')
@@ -160,18 +161,19 @@ describe('ConversationsPanel.vue', () => {
     w.unmount()
   })
 
-  it('a long thread shows its latest lines, the newest at the bottom, Show earlier above them', async () => {
+  it('a long thread shows its latest lines, the newest at the top, Show earlier below them', async () => {
     const many = Array.from({ length: 35 }, (_, i) => msg((100 - i) * MIN, 'p1', ada, { text: `m${i}` }))
     const w = make({ events: many })
     expect(w.findAll('[data-test="cv-line"]')).toHaveLength(30)
-    expect(texts(w)[0]).toBe('m5')
-    expect(texts(w)[29]).toBe('m34')
+    expect(texts(w)[0]).toBe('m34')
+    expect(texts(w)[29]).toBe('m5')
     const lines = w.find('.cv-lines').element.children
-    expect(lines[0].getAttribute('data-test')).toBe('cv-earlier-you:p1')
+    expect(lines[lines.length - 1].getAttribute('data-test')).toBe('cv-earlier-you:p1')
     expect(w.find('[data-test="cv-earlier-you:p1"]').text()).toBe('Show the 5 earlier messages')
     await w.find('[data-test="cv-earlier-you:p1"]').trigger('click')
     expect(w.findAll('[data-test="cv-line"]')).toHaveLength(35)
     expect(w.find('[data-test="cv-earlier-you:p1"]').exists()).toBe(false)
+    expect(texts(w)[34]).toBe('m0')
     w.unmount()
   })
 
@@ -198,6 +200,30 @@ describe('ConversationsPanel.vue', () => {
     expect(texts(w)).toHaveLength(5)
     await w.setProps({ active: true })
     expect(texts(w)).toHaveLength(6)
+    w.unmount()
+  })
+
+  it('a message arriving later appears above the others, and the copy stays oldest first', async () => {
+    const writeText = vi.fn(() => Promise.resolve())
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true })
+    const list = events()
+    const w = make({ events: list })
+    const ada1 = () => w.find('[data-test="cv-thread-you:p1"]')
+    const said = () => ada1().findAll('[data-test="cv-text"]').map((x) => x.text())
+    expect(said()).toEqual(['Done: the tab is there.', 'Please add the tab', 'Three days ago'])
+    await w.setProps({ events: [...list, msg(1 * MIN, 'p1', ada, { text: 'Later' })] })
+    expect(said()).toEqual(['Later', 'Done: the tab is there.', 'Please add the tab', 'Three days ago'])
+    // The stamp heads the newest message of each hour-wide gap: one above the
+    // recent cluster, one more above "Three days ago" below it.
+    const children = [...ada1().find('.cv-lines').element.children]
+    expect(children[0].getAttribute('data-test')).toBe('cv-stamp')
+    expect(children.filter((c) => c.getAttribute('data-test') === 'cv-stamp')).toHaveLength(2)
+    // A transcript still reads oldest first.
+    await w.find('[data-test="cv-copy-you:p1"]').trigger('click')
+    await nextTick()
+    const text = writeText.mock.calls[0][0]
+    expect(text.indexOf('Three days ago')).toBeLessThan(text.indexOf('Please add the tab'))
+    expect(text.indexOf('Please add the tab')).toBeLessThan(text.indexOf('Later'))
     w.unmount()
   })
 })

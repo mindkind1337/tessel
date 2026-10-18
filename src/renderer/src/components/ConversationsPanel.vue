@@ -9,7 +9,7 @@
 // (src/main/chat/terminalConversations.js), merged in time into your thread
 // with it, a small terminal mark on each. One thread per team and one per
 // agent you talked with, latest first; a thread's lines read like a chat
-// (oldest at the top, the latest at the bottom), as chat rows (who,
+// (newest at the top), as chat rows (who,
 // to whom, when, the text, its delivery status, the model it was said with
 // at its bottom right). A scope switch (this workspace / all), a period, an
 // agent filter, a search box, and a switch to show Tessel's own notices. A
@@ -263,12 +263,12 @@ const countText = computed(
 // --- Threads open or folded, lines shown ----------------------------------------------------
 const folded = reactive({}) // thread key -> true when folded
 const toggleThread = (key) => (folded[key] = !folded[key])
-// A thread's lines in the order they were said, like a chat (the latest at
-// the bottom); a long thread shows its latest ones, Show earlier (at the
-// top) the rest.
+// A thread's lines newest first (a new message appears at the top, like the
+// threads themselves); a long thread shows its latest ones, Show earlier (at
+// the bottom) the rest.
 const TAIL = 30
 const whole = reactive({}) // thread key -> true: every line shown
-const visibleLines = (thread) => (whole[thread.key] || thread.lines.length <= TAIL ? thread.lines : thread.lines.slice(-TAIL))
+const visibleLines = (thread) => (whole[thread.key] || thread.lines.length <= TAIL ? thread.lines : thread.lines.slice(-TAIL)).slice().reverse()
 const hiddenCount = (thread) => (whole[thread.key] ? 0 : Math.max(0, thread.lines.length - TAIL))
 // A long text is clamped; a click on it shows it whole.
 const LONG = 280
@@ -304,7 +304,9 @@ const sameSpeaker = (a, b) => !!a && !!b && a.kind !== 'notice' && b.kind !== 'n
 const toKey = (line) => recipients(line).map((to) => to.label).join(', ')
 const sameGroup = (team, a, b) => sameSpeaker(a, b) && (!team || toKey(a) === toKey(b))
 // A time stamp sits between messages an hour or more apart (and above the
-// first one shown), like Messenger's.
+// first one shown), like Messenger's. Lines run newest first, so a stamp heads
+// the cluster below it and carries the time of that cluster's newest message;
+// the clusters read newest to oldest, each stamp older than the one above.
 const STAMP_GAP = 60 * 60000
 function rows(thread) {
   const lines = visibleLines(thread)
@@ -478,9 +480,6 @@ const terminalHint = (line) => (line.from.kind === 'you' ? t('conversations.term
           </button>
         </div>
         <div v-if="!folded[thread.key]" class="cv-lines">
-          <button v-if="hiddenCount(thread)" type="button" class="cv-earlier" :data-test="'cv-earlier-' + thread.key" @click="whole[thread.key] = true">
-            {{ earlierLabel(thread) }}
-          </button>
           <template v-for="row in rows(thread)" :key="row.line.key">
           <div v-if="row.stamp" class="cv-stamp" data-test="cv-stamp">{{ when(row.line.t) }}</div>
           <article
@@ -563,6 +562,9 @@ const terminalHint = (line) => (line.from.kind === 'you' ? t('conversations.term
             </template>
           </article>
           </template>
+          <button v-if="hiddenCount(thread)" type="button" class="cv-earlier" :data-test="'cv-earlier-' + thread.key" @click="whole[thread.key] = true">
+            {{ earlierLabel(thread) }}
+          </button>
         </div>
       </section>
     </div>

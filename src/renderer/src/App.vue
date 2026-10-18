@@ -2587,16 +2587,6 @@ const livePill = computed(() => {
   }
   return null
 })
-// The thin line along the top of the project area: a project you share
-// (dimmer while nobody is in), or a host's project in their session; none
-// on a project that is not shared.
-const liveLine = computed(() => {
-  const cur = currentWs.value
-  if (!cur) return null
-  if (liveShare.isGuestWs(cur) && liveGuestOn.value) return 'guest'
-  if (liveHostOn.value && liveShare.isShared(cur.id)) return guestsIn(liveShare.state.host, cur.id).length ? 'host' : 'host idle'
-  return null
-})
 // The pill's ways: a project (yours or the host's), a project in or out of
 // the share, a section of the dialog, Stop (asked when someone is in), Leave.
 function livePillGoto(id) {
@@ -13337,7 +13327,6 @@ onBeforeUnmount(() => {
       />
       <div class="workspace-main">
         <!-- Live Share: a thin line along the top of a shared project. -->
-        <div v-if="liveLine" class="live-line" :class="liveLine" aria-hidden="true" data-test="live-line"></div>
         <div
           v-for="ws in workspaces"
           :key="ws.id"
