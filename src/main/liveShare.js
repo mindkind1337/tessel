@@ -1505,7 +1505,7 @@ export function registerLiveShare({
   // is still this cloudflared). Stop sharing or quitting meanwhile (stopRun)
   // ends it too; another taking-back or a suspend meanwhile (resumeRun) only
   // lets it go, the tunnel and the saved share kept.
-  const PORT_WAIT_MS = 30000
+  const PORT_WAIT_MS = 180000
   let resumeRun = 0
   let stopRun = 0
   let resuming = 0 // shares being taken back now
@@ -1580,7 +1580,8 @@ export function registerLiveShare({
     s.server = server
     // Its port: the last Tessel may take a while to let it go (a dev restart
     // kills it, but its processes can hold the port for several seconds; one
-    // try of 3 s lost a share you had guests in, 2026-10-18). Tried for up to
+    // try of 3 s, then of 30 s, lost a share you had guests in: the old Tessel
+    // can take a minute to quit, 2026-10-18). Tried for up to
     // PORT_WAIT_MS, every half second.
     let port = 0
     for (let i = 0; i < PORT_WAIT_MS / 500 && !port && check() === 'ok'; i++) {
