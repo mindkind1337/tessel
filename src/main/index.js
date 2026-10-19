@@ -4164,11 +4164,18 @@ liveShare = registerLiveShare({
     createTranscriptViews({
       send: sendView,
       log,
+      // Up to 10 guests with 8 conversations each share these (two guests on
+      // one pane share one view); past it the oldest is let go (liveShare.js
+      // reopens it, within its limits).
+      maxViews: 32,
       homes: async (agent, accountId) => {
         const r = await accountSessions.roots({ agent, accountId })
         return (r && r[agent]) || null
       },
       sessionsDir: () => sessionsDir(),
+      // An agent on an SSH host: its file there, over the host's connection
+      // (the host's own chat view reads it the same way).
+      readAgentFile: (hostId, q) => (remoteHosts.get(hostId) ? remoteFs.readAgentFile(hostId, q) : { ok: false, error: 'unknown host' }), // i18n-ignore
       limits: { bytes: 2 * 1024 * 1024, events: 1000, text: 32 * 1024 }
     })
 })
