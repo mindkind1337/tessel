@@ -3,23 +3,31 @@
 // window. Started on the first ask, stopped after IDLE_MS without one. If it
 // cannot start, fails or does not answer in time, the list is read here as
 // before (fallback).
+//
+// call(method, ...args): the other agent file readings done there too (a
+// pane's model, its sub-agents, the conversation to resume: see
+// sessionListWorker.js METHODS), each with its own fallback here
+// (fallbacks[method]) answered the same way.
 const IDLE_MS = 2 * 60 * 1000
 const REPLY_MS = 30 * 1000
 
-export function createSessionLister({ fork, fallback, timers = globalThis, idleMs = IDLE_MS, replyMs = REPLY_MS, log = null }) {
+export function createSessionLister({ fork, fallback, fallbacks = {}, timers = globalThis, idleMs = IDLE_MS, replyMs = REPLY_MS, log = null }) {
   let child = null
   let nextId = 0
   let idleTimer = null
   let closed = false
-  const waiting = new Map() // id -> { resolve, args, timer }
+  const waiting = new Map() // id -> { resolve, local, timer, method }
 
-  function settle(id, rows, failed) {
+  // failed: its local fallback answers instead (a list, or the method's).
+  // error: a method that threw there throws here (never run twice).
+  function settle(id, value, failed, error = null) {
     const w = waiting.get(id)
     if (!w) return
     waiting.delete(id)
     timers.clearTimeout(w.timer)
-    if (failed) w.resolve(runFallback(w.args))
-    else w.resolve(rows)
+    if (failed) w.resolve(w.local())
+    else if (error !== null) w.resolve(Promise.reject(new Error(error)))
+    else w.resolve(value)
     armIdle()
   }
   function runFallback(args) {
@@ -27,6 +35,17 @@ export function createSessionLister({ fork, fallback, timers = globalThis, idleM
       return fallback(...args)
     } catch {
       return []
+    }
+  }
+  // A method's own fallback, here: its answer, or its error as a rejection
+  // (as when it ran here before).
+  function runMethod(method, args) {
+    const fn = fallbacks[method]
+    if (typeof fn !== 'function') return Promise.reject(new Error(`no fallback for ${method}`)) // i18n-ignore internal
+    try {
+      return Promise.resolve(fn(...args))
+    } catch (err) {
+      return Promise.reject(err)
     }
   }
   function armIdle() {
@@ -45,7 +64,12 @@ export function createSessionLister({ fork, fallback, timers = globalThis, idleM
       const c = fork()
       c.on('message', (msg) => {
         if (!msg || !waiting.has(msg.id)) return
-        settle(msg.id, Array.isArray(msg.rows) ? msg.rows : [], !Array.isArray(msg.rows))
+        const w = waiting.get(msg.id)
+        if (w.method) {
+          if (typeof msg.error === 'string') settle(msg.id, null, false, msg.error)
+          else settle(msg.id, msg.value, msg.ok !== true)
+        }
+        else settle(msg.id, Array.isArray(msg.rows) ? msg.rows : [], !Array.isArray(msg.rows))
       })
       c.on('exit', () => {
         if (child !== c) return
@@ -71,24 +95,32 @@ export function createSessionLister({ fork, fallback, timers = globalThis, idleM
     }
     for (const id of [...waiting.keys()]) settle(id, null, true)
   }
-  function list(...args) {
+  function ask(message, local, method) {
     const c = ensureChild()
-    if (!c) return Promise.resolve(runFallback(args))
+    if (!c) return null
     if (idleTimer) timers.clearTimeout(idleTimer)
     idleTimer = null
     return new Promise((resolve) => {
       const id = ++nextId
       const timer = timers.setTimeout(() => settle(id, null, true), replyMs)
-      waiting.set(id, { resolve, args, timer })
+      waiting.set(id, { resolve, local, timer, method })
       try {
-        c.postMessage({ id, args })
+        c.postMessage({ id, ...message })
       } catch {
         settle(id, null, true)
       }
     })
   }
+  function list(...args) {
+    return ask({ args }, () => runFallback(args), null) || Promise.resolve(runFallback(args))
+  }
+  // -> a Promise of the method's answer (or of its fallback's).
+  function call(method, ...args) {
+    return ask({ method, args }, () => runMethod(method, args), method) || runMethod(method, args)
+  }
   return {
     list,
+    call,
     close() {
       closed = true
       stop()

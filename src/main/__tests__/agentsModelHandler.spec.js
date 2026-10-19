@@ -12,6 +12,7 @@ const handlerSource = main.slice(start, main.indexOf('\n})\n', start) + 4)
 
 function harness(roots) {
   const reads = []
+  const calls = []
   const handlers = {}
   vm.runInNewContext(handlerSource, {
     ipcMain: { handle: (k, v) => (handlers[k] = v) },
@@ -19,9 +20,16 @@ function harness(roots) {
     remoteModels: {},
     remoteAgentModel: async () => null,
     accountSessions: { roots },
-    agentModelLive: async (q) => (reads.push(q), { model: q.codexDir ? 'gpt-account' : 'gpt-system', effort: 'low', source: 'session' })
+    os: { homedir: () => '/home/me' },
+    sessionLister: { call: async (...args) => (calls.push(args), { model: 'from-worker', effort: null, source: 'session' }) },
+    agentModelLive: async (q, home, fetchImpl, read) => {
+      reads.push(q)
+      // The files are read through the session list's process (read).
+      const viaWorker = await read(q, home)
+      return { model: q.codexDir ? 'gpt-account' : 'gpt-system', effort: 'low', source: 'session', viaWorker }
+    }
   })
-  return { call: (q) => handlers['agents:model']({}, q), reads }
+  return { call: (q) => handlers['agents:model']({}, q), reads, calls }
 }
 
 describe('agents:model handler', () => {
@@ -45,5 +53,12 @@ describe('agents:model handler', () => {
     })
     expect(await h.call({ agentId: 'codex', codexDir: 'C:\\elsewhere' })).toMatchObject({ model: 'gpt-system' })
     expect(h.reads[0]).not.toHaveProperty('codexDir')
+  })
+
+  it("reads the model files in the session list's process, never on the main thread (it held it 3.5 s)", async () => {
+    const h = harness(async () => null)
+    const res = await h.call({ agentId: 'claude', sessionId: 's1' })
+    expect(h.calls).toEqual([['agentModel', { agentId: 'claude', sessionId: 's1' }, '/home/me']])
+    expect(res.viaWorker).toMatchObject({ model: 'from-worker' })
   })
 })

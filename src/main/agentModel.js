@@ -893,8 +893,11 @@ export function watchModelFiles(onChange, home = os.homedir()) {
 }
 
 // agentModel, plus what needs asking a running program (Ollama's API).
-export async function agentModelLive(q = {}, home = os.homedir(), fetchImpl = globalThis.fetch) {
-  const found = agentModel(q, home)
+// read(q, home): agentModel itself, or (index.js) the same read in the
+// session list's process (sessionListWorker.js), so the files are never read
+// on the main thread.
+export async function agentModelLive(q = {}, home = os.homedir(), fetchImpl = globalThis.fetch, read = agentModel) {
+  const found = await read(q, home)
   if (found || q.agentId !== 'ollama') return found
   const running = await ollamaRunningModel(fetchImpl)
   return running ? { model: running, effort: null, source: 'running' } : null

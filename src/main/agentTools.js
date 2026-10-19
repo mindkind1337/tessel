@@ -3,6 +3,7 @@
 // Code and Codex. The pure helpers are exported for unit tests.
 import { execFile, spawn } from 'child_process'
 import { cleanEnv } from './cleanEnv'
+import { execFileOff } from './spawnOffThread'
 import {
   JSON_AGENTS,
   listJsonAgent,
@@ -169,9 +170,11 @@ export function slugify(text) {
 const isGit = (file) => /(^|[\\/])git(\.exe)?$/i.test(String(file || ''))
 const isPowerShell = (file) => /(^|[\\/])(powershell|pwsh)(\.exe)?$/i.test(String(file || ''))
 
+// Started from a worker thread (spawnOffThread.js): starting git or
+// PowerShell held the main process for seconds on a busy PC.
 export function run(file, args, opts = {}) {
   return new Promise((resolve) => {
-    execFile(
+    execFileOff(
       file,
       isGit(file) ? ['-c', 'core.fsmonitor=false', ...args] : args,
       {
