@@ -673,17 +673,9 @@ export function createDocumentRenderers() {
         }
         return alt ? h('span', null, alt) : null
       }
-      if (ctx.hasLinkClick) {
-        return h('img', {
-          src,
-          alt,
-          class: 'cm-d-img is-clickable',
-          onClick: (event) => {
-            event.stopPropagation()
-            ctx.onImageClick(event, src)
-          }
-        })
-      }
+      // Tessel: only an image given by its data (data:image, blob:) gets here,
+      // never a link to follow: a click opens it in the lightbox, with or
+      // without the caller's onLinkClick (handing it the data URL did nothing).
       return h(ExpandableMarkdownImage, { src, alt, variant: 'document' })
     },
     // Why: agents' answers commonly contain GFM tables; wide ones scroll.

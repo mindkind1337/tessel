@@ -2,6 +2,7 @@
 // components here): the agents, their names, and how a test result or a
 // server's command reads.
 import { t, intlLocale } from '../../i18n'
+import { openTarget } from '../../links/openTarget'
 
 export const ALL_AGENTS = ['claude', 'codex', 'gemini', 'qwen', 'copilot', 'opencode', 'cline', 'kimi', 'cursor', 'antigravity', 'muse']
 export const AGENT_NAME = {
@@ -105,9 +106,9 @@ export async function copyText(text) {
   }
 }
 
-export function openLink(url) {
-  if (window.shellApi && window.shellApi.openExternal) window.shellApi.openExternal(url)
-  else window.open(url, '_blank', 'noopener')
+// A server's docs: Tessel's link router (links/openTarget.js), like every link.
+export function openLink(url, event) {
+  return openTarget(url, { event })
 }
 
 // Arrow keys, Home and End across a row of tabs (role="tab").

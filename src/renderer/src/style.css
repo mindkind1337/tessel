@@ -4515,6 +4515,22 @@ body.pane-dragging * {
   color: #cfe0ff;
 }
 
+/* The real address of an OSC 8 link under the mouse (TerminalPane). */
+.link-tip {
+  position: fixed;
+  z-index: 60;
+  max-width: min(560px, 70vw);
+  padding: 4px 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: var(--surface-2);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45);
+  color: var(--text);
+  font-size: 11.5px;
+  overflow-wrap: anywhere;
+  pointer-events: none;
+}
+
 /* ================= Pane numbers ================= */
 .pane-pick .pick-title {
   overflow: hidden;

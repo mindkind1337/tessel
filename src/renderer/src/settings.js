@@ -74,6 +74,11 @@ export const DEFAULT_SETTINGS = Object.freeze({
   // user, not for agents using the browser tools. Off: agents share the one
   // session, as in Orca.
   browserAgentSeparateSession: false,
+  // Where a web link clicked in Tessel opens (a terminal, a chat, Markdown,
+  // Source Control: links/openTarget.js): 'builtin', a new tab of Tessel's
+  // browser in the current project; 'system', the system browser.
+  // Ctrl/Cmd+click opens it in the other one.
+  linksOpenUrlsIn: 'builtin',
   // Set at the first successful cookie import, which turns the separate agent
   // session on once (browser/agentSession.js afterCookieImport).
   cookiesImportedOnce: false,
@@ -472,6 +477,7 @@ export function loadSettings(saved) {
     if (key === 'sidebarSortBy' && !SIDEBAR_SORTS.includes(v)) continue
     if (key === 'sidebarProjectOrderBy' && !['manual', 'recent'].includes(v)) continue
     if (key === 'agentActivityDisplayMode' && !['compact', 'full'].includes(v)) continue
+    if (key === 'linksOpenUrlsIn' && !['builtin', 'system'].includes(v)) continue
     if (key === 'leftSidebarAppearanceMode' && !['default', 'match-terminal', 'tinted'].includes(v)) continue
     if (key === 'leftSidebarTintColor' && !(typeof v === 'string' && /^#(?:[0-9a-f]{3}|[0-9a-f]{6})$/i.test(v))) continue
     if (key === 'leftSidebarTintOpacity') {

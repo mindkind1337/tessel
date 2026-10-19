@@ -1,7 +1,7 @@
 <script setup>
-// Settings > Browser: the built-in browser, its cookies and the agents'
-// session.
-import { ref, inject } from 'vue'
+// Settings > Browser: where web links open, the built-in browser, its
+// cookies and the agents' session.
+import { ref, inject, computed } from 'vue'
 import { t } from '../../i18n'
 import SettingsToolRows from '../SettingsToolRows.vue'
 import { settings } from '../../settings'
@@ -9,6 +9,11 @@ import { PAGES } from './settingsPages'
 import { useSettingsShell } from './settingsShell'
 
 const { shown, emit } = useSettingsShell()
+// Where a clicked web link opens (links/openTarget.js).
+const URL_TARGETS = computed(() => [
+  { id: 'builtin', label: t('settings.browser.openUrlsInBuiltin', 'Built-in browser') },
+  { id: 'system', label: t('settings.browser.openUrlsInSystem', 'System browser') }
+])
 
 const browserApi = typeof window !== 'undefined' && window.shellApi ? window.shellApi.browser : null
 const clearingCookies = ref(false)
@@ -49,6 +54,31 @@ async function clearImportedCookies() {
       <h2 id="set-browser-title">{{ PAGES.browser.title }}</h2>
       <p class="set-page-desc">{{ PAGES.browser.desc }}</p>
     </header>
+    <div class="set-group">
+      <h3 class="set-group-title">{{ t('settings.browser.links', 'Links') }}</h3>
+      <div class="set-card">
+        <div class="set-row">
+          <div id="settings-links-open-in-label" class="set-label">
+            {{ t('settings.browser.openUrlsIn', 'Open web links in') }}
+            <span class="set-hint">{{ t('settings.browser.openUrlsInHint', 'Links clicked in a terminal, a chat, a Markdown file or Source Control. Built-in browser: a new tab in the current project. Ctrl+click (Cmd+click on a Mac) opens a link in the other one.') }}</span>
+          </div>
+          <div class="launch-seg set-seg" role="group" aria-labelledby="settings-links-open-in-label" data-setting="linksOpenUrlsIn">
+            <button
+              v-for="o in URL_TARGETS"
+              :key="o.id"
+              type="button"
+              class="launch-seg-btn"
+              :class="{ on: settings.linksOpenUrlsIn === o.id }"
+              :aria-pressed="settings.linksOpenUrlsIn === o.id"
+              :data-value="o.id"
+              @click="settings.linksOpenUrlsIn = o.id"
+            >
+              {{ o.label }}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
     <div class="set-group">
       <h3 class="set-group-title">{{ t('settings.browser.cookies', 'Your sign-ins') }}</h3>
       <div class="set-card">

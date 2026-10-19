@@ -313,7 +313,7 @@ const RESULT = {
             </dd>
           </template>
         </dl>
-        <button v-if="catalogDocs(viewed)" type="button" class="sl-link mcpc-docs" @click="openLink(catalogDocs(viewed))">
+        <button v-if="catalogDocs(viewed)" type="button" class="sl-link mcpc-docs" @click="openLink(catalogDocs(viewed), $event)">
           {{ t('mcp.catalog.docs', 'Documentation') }}<ExternalLink :size="11" aria-hidden="true" />
         </button>
 

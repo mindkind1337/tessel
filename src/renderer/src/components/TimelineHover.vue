@@ -81,7 +81,7 @@ watch(
               </template>
             </svg>
             <Codicon v-else class="timeline-hover-icon" name="account" :size="14" />
-            <a v-if="commit && commit.email" class="timeline-hover-link" href="#" :title="'mailto:' + commit.email" @click.prevent="emit('open-url', 'mailto:' + commit.email)"
+            <a v-if="commit && commit.email" class="timeline-hover-link" href="#" :title="'mailto:' + commit.email" @click.prevent="emit('open-url', 'mailto:' + commit.email, $event)"
               ><strong>{{ commit.author }}</strong></a
             ><strong v-else>{{ commit ? commit.author : t('explorer.timeline.you', 'You') }}</strong>,
             <Codicon class="timeline-hover-icon" name="history" :size="14" /> {{ ago }} ({{ date }})
@@ -90,7 +90,7 @@ watch(
             <template v-for="(b, i) in blocks" :key="i">
               <p v-if="b.kind === 'p'">
                 <template v-for="(p, j) in b.parts" :key="j">
-                  <a v-if="p.kind === 'link'" class="timeline-hover-link" href="#" :title="p.href" @click.prevent="emit('open-url', p.href)">{{ p.text }}</a>
+                  <a v-if="p.kind === 'link'" class="timeline-hover-link" href="#" :title="p.href" @click.prevent="emit('open-url', p.href, $event)">{{ p.text }}</a>
                   <code v-else-if="p.kind === 'code'">{{ p.text }}</code>
                   <template v-else>{{ p.text }}</template>
                 </template>
@@ -98,7 +98,7 @@ watch(
               <ul v-else>
                 <li v-for="(item, k) in b.items" :key="k">
                   <template v-for="(p, j) in item" :key="j">
-                    <a v-if="p.kind === 'link'" class="timeline-hover-link" href="#" :title="p.href" @click.prevent="emit('open-url', p.href)">{{ p.text }}</a>
+                    <a v-if="p.kind === 'link'" class="timeline-hover-link" href="#" :title="p.href" @click.prevent="emit('open-url', p.href, $event)">{{ p.text }}</a>
                     <code v-else-if="p.kind === 'code'">{{ p.text }}</code>
                     <template v-else>{{ p.text }}</template>
                   </template>
@@ -125,7 +125,7 @@ watch(
                 ><Codicon class="timeline-hover-icon" name="copy" :size="14"
               /></a>
               <template v-if="info && info.webUrl"
-                ><span class="timeline-hover-sep" aria-hidden="true">|</span><a class="timeline-hover-link" href="#" :title="t('explorer.timeline.openOnGitHub', 'Open on GitHub')" data-test="timeline-hover-github" @click.prevent="emit('open-url', info.webUrl)"
+                ><span class="timeline-hover-sep" aria-hidden="true">|</span><a class="timeline-hover-link" href="#" :title="t('explorer.timeline.openOnGitHub', 'Open on GitHub')" data-test="timeline-hover-github" @click.prevent="emit('open-url', info.webUrl, $event)"
                   ><Codicon class="timeline-hover-icon" name="github" :size="14" /> {{ t('explorer.timeline.openOnGitHub', 'Open on GitHub') }}</a
                 ></template
               >

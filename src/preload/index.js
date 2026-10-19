@@ -238,6 +238,15 @@ const api = {
   voiceTyping: (opts) => ipcRenderer.invoke('app:voiceTyping', opts),
   inputLanguages: () => ipcRenderer.invoke('app:inputLanguages'),
   openExternal: (url) => ipcRenderer.invoke('app:openExternal', url),
+  // Links the window would open in a new window: handed to its link router
+  // (links/openTarget.js) once it listens. onOpen(cb(url)) -> unsubscribe.
+  links: {
+    onOpen: (cb) => {
+      const stop = subscribe('links:open', (url) => typeof url === 'string' && cb(url))
+      ipcRenderer.invoke('links:ready').catch(() => {})
+      return stop
+    }
+  },
   keepAwake: (on) => ipcRenderer.invoke('power:keepAwake', on === true),
   gitInfo: (cwd) => ipcRenderer.invoke('git:info', cwd),
   // The worktrees of an open project's repository (read-only).

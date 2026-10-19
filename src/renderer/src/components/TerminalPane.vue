@@ -2381,6 +2381,11 @@ const fileLinkCache = new Map() // "<cwd>\n<path>" -> { file, at }
 // Code (or the file's own program).
 async function openFileRef(file, ref, event) {
   const outside = !!(event && event.shiftKey)
+  // The one link router (links/openTarget.js): the same as from a chat or Files.
+  if (ctx.openTarget && !outside) {
+    ctx.openTarget({ path: file, line: ref.line || null, col: ref.col || null }, { label: ref.path, event })
+    return
+  }
   if (ctx.viewFile && isViewed(file) && !outside) {
     ctx.viewFile({ file, label: ref.path, line: ref.line || null })
     return
@@ -2856,12 +2861,32 @@ function onEscapeMenu(e) {
   if (e.key === 'Escape' && modelMenu.visible) closeModelMenu()
 }
 
-// A clicked link opens in the system browser (the main process only lets
+// A clicked link goes through the one link router (links/openTarget.js): a
+// web page in the built-in browser or the system one (Settings > Browser,
+// Ctrl+click the other), mailto: in the mail program; any other scheme is
+// dropped there. Without it, the system browser (the main process only lets
 // http, https and mailto through).
-function openLink(uri) {
+function openLink(uri, event) {
+  // Web pages and mail addresses only: a file: (or any other) link a program
+  // prints never opens from here, whatever computer the program runs on.
+  if (!/^(https?:\/\/|mailto:)/i.test(String(uri || '').trim())) return
+  if (ctx.openTarget) return ctx.openTarget(uri, { event })
   if (window.shellApi.openExternal) window.shellApi.openExternal(uri)
-  else window.open(uri)
 }
+// The real address of a link a program writes with a text of its own (OSC 8):
+// shown while the mouse is on it, so a link never hides where it goes.
+const linkTip = ref(null) // { text, x, y }
+function showLinkTip(event, uri) {
+  if (!event || typeof uri !== 'string') return
+  const text = uri.length > 300 ? uri.slice(0, 300) + '…' : uri
+  linkTip.value = { text, x: event.clientX, y: event.clientY }
+}
+function hideLinkTip() {
+  linkTip.value = null
+}
+// mailto: addresses written as plain text (the web links addon finds http and
+// https only).
+const MAILTO_TEXT = /\bmailto:[^\s"'<>()[\]{}]+/gi
 
 // Draw with the graphics card (much faster with busy agents and many panes),
 // like VS Code: Settings > Terminal, GPU Acceleration (Auto / On / Off).
@@ -3084,12 +3109,37 @@ onMounted(() => {
     // Codex and others print their links this way). Without this, xterm
     // asks in a browser popup "WARNING: This link could potentially be
     // dangerous" and opens it in a new Electron window.
-    linkHandler: { activate: (_e, uri) => openLink(uri), allowNonHttpProtocols: false }
+    // mailto: links too (allowNonHttpProtocols); the router opens web pages
+    // and mail addresses only. Hovering one shows its real address.
+    linkHandler: {
+      activate: (e, uri) => openLink(uri, e),
+      hover: (e, uri) => showLinkTip(e, uri),
+      leave: () => hideLinkTip(),
+      allowNonHttpProtocols: true
+    }
   })
   fit = new FitAddon()
   term.loadAddon(fit)
   // A link written as plain text: the same.
-  term.loadAddon(new WebLinksAddon((_e, uri) => openLink(uri)))
+  term.loadAddon(new WebLinksAddon((e, uri) => openLink(uri, e)))
+  term.registerLinkProvider({
+    provideLinks(y, callback) {
+      const line = term && term.buffer.active.getLine(y - 1)
+      const text = line ? line.translateToString(true) : ''
+      if (!/mailto:/i.test(text)) return callback(undefined)
+      const links = []
+      for (const m of text.matchAll(MAILTO_TEXT)) {
+        const uri = m[0].replace(/[.,;:!?]+$/, '')
+        links.push({
+          range: { start: { x: m.index + 1, y }, end: { x: m.index + uri.length, y } },
+          text: uri,
+          decorations: { underline: true, pointerCursor: true },
+          activate: (e) => openLink(uri, e)
+        })
+      }
+      callback(links.length ? links : undefined)
+    }
+  })
   // OSC 52: a program copies text to the clipboard (writing only, never read).
   // Settings > Terminal, "Allow TUI Clipboard Writes (OSC 52)": off, it is
   // ignored.
@@ -4116,6 +4166,8 @@ const paneMenuBindings = computed(() => ({
         </svg>
       </button>
     </div>
+
+    <div v-if="linkTip" class="link-tip" data-test="link-tip" :style="{ left: linkTip.x + 12 + 'px', top: linkTip.y + 16 + 'px' }">{{ linkTip.text }}</div>
 
     <button
       v-if="scrolledUp && !exited"

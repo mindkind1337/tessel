@@ -1840,6 +1840,12 @@ ipcMain.handle('app:openExternal', async (_evt, url) => {
   await shell.openExternal(url)
   return true
 })
+// The window's link router is listening (createWindow's window-open handler).
+let windowLinksRouted = false
+ipcMain.handle('links:ready', (event) => {
+  if (mainWindow && !mainWindow.isDestroyed() && event.sender === mainWindow.webContents) windowLinksRouted = true
+  return windowLinksRouted
+})
 
 // Keep the computer awake (Settings > Agents): the renderer says when, as
 // it knows which agents are working. The screen may still turn off.
@@ -5070,8 +5076,17 @@ function createWindow() {
   }
   // Never open pages inside the app window: send them to the system browser
   // (OAuth sign-in, e.g. Gemini or Claude, only works there).
+  // A web page a link of the window opens (a target="_blank" link in rendered
+  // text) goes to the window's link router once it said it is there
+  // (links:ready): it opens where every link does (Settings > Browser, the
+  // built-in browser by default). Before that, and a mail address, the system's.
+  windowLinksRouted = false
+  mainWindow.webContents.on('did-navigate', () => {
+    windowLinksRouted = false
+  })
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    if (isSafeExternal(url)) shell.openExternal(url)
+    if (windowLinksRouted && /^https?:/i.test(url) && isSafeExternal(url)) mainWindow.webContents.send('links:open', url)
+    else if (isSafeExternal(url)) shell.openExternal(url)
     return { action: 'deny' }
   })
   // The dev window's own server (electron.vite.config.mjs: 127.0.0.1, a port

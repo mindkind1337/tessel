@@ -6,6 +6,7 @@
 // way the new-pane menu starts it (your agent settings apply).
 import { t } from './i18n'
 import { getAgentSessionOptionCatalog, modelOptions, safeSessionValue, listedModelValues } from '../../shared/agentSessionOptions'
+import { fileKind } from '../../shared/fileKinds'
 
 export class CliRequestError extends Error {
   constructor(code, message) {
@@ -90,6 +91,12 @@ export function createCliRequests(deps) {
   function openFile({ path, line, col }) {
     const ws = projectOrCurrent(path)
     if (ws) deps.selectWorkspace(ws.id)
+    // A PDF: its own PDF window (viewFile), as from Files or a terminal; the
+    // editor would only say "Binary file".
+    if (fileKind(path) === 'pdf') {
+      deps.viewFile({ file: path, line: null })
+      return { kind: 'file', file: folderName(path), project: ws ? ws.name : null }
+    }
     const leaf = ws ? deps.openInEditor({ file: path, line: line || null, col: col || null, ws }) : null
     if (!leaf) deps.viewFile({ file: path, line: line || null })
     return { kind: 'file', file: folderName(path), project: ws ? ws.name : null }

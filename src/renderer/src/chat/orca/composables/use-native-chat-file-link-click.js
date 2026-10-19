@@ -8,8 +8,11 @@
 //     characters: refused, with why; a path that does not exist: refused;
 //   - outside the chat's folders: Tessel asks first (its own dialog,
 //     askConfirm), then opens;
-//   - a folder: the system's file manager; media and documents: the system's
-//     default app (both through shellApi.chatFiles.open, re-checked in main);
+//   - a folder: the Files tab, unfolded at it, and a PDF: its PDF window
+//     (Tessel's link router, panelCtx.openTarget / options.openTarget);
+//     without the router, a folder opens in the system's file manager;
+//     media and documents: the system's default app (both through
+//     shellApi.chatFiles.open, re-checked in main);
 //     anything else (text, code): Tessel's editor (openFile / viewFile).
 // Options (tests, other hosts): statPath(path) -> 'file' | 'dir' | null,
 // openSystem(path) -> { ok, error }, confirmOpen({ path, kind }) -> boolean.
@@ -154,6 +157,13 @@ export function useNativeChatFileLinkClick(context, options = {}) {
     }
     try {
       if (kind === 'file' && fileKind(path) === 'image' && (await showInLightbox(path))) return
+      // A folder (the Files tab, unfolded at it) and a PDF (its PDF window):
+      // through Tessel's link router, the same as from a terminal or Files.
+      const router = callback('openTarget') || (typeof panel?.openTarget === 'function' ? panel.openTarget : null)
+      if (router && (kind === 'dir' || fileKind(path) === 'pdf')) {
+        await router({ kind: kind === 'dir' ? 'dir' : 'pdf', path }, { event })
+        return
+      }
       if (kind === 'dir' || isSystemOpenFile(path)) {
         const openSystem = callback('openSystem') || chatFilesApi()?.open
         if (!openSystem) return failure('unverifiable', path, '')

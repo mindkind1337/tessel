@@ -9,6 +9,7 @@ import { renderMarkdown, renderMermaid } from '../markdownView'
 import { markdownPreviewState } from '../markdownSize'
 import MarkdownSizeGate from './MarkdownSizeGate.vue'
 import { resolveFrom } from '../../../shared/viewPaths'
+import { openTarget } from '../links/openTarget'
 import { t, intlLocale } from '../i18n'
 
 const props = defineProps({
@@ -152,14 +153,16 @@ watch(mode, async () => {
 })
 watch(() => props.file, load)
 
-// Links in a Markdown file: the web outside, a heading here, a file in Tessel.
+// Links in a Markdown file: a web page in the browser (built-in or system),
+// a heading here, a file in Tessel.
 function onBodyClick(e) {
   const a = e.target.closest && e.target.closest('a[href]')
   if (!a || !bodyEl.value || !bodyEl.value.contains(a)) return
   e.preventDefault()
   const href = a.getAttribute('href') || ''
+  // A web page or a mail address: Tessel's link router (links/openTarget.js).
   if (/^(https?:|mailto:)/i.test(href)) {
-    if (window.shellApi.openExternal) window.shellApi.openExternal(href)
+    openTarget(href, { event: e })
     return
   }
   if (href.startsWith('#')) {

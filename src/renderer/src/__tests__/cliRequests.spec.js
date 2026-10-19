@@ -73,6 +73,14 @@ describe('createCliRequests', () => {
     expect(none.deps.viewFile).toHaveBeenCalledWith({ file: 'D:\\x.txt', line: null })
   })
 
+  it('openFile sends a PDF to its PDF window (viewFile), never the editor', async () => {
+    const { r, deps } = setup()
+    const res = await r.handle({ method: 'openFile', params: { path: 'C:\\work\\app\\docs\\spec.PDF', line: 3 } })
+    expect(deps.openInEditor).not.toHaveBeenCalled()
+    expect(deps.viewFile).toHaveBeenCalledWith({ file: 'C:\\work\\app\\docs\\spec.PDF', line: null })
+    expect(res).toEqual({ kind: 'file', file: 'spec.PDF', project: 'app' })
+  })
+
   it('newPane opens an ordinary agent pane with the pane’s own model choice', async () => {
     const { r, deps } = setup()
     const res = await r.handle({ method: 'newPane', params: { cwd: 'C:\\work\\app\\src', agent: 'claude', model: 'opus', effort: 'high' } })

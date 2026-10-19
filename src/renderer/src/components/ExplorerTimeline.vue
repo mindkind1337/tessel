@@ -7,6 +7,7 @@
 import { ref, reactive, computed, watch, nextTick, onBeforeUnmount } from 'vue'
 import { settings } from '../settings'
 import { t } from '../i18n'
+import { openTarget } from '../links/openTarget'
 import { activeEditor } from '../editor/activeEditor'
 import { localHistoryState } from '../editor/localHistory'
 import { timelineEntries, splitPath, repoTopOf } from '../explorer/timeline'
@@ -250,9 +251,9 @@ const hoverStatus = computed(() => (hover.entry && hover.entry.kind === 'uncommi
 function copyHash(id) {
   if (navigator.clipboard) navigator.clipboard.writeText(id).catch(() => {})
 }
-function openUrl(url) {
-  const api = window.shellApi
-  if (api && api.openExternal) Promise.resolve(api.openExternal(url)).catch(() => {})
+// Through Tessel's link router (links/openTarget.js), like every link.
+function openUrl(url, event) {
+  Promise.resolve(openTarget(url, { event })).catch(() => {})
 }
 function onHoverOpen() {
   const e = hover.entry

@@ -32,6 +32,7 @@ import { ref, reactive, computed, watch, nextTick, onMounted, onBeforeUnmount, i
 import BrandIcon from './BrandIcon.vue'
 import SkillTokenTag from './context/SkillTokenTag.vue'
 import { t, intlLocale } from '../i18n'
+import { openTarget } from '../links/openTarget'
 import { isRemotePath } from '../../../shared/remotePath'
 import { splitFrontmatter, renderSkillMarkdown } from '../skillPreview'
 
@@ -905,13 +906,14 @@ const description = computed(() => {
 const longDescription = computed(() => description.value.length > 240)
 const allFilesLabel = computed(() => (preview.value ? t('skills.preview.allFiles', 'Show all {{count}} files', { count: preview.value.files.length }) : ''))
 const shownFiles = computed(() => (!preview.value ? [] : filesAll.value ? preview.value.files : preview.value.files.slice(0, FILES_SHOWN)))
-// A link in the instructions: a web page opens in the browser, never here.
+// A link in the instructions: a web page opens in the browser (Tessel's link
+// router, links/openTarget.js), never here.
 function onMdClick(e) {
   const a = e.target && e.target.closest ? e.target.closest('a[href]') : null
   if (!a) return
   e.preventDefault()
   const href = a.getAttribute('href') || ''
-  if (/^https?:\/\//i.test(href) && window.shellApi.openExternal) window.shellApi.openExternal(href)
+  if (/^https?:\/\//i.test(href)) openTarget(href, { event: e })
 }
 
 // The bar: the agents (chips) and the scope.

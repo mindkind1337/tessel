@@ -10,8 +10,8 @@
  *   content (String, required)
  *   variant ('compact' | 'document', default 'compact')
  *   githubRepo ({ owner, repo } | null): #123 / owner/repo#123 become issue links
- *   onLinkClick ((event, href) => void): every link (and, in the document
- *     variant, every image) click; also bound by @link-click. Without it, links
+ *   onLinkClick ((event, href) => void): every link click; also bound by
+ *     @link-click (an image opens the lightbox either way). Without it, links
  *     go through useNativeChatLinkActions (http(s) to the browser, file paths
  *     to Tessel's viewer, anything else refused).
  *   allowFileUriLinks (Boolean): kept for the reference's callers; file: URIs
@@ -42,12 +42,14 @@ import {
 import {
   createCompactRenderers,
   createDocumentRenderers,
+  isTrustedCompactImageSrc,
   linkifyFilePaths as linkifyFilePathsInDom,
   linkifyGitHubReferences,
   parseSanitizedHtml,
   protectLocalMarkdownLinks,
   renderMarkdownFragment
 } from './chat-markdown-render.js'
+import { openTarget } from '../../../links/openTarget'
 
 const compactRenderers = createCompactRenderers()
 const documentRenderers = createDocumentRenderers()
@@ -75,12 +77,11 @@ export default defineComponent({
       event.stopPropagation()
       // Tessel: the window never follows a link from agent text.
       event.preventDefault()
+      // A compact image given by its data (its link wraps it): Tessel's image
+      // viewer, through the link router; it is never a link to follow.
+      if (/^data:image\//i.test(href || '') && isTrustedCompactImageSrc(href)) return void openTarget(href, { event })
       const handler = props.onLinkClick ?? fallback.onLinkClick.value
       handler?.(event, href)
-    }
-
-    function onImageClick(event, src) {
-      props.onLinkClick?.(event, src)
     }
 
     // The sanitized document, transformed; re-made only when the text or the
@@ -126,9 +127,7 @@ export default defineComponent({
         renderers: isDocument ? documentRenderers : compactRenderers,
         renderCodeBlock: props.renderCodeBlock,
         expandImages: props.expandImages,
-        hasLinkClick: props.onLinkClick !== undefined,
-        onAnchorClick,
-        onImageClick
+        onAnchorClick
       }
       return h(
         'div',
@@ -393,9 +392,6 @@ export default defineComponent({
   border-radius: 6px;
   object-fit: contain;
   outline: 1px solid rgb(255 255 255 / 0.1);
-}
-.cm-d-img.is-clickable {
-  cursor: pointer;
 }
 .cm-d-table-wrap {
   margin: 12px 0;

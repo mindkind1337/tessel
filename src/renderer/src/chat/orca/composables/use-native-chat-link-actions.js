@@ -1,6 +1,9 @@
 // After Orca's use-native-chat-link-actions.ts (MIT, Copyright (c) 2026 Lovecast Inc.)
 // Context, rootRef, scope/options accept refs or getters; callbacks are plain functions.
-// openWeb(url,event) can select Tessel's integrated browser; default opens externally.
+// openWeb(url,event) can select Tessel's integrated browser; by default a web
+// page and a mailto: address go through Tessel's link router (panelCtx.openTarget,
+// links/openTarget.js: the built-in or the system browser per Settings,
+// Ctrl+click the other; the mail program), else open externally.
 // Stable object with computed onLinkClick and nullable linkActionRequest ref (no menu).
 import { computed, inject, ref, toValue, unref } from 'vue'
 import { routeNativeChatHref } from '../shared/native-chat-href-routing.js'
@@ -10,13 +13,18 @@ export function useNativeChatLinkActions(context, rootRef, scope = {}, options =
   const panel = inject('panelCtx', null)
   const onFileClick = useNativeChatFileLinkClick(context, options)
   const linkActionRequest = ref(null)
+  // The router's opener for web pages and mail addresses (the openWeb this
+  // composable passes itself when the caller gives none).
+  const routerWeb = (url, event) => panel.openTarget(url, { event })
   async function onLinkClick(event, href) {
     if (toValue(toValue(scope)?.isVisible) === false) return
     const route = routeNativeChatHref(href)
     if (route.kind === 'file') return onFileClick.value(event, href)
     // Prevent document navigation even for unsupported schemes.
     if (!String(href).startsWith('#')) event.preventDefault()
-    if (route.kind !== 'web' || !/^https?:\/\//i.test(route.url)) return
+    if (route.kind !== 'web') return
+    const mail = /^mailto:/i.test(route.url)
+    if (!mail && !/^https?:\/\//i.test(route.url)) return
     try {
       new URL(route.url)
     } catch {
@@ -24,10 +32,10 @@ export function useNativeChatLinkActions(context, rootRef, scope = {}, options =
     }
     event.preventDefault()
     event.stopPropagation()
-    const open =
-      unref(toValue(options).openWeb) ||
-      panel?.openExternal ||
-      globalThis.window?.shellApi?.openExternal
+    const router = typeof panel?.openTarget === 'function' ? routerWeb : null
+    const open = mail
+      ? router || globalThis.window?.shellApi?.openExternal
+      : unref(toValue(options).openWeb) || router || panel?.openExternal || globalThis.window?.shellApi?.openExternal
     try {
       const result = await open?.(route.url, event)
       if (result === false || result?.ok === false)

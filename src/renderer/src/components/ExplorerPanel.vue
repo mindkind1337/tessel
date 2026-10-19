@@ -572,6 +572,25 @@ async function revealInTree(p) {
   selected.value = p
   scrollToSelected()
 }
+// A folder or file named by a link elsewhere (a terminal, a chat:
+// links/openTarget.js): shown and selected in the tree, its folders opened.
+// -> false when it is not below this project's folder.
+function revealPath(p) {
+  if (!props.root || typeof p !== 'string') return false
+  const r = props.root.replace(/[\\/]+$/, '')
+  const virtual = /^(ssh|lshare):\/\//i.test(r)
+  // The tree's own paths: the root as given, then "\" between folders.
+  const rest = p.slice(r.length)
+  const head = p.slice(0, r.length)
+  if (!(virtual ? head === r : head.replace(/\//g, '\\').toLowerCase() === r.replace(/\//g, '\\').toLowerCase())) return false
+  if (rest && !/^[\\/]/.test(rest)) return false
+  const parts = rest.split(/[\\/]+/).filter(Boolean)
+  settings.explorerFolderShown = true
+  // The project's folder itself: its section, unfolded, is it.
+  if (parts.length) revealInTree(r + '\\' + parts.join('\\'))
+  return true
+}
+defineExpose({ revealPath })
 function onHitClick(h) {
   selected.value = h.path + (h.line ? ':' + h.line : '')
   if (h.dir) revealInTree(h.path)

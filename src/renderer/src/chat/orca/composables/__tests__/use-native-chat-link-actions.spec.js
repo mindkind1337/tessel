@@ -1,6 +1,6 @@
 // After Orca's use-native-chat-link-actions.test.tsx (MIT, Copyright (c) 2026 Lovecast Inc.)
 import { describe, expect, it, vi } from 'vitest'
-import { ref } from 'vue'
+import { createApp, defineComponent, h, provide, ref } from 'vue'
 import { renderHook } from './withSetup.js'
 import { useNativeChatLinkActions } from '../use-native-chat-link-actions.js'
 
@@ -45,6 +45,41 @@ describe('useNativeChatLinkActions', () => {
       { file: '/repo/readme.md', line: 5, col: null },
       expect.anything(),
     )
+  })
+  // Tessel: the window's link router (panelCtx.openTarget, links/openTarget.js).
+  function withPanel(panel, setup) {
+    let api
+    const app = createApp({
+      setup() {
+        provide('panelCtx', panel)
+        return () => h(defineComponent({ setup: () => ((api = setup()), () => null) }))
+      },
+    })
+    app.mount(document.createElement('div'))
+    return { api, unmount: () => app.unmount() }
+  }
+  it('sends web pages and mail addresses to the link router when no openWeb is given', async () => {
+    const openTarget = vi.fn(async () => true)
+    const { api, unmount } = withPanel({ openTarget }, () => useNativeChatLinkActions(null, null, {}, {}))
+    const click = { ...event(), ctrlKey: true }
+    await api.onLinkClick.value(click, 'https://example.com/x')
+    expect(openTarget).toHaveBeenCalledWith('https://example.com/x', { event: click })
+    await api.onLinkClick.value(event(), 'mailto:ada@example.com')
+    expect(openTarget).toHaveBeenLastCalledWith('mailto:ada@example.com', expect.anything())
+    await api.onLinkClick.value(event(), 'javascript:alert(1)')
+    expect(openTarget).toHaveBeenCalledTimes(2)
+    unmount()
+  })
+  it('an explicit openWeb still wins for web pages; mail goes to the router', async () => {
+    const openTarget = vi.fn(async () => true),
+      openWeb = vi.fn()
+    const { api, unmount } = withPanel({ openTarget }, () => useNativeChatLinkActions(null, null, {}, { openWeb }))
+    await api.onLinkClick.value(event(), 'https://example.com/')
+    expect(openWeb).toHaveBeenCalled()
+    expect(openTarget).not.toHaveBeenCalled()
+    await api.onLinkClick.value(event(), 'mailto:a@b.c')
+    expect(openTarget).toHaveBeenCalledWith('mailto:a@b.c', expect.anything())
+    unmount()
   })
   it('restores focus to the root and respects visibility', async () => {
     const root = { focus: vi.fn() },

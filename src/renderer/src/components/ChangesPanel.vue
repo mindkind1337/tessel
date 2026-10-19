@@ -65,6 +65,7 @@ import NotesSendMenu from './NotesSendMenu.vue'
 import { isVirtualPath, isLsharePath } from '../../../shared/liveSharePath'
 import { accessOf, stateOfAnswer, accessStateText, accessStateKind, localOnlyText } from '../liveShareGuestAccess'
 import { t, intlLocale } from '../i18n'
+import { openTarget } from '../links/openTarget'
 
 const props = defineProps({
   root: { type: String, default: null },
@@ -533,9 +534,10 @@ const branchCountTitle = computed(() => {
     : t('changes.committed.count', '{{count}} files changed vs {{ref}}', { count: n, ref: baseLabel.value })
 })
 const branchTruncatedText = () => t('changes.committed.truncated', 'Only the first {{count}} files are listed.', { count: branchEntries.value.length })
-function openReviewPage() {
+// The branch's review page: Tessel's link router (links/openTarget.js).
+function openReviewPage(event) {
   const url = compare.value && compare.value.reviewUrl
-  if (url && window.shellApi && window.shellApi.openExternal) window.shellApi.openExternal(url)
+  if (url) openTarget(url, { event })
 }
 
 // --- Stage, unstage, discard -----------------------------------------------------------

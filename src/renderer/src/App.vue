@@ -117,6 +117,7 @@ import { automationLaunchArgs, AUTOMATION_AGENTS, permissionFingerprint, quoteGl
 import { agyContinueLaunchArgs } from '../../shared/agyContinue'
 import { createAutomationRunner, probeRunAgent } from './automationRunner'
 import { createCliRequests, CliRequestError } from './cliRequests'
+import { createLinkRouter, setLinkRouter, openTarget } from './links/openTarget'
 import { automationsState, applySnapshot as applyAutomations, subscribeAutomations } from './automationsStore'
 import { trackAgent } from '../../shared/tracking'
 import { pasteAndConfirm, turnStarting } from './deliver'
@@ -474,6 +475,64 @@ function openExternalUrl(url) {
     })
     .catch(() => showToast(t('app.port.browserFailed', 'Failed to open browser'), { kind: 'error' }))
 }
+// --- One link router (links/openTarget.js) -------------------------------------------
+// A file, folder, image, PDF, web page or mail address clicked on any
+// surface does the same thing: the editor, the Files tab, the image viewer,
+// the PDF window, the built-in browser (or the system one, Settings >
+// Browser; Ctrl+click the other), the mail program.
+const samePrefix = (p, root) => {
+  if (!p || !root) return false
+  const virtual = isRemotePath(root) || isLsharePath(root)
+  const norm = (s) => {
+    const v = String(s).replace(/[\\/]+/g, '/').replace(/\/+$/, '')
+    return virtual ? v : v.toLowerCase()
+  }
+  const a = norm(p)
+  const b = norm(root)
+  return !!b && (a === b || a.startsWith(b + '/'))
+}
+// A folder shown in the side panel's Files tab, unfolded there; false when
+// it is not in the project Files shows (the router then opens it elsewhere).
+async function revealInFiles(path) {
+  if (!samePrefix(path, sideRoot.value)) return false
+  showSideTab('files')
+  await nextTick()
+  await nextTick()
+  return !!(sidePanelRef.value && (await sidePanelRef.value.revealInFiles(path)))
+}
+const linkRouter = createLinkRouter({
+  openInEditor: ({ file, line, col, preview }) => openInTesselEditor({ file, line, col, preview }),
+  viewFile: ({ file, label, line }) => viewFile({ file, label, line }),
+  openPdf: ({ file, label }) => viewFile({ file, label }),
+  readImage: (path) => (window.shellApi.viewImage ? window.shellApi.viewImage(path) : null),
+  showImage: (img) => (imageView.value = img),
+  revealInFiles,
+  openFolder: (path) => (window.shellApi.chatFiles && window.shellApi.chatFiles.open ? window.shellApi.chatFiles.open(path) : false),
+  urlMode: () => settings.linksOpenUrlsIn,
+  // A new tab of the current project; a Live Share guest's project opens it
+  // in the browser's guest session (none of your sign-ins).
+  openUrlBuiltin: (url) => {
+    const ws = currentWs.value
+    if (!ws || !allowedBrowserUrl(url)) return null
+    return openInBrowser({ url, ws, newPane: true, guestSession: liveShare.isGuestWs(ws) })
+  },
+  openUrlSystem: (url) => Promise.resolve(window.shellApi.openExternal ? window.shellApi.openExternal(url) : false),
+  openMail: (url) => Promise.resolve(window.shellApi.openExternal ? window.shellApi.openExternal(url) : false),
+  notOpened: ({ target, reason }) => {
+    const what = target.path || target.url || ''
+    if (reason === 'outside') showToast(t('app.link.outside', 'This folder is not in the project shown in Files: {{path}}', { path: what }), { timeout: 5000 })
+    else showToast(t('app.link.failed', 'Could not open {{target}}', { target: what }), { kind: 'error', timeout: 5000 })
+  }
+})
+setLinkRouter(linkRouter)
+onBeforeUnmount(() => setLinkRouter(null))
+// A link the window itself would open in a new window (a target="_blank"
+// link in rendered text): the main process hands it here, to the router.
+let stopWindowLinks = null
+onMounted(() => {
+  if (window.shellApi.links && window.shellApi.links.onOpen) stopWindowLinks = window.shellApi.links.onOpen((url) => openTarget(url))
+})
+onBeforeUnmount(() => stopWindowLinks && stopWindowLinks())
 // --- Chat agents (ChatPane.vue, src/main/chat) -----------------------------------------
 // A Claude agent without a terminal: the main process runs claude in its
 // stream-json mode; messages (yours, its team's) are turns of their own,
@@ -758,12 +817,12 @@ function openViewedInEditor({ file, line }) {
   openInTesselEditor({ file, line, preview: false })
 }
 // A link in a viewed file: shown here too, or opened in the editor.
+// A link in the modal viewer's Markdown: the link router (a PDF in its
+// window, an image in the image viewer, text in the editor); binary files stay put.
 function openFromViewer(file) {
-  if (isViewed(file)) viewFile({ file })
-  else if (fileKind(file) === 'text') {
-    fileView.value = null
-    openInTesselEditor({ file })
-  }
+  if (!isViewed(file) && fileKind(file) !== 'text') return
+  if (!isViewed(file)) fileView.value = null
+  linkRouter.open({ path: file })
 }
 
 // Closing editor files with unsaved changes: Save, Don't Save or Cancel.
@@ -3370,6 +3429,9 @@ provide('panelCtx', {
   viewFile: (f) => viewFile(f),
   // A file:line link into Tessel's editor ({ file, line, col }).
   openInEditor: (q) => openInTesselEditor(q),
+  // Any link (a file, folder, image, PDF, web page, mail address): the one
+  // router, so it opens the same way from every surface (links/openTarget.js).
+  openTarget: (target, opts) => linkRouter.open(target, opts),
   // The built-in browser: the active ports, a page in the system browser.
   browserPorts: () => browserPorts(),
   // A link a page opens in a new pane (middle-click, Ctrl+click, its menu),

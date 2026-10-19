@@ -19,6 +19,7 @@ import {
 import { STATUS_COLORS, STATUS_LABELS } from '../../../shared/sourceControl'
 import FileIcon from './FileIcon.vue'
 import { t, intlLocale } from '../i18n'
+import { openTarget } from '../links/openTarget'
 import { dateTimeFormat } from '../../../shared/intlCache'
 import PanelState from './ui/PanelState.vue'
 import TimelineHover from './TimelineHover.vue'
@@ -222,9 +223,10 @@ function openHoveredCommit() {
 function copyCommitHash(id) {
   if (navigator.clipboard) navigator.clipboard.writeText(id).catch(() => {})
 }
-function openCommitUrl(url) {
-  const shell = window.shellApi
-  if (shell && shell.openExternal) Promise.resolve(shell.openExternal(url)).catch(() => {})
+// A commit's page, a link in its message, its author's address: Tessel's
+// link router (links/openTarget.js; Ctrl+click: the other browser).
+function openCommitUrl(url, event) {
+  Promise.resolve(openTarget(url, { event })).catch(() => {})
 }
 </script>
 

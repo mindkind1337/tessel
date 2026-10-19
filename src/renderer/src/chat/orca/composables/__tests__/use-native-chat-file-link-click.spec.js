@@ -146,6 +146,22 @@ describe('useNativeChatFileLinkClick', () => {
     expect(openFile).not.toHaveBeenCalled()
   })
 
+  it("with Tessel's link router: a folder goes to Files and a PDF to its window", async () => {
+    const openSystem = vi.fn(async () => ({ ok: true }))
+    const openTarget = vi.fn(async () => true)
+    const statPath = vi.fn(async (p) => (p.endsWith('docs') ? 'dir' : 'file'))
+    const result = setup({ worktreePath: '/repo' }, { openSystem, openTarget, statPath })
+    const click = event()
+    await result.current(click, 'docs')
+    expect(openTarget).toHaveBeenLastCalledWith({ kind: 'dir', path: '/repo/docs' }, { event: click })
+    await result.current(event(), 'out/spec.pdf')
+    expect(openTarget).toHaveBeenLastCalledWith({ kind: 'pdf', path: '/repo/out/spec.pdf' }, expect.anything())
+    // Media and documents other than a PDF stay with the system's app.
+    await result.current(event(), 'a.mp4')
+    expect(openSystem).toHaveBeenCalledTimes(1)
+    expect(openTarget).toHaveBeenCalledTimes(2)
+  })
+
   describe('images', () => {
     const PNG = 'C:\\Users\\me\\AppData\\Local\\Temp\\tessel-paste\\image-1.png'
     const PNG_ABS = 'C:/Users/me/AppData/Local/Temp/tessel-paste/image-1.png'

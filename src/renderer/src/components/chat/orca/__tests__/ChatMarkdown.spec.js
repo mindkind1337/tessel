@@ -21,6 +21,7 @@ vi.mock('../../../../markdownView', async (importOriginal) => {
 import ChatMarkdown from '../ChatMarkdown.vue'
 import NativeChatCodeBlock from '../NativeChatCodeBlock.vue'
 import { remarkGitHubReferences } from '../chat-markdown-render.js'
+import { createLinkRouter, setLinkRouter } from '../../../../links/openTarget.js'
 
 let wrapper = null
 function render(props) {
@@ -130,6 +131,38 @@ describe('ChatMarkdown (CommentMarkdown)', () => {
     expect(root.querySelector('img').getAttribute('src')).toBe('data:image/png;base64,abc123')
     const button = root.querySelector('button[aria-label="Expand image"]')
     expect(button.getAttribute('type')).toBe('button')
+  })
+
+  // Tessel: with onLinkClick, a click on a data: image used to hand the data
+  // URL to the link handler, which opened nothing.
+  it('opens a document data: image in the lightbox even with onLinkClick', async () => {
+    const onLinkClick = vi.fn()
+    const root = render({
+      variant: 'document',
+      onLinkClick,
+      content: 'See this: ![ui.png](data:image/png;base64,abc123)'
+    })
+    const button = root.querySelector('button[aria-label="Expand image"]')
+    expect(button).not.toBeNull()
+    click(button)
+    await flushPromises()
+    expect(document.body.querySelector('.nc-expand-full')?.getAttribute('src')).toBe('data:image/png;base64,abc123')
+    expect(onLinkClick).not.toHaveBeenCalled()
+  })
+
+  it("sends a compact data: image's link to Tessel's image viewer, not onLinkClick", async () => {
+    const onLinkClick = vi.fn()
+    const showImage = vi.fn()
+    setLinkRouter(createLinkRouter({ showImage }))
+    try {
+      const root = render({ onLinkClick, content: 'See this: ![Image #1](data:image/png;base64,abc123)' })
+      click(root.querySelector('img'))
+      await flushPromises()
+      expect(showImage).toHaveBeenCalledWith({ src: 'data:image/png;base64,abc123', title: '', file: null })
+      expect(onLinkClick).not.toHaveBeenCalled()
+    } finally {
+      setLinkRouter(null)
+    }
   })
 
   it('adds an expand control to compact images only when requested', () => {
@@ -386,7 +419,9 @@ describe('ChatMarkdown link click handler', () => {
     expect(event.defaultPrevented).toBe(true)
   })
 
-  it('lets callers intercept rendered in-page document images', () => {
+  // Tessel: a document image given by its data is never handed to the
+  // link handler (that opened nothing): it opens in the lightbox.
+  it('opens rendered in-page document images in the lightbox, not the link handler', async () => {
     const onLinkClick = vi.fn()
     const root = render({
       variant: 'document',
@@ -394,7 +429,9 @@ describe('ChatMarkdown link click handler', () => {
       onLinkClick
     })
     click(root.querySelector('img[alt="diagram"]'))
-    expect(onLinkClick).toHaveBeenCalledWith(expect.any(Object), 'data:image/png;base64,abc123')
+    await flushPromises()
+    expect(onLinkClick).not.toHaveBeenCalled()
+    expect(document.body.querySelector('.nc-expand-full')).not.toBeNull()
   })
 
   it('linkifies bare POSIX and Windows document paths without an extension allowlist', () => {
@@ -722,7 +759,9 @@ describe('ChatMarkdown safety (Tessel)', () => {
     expect(openExternal).toHaveBeenCalledWith('https://example.com/a', expect.any(Object))
     const mailEvent = click(mail)
     expect(mailEvent.defaultPrevented).toBe(true)
-    expect(openExternal).toHaveBeenCalledOnce()
+    // Tessel: a mail address opens too (the mail program, through main's check).
+    expect(openExternal).toHaveBeenLastCalledWith('mailto:a@b.c', expect.any(Object))
+    expect(openExternal).toHaveBeenCalledTimes(2)
   })
 
   it('without a click handler, a file link goes to the file viewer (panelCtx.viewFile)', async () => {

@@ -929,6 +929,10 @@
       "detailsCopied": "Détails du compte copiés (oui / non seulement : aucun jeton, aucun courriel).",
       "detailsNotCopied": "Les détails du compte n’ont pas pu être copiés.",
       "signedOutThere": "déconnecté là-bas"
+    },
+    "link": {
+      "outside": "Ce dossier n'est pas dans le projet affiché dans Fichiers : {{path}}",
+      "failed": "Impossible d'ouvrir {{target}}"
     }
   }
 }

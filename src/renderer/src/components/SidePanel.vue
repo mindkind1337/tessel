@@ -11,7 +11,7 @@
 // browser pane dragged onto the panel one of its pages (App.vue's pane drag).
 // A tab is created the first time it is shown, then kept (its folders,
 // search and scroll stay as they were) while the panel is open.
-import { reactive, ref, watch, computed, provide, onMounted, onBeforeUnmount } from 'vue'
+import { reactive, ref, watch, computed, provide, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import ExplorerPanel from './ExplorerPanel.vue'
 import { refreshStatus, statusOf, changeCount, rootKey } from '../scmState'
 import ChangesPanel from './ChangesPanel.vue'
@@ -250,8 +250,18 @@ function onBrowserTabAux(e, id) {
   closeBrowser(id)
 }
 window.addEventListener('keydown', onKey)
+// A folder (or file) a link names (links/openTarget.js): the Files tab,
+// unfolded at it. -> false when it is not below the project's folder.
+const explorerPanel = ref(null)
+async function revealInFiles(path) {
+  if (props.tab !== 'files') emit('update:tab', 'files')
+  shown.files = true
+  await nextTick()
+  await nextTick()
+  return explorerPanel.value ? explorerPanel.value.revealPath(path) : false
+}
 // App closes a page moved to the grid like its x does.
-defineExpose({ closeBrowser })
+defineExpose({ closeBrowser, revealInFiles })
 
 onBeforeUnmount(() => {
   window.removeEventListener('keydown', onKey)
@@ -366,6 +376,7 @@ onBeforeUnmount(() => {
       />
       <ExplorerPanel
         v-if="shown.files"
+        ref="explorerPanel"
         :key="'files:' + remoteRev"
         v-show="current() === 'files'"
         :root="root"

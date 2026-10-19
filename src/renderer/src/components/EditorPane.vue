@@ -921,9 +921,11 @@ function copyPath() {
     if (ctx.copied) ctx.copied('Path')
   }
 }
-// A link in a rendered Markdown file.
+// A link in a rendered Markdown file: the link router (a PDF in its window,
+// an image in the image viewer, a folder in Files), else the editor.
 function openLinked(file) {
-  if (ctx.openInEditor) ctx.openInEditor({ file })
+  if (ctx.openTarget) ctx.openTarget({ path: file })
+  else if (ctx.openInEditor) ctx.openInEditor({ file })
 }
 
 // The banner (unsaved edits and a newer file on disk).
