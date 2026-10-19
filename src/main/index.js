@@ -2806,7 +2806,12 @@ ipcMain.handle(
       if (agent === 'cursor') continue
       const preset = (await getAgents()).find((a) => a.id === agent)
       if (!preset || !preset.available) continue
-      const r = setJsonAgentServer(agent, SERVER_NAME, teamToolsEntry(agent, script, node))
+      // A path Tessel writes into an agent's settings: one line, no NUL.
+      if (unsafePath(script) || unsafePath(node)) {
+        errors.push(`${preset.name}: ${t('main.hooks.badPath', 'The Tessel data folder or node has a line break in its path.')}`)
+        continue
+      }
+      const r = setJsonAgentServer(agent, SERVER_NAME, teamToolsEntry(agent, script, node), undefined, { keepUser: true })
       if (!r.ok) errors.push(`${preset.name}: ${r.error}`)
       else if (r.changed) changed.push(`${preset.name}: MCP server tessel-team`)
     }

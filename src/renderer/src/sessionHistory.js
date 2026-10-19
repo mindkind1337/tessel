@@ -36,7 +36,7 @@ export const agentLabel = (agent) => AGENT_NAME[agent] || agent
 // turns) and the ones it can delete: the same lists as src/main/sessionDetails.js
 // (the main process checks again).
 export const CONTENT_AGENTS = ['claude', 'openclaude', 'codex', 'grok', 'pi', 'omp', 'qoder', 'muse']
-export const DELETABLE_AGENTS = ['claude', 'openclaude', 'grok', 'pi', 'omp']
+export const DELETABLE_AGENTS = ['claude', 'openclaude', 'grok', 'pi', 'omp', 'muse']
 export const hasLog = (agent) => CONTENT_AGENTS.includes(agent)
 
 // How many conversations per agent the list asks for (the main process

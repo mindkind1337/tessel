@@ -103,6 +103,22 @@ describe("Muse Code's managed hooks file", () => {
     expect(read(settingsFile())).toEqual(user)
   })
 
+  it('Interrupt declares async: true (Muse 1.4.10 rejects a synchronous cancellation hook); an older install is rewritten', () => {
+    expect(installStatusHooks('muse', scriptPath, { home, env: {}, node: NODE })).toEqual({ changed: true })
+    const hooks = read(hooksFile()).hooks
+    expect(hooks.Interrupt).toEqual([{ hooks: [{ type: 'command', command: statusCommand(scriptPath, 'muse', 'Interrupt', NODE), timeout: 30, async: true }] }])
+    // Only Interrupt: every other event Muse waits on stays synchronous.
+    for (const event of STATUS_HOOKS.muse.events.filter((e) => e !== 'Interrupt')) expect(hooks[event][0].hooks[0]).not.toHaveProperty('async')
+    // What an older Tessel wrote (no async): stale, so the next start rewrites it.
+    const old = { hooks: { ...hooks, Interrupt: [{ hooks: [{ type: 'command', command: statusCommand(scriptPath, 'muse', 'Interrupt', NODE), timeout: 30 }] }] } }
+    put(hooksFile(), old)
+    expect(statusHooksInstallation('muse', scriptPath, { home, env: {}, node: NODE }).hooks).toBe('partial')
+    expect(installStatusHooks('muse', scriptPath, { home, env: {}, node: NODE })).toEqual({ changed: true })
+    expect(read(hooksFile()).hooks.Interrupt[0].hooks[0].async).toBe(true)
+    expect(read(hooksFile()).hooks.Interrupt).toHaveLength(1)
+    expect(installStatusHooks('muse', scriptPath, { home, env: {}, node: NODE })).toEqual({ changed: false })
+  })
+
   it('only what Tessel added is taken out again: a variable name or a pointer that was there before stays', () => {
     // The user already pointed Muse at Tessel's file and named TESSEL_REMOTE (any case).
     const user = { schema_version: 1, managed_hooks_path: resolve(hooksFile()), managed_hooks_env_vars: ['tessel_remote', 'CI_TOKEN'] }

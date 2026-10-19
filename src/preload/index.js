@@ -364,6 +364,7 @@ const api = {
   // OpenCode's usage report (tokens and recorded cost), from its own databases.
   opencodeUsageReport: (query = {}) => ipcRenderer.invoke('usage:opencodeReport', query),
   grokUsageReport: (query = {}) => ipcRenderer.invoke('usage:grokReport', query),
+  museUsageReport: (query = {}) => ipcRenderer.invoke('usage:museReport', query),
   // Review and merge a task branch: { root, path, branch, target, ... }.
   // A team lead's inbox folder: { dir, token, guide }.
   lead: {

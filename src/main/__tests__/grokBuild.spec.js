@@ -256,7 +256,7 @@ describe('Grok subscription tier and sign-in kind', () => {
       auth: vi.fn(async () => ({ headers: { Authorization: 'Bearer fixture-only', 'X-XAI-Token-Auth': 'xai-grok-cli' }, fingerprint: 'one' })),
       signIn: vi.fn(async () => ({ signedIn: true, email: 'ada@example.com', tokenFresh: true, planType: 'SuperGrok', plan: { label: 'SuperGrok', tier: 'supergrok', paid: true, kind: 'subscription', team: null, source: 'cli', checkedAt: 1 } }))
     }
-    const service = createExtraProviderUsage({ sources, request, listAgents: async () => [{ id: 'grok', available: true }], clock: () => now, antigravityCli: { present: () => false, read: async () => ({ ok: false }) }, antigravityPlan: { read: () => null }, museUsage: { present: () => false, read: async () => ({ ok: false }) } })
+    const service = createExtraProviderUsage({ sources, request, listAgents: async () => [{ id: 'grok', available: true }], clock: () => now, antigravityCli: { present: () => false, read: async () => ({ ok: false }) }, antigravityPlan: { read: () => null } })
     const res = await service.read({ provider: 'grok', accountId: null })
     expect(res).toMatchObject({ ok: true, plan: 'SuperGrok Heavy', windows: [{ label: 'Weekly', usedPct: 12 }] })
     expect(request.mock.calls.map(([u]) => u)).toEqual([USAGE_URLS.grok, USAGE_URLS.grokUser])
@@ -271,7 +271,7 @@ describe('Grok subscription tier and sign-in kind', () => {
       url === USAGE_URLS.grokUser ? new Response('nope', { status: 403 }) : new Response(JSON.stringify({ config: { creditUsagePercent: 40, billingPeriodEnd: Date.now() + 1000 } }))
     )
     const sources = { present: async () => true, auth: async () => ({ headers: { Authorization: 'Bearer fixture-only' }, fingerprint: 'one' }), signIn: async () => ({ signedIn: true, planType: 'SuperGrok' }) }
-    const service = createExtraProviderUsage({ sources, request, listAgents: async () => [{ id: 'grok', available: true }], antigravityCli: { present: () => false, read: async () => ({ ok: false }) }, antigravityPlan: { read: () => null }, museUsage: { present: () => false, read: async () => ({ ok: false }) } })
+    const service = createExtraProviderUsage({ sources, request, listAgents: async () => [{ id: 'grok', available: true }], antigravityCli: { present: () => false, read: async () => ({ ok: false }) }, antigravityPlan: { read: () => null } })
     expect(await service.read({ provider: 'grok', accountId: null })).toMatchObject({ ok: true, plan: 'SuperGrok', windows: [{ usedPct: 40 }] })
   })
 })

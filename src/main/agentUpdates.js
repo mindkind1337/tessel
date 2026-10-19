@@ -63,8 +63,22 @@ for (const id of ['cursor', 'grok', 'hermes', 'devin', 'omp', 'muse', 'qoder']) 
 // The Antigravity CLI checks for updates itself when it starts, and has its
 // own command for it.
 OTHER_HINTS.antigravity = () => t('main.agentUpdate.hintAntigravity', 'The Antigravity CLI updates itself when it starts (or run: agy update).')
+// Muse Code: its launcher (muse.cmd -> .muse-launcher.ps1) checks for a new
+// build every hour and installs it in the background; its next start runs it.
+OTHER_HINTS.muse = () => t('main.agentUpdate.hintMuse', 'Muse Code updates itself: its launcher checks every hour and the next start uses the new version.')
 // Grok Build too (installed with winget, `grok update` names the winget command).
 OTHER_HINTS.grok = () => t('main.agentUpdate.hintGrok', 'Grok Build updates itself when it starts (or run: grok update).')
+
+// The Muse Code build its launcher folder holds (.muse-version: "1.4.10-R6427.1"), or null.
+export async function museInstalledVersion(commandPath) {
+  try {
+    const text = await fs.promises.readFile(join(dirname(commandPath), '.muse-version'), 'utf8')
+    const v = text.trim()
+    return /^\d+\.\d+\.\d+-R\d+(\.\d+)?$/.test(v) ? v : null
+  } catch {
+    return null
+  }
+}
 
 export function npmUpdateSteps(id) {
   const pkg = NPM_PACKAGES[id]
@@ -329,6 +343,9 @@ export function createAgentUpdates({
         const c = classifyInstall({ id: a.id, commandPath, npmPrefix, npmVersions, home })
         let installed = c.installed || null
         if (c.source === 'native') installed = parseVersion((await runFile(commandPath, ['--version'])).stdout)
+        // Muse Code: the build its launcher runs, named in .muse-version beside
+        // it (never `muse --version`: the launcher may update first).
+        if (a.id === 'muse' && commandPath && !installed) installed = await museInstalledVersion(commandPath)
         return {
           id: a.id,
           name: a.name,

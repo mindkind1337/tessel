@@ -45,9 +45,9 @@ import { detectTaskDone } from '../agentLimit'
 import { modelLabel } from '../../../shared/modelLabel'
 import { paneAccount, accountChoices, accountSubscription, shortAccount } from '../accountChoices'
 import { planInfo, paneWarnText } from '../claudePlan'
-import { grokPlanInfo, grokSignIn, refreshGrokSignIn } from '../grokPlan'
+import { grokPlanInfo, grokSignIn, musePlanInfo, museSignIn, refreshGrokSignIn } from '../grokPlan'
 import { HOST_ACCOUNT_AGENTS, hostAccountChoices, hostEntry, hostPaneAccount, isDefaultHostAccount, recheckAfterTurn, refreshHostAccounts, unwatchHostAccounts, watchHostAccounts } from '../hostAccounts'
-import { modelFromScreen, modelFromSwitchLine } from '../../../shared/screenModel'
+import { modelFromScreen, modelFromSwitchLine, museFooterModel } from '../../../shared/screenModel'
 import { findFileRefs, pickFileLinks } from '../../../shared/fileLinks'
 import { guestFileTarget } from '../liveShareGuestLinks'
 import { logicalLine, rangeOf, onRow } from '../links/terminalLinkLines'
@@ -172,7 +172,18 @@ const accountInfo = computed(() => {
   // Grok Build: the one sign-in on this computer, with its tier
   // ("name · SuperGrok"; grokPlan.js).
   if (props.node.agentId === 'grok') return grokAccount.value
+  // Muse Code: its one Meta sign-in here, with its plan ("name · Muse Code
+  // High Usage"), once its usage was read (grokPlan.js musePlanInfo).
+  if (props.node.agentId === 'muse') return museAccount.value
   return paneAccount(props.node.agentId, props.node.accountId)
+})
+const musePlan = computed(() => (props.node.agentId === 'muse' && !props.node.remoteHostId ? musePlanInfo(museSignIn()) : null))
+const museAccount = computed(() => {
+  const s = props.node.agentId === 'muse' && !props.node.remoteHostId ? museSignIn() : null
+  if (!s || !s.signedIn) return null
+  const plan = musePlan.value
+  const who = shortAccount(s.email) || t('accounts.choice.account', 'Account')
+  return { name: plan && plan.tag ? `${who} · ${plan.tag}` : who, title: [s.email || who, plan ? plan.title : ''].filter(Boolean).join('\n'), signedIn: true }
 })
 const grokPlan = computed(() => {
   const s = props.node.agentId === 'grok' && !props.node.remoteHostId ? grokSignIn() : null
@@ -214,7 +225,7 @@ const accountPlan = computed(() => {
   }
   return planInfo(accountSubscription('claude', n.accountId))
 })
-const planWarn = computed(() => (grokPlan.value && grokPlan.value.warn ? { short: grokPlan.value.warnText, text: t('accounts.grokPlan.paneWarn', 'This Grok sign-in has no SuperGrok or X Premium+ subscription: Grok Build may refuse to work.'), title: grokPlan.value.title } : accountPlan.value && accountPlan.value.attention ? { short: accountPlan.value.warnText, text: paneWarnText(accountPlan.value), title: [paneWarnText(accountPlan.value), accountPlan.value.title].join('\n') } : null))
+const planWarn = computed(() => (grokPlan.value && grokPlan.value.warn ? { short: grokPlan.value.warnText, text: t('accounts.grokPlan.paneWarn', 'This Grok sign-in has no SuperGrok or X Premium+ subscription: Grok Build may refuse to work.'), title: grokPlan.value.title } : musePlan.value && musePlan.value.warn ? { short: musePlan.value.warnText, text: t('accounts.musePlan.paneWarn', 'This Meta account has no active Muse Code subscription: Muse Code may refuse to work.'), title: musePlan.value.title } : accountPlan.value && accountPlan.value.attention ? { short: accountPlan.value.warnText, text: paneWarnText(accountPlan.value), title: [paneWarnText(accountPlan.value), accountPlan.value.title].join('\n') } : null))
 const accountTitle = computed(() => (accountInfo.value ? [accountInfo.value.title, ...accountNotesOf(true)].join('\n') : ''))
 const accountChipLabel = computed(() => (accountInfo.value ? t('pane.account.chip', 'Account: {{account}}', { account: accountTitle.value }) : ''))
 // An agent on an SSH host follows its accounts there: read when it opens and
@@ -527,6 +538,14 @@ async function refreshModel() {
     if (res && res.model && !res.name && !OWN_MODEL_NAMES.includes(n.agentId)) {
       const row = modelsFor(n.agentId).find((m) => m && m.id === res.model && typeof m.label === 'string' && m.label.trim())
       if (row) res = { ...res, name: row.label.trim() }
+    }
+    // Muse Code: its files first (its log, its settings' per-model effort);
+    // its footer ("muse-wonder-1.0 · medium · C:\proj · YOLO") fills in what
+    // they leave out, or says it all before it has written anything.
+    if (n.agentId === 'muse' && termNow()) {
+      const foot = museFooterModel(screenText(6).split('\n'))
+      if (foot && (!res || !res.model) && !n.modelChoice) res = { model: foot.model, effort: foot.effort, source: 'screen' }
+      else if (foot && res && res.model === foot.model && !res.effort) res = { ...res, effort: foot.effort }
     }
     if ((!res || !res.model) && !n.modelChoice) {
       const seen = modelOnScreen()
@@ -1488,9 +1507,9 @@ const canOpenAsChat = computed(() => {
   return /^ses_[A-Za-z0-9]{20,40}$/.test(n.sessionId)
 })
 // Pane menu > See the conversation: an agent with no chat of its own (Grok,
-// OMP) whose conversation is known: its session file shown as a chat,
-// read-only, over the terminal (typing stays in the terminal).
-const TRANSCRIPT_VIEW_AGENTS = ['grok', 'omp']
+// OMP, Muse Code) whose conversation is known: its session file shown as a
+// chat, read-only, over the terminal (typing stays in the terminal).
+const TRANSCRIPT_VIEW_AGENTS = ['grok', 'omp', 'muse']
 const transcriptOpen = ref(false)
 const canViewTranscript = computed(() => {
   const n = props.node
@@ -3184,9 +3203,9 @@ function onTerminalBell() {
   if (ctx.terminalBell) ctx.terminalBell(props.node, { visible: isActive.value && document.hasFocus() })
 }
 
-// A Grok pane reads the sign-in's tier for its header (once a minute at most).
+// A Grok or Muse pane reads the sign-in's tier for its header (once a minute at most).
 watch(
-  () => props.node.agentId === 'grok' && !props.node.remoteHostId,
+  () => (props.node.agentId === 'grok' || props.node.agentId === 'muse') && !props.node.remoteHostId,
   (grok) => {
     if (grok) refreshGrokSignIn()
   },

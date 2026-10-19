@@ -123,7 +123,10 @@ export const STATUS_HOOKS = {
   // settings.json names that file and those variables (museHooks.js). Not
   // PermissionRequest: Muse's approval judge may decide alone; its
   // Notification says when you have been asked. On Windows it runs a hook
-  // through cmd /C.
+  // through cmd /C. Muse 1.4.10 only admits an Interrupt hook that declares
+  // `async: true` (it never waits on a cancellation hook) and warns at every
+  // start otherwise; the other events take a synchronous hook. An entry of
+  // Tessel's without those fields is stale and rewritten on the next start.
   muse: {
     shape: 'claude',
     own: true,
@@ -131,6 +134,7 @@ export const STATUS_HOOKS = {
     file: (home, env) => join(museConfigDir(home, env), 'tessel-status-hooks.json'),
     settings: (home, env) => museSettingsFile(home, env),
     events: ['SessionStart', 'UserPromptSubmit', 'PreToolUse', 'PostToolUse', 'PostToolUseFailure', 'Notification', 'Stop', 'StopFailure', 'Interrupt', 'SessionEnd', 'SubagentStart', 'SubagentStop'],
+    handler: { Interrupt: { async: true } },
     cmd: true
   },
   amp: {
@@ -356,11 +360,17 @@ function withoutOurs(definition) {
   return others.length ? { ...definition, hooks: others } : null
 }
 
+// The fields an agent requires on Tessel's hook for one event (Muse's
+// `async: true` on Interrupt), or {}.
+const handlerFields = (spec, event) => (spec.handler && record(spec.handler[event]) ? spec.handler[event] : {})
+// A hook object of Tessel's carries those fields.
+const hasHandlerFields = (spec, event, hook) => Object.entries(handlerFields(spec, event)).every(([k, v]) => record(hook) && hook[k] === v)
+
 // The definition Tessel writes for one event.
 function definition(spec, event, command) {
   if (spec.shape === 'flat') return { command }
   if (spec.shape === 'bundle' && !spec.tool.includes(event)) return { type: 'command', command, timeout: 30 }
-  const hook = { type: 'command', command, timeout: 30 }
+  const hook = { type: 'command', command, timeout: 30, ...handlerFields(spec, event) }
   const matcher = spec.shape === 'bundle' ? '*' : spec.matcher && spec.matcher[event]
   return matcher ? { matcher, hooks: [hook] } : { hooks: [hook] }
 }
@@ -465,10 +475,11 @@ function eventStatus(spec, settings, scriptPath, agent, node) {
     if (!Array.isArray(list)) continue
     const want = node ? statusCommand(scriptPath, agent, event, node) : null
     list.forEach((d, index) => {
-      const commands = record(d) ? [d.command, ...(Array.isArray(d.hooks) ? d.hooks.map((h) => record(h) && h.command) : [])] : []
-      for (const c of commands) {
+      const hooks = record(d) ? [d, ...(Array.isArray(d.hooks) ? d.hooks.filter(record) : [])] : []
+      for (const h of hooks) {
+        const c = h.command
         if (!isOurs(c)) continue
-        if (c === want && spec.events.includes(event) && !events[event]) {
+        if (c === want && spec.events.includes(event) && !events[event] && hasHandlerFields(spec, event, h)) {
           events[event] = true
           // Not first where it must be: moved there on the next install.
           if (spec.first && index !== 0) stale = true

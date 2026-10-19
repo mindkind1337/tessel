@@ -8,6 +8,7 @@ import os from 'node:os'
 import { createExtraProviderUsage } from './extraProviderUsage'
 import { createOpencodeUsageReport } from './opencodeUsageReport'
 import { createGrokUsageReport } from './grokUsageReport'
+import { createMuseUsageReport } from './museUsageReport'
 import { t } from './i18n'
 import { createUsagePoller } from './usagePoller'
 import { USAGE_PROVIDERS, validHiddenUsageProviders } from '../shared/usageProviders'
@@ -103,6 +104,7 @@ export function registerProviderUsage({
   listAgents = async () => [],
   opencodeReport = createOpencodeUsageReport(),
   grokReport = createGrokUsageReport(),
+  museReport = createMuseUsageReport(),
   send = () => {},
   getWindow = () => null,
   poller: givenPoller,
@@ -251,6 +253,18 @@ export function registerProviderUsage({
       }
     }
   })
+  // Muse Code's usage report (each model call's tokens), from its own session
+  // logs on this computer (museUsageReport.js).
+  ipcMain.handle('usage:museReport', async (_event, query) => {
+    try {
+      return await museReport(query || {})
+    } catch (error) {
+      return {
+        ok: false,
+        error: error instanceof Error && error.message ? error.message : t('main.usage.museReportFailed', 'Could not read Muse Code usage.')
+      }
+    }
+  })
   ipcMain.handle('usage:opencodeReport', async (_event, query) => {
     try {
       return await opencodeReport(query || {})
@@ -269,8 +283,8 @@ export function registerProviderUsage({
   handle(
     'providerSettings:status',
     async () => {
-      const [cursor, grok, gemini] = await Promise.all([extra.signIn('cursor'), extra.signIn('grok'), extra.signIn('gemini')])
-      return { ...(credentials?.status() || { ok: true, secure: false, saved: {}, settings: {} }), cursor, grok, gemini }
+      const [cursor, grok, gemini, muse] = await Promise.all([extra.signIn('cursor'), extra.signIn('grok'), extra.signIn('gemini'), extra.signIn('muse')])
+      return { ...(credentials?.status() || { ok: true, secure: false, saved: {}, settings: {} }), cursor, grok, gemini, muse }
     },
     () => t('main.providerCredentials.readFailed', 'Could not read the provider settings.')
   )

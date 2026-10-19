@@ -173,7 +173,8 @@
       "registryUnreadable": "réponse du registre illisible",
       "hintInstaller": "Relancez son installateur pour le mettre à jour.",
       "hintAntigravity": "L'Antigravity CLI se met à jour seule à son démarrage (ou lancez : agy update).",
-      "hintGrok": "Grok Build se met à jour tout seul au démarrage (ou lancez : grok update)."
+      "hintGrok": "Grok Build se met à jour tout seul au démarrage (ou lancez : grok update).",
+      "hintMuse": "Muse Code se met à jour tout seul : son lanceur vérifie chaque heure et le prochain démarrage utilise la nouvelle version."
     },
     "agents": {
       "alreadyGenerating": "Un message est déjà en cours de génération.",
@@ -631,14 +632,13 @@
       "minimaxNoModel": "Les données d'usage MiniMax du modèle configuré sont introuvables.",
       "openCodeNoWorkspace": "Aucun espace de travail trouvé pour ce cookie. Ajoutez une clé API OpenCode Go (ou lancez /connect dans OpenCode), ou indiquez un identifiant d'espace de travail.",
       "claudeExpired": "Cette connexion Claude a expiré. Lancez Claude avec ce compte pour la renouveler.",
-      "museNeedsCli": "L’utilisation de Muse Code demande la CLI Muse Code (muse) installée.",
-      "museNeverRun": "Lancez Muse Code une première fois (et connectez-vous) pour que Tessel puisse lire son utilisation.",
       "museSignedOut": "Muse Code n’est pas connecté : lancez muse, puis /login.",
       "museApiKey": "Muse Code est connecté avec une clé API : il est facturé au jeton, sans quota d’abonnement à afficher.",
-      "museNothingYet": "Muse Code n’a pas encore vu l’utilisation de votre abonnement. Envoyez-lui une demande, puis actualisez.",
-      "museConfig": "Muse Code n’a pas pu charger ses réglages ou sa connexion. Lancez muse pour voir pourquoi.",
+      "museSignInExpired": "La connexion de Muse Code n’est plus valide. Lancez muse (il vous reconnecte si besoin), puis Actualiser l’usage.",
+      "museNoSubscription": "Ce compte Meta n’a pas d’abonnement Muse Code actif, donc aucune limite d’usage à afficher.",
       "noUsageLimits": "Anthropic ne donne aucune limite d’utilisation pour ce compte Claude.",
-      "grokReportFailed": "Impossible de lire l'utilisation de Grok Build."
+      "grokReportFailed": "Impossible de lire l'utilisation de Grok Build.",
+      "museReportFailed": "Impossible de lire l'utilisation de Muse Code."
     },
     "reset": {
       "notSaved": "Le résultat de la réinitialisation n'a pas pu être enregistré dans l'historique local.",

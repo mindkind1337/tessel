@@ -203,7 +203,7 @@ describe("a tier read for one sign-in is never shown for another", () => {
       return new Response(JSON.stringify({ config: { creditUsagePercent: 5, billingPeriodEnd: now + 1000 } }))
     })
     const sources = { present: async () => true, auth, signIn: async () => ({ signedIn: true, planType: 'SuperGrok', plan: { label: 'SuperGrok', kind: 'subscription', source: 'cli' } }) }
-    const service = createExtraProviderUsage({ sources, request, clock: () => now, listAgents: async () => [{ id: 'grok', available: true }], antigravityCli: { present: () => false, read: async () => ({ ok: false }) }, antigravityPlan: { read: () => null }, museUsage: { present: () => false, read: async () => ({ ok: false }) } })
+    const service = createExtraProviderUsage({ sources, request, clock: () => now, listAgents: async () => [{ id: 'grok', available: true }], antigravityCli: { present: () => false, read: async () => ({ ok: false }) }, antigravityPlan: { read: () => null } })
     return { service, auth }
   }
 

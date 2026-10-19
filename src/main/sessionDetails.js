@@ -12,12 +12,12 @@
 // Lovecast Inc.
 import fs from 'fs'
 import os from 'os'
-import { basename, dirname, join } from 'path'
+import { basename, dirname, join, relative } from 'path'
 import { claudeTranscriptIn, claudeTurnFromText, codexModelFromText, codexRolloutIn } from './agentModel'
 import { opencodeDbFile, opencodeSessionModel, piModelFromWire } from './agentModelSources'
 import { isUuid, qoderDir, qoderTranscriptIn } from './agentSessions'
 import { insideDir, ompSessions, ompSessionsDir, piSessions, piSessionsDir, plainId, sessionDirs } from './agentSessionSources'
-import { museModelFromText, museSessionLog } from './museSessions'
+import { museModelFromText, museSessionId, museSessionLog } from './museSessions'
 import { HISTORY_LIMITS, claudeHistoryEvents, codexHistoryEvents, readLastLines, resolveHistoryAttachments } from './chat/transcriptHistory'
 import { hasPendingAttachments } from './chat/historyAttachments'
 import { GROK_SESSION_FILES, grokModelTimeline } from './chat/transcriptView'
@@ -29,7 +29,7 @@ export const CONTENT_AGENTS = ['claude', 'openclaude', 'codex', 'grok', 'pi', 'o
 // sub-agents), Grok's session folder, a Pi or OMP file. Codex is left out
 // (its session_index.jsonl would keep naming the file), as are the agents
 // whose history is a database row or a registry entry.
-export const DELETABLE_AGENTS = ['claude', 'openclaude', 'grok', 'pi', 'omp']
+export const DELETABLE_AGENTS = ['claude', 'openclaude', 'grok', 'pi', 'omp', 'muse']
 export const HEAD_BYTES = 256 * 1024
 const TAIL_BYTES = 256 * 1024
 const PROMPT_MAX = 20000
@@ -299,6 +299,13 @@ export function deleteTargets(agent, { file, root } = {}) {
     // folder that holds every session.
     const dir = dirname(file)
     return dir !== root && dirname(dir) !== root && insideDir(root, dir) ? [dir] : []
+  }
+  if (agent === 'muse') {
+    // The session's own folder (<sessions>/YYYY/MM/DD/<id>: its log, its
+    // sub-agents' and observers' logs, its locks), never a day's folder.
+    const dir = dirname(file)
+    const rel = relative(root || '', dir).split(/[\\/]/)
+    return root && insideDir(root, dir) && rel.length === 4 && museSessionId(basename(dir)) ? [dir] : []
   }
   if (agent === 'claude' || agent === 'openclaude') {
     const sidecar = join(dirname(file), basename(file, '.jsonl'))

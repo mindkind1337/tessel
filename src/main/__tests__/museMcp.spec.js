@@ -24,6 +24,26 @@ const put = (value) => {
 const read = () => JSON.parse(fs.readFileSync(file(), 'utf8'))
 const NODE = 'C:\\Program Files\\nodejs\\node.exe'
 
+describe('Muse Code: the team tools written again at each start', () => {
+  it('a server the user turned off stays off, its timeouts stay, never written twice, round-trips as JSON', () => {
+    const entry = teamToolsEntry('muse', 'C:/t/tessel-team-mcp.cjs', NODE)
+    put({ schema_version: 1, model: 'muse-wonder-1.0', mcpServers: { 'tessel-team': { command: 'node', args: ['old.cjs'], enabled: false, startup_timeout_ms: 60000 }, docs: { url: 'https://d' } } })
+    expect(setJsonAgentServer('muse', 'tessel-team', entry, home, { keepUser: true })).toEqual({ ok: true, changed: true })
+    const saved = read()
+    expect(saved.mcpServers['tessel-team']).toEqual({ ...entry, enabled: false, startup_timeout_ms: 60000 })
+    expect(saved.mcpServers.docs).toEqual({ url: 'https://d' })
+    expect(saved.model).toBe('muse-wonder-1.0')
+    expect(Object.keys(saved.mcpServers).filter((k) => k === 'tessel-team')).toHaveLength(1)
+    // Again: nothing to change.
+    expect(setJsonAgentServer('muse', 'tessel-team', entry, home, { keepUser: true })).toEqual({ ok: true, changed: false })
+    expect(listJsonAgent('muse', home).servers.find((s) => s.name === 'tessel-team')).toMatchObject({ enabled: false })
+    // Its older key: still one server there, none added under the new key.
+    put({ schema_version: 1, mcp_servers: { 'tessel-team': { command: 'node', args: ['old.cjs'] } } })
+    expect(setJsonAgentServer('muse', 'tessel-team', entry, home, { keepUser: true })).toEqual({ ok: true, changed: true })
+    expect(read()).toEqual({ schema_version: 1, mcp_servers: { 'tessel-team': entry } })
+  })
+})
+
 describe('Muse Code: MCP servers in its settings', () => {
   it("the team tools: node by its path, the pane's variables passed through env (a missing one empty, never an error)", () => {
     expect(teamToolsEntry('muse', 'C:/t/tessel-team-mcp.cjs', NODE)).toEqual({

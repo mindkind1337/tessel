@@ -179,7 +179,9 @@
       "scopeOpenCode": "Historique OpenCode sur cet ordinateur",
       "opencodeTurns": "Lignes d’utilisation enregistrées : une par session quand OpenCode garde les totaux de session, sinon une par réponse.",
       "scopeGrok": "Historique de Grok Build sur cet ordinateur",
-      "grokTurns": "Tours terminés, une ligne par modèle utilisé dans un tour."
+      "grokTurns": "Tours terminés, une ligne par modèle utilisé dans un tour.",
+      "scopeMuse": "Historique de Muse Code sur cet ordinateur",
+      "museTurns": "Appels de modèle enregistrés par Muse Code, sous-agents et assistants d’arrière-plan compris."
     },
     "percent": {
       "used": "{{n}} % utilisés",
@@ -326,7 +328,8 @@
       "recentOther": "Sessions locales {{name}} les plus récentes dans ce périmètre.",
       "about": "À propos de ces chiffres",
       "readFailed": "Impossible de lire l'utilisation de {{name}}.",
-      "grokCost": "Le coût est celui que Grok Build a enregistré pour chaque tour (prix de l'API), pas la facture de votre abonnement SuperGrok."
+      "grokCost": "Le coût est celui que Grok Build a enregistré pour chaque tour (prix de l'API), pas la facture de votre abonnement SuperGrok.",
+      "museCost": "Muse Code n’enregistre aucun prix pour ses appels (votre abonnement les couvre) : aucun coût n’est affiché."
     },
     "share": {
       "title": "Partager l'utilisation",

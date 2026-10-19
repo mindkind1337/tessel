@@ -251,8 +251,23 @@ export function jsonAgentConfig(agent, name, home) {
   return e ? entryToConfig(agent, e) : null
 }
 
-// entry: the agent's own entry (configToEntry). -> { ok } or { ok: false, error }
-export function setJsonAgentServer(agent, name, entry, home) {
+// What stays the user's when Tessel rewrites its own server entry (its team
+// tools at each start): a server the user turned off stays off (Muse's
+// "enabled": false, Antigravity's "disabled": true), and Muse's timeouts.
+export function userKeptFields(agent, old) {
+  if (!old || typeof old !== 'object' || Array.isArray(old)) return {}
+  const kept = {}
+  if (agent === 'muse') {
+    if (old.enabled === false) kept.enabled = false
+    for (const [k, v] of Object.entries(old)) if (/timeout/i.test(k) && (typeof v === 'number' || (v && typeof v === 'object'))) kept[k] = v
+  }
+  if (agent === 'antigravity' && old.disabled === true) kept.disabled = true
+  return kept
+}
+
+// entry: the agent's own entry (configToEntry). keepUser: what the user set
+// on the entry already there stays (userKeptFields). -> { ok } or { ok: false, error }
+export function setJsonAgentServer(agent, name, entry, home, { keepUser = false } = {}) {
   const file = settingsFile(agent, home)
   if (!file) return { ok: false, error: t('main.jsonAgents.unknownAgent', 'Unknown agent.') }
   const r = readSettings(file)
@@ -266,6 +281,7 @@ export function setJsonAgentServer(agent, name, entry, home) {
   if (agent === 'kimi' && Object.hasOwn(data, key) && (!data[key] || typeof data[key] !== 'object' || Array.isArray(data[key])))
     return { ok: false, error: t('main.jsonAgents.kimiNotObject', 'Kimi mcpServers is not an object; the existing file was left unchanged.') }
   if (!data[key] || typeof data[key] !== 'object' || Array.isArray(data[key])) data[key] = {}
+  if (keepUser) entry = { ...entry, ...userKeptFields(agent, data[key][name]) }
   if (JSON.stringify(data[key][name]) === JSON.stringify(entry)) return { ok: true, changed: false }
   data[key][name] = entry
   try {

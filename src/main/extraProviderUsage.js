@@ -9,6 +9,7 @@ import {
   mapCursor,
   mapCursorLegacy,
   mapGrok,
+  mapMuse,
   mapOpenCodeGo,
   mapMiniMax,
   mapOpenCodeConsole,
@@ -20,7 +21,6 @@ import { t } from './i18n'
 import { retryAfterMs } from './usagePoller'
 import { createAntigravityCliUsage } from './antigravityCliUsage'
 import { createAntigravityPlan } from './antigravityPlan'
-import { createMuseUsage } from './museUsage'
 import { grokPlanAttention, grokUserPlan } from './grokAccount'
 
 // The console's server-function id for its workspaces list (stable, from Orca).
@@ -35,6 +35,11 @@ export const USAGE_URLS = Object.freeze({
   grokMonthly: 'https://cli-chat-proxy.grok.com/v1/billing',
   // Grok Build's own profile call (its sign-in's enrichment): the tier.
   grokUser: 'https://cli-chat-proxy.grok.com/v1/user',
+  // Muse Code's key call, which it makes with its stored login at every start
+  // (POST, x-api-version 1.0.0): its answer carries the subscription's name
+  // and its 5-hour and weekly windows (mapMuse). It hands back the same key
+  // Muse already keeps, and nothing of the key is ever kept by Tessel.
+  muse: 'https://api.meta.ai/muse-code/key',
   'opencode-go': 'https://opencode.ai/zen/go/v1/usage',
   // OpenCode's legacy console, with the session cookie saved in Settings (Orca's
   // opencode-go-usage-fetcher.ts): its workspaces, then a workspace's Go status.
@@ -52,9 +57,8 @@ export const USAGE_URLS = Object.freeze({
 // Internal endpoints of a provider's read, never a provider of their own.
 const SUB_REQUESTS = ['geminiProject', 'cursorLegacy', 'grokMonthly', 'grokUser', 'opencodeWorkspaces', 'opencodeConsole', 'minimaxCn', 'zcodeCn', 'zcodeDev']
 // Providers read from their own CLI instead of a web endpoint: Antigravity's
-// `agy /usage` (antigravityCliUsage.js), Muse Code's `muse serve` usage/read
-// (museUsage.js).
-const CLI_PROVIDERS = ['antigravity', 'muse']
+// `agy /usage` (antigravityCliUsage.js).
+const CLI_PROVIDERS = ['antigravity']
 // loadCodeAssist's answer for an account with no tier: one of its refused
 // tiers says the client itself is no longer supported (UNSUPPORTED_CLIENT).
 export function geminiUnsupported(answer) {
@@ -73,8 +77,7 @@ export function createExtraProviderUsage({
   cliEnv = null,
   antigravityCli = createAntigravityCliUsage(cliEnv ? { env: cliEnv } : {}),
   // Its plan, which agy's answer leaves out (antigravityPlan.js).
-  antigravityPlan = createAntigravityPlan(),
-  museUsage = createMuseUsage(cliEnv ? { env: cliEnv } : {})
+  antigravityPlan = createAntigravityPlan()
 } = {}) {
   const sequences = new Map()
   // Grok's tier as its profile call last answered (grokAccount.js), kept in
@@ -84,6 +87,9 @@ export function createExtraProviderUsage({
   let grokLivePlan = null
   // The profile call's own time limit, shorter than the usage read's.
   const GROK_USER_TIMEOUT_MS = Math.min(5000, timeoutMs)
+  // Muse Code's plan as its key call last named it, for the login it was
+  // read with (its fingerprint): Settings shows it beside that sign-in only.
+  let museLivePlan = null
   // The providers to read: installed ones, and the ones a key saved in
   // Settings links (a GLM Coding Plan key without ZCode, named after its plan).
   async function installedProviders() {
@@ -106,7 +112,7 @@ export function createExtraProviderUsage({
         ...p,
         quota:
           p.quota !== false &&
-          (p.report || (p.id === 'antigravity' ? antigravityCli.present() : p.id === 'muse' ? museUsage.present() : await sources.present(p.id)))
+          (p.report || (p.id === 'antigravity' ? antigravityCli.present() : await sources.present(p.id)))
       }))
     )
     return { ok: true, providers: providers.filter((p) => p.report || p.quota) }
@@ -156,6 +162,8 @@ export function createExtraProviderUsage({
           })
         )
       }
+      if (key === 'muse' && (response.status === 401 || response.status === 403))
+        refuse('expired', t('main.usage.museSignInExpired', "Muse Code's sign-in is no longer valid. Run muse (it signs in again if asked), then Refresh usage."))
       if (key === 'opencode-go' && response.status === 403)
         refuse('unavailable', t('main.usage.noOpenCodeGo', 'This OpenCode account has no Go subscription.'))
       if (key === 'opencodeConsole' && response.status === 401)
@@ -209,6 +217,17 @@ export function createExtraProviderUsage({
     // Grok: the tier its profile call last gave wins over the one its CLI cached.
     async signIn(provider) {
       const s = await sources.signIn?.(provider)
+      if (provider === 'muse') {
+        if (!s || !s.signedIn || !museLivePlan || (s.plan && s.plan.kind === 'api-key')) return s
+        let fingerprint = null
+        try {
+          fingerprint = (await sources.auth('muse'))?.fingerprint || null
+        } catch {
+          fingerprint = null
+        }
+        if (!fingerprint || fingerprint !== museLivePlan.fingerprint) return s
+        return { ...s, planType: museLivePlan.label || null, subscribed: museLivePlan.subscribed, plan: { label: museLivePlan.label, subscribed: museLivePlan.subscribed, checkedAt: museLivePlan.checkedAt } }
+      }
       if (provider !== 'grok' || !s || !s.signedIn || !grokLivePlan || (s.plan && s.plan.kind === 'api-key')) return s
       // Only for the login it was read with (no token kept: its fingerprint).
       let fingerprint = null
@@ -269,39 +288,11 @@ export function createExtraProviderUsage({
           ...(typeof plan === 'string' ? { plan } : {})
         }
       }
-      // Muse Code: what `muse serve` last saw of your subscription (its
-      // 5-hour and weekly windows, and the plan it names).
-      const muse = async () => {
-        const res = await museUsage.read()
-        if (sequences.get(provider) !== sequence)
-          refuse('stale', t('main.usage.loginChanged', 'The provider login or usage request changed. Refresh usage.'))
-        if (!res?.ok) {
-          const reason = res?.reason
-          if (reason === 'timeout') refuse('timeout', t('main.usage.timedOut', 'The usage request timed out.'))
-          if (reason === 'missing') refuse('unavailable', t('main.usage.museNeedsCli', "Muse Code's usage needs the Muse Code CLI (muse) installed."))
-          if (reason === 'never-run') refuse('unavailable', t('main.usage.museNeverRun', 'Start Muse Code once (and sign in) so Tessel can read its usage.'))
-          if (reason === 'signed-out') refuse('unavailable', t('main.usage.museSignedOut', 'Muse Code is not signed in: run muse, then /login.'))
-          if (reason === 'api-key') refuse('unsupported', t('main.usage.museApiKey', 'Muse Code is signed in with an API key: it is billed per token, with no subscription quota to show.'))
-          if (reason === 'none') refuse('unavailable', t('main.usage.museNothingYet', 'Muse Code has not seen your subscription usage yet. Send it a prompt, then refresh.'))
-          if (reason === 'config') refuse('unavailable', t('main.usage.museConfig', 'Muse Code could not load its settings or its sign-in. Run muse to see why.'))
-          refuse('response', t('main.usage.unreadable', 'The usage response could not be read.'))
-        }
-        return {
-          ok: true,
-          provider,
-          accountId: null,
-          source: 'live',
-          observedAt: Number.isFinite(res.observedAt) ? res.observedAt : clock(),
-          windows: res.windows,
-          ...(typeof res.plan === 'string' && res.plan ? { plan: res.plan } : {})
-        }
-      }
       const work = async () => {
         const installed = await installedProviders()
         if (!installed.some((p) => p.id === provider))
           refuse('unavailable', t('main.usage.agentNotInstalled', 'The matching agent is not installed.'))
         if (provider === 'antigravity') return antigravity()
-        if (provider === 'muse') return muse()
         const login = await sources.auth(provider)
         for (const name of ['Authorization', 'Cookie']) {
           const value = login?.headers?.[name]
@@ -365,7 +356,8 @@ export function createExtraProviderUsage({
           unlimited = false,
           plan = null,
           grokPending = null,
-          grokRefused = false
+          grokRefused = false,
+          musePending = null
         if (provider === 'gemini') {
           const project = await fetch('geminiProject', {
             metadata: { ideType: 'GEMINI_CLI', pluginType: 'GEMINI' }
@@ -409,7 +401,8 @@ export function createExtraProviderUsage({
             )
           let data
           try {
-            data = await fetch(provider === 'minimax' || provider === 'zcode' ? login.endpoint || provider : provider)
+            // Muse's key call is a POST with an empty object.
+            data = await fetch(provider === 'minimax' || provider === 'zcode' ? login.endpoint || provider : provider, provider === 'muse' ? {} : null)
           } catch (error) {
             if (provider === 'zcode' && error?.code === 'auth') zcodeKeyRefused()
             throw error
@@ -433,6 +426,13 @@ export function createExtraProviderUsage({
             } catch (error) {
               if (error?.code === 'auth' || error?.code === 'expired') grokRefused = true
             }
+          }
+          if (provider === 'muse') {
+            const mapped = mapMuse(data)
+            windows = mapped.windows
+            musePending = { label: mapped.plan, subscribed: mapped.subscribed, checkedAt: clock(), fingerprint: login.fingerprint }
+            if (!windows.length && !mapped.subscribed)
+              refuse('unavailable', t('main.usage.museNoSubscription', 'This Meta account has no active Muse Code subscription, so it has no usage limits to show.'))
           }
           if (provider === 'opencode-go') windows = mapOpenCodeGo(data)
           if (provider === 'zcode') {
@@ -476,6 +476,10 @@ export function createExtraProviderUsage({
           // Else the one Grok Build cached itself (settings_cache.json).
           plan = grokLivePlan?.label || (await Promise.resolve(sources.signIn?.('grok')).catch(() => null))?.planType || null
         }
+        if (provider === 'muse' && musePending) {
+          museLivePlan = musePending
+          plan = musePending.label
+        }
         if (!windows.length && !unlimited)
           refuse('unavailable', t('main.usage.noWindows', 'This account did not return supported quota windows.'))
         return {
@@ -499,7 +503,7 @@ export function createExtraProviderUsage({
                 reject(new ProviderReadError('timeout', t('main.usage.timedOut', 'The usage request timed out.')))
               },
               // A CLI read: the time it gives its CLI, and a little more.
-              Math.max(1, Math.min(CLI_PROVIDERS.includes(provider) ? Math.max(timeoutMs, ((provider === 'muse' ? museUsage.timeoutMs : antigravityCli.timeoutMs) || 0) + 1000) : timeoutMs, 30000))
+              Math.max(1, Math.min(CLI_PROVIDERS.includes(provider) ? Math.max(timeoutMs, (antigravityCli.timeoutMs || 0) + 1000) : timeoutMs, 30000))
             )
           })
         ])

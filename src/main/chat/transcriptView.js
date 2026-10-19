@@ -50,7 +50,8 @@ import { basename, isAbsolute, join, win32 } from 'path'
 import { claudeTranscriptIn } from '../agentModel.js'
 import { realInside } from '../agentChildren.js'
 import { ompSessionsDir } from '../agentSessionSources.js'
-import { museConversation, museSessionLog, museSessionsDir } from '../museSessions.js'
+import { musePromptOf, museRecords, museSessionLog, museSessionsDir, museTextRecords } from '../museSessions.js'
+import { museContextWindow } from '../museCatalog.js'
 import { HISTORY_LIMITS, ATTACHMENT_LIMITS, resolveHistoryAttachments, claudeHistoryEvents, codexHistoryEvents, createBuilder, findTranscript } from './transcriptHistory.js'
 import { imageFromBase64, imageFromPath, imageFromUrl, resolveHistoryAttachmentsCached } from './historyAttachments.js'
 import { createRemoteDrives } from './remoteDrives.js'
@@ -750,17 +751,93 @@ export function antigravityViewEvents(lines, limits = HISTORY_LIMITS) {
   return b.finish()
 }
 
-// Muse Code: your prompts (each noted twice, taken in then its turn started:
-// shown once) and the answers it committed; its other records (model
-// requests, tools, its background observers' work) are not shown. A turn ends
-// at the next prompt.
+// Muse Code (its session.jsonl, as Muse Code 1.4.10 writes it; see
+// museSessions.js for the record envelope). The records shown:
+//   runtime.user_intent.accepted   your prompt: refill_blocks [{ kind: 'text',
+//                                  text } | { kind: 'image', media_type,
+//                                  base64_data, source_path }]
+//   runtime.session { event: { kind: ... } }, a run's events:
+//     started                      the same prompt again (shown once), or the
+//                                  only record of it in an older log
+//     reasoning_summary_committed  its thinking, summarized (reasoning_committed
+//                                  is mostly encrypted: only a plain text shows)
+//     assistant_message_committed  what it says, between tools or at the end
+//     assistant_tool_calls_committed  tool_calls [{ call_id, name, args (JSON text) }]
+//     tool_result_batch_committed  results [{ tool_call_id, text }]
+//     tool_result_model_visible_content  a tool's images { call_id, content:
+//                                  [{ kind: 'image', media_type, base64_data, path }] }
+//     terminal                     the turn's end: completed, failed (reason),
+//                                  cancelled
+// Its other records (model requests, tasks, hooks, its background observers'
+// own logs beside it) are not shown.
+function museImage(block, source) {
+  const c = obj(block)
+  if (!c || c.kind !== 'image') return null
+  if (str(c.base64_data)) return imageFromBase64(c.base64_data, c.media_type, str(c.path) || str(c.source_path) || undefined, source)
+  const p = str(c.source_path) || str(c.path)
+  return p ? imageFromPath(p, undefined, source) : { kind: 'image', source }
+}
 export function museViewEvents(lines, limits = HISTORY_LIMITS) {
   const b = createBuilder(limits)
-  museConversation(lines.join('\n')).forEach((it, i) => {
-    const ts = it.at || undefined
-    if (it.role === 'user') b.user(`muse-u${i}`, it.text, ts) // i18n-ignore id
-    else b.message('assistant', `muse-a${i}`, it.text, ts, '\n\n') // i18n-ignore id
-  })
+  const tools = toolQueue(b)
+  let last = null // { text, at } of the latest prompt
+  let i = 0
+  const keep = (l) =>
+    l.includes('user_intent.accepted') || l.includes('"started"') || l.includes('_committed') || l.includes('tool_result_model_visible_content') || l.includes('"terminal"') || l.includes('record_json')
+  for (const rec of museTextRecords(lines.join('\n'), keep)) {
+    const ts = rec.at || undefined
+    const p = rec.payload
+    i++
+    if (rec.type === 'runtime.user_intent.accepted') {
+      const blocks = Array.isArray(p.refill_blocks) ? p.refill_blocks : []
+      const text = blocks.map((x) => (obj(x) && (x.kind || x.type) === 'text' && typeof x.text === 'string' ? x.text : '')).filter(Boolean).join('\n')
+      const images = blocks.map((x) => museImage(x, 'user')).filter(Boolean)
+      const body = text || musePromptOf(rec)
+      if (!body && !images.length) continue
+      tools.clear()
+      b.settleTools(ts)
+      b.user(`muse-u${i}`, body, ts, images) // i18n-ignore id
+      last = { text: body, at: rec.at }
+      continue
+    }
+    const e = rec.type === 'runtime.session' ? obj(p.event) : null
+    if (!e) continue
+    if (e.kind === 'started') {
+      const prompt = str(e.prompt)
+      if (!prompt || (last && last.text === prompt && (!rec.at || !last.at || Math.abs(rec.at - last.at) < 60000))) continue
+      tools.clear()
+      b.settleTools(ts)
+      b.user(`muse-u${i}`, prompt, ts) // i18n-ignore id
+      last = { text: prompt, at: rec.at }
+    } else if (e.kind === 'reasoning_summary_committed' || e.kind === 'reasoning_committed') {
+      if (str(e.text)) b.message('thinking', `muse-${str(e.message_id) || i}`, e.text, ts, '\n\n') // i18n-ignore id
+    } else if (e.kind === 'assistant_message_committed') {
+      // What a record marks as commentary (its words between tools) stays out,
+      // as in the Conversations tab (museAnswerOf).
+      if (str(e.text) && ![e.phase, e.message_phase, e.messagePhase].includes('commentary')) b.message('assistant', `muse-${str(e.message_id) || i}`, e.text, ts, '\n\n') // i18n-ignore id
+    } else if (e.kind === 'assistant_tool_calls_committed') {
+      for (const call of Array.isArray(e.tool_calls) ? e.tool_calls : []) {
+        const c = obj(call)
+        if (!c) continue
+        const id = str(c.call_id) || str(c.id)
+        if (id && b.hasTool(id)) continue
+        tools.call(id, str(c.name) || 'tool', c.args ?? {}, ts) // i18n-ignore tool name
+      }
+    } else if (e.kind === 'tool_result_batch_committed') {
+      for (const r of Array.isArray(e.results) ? e.results : []) {
+        const o = obj(r)
+        if (o) tools.result(str(o.tool_call_id), typeof o.text === 'string' ? o.text : '', o.is_error === true, ts)
+      }
+    } else if (e.kind === 'tool_result_model_visible_content') {
+      const id = str(e.call_id)
+      const images = (Array.isArray(e.content) ? e.content : []).map((x) => museImage(x, 'tool')).filter(Boolean)
+      if (id && images.length) b.toolImages(id, images)
+    } else if (e.kind === 'terminal') {
+      const how = str(e.terminal)
+      tools.clear()
+      b.endTurn(how === 'cancelled' || how === 'interrupted' ? 'interrupted' : how === 'failed' ? 'failed' : 'completed', ts, how === 'failed' ? str(e.reason) || '' : '')
+    }
+  }
   return b.finish()
 }
 
@@ -985,9 +1062,10 @@ export function viewEvents(agent, lines, sessionId, limits = HISTORY_LIMITS) {
 // Inc.): Claude Code / OpenClaude: the newest main-thread answer's usage
 // (its input, cache writes and reads; the file never says the window);
 // Codex: its newest token_count (the last request's total, in the model's
-// window). -> { type: 'contextUsage', usedTokens, windowTokens } | null
+// window); Muse Code: its newest model call (museWindow: the model's window
+// from its catalog). -> { type: 'contextUsage', usedTokens, windowTokens } | null
 const SCAN_FOR_USAGE = 400
-export function contextUsageEvent(agent, lines) {
+export function contextUsageEvent(agent, lines, { museWindow = museContextWindow } = {}) {
   const list = Array.isArray(lines) ? lines : []
   const n = (v) => (typeof v === 'number' && Number.isFinite(v) && v > 0 ? Math.round(v) : 0)
   const stop = Math.max(0, list.length - SCAN_FOR_USAGE)
@@ -1011,6 +1089,21 @@ export function contextUsageEvent(agent, lines) {
       const g = grokUpdateOf(line)
       const used = g ? n(g.meta.totalTokens) : 0
       if (used) return { type: 'contextUsage', usedTokens: used, windowTokens: null }
+      continue
+    }
+    if (agent === 'muse') {
+      // Muse Code: its latest model call's tokens as the provider reported
+      // them (input, cached input inside it, and the answer), in the window
+      // its own model catalog gives that model (museCatalog.js).
+      if (!line.includes('"model_completed"')) continue
+      const o = parse(line)
+      for (const rec of o ? museRecords(o).reverse() : []) {
+        const e = obj(rec.payload.event)
+        if (rec.type !== 'runtime.session' || !e || e.kind !== 'model_completed') continue
+        const u = obj(e.usage)
+        const used = u ? n(u.input_tokens) + n(u.output_tokens) : 0
+        if (used) return { type: 'contextUsage', usedTokens: used, windowTokens: museWindow(typeof e.model === 'string' ? e.model : '') }
+      }
       continue
     }
     if (agent !== 'claude' && agent !== 'openclaude') return null

@@ -1,22 +1,23 @@
 <script setup>
-// Cursor and Grok in Settings > AI provider accounts: the sign-in already on
+// Cursor, Grok and Muse Code in Settings > AI provider accounts: the sign-in already on
 // this computer (read only) and its plan usage. After Orca's
 // CursorAccountsSection.tsx and GrokAccountsSection.tsx (MIT, Copyright (c)
 // 2026 Lovecast Inc.).
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import ProviderAccountRow from './ProviderAccountRow.vue'
 import { t, intlLocale } from '../i18n'
-import { grokPlanInfo } from '../grokPlan'
+import { grokPlanInfo, musePlanInfo } from '../grokPlan'
 
 const props = defineProps({
-  provider: { type: String, required: true }, // 'cursor' | 'grok'
+  provider: { type: String, required: true }, // 'cursor' | 'grok' | 'muse'
   status: { type: Object, default: null },
   loading: { type: Boolean, default: false }
 })
 const emit = defineEmits(['reload'])
 const LINKS = {
   cursor: 'https://cursor.com/dashboard/spending',
-  grok: 'https://docs.x.ai/build/overview'
+  grok: 'https://docs.x.ai/build/overview',
+  muse: 'https://accountscenter.meta.com/muse_code/'
 }
 const CURSOR = 'Cursor' // i18n-ignore product name
 const usage = ref(null)
@@ -69,7 +70,7 @@ function resetText(at) {
 }
 const reset = computed(() => resetText(windows.value.find((w) => Number.isFinite(w.resetsAt))?.resetsAt))
 const weekly = computed(() => windows.value.some((w) => w.label === 'Weekly'))
-const name = computed(() => (props.provider === 'cursor' ? CURSOR : t('settings.accounts.grok.title', 'Grok (xAI)')))
+const name = computed(() => (props.provider === 'cursor' ? CURSOR : props.provider === 'muse' ? t('settings.accounts.muse.title', 'Muse Code (Meta)') : t('settings.accounts.grok.title', 'Grok (xAI)')))
 // The row's one status line: who is signed in and the first usage number.
 const line = computed(() => {
   if (props.loading && !props.status) return { text: t('settings.accounts.loading', 'Loading…'), tone: 'dim' }
@@ -79,7 +80,9 @@ const line = computed(() => {
       text:
         props.provider === 'cursor'
           ? t('settings.accounts.cursor.signedOut', 'No Cursor sign-in found on this computer')
-          : t('settings.accounts.grok.signedOut', 'Not signed in to Grok CLI'),
+          : props.provider === 'muse'
+            ? t('settings.accounts.muse.signedOut', 'Not signed in to Muse Code')
+            : t('settings.accounts.grok.signedOut', 'Not signed in to Grok CLI'),
       tone: 'dim'
     }
   if (!fresh.value) return { text: t('settings.accounts.row.expired', 'Sign-in expired'), tone: 'warn' }
@@ -98,7 +101,9 @@ const help = computed(() => {
   if (!signedIn.value)
     return props.provider === 'cursor'
       ? t('settings.accounts.cursor.signedOutShort', 'Sign in with Cursor IDE or run cursor-agent login, then Refresh usage.')
-      : t('settings.accounts.grok.signedOutShort', 'Run grok login in a terminal, then Refresh usage.')
+      : props.provider === 'muse'
+        ? t('settings.accounts.muse.signedOutShort', 'Run muse in a terminal and sign in (/login), then Refresh usage.')
+        : t('settings.accounts.grok.signedOutShort', 'Run grok login in a terminal, then Refresh usage.')
   if (!fresh.value)
     return props.provider === 'cursor'
       ? t('settings.accounts.cursor.expiredShort', 'Run cursor-agent login on this computer, then Refresh usage.')
@@ -107,13 +112,15 @@ const help = computed(() => {
 })
 // Grok's tier and sign-in kind (grokPlan.js): a tag beside Refresh, its
 // details below; Free / X Basic says "No subscription".
-const plan = computed(() => (props.provider === 'grok' && signedIn.value ? grokPlanInfo(props.status?.plan) : null))
+// Muse Code's plan as its key call named it (musePlanInfo).
+const plan = computed(() => (!signedIn.value ? null : props.provider === 'grok' ? grokPlanInfo(props.status?.plan) : props.provider === 'muse' ? musePlanInfo(props.status) : null))
 const attention = computed(
   () => !!props.status?.error || (signedIn.value && !fresh.value) || !!staleError.value || !!plan.value?.warn
 )
 // Where Tessel reads the sign-in from.
 const sourceText = computed(() => {
   if (props.provider === 'grok') return t('settings.accounts.grok.source', 'Read from the Grok CLI session (~/.grok/auth.json).')
+  if (props.provider === 'muse') return t('settings.accounts.muse.source', 'Read from the Muse Code sign-in (~/.config/muse/auth.json). Its usage comes from the call Muse itself makes at every start.')
   const source = sourceLabel(props.status?.credentialSource)
   return source
     ? t('settings.accounts.cursor.readFrom', 'Read from {{source}}. Tessel never changes your Cursor login.', { source })
@@ -211,6 +218,8 @@ onBeforeUnmount(() => {
         {{
           provider === 'cursor'
             ? t('settings.accounts.cursor.usageTitle', 'Monthly plan usage')
+            : provider === 'muse'
+              ? t('settings.accounts.muse.usageTitle', 'Subscription usage')
             : weekly
               ? t('settings.accounts.grok.weeklyTitle', 'Weekly credits')
               : t('settings.accounts.grok.monthlyTitle', 'Monthly usage')
@@ -219,9 +228,11 @@ onBeforeUnmount(() => {
       <ul class="usage-account-windows">
         <li v-for="w in windows" :key="w.label">
           <span class="usage-badge">{{ Math.round(w.usedPct) }}%</span>{{ windowLabel(w.label) }}
+          <!-- Muse: each window resets on its own (5-hour, weekly). -->
+          <span v-if="provider === 'muse' && Number.isFinite(w.resetsAt)" class="usage-hint"> · {{ resetText(w.resetsAt) }}</span>
         </li>
       </ul>
-      <p v-if="reset" class="usage-hint">{{ reset }}</p>
+      <p v-if="reset && provider !== 'muse'" class="usage-hint">{{ reset }}</p>
       <div v-if="staleError" class="usage-stale" role="alert">
         <span class="tag tag-warn">{{ t('settings.accounts.staleTag', 'Last known usage') }}</span>
         <span class="usage-hint">{{ t('settings.accounts.staleShort', 'The latest refresh failed.') }}</span>
@@ -237,6 +248,8 @@ onBeforeUnmount(() => {
         {{
           provider === 'cursor'
             ? t('settings.accounts.cursor.noAllowance', 'Cursor reported no usage allowance for this account.')
+            : provider === 'muse'
+              ? t('settings.accounts.muse.noUsage', 'Muse Code reported no usage for this account.')
             : t('settings.accounts.grok.noPercentage', 'Grok reported no usage percentage for this account.')
         }}
       </p>
@@ -250,6 +263,8 @@ onBeforeUnmount(() => {
         {{
           provider === 'cursor'
             ? t('settings.accounts.cursor.dashboard', 'Cursor dashboard')
+            : provider === 'muse'
+              ? t('settings.accounts.muse.account', 'Muse Code subscription')
             : t('settings.accounts.grok.docs', 'Grok CLI docs')
         }}
         <span aria-hidden="true">↗</span>
