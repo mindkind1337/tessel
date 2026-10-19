@@ -17,7 +17,7 @@ const WORDS = {
     part: t('liveShare.rights.typePart', 'type in its terminals and agents')
   }),
   open: () => ({
-    label: t('liveShare.right.open', 'Can open terminals and agents on your computer (they can run commands)'),
+    label: t('liveShare.right.open2', 'Open terminals and agents on your computer (they can run commands)'),
     short: t('liveShare.right.openShort', 'Open'),
     hint: t('liveShare.right.openHint', 'Without it, each terminal or agent they ask for waits for your yes.'),
     part: t('liveShare.rights.openPart', 'open terminals and agents')
@@ -65,9 +65,17 @@ export const hasRightWords = (id) => typeof id === 'string' && Object.hasOwn(WOR
 // One right's words ({ label, short, hint, part }), or null.
 export const rightWords = (id) => (hasRightWords(id) ? WORDS[id]() : null)
 
-// The rights shown, in the catalog's order: [{ id, label, short, hint, part }].
+// The rights that let a guest run commands as you (Type): every view that
+// shows rights marks them (a red outline, the tag below), so they never look
+// like the others.
+const DANGER = new Set(['type'])
+export const isDangerRight = (id) => DANGER.has(id)
+export const dangerTag = () => t('liveShare.right.dangerTag', 'Runs commands as you')
+
+// The rights shown, in the catalog's order (Type first):
+// [{ id, label, short, hint, part, danger }].
 export function shownRights() {
-  return RIGHT_IDS.filter(hasRightWords).map((id) => ({ id, ...WORDS[id]() }))
+  return RIGHT_IDS.filter(hasRightWords).map((id) => ({ id, ...WORDS[id](), danger: DANGER.has(id) }))
 }
 
 // Which rights are on, in a few words ("Type, Open"; "Watch only").
@@ -94,4 +102,28 @@ export function presetRights(id) {
 export function rightsPreset(rights) {
   for (const id of Object.keys(RIGHTS_PRESETS)) if (sameRights(presetRights(id), rights)) return id
   return 'custom'
+}
+
+// A preset's name and what it means, for the presets control (RightsGrid)
+// and every summary of someone's rights.
+export function presetLabel(id) {
+  if (id === 'view') return t('liveShare.invite.presetView', 'View only')
+  if (id === 'collaborate') return t('liveShare.invite.presetCollaborate', 'Collaborate')
+  if (id === 'full') return t('liveShare.invite.presetFull', 'Full control')
+  return t('liveShare.preset.custom', 'Custom')
+}
+export function presetHint(id, rights) {
+  if (id === 'view') return t('liveShare.invite.presetViewHint', 'They watch the shared panes and files, nothing else.')
+  if (id === 'collaborate') return t('liveShare.invite.presetCollaborateHint', 'They open terminals and agents, edit files, commit and manage tasks. They never type in your terminals.')
+  if (id === 'full') return t('liveShare.invite.presetFullHint', 'Every right, typing included: they can run any command on this PC as you. Only for people you trust.')
+  return t('liveShare.invite.presetCustomHint', 'Custom: {{rights}}', { rights: rightsShort(rights) })
+}
+
+// Someone's rights in one chip: the preset's name, or "Custom · 4" (how many
+// rights are on); danger when they can type. -> { preset, text, title, danger }.
+export function rightsSummary(rights) {
+  const preset = rightsPreset(rights)
+  const count = shownRights().filter((r) => rights && rights[r.id] === true).length
+  const text = preset === 'custom' ? t('liveShare.preset.customCount', 'Custom · {{n}}', { n: count }) : presetLabel(preset)
+  return { preset, text, title: rightsShort(rights), danger: shownRights().some((r) => r.danger && rights && rights[r.id] === true) }
 }
