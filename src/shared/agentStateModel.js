@@ -56,6 +56,8 @@ const MAX_CHILDREN = 32
 const MAX_PENDING = 32
 const MAX_ID = 256
 const MAX_RESET = 160
+// A usage limit's reset is never further ahead than this (limitReset.js).
+const MAX_RESET_AHEAD = 40 * 24 * 60 * 60 * 1000
 const STATES = ['unknown', 'working', 'idle', 'approval', 'limited', 'closed']
 const REASONS = [
   'unconfirmed',
@@ -392,9 +394,12 @@ function endTurn(target, event, reason) {
 // ("3pm", "in 2 hours"), resetAt that time as a moment when the event knows
 // it (Codex's resets_at, the screen's reading), else read from reset here.
 // A screen read again with the same words keeps the moment first read ("3pm"
-// read after 3pm would be tomorrow's). -> false when it is a limit already
-// over (its old message still in view): nothing changes. fresh: a new limit
-// (a hook, the rollout), never an old message read again.
+// read after 3pm would be tomorrow's, "in 2 hours" would start again). Once
+// the limit is over (its reset, or new work), its words stay noted, and a
+// screen showing the same words is its old message still in view, until the
+// screen has shown no limit at all once (noLimit, applyScreenNoLimit). ->
+// false when nothing changes. fresh: a new limit (a hook, the rollout), never
+// an old message read again.
 function applyLimit(target, event, fresh = false) {
   const reset =
     typeof event.reset === 'string'
@@ -403,9 +408,12 @@ function applyLimit(target, event, fresh = false) {
           .trim()
           .slice(0, MAX_RESET) || null
       : null
+  if (!fresh && target.state !== 'limited' && reset && target.reset === reset) return false
   const given = isTime(event.resetAt) ? event.resetAt : isTime(event.reset) ? event.reset : null
-  const same = !fresh && target.reset === reset && isTime(target.limitedResetAt)
-  const at = same ? target.limitedResetAt : (given ?? (reset ? parseLimitReset(reset, { now: event.at }) : null))
+  const same = !fresh && target.state === 'limited' && target.reset === reset && isTime(target.limitedResetAt)
+  let at = same ? target.limitedResetAt : (given ?? (reset ? parseLimitReset(reset, { now: event.at }) : null))
+  // Further than a usage limit's reset can be: a misread, no moment.
+  if (isTime(at) && at > event.at + MAX_RESET_AHEAD) at = null
   if (isTime(at) && at <= event.at) return false
   target.limitedResetAt = isTime(at) ? at : null
   target.reset = reset
@@ -413,9 +421,31 @@ function applyLimit(target, event, fresh = false) {
   return true
 }
 
+// The agents that report their usage limit themselves (Claude Code's
+// StopFailure, Muse Code's, Codex's rollout): a limit on their screen counts
+// only once their own report confirms the turn failed, never while a turn
+// their hooks opened is under way (a file shown in the conversation that
+// quotes a limit message).
+const LIMIT_REPORTERS = ['claude', 'openclaude', 'codex', 'muse']
+function screenLimitAllowed(target, provider) {
+  if (!LIMIT_REPORTERS.includes(provider) || !target.hookSeen) return true
+  if (target.state === 'limited') return true
+  if (target.state === 'working' && target.source === 'hook') return false
+  return target.readyReason === 'error' || target.reason === 'error'
+}
+
+// The screen showed no limit at all: the words of an earlier limit no longer
+// stand for an old message in view.
+function forgetLimitWords(target) {
+  if (target.state === 'limited' || (target.reset === null && target.limitedResetAt === null)) return false
+  target.reset = null
+  target.limitedResetAt = null
+  return true
+}
+
 // Its reset time has passed: no longer limited. Its reset stays noted (an
 // idle state does not show it) so the same old message, still on screen,
-// does not bring the limit back (applyLimit); new work clears it.
+// does not bring the limit back (applyLimit).
 const limitOver = (target, at) => target.state === 'limited' && isTime(target.limitedResetAt) && at >= target.limitedResetAt
 function endLimit(target, event) {
   clearPending(target)
@@ -458,9 +488,8 @@ function applyHook(target, event, alone = false) {
       cancelCandidate(target)
       clearPending(target)
       target.turnId = event.turnId || null
-      // Explicit new work is evidence that the previous quota wait ended.
-      target.limitedResetAt = null
-      target.reset = null
+      // Explicit new work is evidence that the previous quota wait ended
+      // (its words stay noted: applyLimit).
       transition(target, 'working', 'processing', event)
       return
     case 'PermissionRequest':
@@ -524,10 +553,10 @@ function applyHook(target, event, alone = false) {
     case 'Interrupt':
       // The turn failed on the usage limit (Claude Code's rate_limit error,
       // teamMcp/server.cjs): limited until its reset, a ready prompt or not.
-      if (event.event === 'StopFailure' && event.limit === true && !event.agentId) {
+      // A limit already over by its own reset time: an ordinary failure.
+      if (event.event === 'StopFailure' && event.limit === true && !event.agentId && applyLimit(target, event, true)) {
         clearPending(target)
         cancelCandidate(target)
-        applyLimit(target, event, true)
         return
       }
       if (alone) return endTurn(target, event, event.event === 'StopFailure' ? 'error' : 'interrupted')
@@ -550,13 +579,15 @@ function applyHook(target, event, alone = false) {
 function applyRollout(target, event) {
   clearPending(target)
   cancelCandidate(target)
-  if (event.ended === 'limit') applyLimit(target, event, true)
-  else if (event.ended === 'complete') {
+  // A limit already over by its own reset time: an ordinary error.
+  if (event.ended === 'limit' && applyLimit(target, event, true)) {
+    // limited
+  } else if (event.ended === 'complete') {
     target.readyReason = 'ready'
     target.turnCompletedAt = event.at
     if (target.state !== 'limited') transition(target, 'idle', 'ready', event)
   } else {
-    target.readyReason = event.ended === 'error' ? 'error' : 'interrupted'
+    target.readyReason = event.ended === 'aborted' ? 'interrupted' : 'error'
     if (target.state !== 'limited') transition(target, 'unknown', target.readyReason, event)
   }
   target.lastHookAt = Math.max(target.lastHookAt ?? event.at, event.at)
@@ -570,10 +601,10 @@ const screenWork = (value) =>
   value.source === 'screen' &&
   value.lastScreenEvent === 'ScreenBusy'
 
-function applyScreen(target, event, alone = false) {
+function applyScreen(target, event, alone = false, provider = null) {
   switch (event.event) {
     case 'ScreenLimit':
-      return applyLimit(target, event)
+      return screenLimitAllowed(target, provider) && applyLimit(target, event)
     case 'ScreenApproval':
       if (target.stopCandidateAt === null) target.readyReason = null
       addPending(target, 'approval', event)
@@ -612,8 +643,6 @@ function applyScreen(target, event, alone = false) {
         clearPending(target)
         cancelCandidate(target)
         target.readyReason = 'interrupted'
-        target.limitedResetAt = null
-        target.reset = null
         transition(target, 'idle', 'interrupted', event)
         return true
       }
@@ -635,8 +664,6 @@ function applyScreen(target, event, alone = false) {
         target.readyReason === 'error' || target.readyReason === 'interrupted'
           ? target.readyReason
           : 'ready'
-      target.limitedResetAt = null
-      target.reset = null
       transition(target, 'idle', reason, event)
       target.stopCandidateAt = null
       target.continuing = false
@@ -788,9 +815,15 @@ export function reduceAgentState(state, event, now = Date.now()) {
   const prior = { state: target.state, since: target.since }
 
   if (event.source === 'screen') {
-    if (!applyScreen(target, event, hooksAlone(state.provider))) return state
-    target.lastScreenAt = event.at
-    target.lastScreenEvent = event.event
+    // A screen showing no limit at all (noLimit) forgets an earlier limit's
+    // words, whatever else it changes.
+    const forgot = event.noLimit === true && forgetLimitWords(target)
+    const applied = applyScreen(target, event, hooksAlone(state.provider), state.provider)
+    if (!applied && !forgot) return state
+    if (applied) {
+      target.lastScreenAt = event.at
+      target.lastScreenEvent = event.event
+    }
   } else if (event.source === 'rollout') {
     applyRollout(target, event)
   } else if (event.event === 'PtyExit') {

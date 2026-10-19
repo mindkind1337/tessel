@@ -1704,7 +1704,7 @@ ipcMain.handle('agentRules:open', async () => {
 })
 ipcMain.on('agents:screen', (_evt, q) => {
   if (!q || typeof q !== 'object') return
-  void agentStateStore.observe(q.paneId, q.launchToken, { event: q.event, reset: q.reset, resetAt: q.resetAt }).catch(() => {})
+  void agentStateStore.observe(q.paneId, q.launchToken, { event: q.event, reset: q.reset, resetAt: q.resetAt, noLimit: q.noLimit === true }).catch(() => {})
 })
 // optIn: the agents whose status hooks the user turned on in Settings (only
 // Cursor's are off by default), from the renderer: { cursor: true }.

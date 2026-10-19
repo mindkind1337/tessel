@@ -318,8 +318,9 @@ describe('terminal activity and authoritative agent events', () => {
   })
 
   it('gives quota priority over ready/approval and never treats its reset as completion', async () => {
+    // Its turn failed (a StopFailure): its screen's limit is confirmed.
     hook('UserPromptSubmit')
-    hook('Stop')
+    hook('StopFailure')
     screen = { ...screen, ready: true, approval: true, limit: { reset: 'in 1 minute' } }
     monitor.output()
     await vi.advanceTimersByTimeAsync(30000)

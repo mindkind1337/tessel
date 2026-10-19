@@ -78,17 +78,20 @@ export function applyAgentStates(snapshot) {
   }
   for (const [id, state] of Object.entries(entries)) {
     if (!state || state.paneId !== id || !state.launchToken) continue
+    const wasLimited = agentStates[id]?.state === 'limited' && agentStates[id].launchToken === state.launchToken
     agentStates[id] = { ...state }
     // Not yet heard from its hooks: the screen keeps the status for now.
     if (!drives(state)) continue
     agentStatus[id] = displayStatus(state)
     setMonitoring(id, state.monitoring === true && Number.isInteger(state.backgroundTasks) ? state.backgroundTasks : 0)
     setApproval(id, state.state === 'approval')
-    // Working again by its own hooks (a new prompt): any limit message still
-    // on its screen is an old one.
-    if (state.state === 'working' && state.source === 'hook') forgetSpentLimit(id)
     if (state.state === 'limited' && !limitSpent(id, state)) setLimit(id, { reset: state.reset, resetAt: state.resetAt })
-    else if (!state.stale && state.confirmed !== false) clearLimit(id)
+    else if (!state.stale && state.confirmed !== false) {
+      // Over (its reset time, or new work): its words, still on the screen,
+      // are its old message until the screen shows no limit (screenCheck).
+      if (limits[id] && wasLimited) spentLimits[id] = limits[id].reset
+      clearLimit(id)
+    }
   }
 }
 
@@ -210,7 +213,7 @@ export function agentScreenObservation(term, provider, screen) {
   }
   const rules = rulesFor(provider)
   const approval = detectApproval(screen, provider)
-  const limit = detectLimit(screen, provider, { at: Date.now() })
+  const limit = detectLimit(limitRows(screen), provider, { at: Date.now() })
   const footer = String(screen || '')
     .split(/\r?\n/)
     .slice(-8)
@@ -294,7 +297,7 @@ function freebuffObservation(term, screen) {
   return {
     screen,
     approval: waiting,
-    limit: detectLimit(screen, 'freebuff', { at: Date.now() }),
+    limit: detectLimit(limitRows(screen), 'freebuff', { at: Date.now() }),
     busy: state === 'working',
     running: state === 'working',
     ready: state === 'ready',
@@ -342,6 +345,33 @@ function inputState(term, provider) {
     // A terminal being torn down: not known.
   }
   return null
+}
+
+// Where an agent prints its usage limit: the last rows of its screen, right
+// above its input (Claude Code's status line can sit under that). A limit
+// message further up is something shown in the conversation (a file quoting
+// one), never the agent's own.
+export const LIMIT_ROWS = 10
+function limitRows(screen) {
+  return String(screen || '')
+    .replace(/(?:\r?\n\s*)+$/, '')
+    .split(/\r?\n/)
+    .slice(-LIMIT_ROWS)
+    .join('\n')
+}
+
+// The agents that report their usage limit themselves (Claude Code's
+// StopFailure hook, Muse Code's, Codex's rollout; agentStateModel.js): their
+// screen's limit counts only once their own report says the turn failed or
+// they are at their limit, never while a turn their hooks opened runs.
+const LIMIT_REPORTERS = ['claude', 'openclaude', 'codex', 'muse']
+function screenLimitConfirmed(node) {
+  if (!managedAgentStatus(node) || !LIMIT_REPORTERS.includes(node.agentId)) return true
+  const state = getAgentState(node.id, node.agentLaunchToken)
+  if (!state || !state.hookSeen) return true
+  if (state.state === 'limited') return true
+  if (state.state === 'working' && state.source === 'hook') return false
+  return state.reason === 'error'
 }
 
 // Shared by TerminalPane and clock-driven tests. Hook state owns the result;
@@ -404,10 +434,14 @@ export function createAgentActivityMonitor({
     const node = getNode()
     let observation = readScreen()
     const managed = managedAgentStatus(node)
-    // A limit message whose reset time has passed (still on the screen) is
-    // read as no limit; one no longer shown is forgotten.
-    if (!observation.limit) forgetSpentLimit(node.id)
-    else if (limitSpent(node.id, observation.limit)) observation = { ...observation, limit: null }
+    // No limit on the screen at all: the words of an earlier one are
+    // forgotten, here and in main. A limit message that is over (still on
+    // the screen), or one its agent's own report does not confirm, is read
+    // as no limit.
+    const noLimit = !observation.limit
+    if (noLimit) forgetSpentLimit(node.id)
+    else if (limitSpent(node.id, observation.limit) || !screenLimitConfirmed(node)) observation = { ...observation, limit: null }
+    const quiet = noLimit ? { noLimit: true } : {}
     if (observation.limit) {
       onLimit(observation.limit)
       if (managed)
@@ -439,7 +473,7 @@ export function createAgentActivityMonitor({
           approvals[node.id] || getAgentState(node.id, node.agentLaunchToken)?.state === 'approval'
         onApproval(false)
         if (hadApproval) send('ScreenClearApproval')
-        send(freshInterruption(node, observation) ? 'ScreenInterrupted' : 'ScreenReady')
+        send(freshInterruption(node, observation) ? 'ScreenInterrupted' : 'ScreenReady', quiet)
       } else if (observation.busy) {
         // Working again ("esc to interrupt", never an approval's "esc to
         // cancel") with no approval on screen: the approval was answered.
@@ -452,7 +486,7 @@ export function createAgentActivityMonitor({
           onApproval(false)
           send('ScreenClearApproval')
         }
-        send('ScreenBusy')
+        send('ScreenBusy', quiet)
       }
     } else onApproval(false)
     return observation

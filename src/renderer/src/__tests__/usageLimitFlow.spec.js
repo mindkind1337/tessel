@@ -9,7 +9,8 @@ import {
   forgetSpentLimit,
   applyAgentStates,
   clearAgentStatus,
-  createAgentActivityMonitor
+  createAgentActivityMonitor,
+  agentScreenObservation
 } from '../agentStatus'
 import { pickReplacement, otherAccounts, leadLimitText, limitUntilEn, handOverText, limitClock } from '../limitFlow'
 
@@ -67,9 +68,18 @@ describe('a limit goes at its reset time', () => {
     // Main still says limited with the same words: not brought back.
     applyAgentStates({ p1: { paneId: 'p1', launchToken: 'tok', provider: 'claude', state: 'limited', reset: '3pm', hookSeen: true, confirmed: true } })
     expect(limits.p1).toBeUndefined()
-    // Working again by its hooks: forgotten; a new limit counts.
+    // Working again by its hooks: its old words still on screen stay old.
     applyAgentStates({ p1: { paneId: 'p1', launchToken: 'tok', provider: 'claude', state: 'working', source: 'hook', hookSeen: true, confirmed: true } })
-    expect(limitSpent('p1', { reset: '3pm' })).toBe(false)
+    expect(limitSpent('p1', { reset: '3pm' })).toBe(true)
+  })
+
+  it('a limit ended by new work (UserPromptSubmit) leaves its words old until the screen shows no limit', () => {
+    const base = { paneId: 'p2', launchToken: 'tok2', provider: 'claude', hookSeen: true, confirmed: true }
+    applyAgentStates({ p2: { ...base, state: 'limited', reset: '3pm', resetAt: Date.now() + 3600000 } })
+    expect(limits.p2).toMatchObject({ reset: '3pm' })
+    applyAgentStates({ p2: { ...base, state: 'working', source: 'hook' } })
+    expect(limits.p2).toBeUndefined()
+    expect(limitSpent('p2', { reset: '3pm' })).toBe(true)
   })
 
   it('a limit read already over is never shown; sweepLimits catches up after sleep', () => {
@@ -123,13 +133,62 @@ describe('a limit goes at its reset time', () => {
   })
 })
 
+describe('which screen limits count', () => {
+  beforeEach(() => vi.useFakeTimers())
+  afterEach(() => {
+    vi.useRealTimers()
+    clearAgentStatus('p3')
+  })
+
+  it('only in the last rows, never a limit message quoted higher up', () => {
+    const quoted = [CODEX, ...Array.from({ length: 12 }, (_, i) => `line ${i}`)].join('\n')
+    expect(agentScreenObservation(null, 'codex', quoted).limit).toBeNull()
+    expect(agentScreenObservation(null, 'codex', `line\n${CODEX}\n\n\n`).limit).toMatchObject({ reset: '8:47 PM' })
+  })
+
+  it("an agent that reports its limit itself: its screen counts only once its report confirms", () => {
+    const node = { id: 'p3', agentId: 'claude', agentLaunchToken: 'tok3' }
+    const base = { paneId: 'p3', launchToken: 'tok3', provider: 'claude', hookSeen: true, confirmed: true }
+    const screen = { screen: 'x', limit: { reset: '3pm', resetAt: Date.now() + 3600000 }, approval: false, ready: true, waiting: true, busy: false }
+    const onLimit = vi.fn()
+    const report = vi.fn()
+    const monitor = createAgentActivityMonitor({ getNode: () => node, readScreen: () => screen, report, onStatus: () => {}, onWorking: () => {}, onCompleted: () => {}, onApproval: () => {}, onLimit })
+    // A turn its hooks opened is under way (a file quoting a limit message).
+    applyAgentStates({ p3: { ...base, state: 'working', source: 'hook', reason: 'processing' } })
+    monitor.output()
+    vi.advanceTimersByTime(1500)
+    expect(onLimit).not.toHaveBeenCalled()
+    expect(report.mock.calls.map((c) => c[0].event)).not.toContain('ScreenLimit')
+    // Its turn failed (its StopFailure): now the screen's limit counts.
+    applyAgentStates({ p3: { ...base, state: 'unknown', source: 'hook', reason: 'error' } })
+    monitor.output()
+    vi.advanceTimersByTime(1500)
+    expect(onLimit).toHaveBeenCalled()
+    expect(report.mock.calls.map((c) => c[0].event)).toContain('ScreenLimit')
+    monitor.dispose()
+  })
+
+  it('tells main when the screen shows no limit at all', () => {
+    const node = { id: 'p3', agentId: 'claude', agentLaunchToken: 'tok3' }
+    applyAgentStates({ p3: { paneId: 'p3', launchToken: 'tok3', provider: 'claude', hookSeen: true, confirmed: true, state: 'idle', reason: 'ready' } })
+    const report = vi.fn()
+    const monitor = createAgentActivityMonitor({ getNode: () => node, readScreen: () => ({ screen: '', limit: null, approval: false, ready: true, waiting: true, busy: false }), report, onStatus: () => {}, onWorking: () => {}, onCompleted: () => {}, onApproval: () => {}, onLimit: () => {} })
+    monitor.output()
+    vi.advanceTimersByTime(1500)
+    expect(report.mock.calls.find((c) => c[0].event === 'ScreenReady')[0]).toMatchObject({ noLimit: true })
+    monitor.dispose()
+  })
+})
+
 describe('limitFlow', () => {
   it('picks a free agent of the same team first, then of the project; same kind first', () => {
     const limited = { id: 'a', agentId: 'claude', team: 't1', wsId: 'w1' }
     const c = (id, extra) => ({ id, agentId: 'codex', team: null, wsId: 'w1', free: true, ...extra })
     expect(pickReplacement(limited, [c('b'), c('c', { team: 't1' }), c('d', { team: 't1', agentId: 'claude' })]).id).toBe('d')
-    expect(pickReplacement(limited, [c('b'), c('c', { team: 't1', free: false })]).id).toBe('b')
-    expect(pickReplacement(limited, [c('b', { wsId: 'w2' }), c('a')])).toBeNull()
+    // A team's card stays in its team.
+    expect(pickReplacement(limited, [c('b'), c('c', { team: 't1', free: false })])).toBeNull()
+    const loose = { id: 'a', agentId: 'claude', team: null, wsId: 'w1' }
+    expect(pickReplacement(loose, [c('b', { wsId: 'w2' }), c('a'), c('e')]).id).toBe('e')
   })
 
   it('offers another account, never the current one nor one at its limit', () => {

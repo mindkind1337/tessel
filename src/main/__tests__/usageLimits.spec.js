@@ -36,7 +36,13 @@ describe('usageLimitOf (the hook script)', () => {
     expect(mcp.usageLimitOf('claude', { error: 'rate_limit', last_assistant_message: "You've hit your limit · resets 3pm" })).toEqual({ limit: true, reset: '3pm' })
     expect(mcp.usageLimitOf('claude', { error: 'rate_limit', last_assistant_message: '5-hour limit reached ∙ resets 3pm (America/Toronto)' })).toEqual({ limit: true, reset: '3pm (America/Toronto)' })
     expect(mcp.usageLimitOf('openclaude', { error: { type: 'rate_limit' }, last_assistant_message: 'Claude AI usage limit reached|1792440000' })).toEqual({ limit: true, resetAt: 1792440000 * 1000 })
-    expect(mcp.usageLimitOf('claude', { error: 'rate_limit' })).toEqual({ limit: true })
+    // Its own error text is read first.
+    expect(mcp.usageLimitOf('claude', { error: 'rate_limit', error_details: "You've hit your limit · resets 5pm", last_assistant_message: 'It resets 3pm' })).toEqual({ limit: true, reset: '5pm' })
+  })
+
+  it('a rate_limit without a usage-limit phrase (a short burst of 429s) is no usage limit', () => {
+    expect(mcp.usageLimitOf('claude', { error: 'rate_limit' })).toBeNull()
+    expect(mcp.usageLimitOf('claude', { error: 'rate_limit', error_details: 'API Error: 429 Too Many Requests. Retrying.' })).toBeNull()
   })
 
   it("reads Muse Code's subscription quota failure (its real wording, anonymised)", () => {
@@ -80,6 +86,12 @@ describe('the store takes a hook limit in', () => {
       tick = Date.UTC(2026, 9, 19, 19, 0, 1)
       await store.scan()
       expect(store.snapshot()[paneId].state).toBe('idle')
+      // A reset moment further than 40 days: the event is refused.
+      put('UserPromptSubmit', tick)
+      put('StopFailure', tick, { limit: true, resetAt: tick + 90 * 86400000 })
+      tick += 1
+      await store.scan()
+      expect(store.snapshot()[paneId].state).toBe('working')
     } finally {
       await store.dispose()
     }

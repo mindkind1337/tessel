@@ -342,7 +342,8 @@ describe('permissions and screen evidence', () => {
   })
 
   it('does not clear quota on a redraw or tool completion, only at its reset time', () => {
-    const f = fixture()
+    // An agent whose limit only its screen says (Codex's comes from its rollout).
+    const f = fixture('gemini')
     f.send('UserPromptSubmit', 101)
     f.send('ScreenLimit', 102, { reset: 150 })
     expect(f.send('ScreenBusy', 106).state).toBe('limited')
@@ -378,6 +379,59 @@ describe('permissions and screen evidence', () => {
       state: 'limited',
       resetAt: reset + 6 * 3600 * 1000
     })
+  })
+
+  it('an old "resets 3pm" still on screen after new work never limits the pane again until tomorrow', () => {
+    const f = fixture('claude')
+    const at = Date.UTC(2026, 9, 19, 18, 40)
+    f.state = createAgentState({ ...identity, provider: 'claude', startedAt: at - 1000 })
+    f.send('UserPromptSubmit', at)
+    f.send('StopFailure', at + 10, { limit: true, reset: '3pm (America/Toronto)' })
+    // You type before its reset: working; its old message is still in view.
+    expect(f.send('UserPromptSubmit', at + 1000).state).toBe('working')
+    // While its hook turn runs, its screen's limit does not count.
+    expect(f.send('ScreenLimit', at + 2000, { reset: '3pm (America/Toronto)' }).state).toBe('working')
+    // Its turn ends fine; the same words read again are its old message.
+    f.send('Stop', at + 3000)
+    expect(f.send('ScreenLimit', at + 4000, { reset: '3pm (America/Toronto)' }).state).not.toBe('limited')
+    // Even after a failed turn (a confirmed screen), the same words stay old...
+    f.send('UserPromptSubmit', at + 5000)
+    f.send('StopFailure', at + 6000)
+    expect(f.send('ScreenLimit', at + 7000, { reset: '3pm (America/Toronto)' }).state).not.toBe('limited')
+    // ...until the screen has shown no limit at all once.
+    f.send('ScreenReady', at + 8000, { noLimit: true })
+    expect(f.send('ScreenLimit', at + 9000, { reset: '3pm (America/Toronto)' })).toMatchObject({ state: 'limited', resetAt: Date.UTC(2026, 9, 19, 19, 0) })
+  })
+
+  it('"in 20 minutes" read again does not start again; a screen agent keeps the words until no limit shows', () => {
+    const f = fixture('gemini')
+    f.send('SessionStart', 101)
+    expect(f.send('ScreenLimit', 1000, { reset: 'in 20 minutes' })).toMatchObject({ state: 'limited', resetAt: 1201000 })
+    expect(f.send('ScreenLimit', 60000, { reset: 'in 20 minutes' }).resetAt).toBe(1201000)
+    expect(publicAgentState(f.state, 1201000).state).toBe('idle')
+    expect(f.send('ScreenLimit', 1300000, { reset: 'in 20 minutes' }).state).toBe('idle')
+    f.send('UserPromptSubmit', 1400000)
+    expect(f.send('ScreenLimit', 1500000, { reset: 'in 20 minutes' }).state).not.toBe('limited')
+    f.send('ScreenBusy', 1600000, { noLimit: true })
+    expect(f.send('ScreenLimit', 1700000, { reset: 'in 20 minutes' }).state).toBe('limited')
+  })
+
+  it('a limit report already over ends the turn as an error, never leaves it working', () => {
+    const f = fixture('claude')
+    f.send('UserPromptSubmit', 101)
+    expect(f.send('StopFailure', 200, { limit: true, resetAt: 150 })).toMatchObject({ state: 'unknown', reason: 'error' })
+    const c = fixture('codex')
+    c.send('UserPromptSubmit', 101)
+    c.state = reduceAgentState(c.state, { ...c.event('RolloutTurnEnd', 200), source: 'rollout', ended: 'limit', resetAt: 150 }, 210)
+    expect(publicAgentState(c.state, 210)).toMatchObject({ state: 'unknown', reason: 'error' })
+  })
+
+  it('a reset moment further than 40 days is no moment', () => {
+    const f = fixture('claude')
+    f.send('UserPromptSubmit', 101)
+    const state = f.send('StopFailure', 200, { limit: true, resetAt: 200 + 90 * 86400000 })
+    expect(state.state).toBe('limited')
+    expect(state).not.toHaveProperty('resetAt')
   })
 
   it('a StopFailure that is no limit, and a sub-agent’s limit, do not limit the pane', () => {
@@ -465,6 +519,8 @@ describe('launch, session, actor, and ordering fences', () => {
       since: 120,
       hookSeen: true
     })
+    // Codex's screen limit counts once its turn failed.
+    f.send('StopFailure', 495)
     f.send('ScreenLimit', 501, { reset: '10pm' })
     f.state = reduceAgentState(f.state, f.event('UserPromptSubmit', 490), 510)
     expect(publicAgentState(f.state, 510)).toMatchObject({

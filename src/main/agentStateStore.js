@@ -94,6 +94,9 @@ const FIELDS = new Set([
 const clone = (value) => JSON.parse(JSON.stringify(value))
 // A reset time as an agent says it: short plain text.
 const validReset = (value) => typeof value === 'string' && value.length <= 160 && !/[\u0000-\u001f\u007f]/.test(value)
+// A reset moment: never further than a usage limit's reset can be (40 days
+// from when it was said).
+const validResetAt = (value, at) => Number.isSafeInteger(value) && value >= 0 && value <= at + 40 * 24 * 60 * 60 * 1000
 const record = (value) => value && typeof value === 'object' && !Array.isArray(value)
 const provider = (value) => STATUS_PROVIDERS.includes(value)
 const validId = (value) => typeof value === 'string' && ID.test(value) && !value.includes('..')
@@ -209,7 +212,7 @@ function hookEvent(value, now) {
   if (value.continuing !== undefined && typeof value.continuing !== 'boolean') return null
   if (value.limit !== undefined && (value.limit !== true || value.event !== 'StopFailure')) return null
   if (value.reset !== undefined && (value.limit !== true || !validReset(value.reset))) return null
-  if (value.resetAt !== undefined && (value.limit !== true || !Number.isSafeInteger(value.resetAt) || value.resetAt < 0)) return null
+  if (value.resetAt !== undefined && (value.limit !== true || !validResetAt(value.resetAt, value.at))) return null
   if (
     value.background !== undefined &&
     (value.event !== 'Stop' ||
@@ -652,8 +655,10 @@ export function createAgentStateStore({ dir, now = Date.now, onChange = () => {}
         )
           event.reset = screenEvent.reset
         // The moment the screen's reset time stands for (the window read it).
-        if (eventName === 'ScreenLimit' && Number.isSafeInteger(screenEvent?.resetAt) && screenEvent.resetAt >= 0)
-          event.resetAt = screenEvent.resetAt
+        if (eventName === 'ScreenLimit' && validResetAt(screenEvent?.resetAt, event.at)) event.resetAt = screenEvent.resetAt
+        // The screen showed no limit at all (agentStatus.js): an earlier
+        // limit's words no longer stand for an old message in view.
+        if (eventName !== 'ScreenLimit' && screenEvent?.noLimit === true) event.noLimit = true
         const next = reduceAgentState(current.state, event, clock())
         if (JSON.stringify(next) !== JSON.stringify(current.state)) {
           current.state = next
@@ -714,7 +719,7 @@ export function createAgentStateStore({ dir, now = Date.now, onChange = () => {}
         // Codex's usage limit: its reset time as it said it, and its moment.
         if (end.ended === 'limit') {
           if (validReset(end.reset)) event.reset = end.reset
-          if (Number.isSafeInteger(end.resetAt) && end.resetAt >= 0) event.resetAt = end.resetAt
+          if (validResetAt(end.resetAt, event.at)) event.resetAt = end.resetAt
         }
         const next = reduceAgentState(current.state, event, clock())
         if (JSON.stringify(next) !== JSON.stringify(current.state)) {

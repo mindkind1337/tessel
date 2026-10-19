@@ -11611,7 +11611,8 @@ function writeTeamRoster(team, dir, members) {
   const out = {}
   for (const m of members) {
     const st = agentStates.value[m.id]
-    out[m.id] = { agent: m.agentId || null, model: paneModels[m.id] || null, state: st ? st.state : null }
+    // At its usage limit by this window's view (any source): limited.
+    out[m.id] = { agent: m.agentId || null, model: paneModels[m.id] || null, state: limits[m.id] ? 'limited' : st ? st.state : null }
     // At its usage limit: until when (what team_send and team_ask tell the
     // sender, teamMcp/server.cjs), as a moment and in words.
     if (limits[m.id]) out[m.id].until = { at: Number.isFinite(limits[m.id].resetAt) ? limits[m.id].resetAt : null, text: limitUntilEn(limits[m.id]).trim() }
@@ -12579,13 +12580,18 @@ function giveTaskToAnother(taskId, toId = null) {
   const task = boardTasks.find((x) => x.id === taskId)
   if (!task) return false
   const from = task.paneId ? findLeaf(task.paneId) : null
-  const to = toId ? findLeaf(toId) : replacementFor(task)
-  if (!to || !isAgentLeaf(to) || (from && to.id === from.id)) {
+  // Checked again now (the toast's choice may be minutes old): still free,
+  // and of the card's own team when it has one.
+  const named = toId ? findLeaf(toId) : null
+  const team = from ? from.team || null : null
+  const usable = (l) => !!l && isAgentLeaf(l) && (!from || l.id !== from.id) && !busyReason(l) && !l.sleeping && (team ? l.team === team : true)
+  const to = usable(named) ? named : replacementFor(task)
+  if (!usable(to)) {
     showToast(t('app.limit.noneFree', 'No other agent of this project is free now. Open one, or wait until the limit is over.'), { kind: 'attention', timeout: 8000 })
     return false
   }
   updateTask(task.id, { paneId: to.id })
-  deliverToAgent(to.id, handOverText({ card: task, from: from ? paneLabel(from) : 'its agent' }), { source: 'tessel', scope: 'task', teamId: to.team || null }) // i18n-ignore
+  deliverToAgent(to.id, handOverText({ card: task, from: from ? paneLabel(from) : 'its agent' }), { source: 'tessel', scope: 'task', teamId: team, multilineSafe: true }) // i18n-ignore
   recordActivity({ type: 'task', action: 'added', taskId: task.id, paneId: to.id, agent: agentInfo(to), title: task.title, wsId: task.wsId, by: 'Tessel' }) // i18n-ignore
   showToast(t('app.limit.handedOver', '"{{title}}" is now {{name}}\'s.', { title: task.title, name: to.paneName || to.title }), { timeout: 5000 })
   return true
@@ -12598,9 +12604,16 @@ provide('giveTaskToAnother', giveTaskToAnother)
 // project goes on without it. Once the limit is over, the lead hears that too.
 const limitsSeen = new Set()
 const limitsToldLead = new Map() // pane id -> the lead told
+// Told at most once per pane in LIMIT_NOTICE_MS (a limit seen, over, seen
+// again: one notice).
+const LIMIT_NOTICE_MS = 10 * 60 * 1000
+const limitNoticeAt = new Map() // pane id -> when it was last told
 function onAgentLimited(id) {
   const leaf = findLeaf(id)
   if (!leaf || !isAgentLeaf(leaf)) return
+  const last = limitNoticeAt.get(id)
+  if (last && Date.now() - last < LIMIT_NOTICE_MS) return
+  limitNoticeAt.set(id, Date.now())
   notifyAgentLimit(leaf)
   const team = leaf.team ? teamById(leaf.team) : null
   const lead = team ? teamLead(team.id) : null

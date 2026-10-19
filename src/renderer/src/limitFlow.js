@@ -24,8 +24,8 @@ export function limitWhen(limit, now = Date.now()) {
 // " until 15:00" in 24-hour time, " until in 2 hours" never.
 export function limitUntilEn(limit, now = Date.now()) {
   if (!limit) return ''
-  if (Number.isFinite(limit.resetAt)) {
-    const at = new Date(limit.resetAt)
+  const at = Number.isFinite(limit.resetAt) ? new Date(limit.resetAt) : null
+  if (at && Number.isFinite(at.getTime())) {
     const two = (n) => String(n).padStart(2, '0')
     const time = `${two(at.getHours())}:${two(at.getMinutes())}`
     const sameDay = at.toDateString() === new Date(now).toDateString()
@@ -37,14 +37,17 @@ export function limitUntilEn(limit, now = Date.now()) {
 
 // Who takes over the cards of an agent at its limit: an agent free now (no
 // card of its own under way, not at its limit, not asking for an approval,
-// not working), its own team's first, then its workspace's; the same kind of
-// agent first within each. candidates: [{ id, agentId, team, wsId, free }].
-// -> a candidate or null.
+// not working). A team's card stays in its team (its board and its lead
+// follow it there); a card of no team goes to an agent of its workspace.
+// The same kind of agent first. candidates: [{ id, agentId, team, wsId,
+// free }]. -> a candidate or null.
 export function pickReplacement(limited, candidates) {
   if (!limited) return null
-  const free = (candidates || []).filter((c) => c && c.id !== limited.id && c.free)
-  const rank = (c) => (limited.team && c.team === limited.team ? 0 : 2) + (c.agentId === limited.agentId ? 0 : 1)
-  const near = free.filter((c) => (limited.team && c.team === limited.team) || c.wsId === limited.wsId)
+  const team = limited.team || null
+  const near = (candidates || []).filter(
+    (c) => c && c.id !== limited.id && c.free && (team ? c.team === team : c.wsId === limited.wsId)
+  )
+  const rank = (c) => (c.agentId === limited.agentId ? 0 : 1)
   return near.sort((a, b) => rank(a) - rank(b))[0] || null
 }
 

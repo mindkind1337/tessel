@@ -2112,7 +2112,11 @@ function usageLimitOf(provider, data) {
   let message = ''
   if (provider === 'claude' || provider === 'openclaude') {
     if (errorName(data.error) !== 'rate_limit') return null
-    message = firstStr(data, ['last_assistant_message', 'error_details', 'error_message', 'message'])
+    // Its own error text first; the last answer only when it says nothing.
+    message = ['error_details', 'error_message', 'last_assistant_message', 'message'].map((k) => str(data[k]).slice(0, 1000)).filter(Boolean).join('\n')
+    // A rate_limit that is no usage limit (a short burst of 429s, retried):
+    // only one of its usage-limit phrasings counts.
+    if (!/hit your (?:[\w-]+ )?limit|usage limit|limit reached|limit will reset|quota/i.test(message)) return null
   } else if (provider === 'muse') {
     const reason = firstStr(data, ['reason', 'error', 'error_message', 'message'])
     if (!/rate_limit_error/.test(reason) || !/quota|usage/i.test(reason)) return null
