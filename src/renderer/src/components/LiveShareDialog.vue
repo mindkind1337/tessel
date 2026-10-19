@@ -15,10 +15,9 @@
 //   (tick or untick at any time), the invitations' codes to copy, who is in
 //   now (what they watch or type, their rights in one chip) and what guests
 //   changed lately (Recent guest actions);
-// - People: the people of the share (liveshare/LsPeople.vue), the access
-//   grid (LsAccess.vue: people x projects, or one project's people) and the
-//   trusted people (LsTrusted.vue, also while not sharing), one view at a
-//   time;
+// - People: everyone of the share, trusted people included (also while not
+//   sharing), as a list with filters or as a grid against the shared
+//   projects (liveshare/LsPeople.vue, LsAccess.vue);
 // - Invitations (LsInvitations.vue);
 // - Settings (LsSettings.vue: main's share settings, kept across shares).
 // The sections share one context (provide 'lsDialog'): the calls, a change
@@ -28,13 +27,12 @@ import { ref, computed, watch, nextTick, onMounted, onUnmounted, provide } from 
 import { ScreenShare, Copy, Check, Loader2, AlertTriangle, LogIn, LogOut, X, MessageSquareText, UserCheck, Keyboard, Eye } from 'lucide-vue-next'
 import { t, intlLocale } from '../i18n'
 import { endReason, rightsText, actionText } from '../liveShareWindow'
-import { accessError, invitesOf, inviteName, inviteExpiry, joinedGuests, waitingGuests, offlinePeople, trustedPeople, personName, viaName } from '../liveShareAccess'
+import { accessError, invitesOf, inviteName, inviteExpiry, joinedGuests, waitingGuests, offlinePeople, personName, viaName, shortCode } from '../liveShareAccess'
 import { cleanRights } from '../../../shared/liveShareRights'
+import { shownRights, presetRights } from '../liveShareRights'
 import LsInviteEditor from './liveshare/LsInviteEditor.vue'
 import LsInvitations from './liveshare/LsInvitations.vue'
 import LsPeople from './liveshare/LsPeople.vue'
-import LsAccess from './liveshare/LsAccess.vue'
-import LsTrusted from './liveshare/LsTrusted.vue'
 import LsStatus from './liveshare/LsStatus.vue'
 import LsSettings from './liveshare/LsSettings.vue'
 import LsAvatars from './liveshare/LsAvatars.vue'
@@ -45,9 +43,10 @@ const props = defineProps({
   open: { type: Boolean, default: false },
   initialTab: { type: String, default: 'share' },
   // The Share section shown first: overview, people, invites, settings; or
-  // one of People's views: access (the grid), trusted.
+  // one of People's views: access (the grid), trusted (the list, trusted
+  // people only).
   initialSection: { type: String, default: 'overview' },
-  // Access: a project shown on its own first (a project's "Who has access…").
+  // The grid: a project's column lit (a project's "Who has access…").
   focusProject: { type: String, default: null },
   // Your projects ({ id, name }), and the ones ticked: shared, or picked to
   // share before you start.
@@ -67,13 +66,13 @@ const api = plainBridge(window.shellApi && window.shellApi.liveShare)
 const OFF_HOST = { state: 'off', projectIds: [], invites: [], guests: [], offline: [], trusted: [], presence: [], progress: null, error: null, settings: { hideIgnored: true }, actions: [] }
 const OFF_GUEST = { state: 'off', host: null, panes: [], projects: [], reason: null, rights: null, code: null, agents: null }
 const SECTIONS = ['overview', 'people', 'invites', 'settings']
-// People's views, and the old sections that are one of them now.
-const PEOPLE_VIEWS = ['list', 'grid', 'trusted']
-const VIEW_OF = { access: 'grid', trusted: 'trusted', people: 'list' }
+// People's view and filter for the old sections that are one of them now.
+const VIEW_OF = { access: { view: 'grid', filter: 'all' }, trusted: { view: 'list', filter: 'trusted' }, people: { view: 'list', filter: 'all' } }
 
 const tab = ref(props.initialTab === 'join' ? 'join' : 'share')
 const section = ref('overview')
 const peopleView = ref('list')
+const peopleFilter = ref('all')
 const host = ref(OFF_HOST)
 const guest = ref(OFF_GUEST)
 const name = ref('')
@@ -105,7 +104,8 @@ const unsubscribe = []
 function goTo(id) {
   if (VIEW_OF[id]) {
     section.value = 'people'
-    peopleView.value = VIEW_OF[id]
+    peopleView.value = VIEW_OF[id].view
+    peopleFilter.value = VIEW_OF[id].filter
   } else section.value = SECTIONS.includes(id) ? id : 'overview'
 }
 goTo(props.initialSection)
@@ -192,7 +192,6 @@ const invites = computed(() => invitesOf(host.value))
 const joined = computed(() => joinedGuests(host.value))
 const waiting = computed(() => waitingGuests(host.value))
 const offline = computed(() => offlinePeople(host.value))
-const trusted = computed(() => trustedPeople(host.value))
 
 // The projects ticked; while sharing, the last one can't be unticked (Stop
 // sharing ends the share).
@@ -233,6 +232,18 @@ function notice(text) {
   clearTimeout(noticeTimer)
   noticeTimer = setTimeout(() => (hostNotice.value = ''), 6000)
 }
+// A preset for a person (People's presets, the grid's preset column): one
+// change per right that differs, in turn (main takes one right at a time);
+// the first that fails stops the rest.
+async function setPreset(subject, rights, id) {
+  const want = presetRights(id)
+  for (const r of shownRights()) {
+    const on = want[r.id] === true
+    if (!!(rights && rights[r.id] === true) === on) continue
+    const res = await run(`${subject}:right:${r.id}`, () => api.access({ subject, right: r.id, on })) // i18n-ignore
+    if (!res || !res.ok) break
+  }
+}
 async function copyText(text) {
   try {
     if (window.shellApi && window.shellApi.writeClipboard) await window.shellApi.writeClipboard(text)
@@ -256,6 +267,7 @@ provide('lsDialog', {
   notice,
   error: (text) => (hostError.value = text),
   copy: copyText,
+  preset: setPreset,
   review: (guestId) => emit('review-guest', guestId)
 })
 
@@ -309,7 +321,6 @@ const stopText = computed(() => {
 
 // The invitations' codes: shortened on screen (the whole code in its
 // tooltip and on the clipboard), or a message saying how to join.
-const shortCode = (code) => (typeof code === 'string' && code.length > 26 ? code.slice(0, 14) + '…' + code.slice(-8) : code || '')
 async function copyInvite(inv, message) {
   if (!inv.code) return
   const text = message ? t('liveShare.invite.message', 'Join my Tessel Live Share: in Tessel, open Live Share, then Join, and paste this code: {{code}}', { code: inv.code }) : inv.code
@@ -337,13 +348,13 @@ function inNowMeta(g) {
   if (typing.length) return { typing: true, text: t('liveShare.people.typing', 'Typing in {{panes}}', { panes: typing.join(', ') }) }
   const watching = panesOf(g.id, 'watching')
   if (watching.length) return { typing: false, text: t('liveShare.people.watching', 'Watching {{panes}}', { panes: watching.join(', ') }) }
-  const via = viaName(g.invite)
+  const via = viaName(g.invite, invites.value)
   return { typing: false, text: via ? t('liveShare.people.via', 'Came with {{invite}}', { invite: via }) : '' }
 }
 const waitingMeta = (g) => {
   const parts = []
   if (g.code) parts.push(t('liveShare.overview.code', 'Code {{code}}', { code: g.code }))
-  const via = viaName(g.invite)
+  const via = viaName(g.invite, invites.value)
   if (via) parts.push(t('liveShare.people.via', 'Came with {{invite}}', { invite: via }))
   return parts.join(' · ')
 }
@@ -370,11 +381,6 @@ const sections = computed(() => [
   { id: 'people', label: t('liveShare.section.people', 'People'), count: sharing.value ? joined.value.length + waiting.value.length + offline.value.length : null, warn: waiting.value.length > 0 },
   { id: 'invites', label: t('liveShare.section.invites', 'Invitations'), count: sharing.value ? invites.value.length : null },
   { id: 'settings', label: t('liveShare.section.settings', 'Settings') }
-])
-const peopleViews = computed(() => [
-  { id: 'list', label: t('liveShare.peopleView.list', 'People'), count: sharing.value ? joined.value.length + waiting.value.length + offline.value.length : null },
-  { id: 'grid', label: t('liveShare.peopleView.grid', 'Access grid') },
-  { id: 'trusted', label: t('liveShare.section.trusted', 'Trusted'), count: trusted.value.length }
 ])
 
 // --- Join ----------------------------------------------------------------
@@ -695,17 +701,9 @@ function tabKeys(event, list, current, set) {
           </template>
         </div>
 
-        <!-- People: the people, the access grid, the trusted people -->
+        <!-- People: everyone, as a list (filters) or a grid -->
         <div v-else-if="section === 'people'" role="tabpanel" data-test="ls-people-section">
-          <div class="ls-views" role="group" :aria-label="t('liveShare.section.people', 'People')">
-            <button v-for="v in peopleViews" :key="v.id" type="button" class="chip" :class="{ on: peopleView === v.id }" :aria-pressed="peopleView === v.id" :data-test="'ls-people-view-' + v.id" @click="peopleView = v.id">
-              {{ v.label }}<span v-if="v.count" class="chip-count">{{ v.count }}</span>
-            </button>
-          </div>
-          <LsAccess v-if="peopleView === 'grid'" :focus-project="focusProject" />
-          <LsTrusted v-else-if="peopleView === 'trusted'" />
-          <LsPeople v-else-if="sharing" />
-          <p v-else class="ls-empty ls-section-off" data-test="ls-section-off">{{ t('liveShare.section.offPeople', 'No one is here before you share. Trusted people are kept between shares.') }}</p>
+          <LsPeople v-model:view="peopleView" v-model:filter="peopleFilter" :focus-project="focusProject" />
         </div>
 
         <LsInvitations v-else-if="section === 'invites' && sharing" role="tabpanel" />
@@ -1065,12 +1063,6 @@ function tabKeys(event, list, current, set) {
   color: var(--text);
   font-family: 'Cascadia Mono', Consolas, monospace;
   font-size: 11.5px;
-}
-.ls-views {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin-bottom: 12px;
 }
 .ls-link {
   margin-left: 4px;

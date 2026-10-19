@@ -31,6 +31,9 @@ const props = defineProps({
   // The first invitation, set before sharing starts: no projects (it offers
   // every shared project), no buttons, each change emitted.
   embedded: { type: Boolean, default: false },
+  // In an invitation's opened row (Invitations): no card of its own and no
+  // title (the row says which one).
+  flat: { type: Boolean, default: false },
   busy: { type: Boolean, default: false },
   now: { type: Number, default: () => Date.now() }
 })
@@ -180,9 +183,9 @@ onMounted(() => {
 </script>
 
 <template>
-  <form class="lsi-form" :class="{ embedded }" data-test="ls-invite-editor" :aria-label="embedded ? t('liveShare.invite.firstTitle', 'First invitation') : title" @submit.prevent="submit" @keydown.escape="onEscape">
+  <form class="lsi-form" :class="{ embedded, flat }" data-test="ls-invite-editor" :aria-label="embedded ? t('liveShare.invite.firstTitle', 'First invitation') : title" @submit.prevent="submit" @keydown.escape="onEscape">
     <template v-if="step === 'form'">
-      <div v-if="!embedded" class="lsi-title">{{ title }}</div>
+      <div v-if="!embedded && !flat" class="lsi-title">{{ title }}</div>
       <label class="lsi-field">
         <span class="lsi-label">{{ t('liveShare.invite.label', 'Label (who it is for)') }}</span>
         <input ref="labelEl" v-model="form.label" class="ls-input" type="text" spellcheck="false" :maxlength="MAX_LABEL" :placeholder="t('liveShare.invite.labelPlaceholder', 'For example Simpa, or Design team')" data-test="ls-invite-label" />
@@ -261,7 +264,8 @@ onMounted(() => {
   border-radius: 10px;
   background: var(--surface-2);
 }
-.lsi-form.embedded {
+.lsi-form.embedded,
+.lsi-form.flat {
   padding: 0;
   border: 0;
   background: transparent;

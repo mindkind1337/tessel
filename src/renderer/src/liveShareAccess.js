@@ -31,16 +31,21 @@ export function initials(name) {
 
 export const personName = (p) => (p && typeof p.name === 'string' && p.name.trim()) || t('liveShare.guest', 'A guest')
 
-// An invitation's name: its label, else what it is.
+// An invitation's name: its label, else what it is (the one made when the
+// share started: "First invitation", as the setup card calls it).
 export function inviteName(inv) {
   if (inv && typeof inv.label === 'string' && inv.label.trim()) return inv.label.trim()
-  return inv && inv.root ? t('liveShare.invite.rootLabel', 'First invite code') : t('liveShare.invite.untitled', 'Invitation')
+  return inv && inv.root ? t('liveShare.invite.firstLabel', 'First invitation') : t('liveShare.invite.untitled', 'Invitation')
 }
 
 // The invitation a person came in with ({ id, label } or null), in words.
-export function viaName(via) {
+// With the share's invitations, one without a label is named as the
+// Invitations section names it (the first one: "First invitation").
+export function viaName(via, invites = null) {
   if (!via) return ''
   if (!via.id) return via.label ? t('liveShare.invite.goneNamed', '{{label}} (no longer exists)', { label: via.label }) : t('liveShare.invite.gone', 'An invitation that no longer exists')
+  const inv = Array.isArray(invites) ? invites.find((x) => x && x.id === via.id) : null
+  if (inv) return inviteName(inv)
   return via.label || t('liveShare.invite.untitled', 'Invitation')
 }
 
@@ -128,6 +133,30 @@ export function inviteUses(inv) {
   // count picks the French singular (1 utilisation sur 3).
   if (max > 0) return t('liveShare.invite.usesOf', '{{uses}} of {{max}} uses', { uses, max, count: uses })
   return uses === 1 ? t('liveShare.invite.uses', '{{count}} use, no limit', { count: uses }) : t('liveShare.invite.uses', '{{count}} uses, no limit', { count: uses })
+}
+
+// The same, in a few words for an invitation's row: "Expires 14:37" (a date
+// first when it is not today), "No expiry", "Expired".
+export function inviteExpiryShort(inv, now = Date.now()) {
+  if (!inv || inv.expiresAt == null) return { text: t('liveShare.invite.noExpiry', 'No expiry'), expired: false, never: true }
+  if (inv.expiresAt - now <= 0) return { text: t('liveShare.invite.expired', 'Expired'), expired: true, never: false }
+  return { text: t('liveShare.invite.expiresAt', 'Expires {{when}}', { when: formatWhen(inv.expiresAt, now) }), expired: false, never: false }
+}
+// An invitation's code, shortened for the screen (the whole code goes in
+// its tooltip and on the clipboard).
+export const shortCode = (code) => (typeof code === 'string' && code.length > 26 ? code.slice(0, 14) + '…' + code.slice(-8) : code || '')
+
+// "1/3 used", or "2 used" with no limit.
+export function inviteUsesShort(inv) {
+  const uses = (inv && Number.isInteger(inv.uses) && inv.uses) || 0
+  const max = (inv && Number.isInteger(inv.maxUses) && inv.maxUses) || 0
+  if (max > 0) return t('liveShare.invite.usedOf', '{{uses}}/{{max}} used', { uses, max, count: uses })
+  return t('liveShare.invite.used', '{{count}} used', { count: uses })
+}
+// "2 in": the people who joined with it.
+export function inviteJoinedShort(inv) {
+  const count = (inv && Number.isInteger(inv.joined) && inv.joined) || 0
+  return t('liveShare.invite.joinedShort', '{{count}} in', { count })
 }
 
 // An invitation that lets no new guest in, and why (null: it does).

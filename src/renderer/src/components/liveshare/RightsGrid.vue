@@ -1,3 +1,11 @@
+<script>
+import { Keyboard, SquareTerminal, SquareX, Gauge, FilePenLine, GitCommitHorizontal, ListTodo, Globe, Circle } from 'lucide-vue-next'
+// Each right's icon, also for the views that show rights as columns
+// (LsAccess.vue's grid).
+const ICONS = { type: Keyboard, open: SquareTerminal, close: SquareX, usage: Gauge, edit: FilePenLine, git: GitCommitHorizontal, tasks: ListTodo, pagesView: Globe }
+export const rightIcon = (id) => ICONS[id] || Circle
+</script>
+
 <script setup>
 // Live Share: someone's rights, the one way every view shows them (an
 // invitation, the first invitation, a person, a trusted person, the accept
@@ -16,7 +24,7 @@
 // `agents`: a row for the agents they may use, under the tiles (the #agents
 // slot; for now every agent, which is what a guest gets).
 import { ref, computed, useId } from 'vue'
-import { Keyboard, SquareTerminal, SquareX, Gauge, FilePenLine, GitCommitHorizontal, ListTodo, Globe, Circle, Check, Bot } from 'lucide-vue-next'
+import { Check, Bot } from 'lucide-vue-next'
 import { shownRights, rightsPreset, presetLabel, presetHint, dangerTag } from '../../liveShareRights'
 import { t } from '../../i18n'
 
@@ -37,8 +45,7 @@ const props = defineProps({
 // toggle(id, on), preset(id)
 const emit = defineEmits(['toggle', 'preset'])
 
-const ICONS = { type: Keyboard, open: SquareTerminal, close: SquareX, usage: Gauge, edit: FilePenLine, git: GitCommitHorizontal, tasks: ListTodo, pagesView: Globe }
-const iconOf = (id) => ICONS[id] || Circle
+const iconOf = rightIcon
 
 const rows = computed(() => shownRights())
 const on = (id) => !!(props.rights && props.rights[id] === true)
