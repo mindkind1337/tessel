@@ -32,10 +32,14 @@ export function useNativeChatLinkActions(context, rootRef, scope = {}, options =
     }
     event.preventDefault()
     event.stopPropagation()
+    // A caller's openWeb takes mail addresses too (a Live Share host's
+    // conversation: its guard decides, the router never bypasses it).
     const router = typeof panel?.openTarget === 'function' ? routerWeb : null
-    const open = mail
-      ? router || globalThis.window?.shellApi?.openExternal
-      : unref(toValue(options).openWeb) || router || panel?.openExternal || globalThis.window?.shellApi?.openExternal
+    const open =
+      unref(toValue(options).openWeb) ||
+      router ||
+      (mail ? null : panel?.openExternal) ||
+      globalThis.window?.shellApi?.openExternal
     try {
       const result = await open?.(route.url, event)
       if (result === false || result?.ok === false)

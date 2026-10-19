@@ -48,6 +48,7 @@ import { planInfo, paneWarnText } from '../claudePlan'
 import { HOST_ACCOUNT_AGENTS, hostAccountChoices, hostEntry, hostPaneAccount, isDefaultHostAccount, recheckAfterTurn, refreshHostAccounts, unwatchHostAccounts, watchHostAccounts } from '../hostAccounts'
 import { modelFromScreen, modelFromSwitchLine } from '../../../shared/screenModel'
 import { findFileRefs } from '../../../shared/fileLinks'
+import { guestFileTarget } from '../liveShareGuestLinks'
 import { osc52Text } from '../../../shared/osc52'
 import { stripTerminalSelectionGutter } from '../../../shared/terminalSelectionGutter'
 import { buildInputModeReset } from '../../../shared/terminalModeReset'
@@ -2865,8 +2866,13 @@ function onEscapeMenu(e) {
 // web page in the built-in browser or the system one (Settings > Browser,
 // Ctrl+click the other), mailto: in the mail program; any other scheme is
 // dropped there. Without it, the system browser (the main process only lets
-// http, https and mailto through).
+// http, https and mailto through). In a Live Share host's pane: filtered,
+// in the Live Share browser (App.vue openGuestUrl), never the router.
 function openLink(uri, event) {
+  if (props.node.backend === 'liveshare') {
+    if (ctx.openGuestUrl) ctx.openGuestUrl(uri, { fromId: props.node.id, session: props.node.liveShare ? props.node.liveShare.session : null })
+    return
+  }
   // Web pages and mail addresses only: a file: (or any other) link a program
   // prints never opens from here, whatever computer the program runs on.
   if (!/^(https?:\/\/|mailto:)/i.test(String(uri || '').trim())) return
@@ -3183,11 +3189,37 @@ onMounted(() => {
       callback(links.length ? links : undefined)
     }
   })
+  // A Live Share host's pane prints the host's paths: never looked up on this
+  // computer (liveShareGuestLinks.js). A path relative to the host's project
+  // links to that project's file (lshare://), opened in Tessel's viewer or
+  // editor through your access to it; an absolute one stays plain text.
+  // Shift+click opens nothing outside Tessel here.
+  function guestFileLinks(y, callback) {
+    const project = props.node.liveShare ? props.node.liveShare.project : null
+    const line = term ? term.buffer.active.getLine(y - 1) : null
+    const links = []
+    for (const r of findFileRefs(line ? line.translateToString(true) : '')) {
+      const file = guestFileTarget(project, r.path)
+      if (!file) continue
+      links.push({
+        range: { start: { x: r.index + 1, y }, end: { x: r.index + r.text.length, y } },
+        text: r.text,
+        decorations: { underline: true, pointerCursor: true },
+        activate: () => openGuestFile(file, r)
+      })
+    }
+    callback(links.length ? links : undefined)
+  }
+  function openGuestFile(file, ref) {
+    if (ctx.viewFile && isViewed(file)) return ctx.viewFile({ file, label: ref.path, line: ref.line || null })
+    if (ctx.openInEditor) ctx.openInEditor({ file, line: ref.line || null, col: ref.col || null })
+  }
   // A file path (src/app.js:12:5, C:\x\y.ts:3...) that exists: a click opens
   // it at that line (VS Code when installed). Checked on disk, relative to
   // the pane's folder; answers are kept 30 s so hovering stays instant.
   term.registerLinkProvider({
     provideLinks(y, callback) {
+      if (props.node.backend === 'liveshare') return guestFileLinks(y, callback)
       if (!term || !window.shellApi.resolveFiles) return callback(undefined)
       const line = term.buffer.active.getLine(y - 1)
       const refs = findFileRefs(line ? line.translateToString(true) : '')

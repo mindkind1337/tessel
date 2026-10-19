@@ -21,7 +21,6 @@ describe('useNativeChatLinkActions', () => {
   it.each([
     'javascript:alert(1)',
     'data:text/html,foo',
-    'mailto:test@example.com',
     'ssh://host/path',
     'https://',
     'file:///repo/foo.md',
@@ -70,7 +69,7 @@ describe('useNativeChatLinkActions', () => {
     expect(openTarget).toHaveBeenCalledTimes(2)
     unmount()
   })
-  it('an explicit openWeb still wins for web pages; mail goes to the router', async () => {
+  it('an explicit openWeb (a Live Share guard) still wins, for mail addresses too', async () => {
     const openTarget = vi.fn(async () => true),
       openWeb = vi.fn()
     const { api, unmount } = withPanel({ openTarget }, () => useNativeChatLinkActions(null, null, {}, { openWeb }))
@@ -78,7 +77,8 @@ describe('useNativeChatLinkActions', () => {
     expect(openWeb).toHaveBeenCalled()
     expect(openTarget).not.toHaveBeenCalled()
     await api.onLinkClick.value(event(), 'mailto:a@b.c')
-    expect(openTarget).toHaveBeenCalledWith('mailto:a@b.c', expect.anything())
+    expect(openWeb).toHaveBeenLastCalledWith('mailto:a@b.c', expect.anything())
+    expect(openTarget).not.toHaveBeenCalled()
     unmount()
   })
   it('restores focus to the root and respects visibility', async () => {

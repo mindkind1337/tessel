@@ -111,6 +111,16 @@ export const GUEST_CHAT_AGENTS = ['claude', 'openclaude', 'codex', 'cursor', 'an
 // own chat view reads the same two there.
 export const GUEST_REMOTE_CHAT_AGENTS = ['claude', 'codex']
 const isLocalDir = (p) => typeof p === 'string' && !!p && !isRemotePath(p)
+// A folder inside (or equal to) another: Windows folders without case.
+const dirWithin = (p, top, win) => {
+  const norm = (x) => {
+    const v = String(x).replace(/[\\/]+/g, '/').replace(/\/+$/, '')
+    return win ? v.toLowerCase() : v
+  }
+  const a = norm(p)
+  const b = norm(top)
+  return !!b && (a === b || a.startsWith(`${b}/`))
+}
 // A folder on an SSH host, as its own path (guests' chats name files by it).
 const hostDir = (p) => {
   const parsed = typeof p === 'string' ? parseRemotePath(p) : null
@@ -143,9 +153,14 @@ export function hostChatsFromWorkspace(ws) {
       out.push({ id: n.id, agentId: n.agentId, terminal: true, title: '', reason: !readable ? 'agent' : 'none' })
       return
     }
-    const roots = remote
-      ? [hostDir(n.cwd), hostDir(n.startDir), hostDir(n.projectDir), n.remotePath, ws.remote && ws.remote.path].filter((p) => typeof p === 'string' && p.startsWith('/'))
-      : [n.startDir, n.cwd, n.projectDir, n.worktree && n.worktree.path, ws.cwd].filter(isLocalDir)
+    // The project's folder, and the pane's own folders only when inside it:
+    // a pane opened elsewhere (the home folder, another repository) never
+    // makes that folder's paths readable to guests (main checks it again).
+    const top = remote ? (ws.remote && typeof ws.remote.path === 'string' && ws.remote.path.startsWith('/') ? ws.remote.path : null) : isLocalDir(ws.cwd) ? ws.cwd : null
+    const paneDirs = remote
+      ? [hostDir(n.cwd), hostDir(n.startDir), hostDir(n.projectDir), n.remotePath].filter((p) => typeof p === 'string' && p.startsWith('/'))
+      : [n.startDir, n.cwd, n.projectDir, n.worktree && n.worktree.path].filter(isLocalDir)
+    const roots = top ? [top, ...paneDirs.filter((p) => dirWithin(p, top, !remote))] : []
     out.push({
       id: n.id,
       agentId: n.agentId,

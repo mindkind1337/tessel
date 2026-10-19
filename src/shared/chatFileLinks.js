@@ -17,6 +17,12 @@ export const BLOCKED_EXTENSIONS = new Set(
   ).split(' ')
 )
 
+// Blocked from the system, but plain text: an editor (VS Code, Tessel's own)
+// may show them, since opening one there never runs it.
+export const BLOCKED_TEXT_EXTENSIONS = new Set(
+  'bat cmd ps1 psm1 psd1 ps1xml sh bash zsh ksh csh fish command vbs wsf hta reg inf url ahk au3 jnlp'.split(' ')
+)
+
 // Scripts that are also code: shown as text in Tessel's editor when inside or
 // confirmed, never handed to the system (where Windows Script Host or an
 // interpreter would run them).

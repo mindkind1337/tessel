@@ -171,6 +171,38 @@ export function cleanRoots(list) {
   }
   return out
 }
+// A pane's folders a guest's copy of its conversation is written from: only
+// the shared project's own folders and those of the pane inside them. A
+// pane opened in a folder outside the project (the home folder, another
+// repository) never makes that folder's paths readable: they are hidden
+// like any other host path. -> the raw paths kept
+export function chatRootsWithin(paneRoots, projectRoots) {
+  const projects = cleanRoots(projectRoots)
+  const out = (Array.isArray(projectRoots) ? projectRoots : []).filter((r) => normalizedRoot(r))
+  for (const r of Array.isArray(paneRoots) ? paneRoots : []) {
+    const n = normalizedRoot(r)
+    if (n && projects.some((p) => p.win === n.win && (n.path === p.path || n.path.startsWith(`${p.path}/`)))) out.push(r)
+  }
+  return [...new Set(out)]
+}
+
+// Every text of a guest's chat payload (what guestEvent wrote: messages,
+// tool labels and inputs, a turn's error), in order; fn(text, i) gives each
+// one's replacement (the hidden files' names out, shareHiddenText.js).
+export function mapChatTexts(payload, fn) {
+  const texts = []
+  const at = (obj, k) => {
+    if (!obj || typeof obj[k] !== 'string' || !obj[k]) return
+    texts.push(obj[k])
+    obj[k] = fn(obj[k], texts.length - 1)
+  }
+  for (const ev of (payload && Array.isArray(payload.events) && payload.events) || []) {
+    for (const k of ['text', 'summary', 'error']) at(ev, k)
+    if (ev.input && typeof ev.input === 'object') for (const k of Object.keys(ev.input)) at(ev.input, k)
+  }
+  return texts
+}
+
 // One path found in the text: from the project's folder when it is inside
 // one (after its .. are resolved), else hidden.
 function rewritePath(raw, roots) {

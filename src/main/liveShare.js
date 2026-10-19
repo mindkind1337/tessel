@@ -123,12 +123,12 @@ import { createPublisher, rendezvousKeys, newestAddress, withBase, isTunnelUrl, 
 import { OFFLINE_KEEP_MS } from './liveShare/shareAccess.js'
 import { pidRunning as pidAlive } from './processTree.js'
 import { trimBuffer, HOST_BUFFER_BYTES } from './ptyProtocol.js'
-import { guestChatPayload, cleanChatPanes, cleanChatMessage, mergeChatEvents, CHAT_REASONS } from './liveShare/shareChat.js'
+import { guestChatPayload, cleanChatPanes, cleanChatMessage, mergeChatEvents, CHAT_REASONS, chatRootsWithin, mapChatTexts } from './liveShare/shareChat.js'
 import { TRANSCRIPT_VIEW_AGENTS, validViewId } from './chat/transcriptView.js'
 import { validRemoteTranscript } from './chat/remoteTranscripts.js'
 import { TOPICS, subKey } from './liveShare/shareChannel.js'
 import { createShareRequests, SHARE_OPS } from './liveShare/shareRequests.js'
-import { createShareScope, hiddenByName, relFrom, DEFAULT_SHARE_SETTINGS } from './liveShare/shareScope.js'
+import { createShareScope, hiddenByName, relFrom, DEFAULT_SHARE_SETTINGS, assertNoHostPaths } from './liveShare/shareScope.js'
 import { cleanRoots } from './liveShare/shareChat.js'
 import { createGuestFs } from './liveShare/guestFs.js'
 import { TASK_OPS, taskArgs, guestTasks, checkTasks, isTaskId } from './liveShare/shareTasks.js'
@@ -1316,7 +1316,38 @@ export function registerLiveShare({
     if (feed && !read.ok && feed.code === read.code) return
     if (feed) feed.code = read.ok ? null : read.code
     const src = chatSourceOf(s, id)
-    s.server?.sendChat(id, guestChatPayload(read, src ? src.roots : []))
+    const project = chatHomes(s).get(id) || null
+    // Written from the shared project's folders only (a pane opened outside
+    // it never makes that folder readable), then as History and Activity:
+    // the hidden files' names out, and no host path left anywhere.
+    const { roots: chatRoots, raw } = chatRootsOf(project, src)
+    const payload = guestChatPayload(read, chatRoots)
+    if (!payload.ok) return s.server?.sendChat(id, payload)
+    const seq = (chatSeq.get(id) || 0) + 1
+    chatSeq.set(id, seq)
+    hiddenMasker(project)(mapChatTexts(payload, (t) => t))
+      .then((texts) => {
+        // A newer read of the pane went meanwhile: that one is sent.
+        if (sharing !== s || chatSeq.get(id) !== seq) return
+        mapChatTexts(payload, (_t, i) => (typeof texts[i] === 'string' ? texts[i] : ''))
+        s.server?.sendChat(id, assertNoHostPaths(payload, raw).value)
+      })
+      .catch(() => {})
+  }
+  // A pane's conversation's folders for guests: the shared project's own
+  // (as given and real) and the pane's inside them. A pane on an SSH host:
+  // the window already kept its project's folder there and the pane's inside
+  // it (liveShareLayout.js hostChatsFromWorkspace). -> { roots, raw }
+  const chatSeq = new Map() // pane id -> the latest push's number
+  function chatRootsOf(project, src) {
+    const paneRoots = src && Array.isArray(src.roots) ? src.roots : []
+    const root = project ? roots.get(project) || null : null
+    const info = root ? scope.root(root) : null
+    // Its folder as the scope knows it (given and real), else as the window gave it.
+    const own = (info ? [info.root, info.real] : [root]).filter((r) => typeof r === 'string' && r)
+    if (src && src.hostId) return { roots: paneRoots, raw: [...own, ...paneRoots] }
+    const kept = chatRootsWithin(paneRoots, own)
+    return { roots: kept, raw: [...new Set([...own, ...kept])] }
   }
   const reopenMs = chatRetry.reopenMs ?? FEED_REOPEN_MS
   const lingerMs = chatRetry.lingerMs ?? FEED_LINGER_MS

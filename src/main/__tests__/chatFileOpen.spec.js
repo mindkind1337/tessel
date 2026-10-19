@@ -159,3 +159,12 @@ describe('revealChatPath (Show in Folder)', () => {
     expect(deps.shell.showItemInFolder).not.toHaveBeenCalled()
   })
 })
+
+describe('shared blocklist (files:open and the chat)', () => {
+  it('every plain-text exception is itself blocked from the system', async () => {
+    const { BLOCKED_EXTENSIONS, BLOCKED_TEXT_EXTENSIONS, SYSTEM_OPEN_EXTENSIONS } = await import('../../shared/chatFileLinks')
+    for (const ext of BLOCKED_TEXT_EXTENSIONS) expect(BLOCKED_EXTENSIONS.has(ext)).toBe(true)
+    for (const ext of BLOCKED_EXTENSIONS) expect(SYSTEM_OPEN_EXTENSIONS.has(ext)).toBe(false)
+    for (const ext of ['exe', 'lnk', 'url', 'msi', 'reg', 'hta', 'scr', 'jar', 'bat', 'cmd', 'ps1', 'vbs', 'appref-ms']) expect(BLOCKED_EXTENSIONS.has(ext)).toBe(true)
+  })
+})

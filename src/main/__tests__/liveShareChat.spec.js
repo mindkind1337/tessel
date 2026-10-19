@@ -14,7 +14,7 @@ import { join } from 'path'
 import { createShareHost } from '../liveShare/shareHost'
 import { createShareGuest } from '../liveShare/shareGuest'
 import { newSecret, newSigningKey } from '../liveShare/shareCrypto'
-import { guestChatPayload, cleanChatMessage, mergeChatEvents, guestText, cleanRoots, CHAT_LIMITS } from '../liveShare/shareChat'
+import { guestChatPayload, cleanChatMessage, mergeChatEvents, guestText, cleanRoots, CHAT_LIMITS, chatRootsWithin, mapChatTexts } from '../liveShare/shareChat'
 import WebSocket from 'ws'
 import { registerLiveShare, cleanHostChats } from '../liveShare'
 
@@ -378,7 +378,7 @@ function fakeReader() {
       openFromWindow: vi.fn(async (q) => {
         r.opened.push(q)
         if (r.missing) return { ok: false, code: 'missing' }
-        return { ok: true, viewId: `tv-${++r.next}`, ...hostRead() }
+        return { ok: true, viewId: `tv-${++r.next}`, ...(r.read ? r.read() : hostRead()) }
       }),
       close: vi.fn((viewId) => r.closed.push(viewId))
     }
@@ -404,7 +404,7 @@ describe('registerLiveShare: a guest looks at a host’s agent pane as a chat', 
     mains.push(host, guest)
     const started = await host.handle['liveShare:start'](null, { name: 'Cedric', projects: ['ws-1', 'ws-2'] })
     host.on['liveShare:layouts'](null, [
-      { id: 'ws-1', layout: { project: 'site', tree, activeId: 'pane-1-cc' }, chats: hostChats },
+      { id: 'ws-1', layout: { project: 'site', tree, activeId: 'pane-1-cc' }, chats: hostChats, root: 'C:\\work\\site' },
       { id: 'ws-2', layout: { project: 'other', tree: leaf('pane-9-cc'), activeId: null }, chats: [{ id: 'pane-9-cc', agentId: 'claude', sessionId: UUID, terminal: true, roots: [] }] }
     ])
     await guest.handle['liveShare:join'](null, { invite: started.invites[0].code, name: 'Alex' })
@@ -448,6 +448,34 @@ describe('registerLiveShare: a guest looks at a host’s agent pane as a chat', 
     await guest.handle['liveShare:chatWatch'](null, { id: 'pane-ls1-2-chat', on: false })
     await until(() => reader.closed.length)
     expect(reader.closed).toEqual(['tv-1'])
+  })
+
+  it('a pane opened outside the project: its folder never makes paths readable; hidden files and stray host paths go too', async () => {
+    const reader = fakeReader()
+    reader.read = () => ({
+      ok: true,
+      truncated: false,
+      events: [
+        { type: 'assistant', messageId: 'm1', text: 'See C:\\Users\\ada\\private\\plan.md and C:\\work\\site\\src\\app.js, then C:\\work\\site\\.env', at: 1 },
+        { type: 'tool', id: 't1', name: 'C:\\Users\\ada\\tool.exe', summary: 'x', input: { file_path: 'C:\\Users\\ada\\private\\plan.md' }, status: 'running', at: 2 }
+      ]
+    })
+    // The window sent the pane's folder (the home folder) with the project's.
+    const hostChats = [{ id: 'pane-1-cc', agentId: 'claude', sessionId: UUID, accountId: null, terminal: true, title: '', roots: ['C:\\Users\\ada', 'C:\\work\\site'] }]
+    const { guest } = await sharedAndJoined({ reader, hostChats })
+    await guest.handle['liveShare:chatWatch'](null, { id: 'pane-ls1-1-cc', on: true })
+    const got = await until(() => guest.last('liveShare:chat'))
+    expect(got.ok).toBe(true)
+    const text = JSON.stringify(got)
+    // Inside the project: from its folder; the home folder's files: hidden.
+    expect(got.events[0].text).toContain('src/app.js')
+    expect(text).not.toContain('plan.md')
+    expect(text).not.toContain('private')
+    // A hidden file of the project (a secret's name): "…", as History and Activity.
+    expect(text).not.toContain('.env')
+    // A field guestText leaves alone (a tool's name) still loses the host path.
+    expect(text).not.toContain('ada')
+    expect(text).not.toContain('tool.exe')
   })
 
   it('an agent on an SSH host: read over the connection, the guest gets the same smaller copy and never where it is', async () => {
@@ -860,5 +888,28 @@ describe('second review: over the wire', () => {
     alex.client.resyncChat('a1')
     await until(() => alex.chats.length === 33)
     expect(alex.chats[32][1]).toMatchObject({ ok: true, dropped: 0, from: 0, events: [ev(1), ev(2)], total: 2 })
+  })
+})
+
+describe('shareChat: the folders a guest’s copy is written from, and its texts', () => {
+  it('chatRootsWithin keeps the project’s folders and the pane’s inside them only', () => {
+    expect(chatRootsWithin(['C:\\Users\\ada', 'c:/work/SITE/lib', 'C:\\work\\site-other', '/', 'C:\\'], ['C:\\work\\site'])).toEqual(['C:\\work\\site', 'c:/work/SITE/lib'])
+    expect(chatRootsWithin(['C:\\Users\\ada'], [])).toEqual([])
+    expect(chatRootsWithin(['/home/x/app/src', '/home/x'], ['/home/x/app'])).toEqual(['/home/x/app', '/home/x/app/src'])
+  })
+
+  it('mapChatTexts walks every text a guest reads, in order, and replaces them', () => {
+    const payload = {
+      ok: true,
+      events: [
+        { type: 'user', id: 'u', text: 'one' },
+        { type: 'tool', id: 't', name: 'Bash', summary: 'two', input: { command: 'three', path: 'four' } },
+        { type: 'turnEnd', status: 'failed', error: 'five' }
+      ]
+    }
+    expect(mapChatTexts(payload, (t) => t)).toEqual(['one', 'two', 'three', 'four', 'five'])
+    mapChatTexts(payload, (t, i) => `${i}:${t}`)
+    expect(payload.events[1]).toMatchObject({ name: 'Bash', summary: '1:two', input: { command: '2:three', path: '3:four' } })
+    expect(payload.events[2].error).toBe('4:five')
   })
 })

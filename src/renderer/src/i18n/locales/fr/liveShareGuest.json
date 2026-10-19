@@ -1,5 +1,12 @@
 {
   "liveShare": {
+    "link": {
+      "notWeb": "Seules les adresses web s’ouvrent depuis un volet partagé.",
+      "localOnly": "Cette adresse ne fonctionne que sur l’ordinateur ou le réseau de l’hôte : {{url}}",
+      "openedTrimmed": "Ouvert dans le navigateur Live Share (aucune de vos connexions), sans les parties de l’adresse qui semblaient privées.",
+      "opened": "Ouvert dans le navigateur Live Share (aucune de vos connexions).",
+      "openMine": "Ouvrir dans mon navigateur"
+    },
     "access": {
       "noAccess": "Vous n'avez plus accès à ce projet.",
       "outdatedHost": "Le Tessel de l'hôte est trop ancien pour cela : l'hôte doit mettre Tessel à jour.",
