@@ -3459,12 +3459,7 @@ const browserGuests = createBrowserGuests({
     if (isSafeExternal(url)) shell.openExternal(url).catch(() => {})
   },
   // Each page's console, for the agents' browser tools.
-  onGuest: (guest) => agentBrowser.watchGuest(guest),
-  // A new window from a Live Share guest's click in a shared page: a new
-  // pane in the guest session, a few a minute (liveShare.js pagePopup).
-  guestPopup: (id) => (liveShare ? liveShare.pagePopup(id) : null),
-  // ...and no clipboard permission for a page a guest uses (or did lately).
-  guestInput: (id) => (liveShare ? liveShare.pageGuestInput(id) : false)
+  onGuest: (guest) => agentBrowser.watchGuest(guest)
 })
 browserGuests.register(ipcMain)
 // Importing cookies from another browser into Tessel's browser session, so the

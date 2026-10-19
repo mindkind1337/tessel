@@ -362,9 +362,11 @@ function makeEditorLeaf(id = null) {
 function openInTesselEditor({ file, line = null, col = null, preview = true, ws = currentWs.value } = {}) {
   if (!file || !ws) return null
   const active = ws.activeId ? findLeafIn(ws.tree, ws.activeId) : null
-  let leaf = active && active.kind === 'editor' ? active : null
+  // Never into a Live Share host's editor tabs (they are the host's list).
+  const own = (l) => l.kind === 'editor' && !liveShare.isGuestLeaf(l)
+  let leaf = active && own(active) ? active : null
   // The editor of the worktree you are looking at (its own grid).
-  if (!leaf) forEachLeaf(ws.tree, (l) => !leaf && l.kind === 'editor' && sameView(l, active, ws) && (leaf = l))
+  if (!leaf) forEachLeaf(ws.tree, (l) => !leaf && own(l) && sameView(l, active, ws) && (leaf = l))
   if (!leaf) {
     leaf = makeEditorLeaf()
     keepView(leaf, active, ws)
@@ -2283,6 +2285,12 @@ function closeLeaf(leafId, opts = {}) {
   const isEditor = !!(closing && closing.kind === 'editor')
   // An editor or a browser pane: no terminal to stop.
   const noTerminal = hasNoTerminal(closing)
+  // A tab of the host's (its editor tabs, one of its pages): hidden on your
+  // screen only, never closed on the host's.
+  if (closing && liveShare.isGuestLeaf(closing) && liveShare.isHostTab(closing)) {
+    liveShare.hideHostTab(leafId)
+    return
+  }
   // A pane of a Live Share project is the host's: closing it asks the host
   // to close it on their computer, for everyone in the session (asked here
   // first), when the host lets you. It stays here until the host closed it.
@@ -2501,6 +2509,8 @@ const liveShare = createLiveShareWindow({
   // Phase 2c: each browser pane's page (its webContents id once ready), and
   // a shared project's activity for the guests who follow it.
   pageGuest: (id) => (Number.isSafeInteger(pageGuests[id]) ? pageGuests[id] : null),
+  // The side panel's pages (they go with the shared project on screen).
+  sidePages: () => sideBrowsers.value,
   activityOf: (wsId) => projectActivity(wsId),
   activityRev: () => activity.length,
   // This computer's board, for guests: read (each shared project's cards)
@@ -2584,7 +2594,10 @@ const livePill = computed(() => {
       host: guest.host || '?',
       rights: guest.state === 'joined' ? rightsText(guest.rights) : '',
       code: guest.code || null,
-      projects: workspaces.value.filter((w) => liveShare.isGuestWs(w)).map((w) => ({ id: w.id, name: w.name, here: w.id === currentWsId.value }))
+      projects: workspaces.value.filter((w) => liveShare.isGuestWs(w)).map((w) => ({ id: w.id, name: w.name, here: w.id === currentWsId.value })),
+      // The host's project on screen: whether your screen follows the
+      // host's, and the task copy the host looks at.
+      follow: guest.state === 'joined' ? liveShare.followInfo(currentWs.value) : null
     }
   }
   return null
@@ -3285,12 +3298,13 @@ provide('panelCtx', {
   // and who watches, types in or reads each pane (LiveSharePresence).
   liveShareReaders: (id) => liveShare.readersOf(id),
   liveSharePresence: (id) => liveShare.presenceOf(id),
-  // ...a page of a shared project: its eye (guests watching) and "Hide this
-  // page from guests". As a guest: a host's page shown here (its frames,
-  // your input with the right).
+  // ...a page of a shared project: "Hide this page from guests". As a guest:
+  // a host's page here (your own browser on its address: "Follow host" on
+  // it; an address only the host's side opens: its note).
   liveSharePageShare: (id) => liveShare.pageShare(id),
   setLiveSharePageHidden: (id, hidden) => liveShare.setPageHidden(id, hidden),
-  liveSharePageSource: (id) => liveShare.pageSource(id),
+  liveShareFollowPage: (id) => liveShare.followPage(id),
+  liveSharePageNote: (id) => liveShare.pageNote(id),
   // A terminal agent's chat view (nothing restarts): what you write there,
   // and its agent's real end (back to the terminal).
   sendFromChatView: (id, text, callbacks) => sendFromChatView(id, text, callbacks),
@@ -13165,6 +13179,7 @@ onBeforeUnmount(() => {
           @share="liveShare.setShared"
           @stop="liveShareStop"
           @leave="liveShareLeave"
+          @follow="liveShare.followHost()"
         />
         <button
           v-else

@@ -90,8 +90,7 @@
       "editPart": "modifier ses fichiers",
       "gitPart": "indexer et faire des commits",
       "tasksPart": "gérer ses tâches",
-      "pagesViewPart": "voir ses pages de navigateur",
-      "pagesUsePart": "utiliser ses pages de navigateur"
+      "pagesViewPart": "voir ses pages de navigateur"
     },
     "ask": {
       "title": "{{name}} veut rejoindre votre Live Share",
@@ -439,15 +438,12 @@
       "tasksShort": "Tâches",
       "pagesView": "Voir mes pages de navigateur",
       "pagesViewShort": "Pages",
-      "pagesViewHint": "Les pages de navigateur des projets que cette personne voit, en direct. Les pages du panneau latéral ne sont jamais partagées.",
-      "pagesUse": "Utiliser mes pages de navigateur : cette personne agit dans votre navigateur avec vos sessions connectées et peut atteindre votre réseau",
-      "pagesUseShort": "Utiliser les pages",
-      "pagesUseHint": "Cette personne clique et tape dans vos pages en votre nom, connectée partout où vous l'êtes, et ces pages atteignent ce que votre ordinateur atteint (localhost, votre réseau, les adresses de métadonnées du cloud). Inclut « Voir mes pages de navigateur ».",
       "watchOnly": "Regarder seulement",
       "editHint2": "Dans les projets que cette personne voit. Les réglages des agents et des outils, les instructions des agents (CLAUDE.md, AGENTS.md, les notes), les hooks git et leurs configurations, et .gitignore restent en lecture seule, sauf si elle peut aussi taper.",
       "gitHint2": "Dans les projets que cette personne voit, avec votre nom git. Ses commits se font sans vos hooks git ; push, pull et fetch restent à vous.",
       "tasks2": "Gérer les tâches (ajouter, déplacer, modifier, répondre aux questions, supprimer définitivement)",
-      "tasksHint2": "Le tableau des tâches des projets que cette personne voit. Une carte supprimée l'est définitivement ; sans Taper, elle ne répond à un agent qu'avec l'un des choix qu'il propose."
+      "tasksHint2": "Le tableau des tâches des projets que cette personne voit. Une carte supprimée l'est définitivement ; sans Taper, elle ne répond à un agent qu'avec l'un des choix qu'il propose.",
+      "pagesViewHint2": "Les invités voient l'adresse de vos pages et les ouvrent de leur côté, dans leur propre navigateur (jamais avec vos sessions). Les pages des projets qu'ils voient, et celles de votre panneau latéral quand l'un d'eux est à votre écran. Les pages masquées ne sont jamais envoyées."
     },
     "openAsk": {
       "titleAgent": "{{name}} demande d'ouvrir {{agent}}",

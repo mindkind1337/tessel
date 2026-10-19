@@ -182,8 +182,8 @@ export function contextMenuItems(params = {}, nav = {}) {
 // browser session". On, guestById (the agents' only way to a page) gives only
 // pages of the agents' own session, never the user's with its logins.
 // guestPopup(webContentsId) -> null | { allowed }: a new window a page asks
-// for came from a Live Share guest's click (liveShare/sharePageFeed.js
-// popupFrom): it opens in a new pane in the guest session, if allowed.
+// for came from a Live Share guest's click: it opens in a new pane in the
+// guest session, if allowed (none now: guests no longer use the host's pages).
 // guestInput(webContentsId | null) -> bool: a Live Share guest uses that page
 // now or did lately (null: any page): no clipboard permission for it then
 // (a guest's click on a page's "Copy" never writes the host's clipboard
@@ -660,8 +660,8 @@ export function createBrowserGuests({ getWindow, send, log = null, screenshotDir
   }
 
   // A page of the browser in Tessel's window, by its id, whatever its session
-  // (Live Share's view of the host's own pages: the host's window lists
-  // them, sharePageFeed.js checks each against the shared projects). Never
+  // (Live Share's links to the host's own pages: the host's window lists
+  // them, shareLinks.js reads each one's address). Never
   // Tessel's window itself, never another kind of webContents or session.
   function pageById(id) {
     const win = getWindow()

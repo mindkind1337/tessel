@@ -29,10 +29,11 @@ export const SHARE_RIGHTS = Object.freeze([
   Object.freeze({ id: 'edit', default: false }),
   Object.freeze({ id: 'git', default: false }),
   Object.freeze({ id: 'tasks', default: false }),
-  // See the host's browser pages, and use them (they act with the host's
-  // logged-in sessions): using needs seeing.
-  Object.freeze({ id: 'pagesView', default: false }),
-  Object.freeze({ id: 'pagesUse', default: false, needs: 'pagesView' })
+  // See the host's browser pages: their addresses and titles, which the
+  // guest opens in its own browser (its own session, never the host's). The
+  // old "use my pages" (pagesUse) is gone: a record that still has it reads
+  // without it.
+  Object.freeze({ id: 'pagesView', default: false })
 ])
 
 export const RIGHT_IDS = Object.freeze(SHARE_RIGHTS.map((r) => r.id))

@@ -1,14 +1,16 @@
 // Live Share phase 2c in the window (liveShareWindowFeeds.js through
 // liveShareWindow.js, LiveSharePageView.vue, SessionHistoryPanel.vue,
 // ConversationsPanel.vue, BrowserPane.vue, browser/pageHost.js). Host: the
-// browser panes of the shared projects go to main with their page and the
-// host's "hide" (never another project's, never one without a page yet);
-// the eye says who watches; the activity goes only while guests follow it.
-// Guest: the host's browser panes show only with "See my browser pages"; a
-// page view watches only while it is on screen, shows the frames, sends
-// clicks and keys only with "Use my browser pages", opens the address in
-// your own browser only when it is not the host's network; the Agents tab
-// and the Conversations tab of a host's project read the host's, read only.
+// browser panes of the shared projects (and the side panel's pages while a
+// shared project is on screen) go to main with their page and the host's
+// "hide" (never another project's, never one without a page yet); the
+// activity goes only while guests follow it. Guest: the host's pages are
+// links, shown only with "See my browser pages": each one your own browser
+// on its address, following the host's page (a new address, its videos)
+// until you go elsewhere ("Follow host" brings it back); an address only the
+// host's side opens is a note with the address to copy, never opened; the
+// Agents tab and the Conversations tab of a host's project read the host's,
+// read only.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { reactive, ref, nextTick } from 'vue'
 import { mount, flushPromises, config } from '@vue/test-utils'
@@ -106,13 +108,11 @@ function setup() {
     setActivity: vi.fn(),
     subscribe: vi.fn(async () => ({ ok: true })),
     sessions: vi.fn(async () => ({ ok: true, sessions: [] })),
-    pageWatch: vi.fn(async () => ({ ok: true })),
-    pageInput: vi.fn(),
     share: vi.fn(async () => ({ ok: true })),
     focus: vi.fn(),
     requestDone: vi.fn()
   }
-  for (const name of ['onHost', 'onGuest', 'onAsk', 'onHostRequest', 'onNotice', 'onPresence', 'onInviteBlocked', 'onGuestAction', 'onPush', 'onFeeds', 'onPagesWatched', 'onPageFrame', 'onPageEvent']) {
+  for (const name of ['onHost', 'onGuest', 'onAsk', 'onHostRequest', 'onNotice', 'onPresence', 'onInviteBlocked', 'onGuestAction', 'onPush', 'onFeeds']) {
     api[name] = (cb) => {
       listeners[name] = cb
       return () => delete listeners[name]
@@ -123,6 +123,7 @@ function setup() {
   const currentWsId = ref(null)
   const pages = reactive({})
   const log = reactive([])
+  const side = ref([])
   let made = 0
   const findLeaf = (id) => {
     let found = null
@@ -159,10 +160,11 @@ function setup() {
     layoutReady: () => true,
     pageGuest: (id) => (Number.isSafeInteger(pages[id]) ? pages[id] : null),
     activityOf: (wsId) => ({ events: log.filter((e) => e.wsId === wsId), teams: [{ id: 'team-1', name: 'Builders', color: '#00ff00' }] }),
-    activityRev: () => log.length
+    activityRev: () => log.length,
+    sidePages: () => side.value
   }
   const ls = createLiveShareWindow(deps)
-  return { ls, api, listeners, workspaces, currentWsId, pages, log }
+  return { ls, api, listeners, workspaces, currentWsId, pages, log, side }
 }
 const browser = (id, extra = {}) => reactive({ type: 'leaf', id, kind: 'browser', url: 'https://a.test/', ...extra })
 const shell = (id) => reactive({ type: 'leaf', id, kind: 'shell' })
@@ -200,9 +202,25 @@ describe('Live Share phase 2c in the window, as the host', () => {
     expect(t.api.setPages.mock.calls.at(-1)[0][0]).toEqual({ project: 'ws-1', paneId: 'b1', webContentsId: 11, hidden: true })
     expect(t.ls.pageShare('b1').hidden).toBe(true)
     expect(t.ls.setPageHidden('p1', true)).toBe(false)
-    // The eye: the guests watching (names of those in).
-    t.listeners.onPagesWatched([{ id: 'b1', guests: [{ id: 'g1', name: 'x' }, { id: 'gone', name: 'y' }] }])
-    expect(t.ls.pageShare('b1').watchers).toEqual(['Ana'])
+  })
+
+  it('the side panel pages go with the shared project on screen, never while another is', async () => {
+    await host()
+    t.side.value = [reactive({ id: 'web-side1', url: 'https://docs.test/' })]
+    t.pages['web-side1'] = 21
+    await flush()
+    expect(t.api.setPages.mock.calls.at(-1)[0].some((p) => p.paneId === 'web-side1')).toBe(false)
+    t.currentWsId.value = 'ws-1'
+    await flush()
+    expect(t.api.setPages.mock.calls.at(-1)[0].find((p) => p.paneId === 'web-side1')).toEqual({ project: 'ws-1', paneId: 'web-side1', webContentsId: 21, hidden: false, side: true })
+    expect(t.ls.pageShare('web-side1')).toEqual({ project: 'ws-1', hidden: false, watchers: [] })
+    expect(t.ls.setPageHidden('web-side1', true)).toBe(true)
+    await flush()
+    expect(t.api.setPages.mock.calls.at(-1)[0].find((p) => p.paneId === 'web-side1').hidden).toBe(true)
+    // Another project on screen (not shared): the panel's pages are not sent.
+    t.currentWsId.value = 'ws-2'
+    await flush()
+    expect(t.api.setPages.mock.calls.at(-1)[0].some((p) => p.paneId === 'web-side1')).toBe(false)
   })
 
   it('sends a project activity only while guests follow it, at most every 2 s', async () => {
@@ -245,7 +263,9 @@ describe('Live Share phase 2c in the window, as a guest', () => {
   })
   afterEach(() => t.ls.dispose())
   const layout = { project: 'site', tree: { type: 'split', dir: 'row', sizes: [50, 50], children: [{ type: 'leaf', id: 'pane-ls1-t', view: 'terminal', title: 't', kind: 'shell' }, { type: 'leaf', id: 'pane-ls1-web', view: 'browser', title: '' }] }, activeId: null }
-  const joined = (rights = {}, extra = {}) => ({ state: 'joined', host: 'Cedric', session: 1, panes: [], projects: [{ id: 'ws-1', layout }], rights: { ...NO_RIGHTS, ...rights }, features: ['chat', 'files', 'scm', 'tasks', 'history', 'pages'], ...extra })
+  const joined = (rights = {}, extra = {}) => ({ state: 'joined', host: 'Cedric', session: 1, panes: [], projects: [{ id: 'ws-1', layout }], rights: { ...NO_RIGHTS, ...rights }, features: ['chat', 'files', 'scm', 'tasks', 'history', 'tabs', 'links'], ...extra })
+  const links = (pages) => t.listeners.onPush({ topic: 'links', project: 'ws-1', data: { pages } })
+  const web = (extra = {}) => ({ id: 'pane-ls1-web', url: 'https://mail.example/inbox', local: false, title: 'Inbox', side: false, ...extra })
   const lsWs = () => t.workspaces.value.find((w) => w.liveShare)
   const leaves = (n, out = []) => {
     if (!n) return out
@@ -254,36 +274,94 @@ describe('Live Share phase 2c in the window, as a guest', () => {
     return out
   }
 
-  it('shows the host browser panes only with "See my browser pages", as page views', async () => {
+  it('shows the host pages only with "See my browser pages", as your own browser on their address', async () => {
     t.listeners.onGuest(joined())
+    await flush()
+    links([web()])
     await flush()
     expect(leaves(lsWs().tree).some((l) => l.id === 'pane-ls1-web')).toBe(false)
     t.listeners.onGuest(joined({ pagesView: true }))
     await flush()
+    links([web()])
+    await flush()
     const page = leaves(lsWs().tree).find((l) => l.id === 'pane-ls1-web')
-    expect(page).toMatchObject({ kind: 'shell', backend: 'liveshare', liveShare: { page: true, terminal: false, project: 'ws-1' } })
-    const src = t.ls.pageSource('pane-ls1-web')
-    expect(src.info()).toMatchObject({ host: 'Cedric', joined: true, canView: true, canUse: false, outdated: false, project: 'ws-1' })
-    await src.watch(true)
-    expect(t.api.pageWatch).toHaveBeenLastCalledWith({ id: 'pane-ls1-web', on: true })
-    const got = []
-    const off = src.onFrame((m) => got.push(m.seq))
-    t.listeners.onPageFrame({ id: 'other', seq: 1 })
-    t.listeners.onPageFrame({ id: 'pane-ls1-web', seq: 2 })
-    off()
-    t.listeners.onPageFrame({ id: 'pane-ls1-web', seq: 3 })
-    expect(got).toEqual([2])
-    t.listeners.onGuest(joined({ pagesView: true, pagesUse: true }))
+    // A browser of this computer (your session), on the host's address.
+    expect(page).toMatchObject({ kind: 'browser', url: 'https://mail.example/inbox', backend: 'liveshare', liveShare: { link: true, following: true, project: 'ws-1', host: 'Cedric' } })
+    // A page the host hid (or never sent): no tab.
+    links([])
     await flush()
-    expect(t.ls.pageSource('pane-ls1-web').info().canUse).toBe(true)
-    // An older host: its page views say it needs to update.
-    t.listeners.onGuest(joined({ pagesView: true }, { features: ['chat', 'files'] }))
+    expect(leaves(lsWs().tree).some((l) => l.id === 'pane-ls1-web')).toBe(false)
+    links([web()])
     await flush()
-    expect(t.ls.pageSource('pane-ls1-web').info().outdated).toBe(true)
-    // The right taken away: the page view goes.
+    // The right taken away: the page goes.
     t.listeners.onGuest(joined())
     await flush()
     expect(leaves(lsWs().tree).some((l) => l.id === 'pane-ls1-web')).toBe(false)
+  })
+
+  it('follows the host page (a new address, its videos) until you go elsewhere; "Follow host" brings it back', async () => {
+    t.listeners.onGuest(joined({ pagesView: true }))
+    await flush()
+    links([web()])
+    await flush()
+    const page = () => leaves(lsWs().tree).find((l) => l.id === 'pane-ls1-web')
+    const leaf = page()
+    links([web({ url: 'https://mail.example/inbox/2', title: 'Second', media: [{ kind: 'video', i: 0, paused: false, ended: false, t: 12, rate: 1 }] })])
+    await flush()
+    expect(page()).toBe(leaf)
+    expect(leaf.url).toBe('https://mail.example/inbox/2')
+    expect(leaf.liveShare.media).toMatchObject({ items: [{ kind: 'video', i: 0, paused: false, t: 12 }] })
+    // A redirect right after following loaded it: still following.
+    leaf.url = 'https://mail.example/consent'
+    await flush()
+    expect(leaf.liveShare.following).toBe(true)
+    // You went elsewhere yourself (later): not following that page any more.
+    leaf.liveShare.setAt = Date.now() - 5000
+    leaf.url = 'https://mail.example/settings'
+    await flush()
+    expect(leaf.liveShare.following).toBe(false)
+    const seq = leaf.liveShare.media.seq
+    links([web({ url: 'https://mail.example/inbox/3', media: [{ kind: 'video', i: 0, paused: true, ended: false, t: 20, rate: 1 }] })])
+    await flush()
+    expect(leaf.url).toBe('https://mail.example/settings')
+    expect(leaf.liveShare.media.seq).toBe(seq)
+    expect(t.ls.followPage('pane-ls1-web')).toBe(true)
+    expect(leaf.liveShare.following).toBe(true)
+    expect(leaf.url).toBe('https://mail.example/inbox/3')
+  })
+
+  it('an address only the host side opens is a note with the address, never a page', async () => {
+    t.listeners.onGuest(joined({ pagesView: true }))
+    await flush()
+    links([web({ url: 'http://localhost:5173/app', local: true, title: 'Dev' })])
+    await flush()
+    const page = leaves(lsWs().tree).find((l) => l.id === 'pane-ls1-web')
+    expect(page).toMatchObject({ kind: 'shell', liveShare: { page: true, link: true, local: true } })
+    expect(page.url).toBeUndefined()
+    expect(t.ls.pageNote('pane-ls1-web')).toEqual({ host: 'Cedric', url: 'http://localhost:5173/app', title: 'Dev', ended: false })
+    // The host goes to a public address: your browser on it.
+    links([web({ url: 'https://example.com/' })])
+    await flush()
+    expect(leaves(lsWs().tree).find((l) => l.id === 'pane-ls1-web')).toMatchObject({ kind: 'browser', url: 'https://example.com/' })
+  })
+
+  it('the side panel pages of the host are tabs too; closing a host tab only hides it here', async () => {
+    t.listeners.onGuest(joined({ pagesView: true }))
+    await flush()
+    links([web(), { id: 'pane-ls1-web-side1', url: 'https://docs.test/a', local: false, title: 'Docs', side: true }])
+    await flush()
+    const [view] = workspaceViews(lsWs())
+    expect(view.tabs.map((l) => l.id)).toEqual(['pane-ls1-web', 'pane-ls1-web-side1'])
+    expect(t.ls.isHostTab(view.tabs[1])).toBe(true)
+    expect(t.ls.hideHostTab('pane-ls1-web-side1')).toBe(true)
+    expect(workspaceViews(lsWs())[0].tabs.map((l) => l.id)).toEqual(['pane-ls1-web'])
+    links([web(), { id: 'pane-ls1-web-side1', url: 'https://docs.test/b', local: false, title: 'Docs', side: true }])
+    await flush()
+    expect(workspaceViews(lsWs())[0].tabs.map((l) => l.id)).toEqual(['pane-ls1-web'])
+    // "Follow host": everything of that project back.
+    t.currentWsId.value = lsWs().id
+    expect(t.ls.followHost()).toBe(true)
+    expect(workspaceViews(lsWs())[0].tabs.map((l) => l.id)).toEqual(['pane-ls1-web', 'pane-ls1-web-side1'])
   })
 
   // 2026-10-19: the host's page showed inside the guest's grid, beside the
@@ -291,14 +369,15 @@ describe('Live Share phase 2c in the window, as a guest', () => {
   it('the host browser page is a tab of its own, as on the host, never a pane of the grid', async () => {
     t.listeners.onGuest(joined({ pagesView: true }))
     await flush()
+    links([web()])
+    await flush()
     const [view] = workspaceViews(lsWs())
     expect(view.tabs.map((l) => l.id)).toEqual(['pane-ls1-web'])
     // (No terminal attached in this test: the grid holds none of the pages.)
     expect(leaves(view.grid).map((l) => l.id)).not.toContain('pane-ls1-web')
     expect(view.shown).toBe('terminal')
-    // The host on its page: that tab comes up here too (the host's active pane
-    // is taken once, when there is one).
-    t.listeners.onGuest(joined({ pagesView: true }, { projects: [{ id: 'ws-1', layout: { ...layout, activeId: 'pane-ls1-web' } }] }))
+    // The host shows its page: that tab comes up here too.
+    t.listeners.onGuest(joined({ pagesView: true }, { projects: [{ id: 'ws-1', layout: { ...layout, shown: 'pane-ls1-web' } }] }))
     await flush()
     const ws = lsWs()
     expect(ws.activeId).toBe('pane-ls1-web')
@@ -341,151 +420,49 @@ describe('Live Share phase 2c in the window, as a guest', () => {
 })
 
 // --- The page view ------------------------------------------------------------------
-describe('LiveSharePageView.vue', () => {
-  let wrapper, src, info, frameCb, eventCb, ctx, askConfirm
+describe('LiveSharePageView.vue (an address only the host side opens)', () => {
+  let wrapper, ctx, note
   beforeEach(() => {
-    askConfirm = vi.fn(async () => true)
-    info = reactive({ host: 'Cedric', joined: true, ended: false, outdated: false, canView: true, canUse: false, project: 'ws-1' })
-    src = {
-      info: () => info,
-      watch: vi.fn(async () => ({ ok: true })),
-      input: vi.fn(),
-      onFrame: (cb) => ((frameCb = cb), () => (frameCb = null)),
-      onEvent: (cb) => ((eventCb = cb), () => (eventCb = null))
-    }
-    ctx = { activeId: ref(null), maximizedId: ref(null), highlightId: ref(null), setActive: vi.fn(), toggleMaximize: vi.fn(), liveSharePageSource: () => src }
-    window.shellApi = { openExternal: vi.fn() }
-    URL.createObjectURL = vi.fn(() => 'blob:frame')
-    URL.revokeObjectURL = vi.fn()
+    note = reactive({ host: 'Cedric', url: 'http://localhost:5173/app', title: 'Dev', ended: false })
+    ctx = { activeId: ref(null), maximizedId: ref(null), highlightId: ref(null), setActive: vi.fn(), liveSharePageNote: () => note }
   })
   afterEach(() => {
     wrapper?.unmount()
     wrapper = null
-    node = null
   })
-  let node = null
-  const wrapperNode = () => node
-  const mountView = async () => {
-    node = node || reactive({ type: 'leaf', id: 'pane-ls1-web', backend: 'liveshare', liveShare: { page: true, host: 'Cedric', project: 'ws-1' } })
-    wrapper = mount(LiveSharePageView, { props: { node }, attachTo: document.body, global: { provide: { panelCtx: ctx, askConfirm: (q) => askConfirm(q) } } })
+  const node = () => reactive({ type: 'leaf', id: 'pane-ls1-web', backend: 'liveshare', liveShare: { page: true, link: true, local: true, host: 'Cedric', project: 'ws-1', pageTitle: 'Dev', pageUrl: 'http://localhost:5173/app' } })
+  const mountView = async (n = node()) => {
+    wrapper = mount(LiveSharePageView, { props: { node: n }, attachTo: document.body, global: { provide: { panelCtx: ctx } } })
     await flushPromises()
+    return n
   }
-  const frame = (seq, url = 'https://mail.example/inbox?…') => frameCb({ id: 'pane-ls1-web', seq, jpeg: new Uint8Array([0xff, 0xd8]), w: 1000, h: 700, meta: { title: 'Inbox', url } })
 
-  it('watches while on screen, shows the frames, the title and the masked address; stops when it goes', async () => {
+  it('says calmly where it runs, with the address to copy; no picture, no input', async () => {
+    const writeText = vi.fn(async () => {})
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true })
     await mountView()
-    expect(src.watch).toHaveBeenCalledWith(true)
-    expect(wrapper.find('[data-test="liveshare-page-note"]').text()).toBe('Waiting for the page…')
-    frame(1)
-    await nextTick()
-    expect(wrapper.find('[data-test="liveshare-page-frame"]').attributes('src')).toBe('blob:frame')
-    expect(wrapper.find('[data-test="pane-title"]').text()).toBe('Inbox')
-    expect(wrapper.find('[data-test="liveshare-page-url"]').text()).toBe('https://mail.example/inbox?…')
-    expect(wrapper.find('[data-test="liveshare-page-mode"]').text()).toBe('View only: Cedric’s page, live.')
-    // An older frame after a newer one: dropped.
-    frame(1)
-    expect(URL.createObjectURL).toHaveBeenCalledTimes(1)
-    eventCb({ id: 'pane-ls1-web', state: 'paused', reason: 'password' })
-    await nextTick()
-    expect(wrapper.find('[data-test="liveshare-page-note"]').text()).toBe('Hidden by the host')
-    eventCb({ id: 'pane-ls1-web', state: 'ended', reason: 'gone' })
-    await nextTick()
-    expect(wrapper.find('[data-test="liveshare-page-note"]').text()).toBe('This page is no longer shared.')
-    // The window hidden: no watching.
-    Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true })
-    document.dispatchEvent(new Event('visibilitychange'))
+    expect(wrapper.find('[data-test="liveshare-page-note"] p').text()).toBe('This page runs on Cedric’s computer: it can’t open here.')
+    expect(wrapper.find('[data-test="liveshare-page-url"]').text()).toBe('http://localhost:5173/app')
+    expect(wrapper.find('img').exists()).toBe(false)
+    await wrapper.find('[data-test="liveshare-page-copy"]').trigger('click')
     await flushPromises()
-    expect(src.watch).toHaveBeenLastCalledWith(false)
-    Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true })
-    document.dispatchEvent(new Event('visibilitychange'))
-    await flushPromises()
-    expect(src.watch).toHaveBeenLastCalledWith(true)
-    wrapper.unmount()
-    wrapper = null
-    expect(src.watch).toHaveBeenLastCalledWith(false)
+    expect(writeText).toHaveBeenCalledWith('http://localhost:5173/app')
+    expect(wrapper.find('[data-test="liveshare-page-copy"]').text()).toBe('Copied')
+    note.ended = true
+    await nextTick()
+    expect(wrapper.find('[data-test="liveshare-page-note"] p').text()).toBe('The Live Share session ended.')
   })
 
-  it('as a tab: its header is the line of tabs (Terminal, then the page by its title, which only the host closes); the address goes under it', async () => {
-    ctx.paneTabs = (id) => (id === 'pane-ls1-web' ? { leaves: [wrapperNode()], shown: 'pane-ls1-web' } : null)
-    ctx.selectViewTab = vi.fn()
-    await mountView()
+  it('as a tab: its header is the line of tabs, the page by its title; its x hides it here', async () => {
+    const n = node()
+    ctx.paneTabs = (id) => (id === 'pane-ls1-web' ? { leaves: [n], shown: 'pane-ls1-web' } : null)
+    ctx.closeViewTab = vi.fn()
+    await mountView(n)
     const tabs = () => wrapper.findAll('[data-test="view-tab"]')
-    expect(tabs().map((x) => x.text())).toEqual(['Terminal', 'Browser page'])
-    expect(wrapper.find('[data-test="pane-title"]').exists()).toBe(false)
-    expect(wrapper.find('[data-test="view-tab-close"]').exists()).toBe(false)
-    expect(wrapper.find('[aria-label="Maximize pane"]').exists()).toBe(false)
-    frame(1)
-    await nextTick()
-    expect(tabs().map((x) => x.text())).toEqual(['Terminal', 'Inbox'])
-    expect(wrapperNode().liveShare).toMatchObject({ pageTitle: 'Inbox', pageUrl: 'https://mail.example/inbox?…' })
-    expect(wrapper.find('[data-test="liveshare-page-mode"] [data-test="liveshare-page-url"]').text()).toBe('https://mail.example/inbox?…')
-    await tabs()[0].trigger('click')
-    expect(ctx.selectViewTab).toHaveBeenCalledWith('pane-ls1-web', 'terminal', null)
-  })
-
-  it('sends clicks and keys only with "use"; opens the address in your browser unless it is the host network', async () => {
-    await mountView()
-    frame(1)
-    await nextTick()
-    const img = wrapper.find('[data-test="liveshare-page-frame"]')
-    img.element.getBoundingClientRect = () => ({ left: 0, top: 0, width: 500, height: 350 })
-    await img.trigger('mousedown', { button: 0, clientX: 250, clientY: 175 })
-    await new Promise((r) => setTimeout(r, 80))
-    expect(src.input).not.toHaveBeenCalled()
-    info.canUse = true
-    await nextTick()
-    expect(wrapper.find('[data-test="liveshare-page-mode"]').text()).toBe('Your clicks and keys act in Cedric’s browser, signed in as Cedric.')
-    await img.trigger('mousedown', { button: 0, clientX: 250, clientY: 175 })
-    await img.trigger('mouseup', { button: 0, clientX: 250, clientY: 175 })
-    await wrapper.find('[data-test="liveshare-page"]').trigger('keydown', { key: 'a' })
-    await wrapper.find('[data-test="liveshare-page"]').trigger('keydown', { key: 'Enter' })
-    await img.trigger('mousedown', { button: 2, clientX: 10, clientY: 10 })
-    await new Promise((r) => setTimeout(r, 80))
-    const sent = src.input.mock.calls.flatMap(([events]) => events)
-    expect(sent).toEqual([
-      { type: 'mouse', action: 'down', x: 0.5, y: 0.5, modifiers: { ctrl: false, alt: false, shift: false, meta: false }, button: 'left', clicks: 1 },
-      { type: 'mouse', action: 'up', x: 0.5, y: 0.5, modifiers: { ctrl: false, alt: false, shift: false, meta: false }, button: 'left', clicks: 1 },
-      { type: 'text', text: 'a' },
-      { type: 'key', key: 'Enter', modifiers: { ctrl: false, alt: false, shift: false, meta: false } }
-    ])
-    expect(wrapper.find('[data-test="liveshare-page-notice"]').text()).toMatch(/Only the left mouse button/)
-    // Refusals the host says back.
-    eventCb({ id: 'pane-ls1-web', state: 'input', refused: ['key'] })
-    await nextTick()
-    expect(wrapper.find('[data-test="liveshare-page-notice"]').text()).toMatch(/That key is not sent/)
-    eventCb({ id: 'pane-ls1-web', state: 'input', refused: [], notice: 'limit' })
-    await nextTick()
-    expect(wrapper.find('[data-test="liveshare-page-notice"]').text()).toMatch(/limits how fast/)
-    // Open in your own browser: origin and path, once the whole address was
-    // shown and you said yes.
-    const open = wrapper.find('[data-test="liveshare-page-open"]')
-    expect(open.attributes('disabled')).toBeUndefined()
-    askConfirm.mockResolvedValueOnce(false)
-    await open.trigger('click')
-    await flushPromises()
-    expect(askConfirm).toHaveBeenCalledWith(expect.objectContaining({ text: expect.stringContaining('https://mail.example/inbox') }))
-    expect(window.shellApi.openExternal).not.toHaveBeenCalled()
-    await open.trigger('click')
-    await flushPromises()
-    expect(window.shellApi.openExternal).toHaveBeenCalledWith('https://mail.example/inbox')
-    frame(2, 'http://localhost:5173/app')
-    await nextTick()
-    expect(open.attributes('disabled')).toBeDefined()
-    expect(open.attributes('title')).toBe('This address only works on the host’s computer or network.')
-  })
-
-  it('says why nothing shows: no right, an older host, the session ended', async () => {
-    info.canView = false
-    await mountView()
-    expect(src.watch).not.toHaveBeenCalled()
-    expect(wrapper.find('[data-test="liveshare-page-note"]').text()).toBe('Cedric has not let you see their browser pages.')
-    info.canView = true
-    info.outdated = true
-    await nextTick()
-    expect(wrapper.find('[data-test="liveshare-page-note"]').text()).toMatch(/too old to share its browser pages/)
-    info.ended = true
-    await nextTick()
-    expect(wrapper.find('[data-test="liveshare-page-note"]').text()).toBe('The Live Share session ended.')
+    expect(tabs().map((x) => x.text())).toEqual(['Terminal', 'Dev'])
+    expect(tabs()[1].attributes('title')).toBe('Cedric’s tab: http://localhost:5173/app')
+    await wrapper.find('[data-test="view-tab-close"]').trigger('click')
+    expect(ctx.closeViewTab).toHaveBeenCalledWith('pane-ls1-web', null)
   })
 })
 
@@ -583,7 +560,8 @@ describe('BrowserPane.vue while sharing', () => {
       openExternal: vi.fn(),
       openBrowserPane: vi.fn(),
       liveSharePageShare: () => share.value,
-      setLiveSharePageHidden: vi.fn((id, hidden) => (share.value = { ...share.value, hidden }))
+      setLiveSharePageHidden: vi.fn((id, hidden) => (share.value = { ...share.value, hidden })),
+      liveShareFollowPage: vi.fn()
     }
   })
   afterEach(() => {
@@ -599,19 +577,46 @@ describe('BrowserPane.vue while sharing', () => {
     return node
   }
 
-  it('the eye says who watches; "Hide this page from guests" toggles; nothing while not shared', async () => {
+  it('"Hide this page from guests" toggles; nothing while not shared; a side panel page too', async () => {
     await mountPane()
     expect(wrapper.find('[data-test="browser-live-hide"]').exists()).toBe(false)
-    share.value = { project: 'ws-1', hidden: false, watchers: ['Ana', 'Bo'] }
+    share.value = { project: 'ws-1', hidden: false, watchers: [] }
     await nextTick()
-    const eye = wrapper.find('[data-test="browser-live-eye"]')
-    expect(eye.attributes('title')).toBe('Guests watching this page: Ana, Bo')
-    expect(eye.text()).toBe('2')
     await wrapper.find('[data-test="browser-live-hide"]').trigger('click')
     expect(ctx.setLiveSharePageHidden).toHaveBeenCalledWith('b1', true)
     await nextTick()
     expect(wrapper.find('[data-test="browser-live-hide"]').attributes('aria-pressed')).toBe('true')
-    expect(wrapper.find('[data-test="browser-live-eye"]').exists()).toBe(false)
+    wrapper.unmount()
+    wrapper = mount(BrowserPane, { props: { node: reactive({ type: 'leaf', kind: 'browser', id: 'web-side1', title: '', url: 'https://docs.test/', zoom: 0, focusAddress: 0 }), inSidePanel: true }, attachTo: document.body, global: { provide: { panelCtx: ctx } } })
+    await nextTick()
+    expect(wrapper.find('[data-test="browser-live-hide"]').exists()).toBe(true)
+  })
+
+  it('a host page followed here: says so; going elsewhere yourself stops it, "Follow host" asks again; the host videos played here', async () => {
+    const node = await mountPane({ backend: 'liveshare', liveShare: { link: true, host: 'Cedric', following: true, hostUrl: 'https://mail.example/', setAt: Date.now(), media: null } })
+    const el = wrapper.find('webview').element
+    el.executeJavaScript = vi.fn(async () => 1)
+    el.dispatchEvent(new Event('dom-ready'))
+    await nextTick()
+    expect(wrapper.find('[data-test="browser-host-link"]').text()).toBe('Following Cedric')
+    expect(wrapper.find('[data-test="browser-follow-host"]').exists()).toBe(false)
+    // The host's video: played here (numbers only reach the page).
+    node.liveShare.media = { seq: 1, items: [{ kind: 'video', i: 0, paused: false, ended: false, t: 30, rate: 1 }], at: Date.now() }
+    await nextTick()
+    expect(el.executeJavaScript).toHaveBeenCalledTimes(1)
+    expect(el.executeJavaScript.mock.calls[0][0]).toMatch(/"kind":"video","i":0,"paused":false,"ended":false,"t":30(\.\d+)?,"rate":1/)
+    // An address typed here: not following any more.
+    const input = wrapper.find('.bp-address-input')
+    await input.setValue('https://other.example/')
+    await wrapper.find('[data-test="browser-address"]').trigger('submit')
+    expect(node.liveShare.following).toBe(false)
+    await nextTick()
+    expect(wrapper.find('[data-test="browser-host-link"]').text()).toContain('Not following')
+    node.liveShare.media = { seq: 2, items: [{ kind: 'video', i: 0, paused: true, ended: false, t: 31, rate: 1 }], at: Date.now() }
+    await nextTick()
+    expect(el.executeJavaScript).toHaveBeenCalledTimes(1)
+    await wrapper.find('[data-test="browser-follow-host"]').trigger('click')
+    expect(ctx.liveShareFollowPage).toHaveBeenCalledWith('b1')
   })
 
   it('a page a guest opened is in the guest session; a guest popup opens a new pane there', async () => {

@@ -460,8 +460,8 @@ async function insertText(keys, text, insert = null, focusNow) {
   }
 }
 
-// Live Share's guests type at the page's keyboard, wherever it is
-// (liveShare/sharePages.js): the same path, the same checks.
+// The same typing, by another name (for a caller that types at the page's
+// keyboard wherever it is): the same path, the same checks.
 export { insertText as insertFocusedText }
 
 function checkText(text) {

@@ -44,23 +44,63 @@ function layoutNode(node) {
 
 // What the host's window shows: the project shared (a Tessel workspace
 // { name, tree, activeId }), the view of it on screen (a project's task
-// copies each have their own, paneViews.js: only that one), and its
-// fullscreen pane.
-function shownTree(ws) {
+// copies each have their own, paneViews.js: only that one), the tab shown
+// there (its grid, 'terminal', or an editor or a browser pane), the task
+// copy it is (its branch: guests' note says which), and its fullscreen pane.
+function shownView(ws) {
   const views = workspaceViews(ws)
-  const onScreen = views.find((v) => v.active) || views[0]
+  return views.find((v) => v.active) || views[0] || null
+}
+function shownTree(ws) {
+  const onScreen = shownView(ws)
   return onScreen ? onScreen.tree : ws.tree
+}
+// The branch of the task copy a view is ('' for the project's own folder).
+function copyOf(view) {
+  if (!view || view.key === ':main') return ''
+  let branch = ''
+  const walk = (n) => {
+    if (!n || branch) return
+    if (n.type === 'leaf') branch = (n.worktree && typeof n.worktree.branch === 'string' && n.worktree.branch) || ''
+    else (n.children || []).forEach(walk)
+  }
+  walk(view.tree)
+  return branch
 }
 
 export function hostLayoutFromWorkspace(ws, maximizedId = null) {
   if (!ws) return null
-  const tree = layoutNode(shownTree(ws))
+  const view = shownView(ws)
+  const tree = layoutNode(view ? view.tree : ws.tree)
+  const shown = view ? view.shown : 'terminal'
   return {
     project: ws.name || null,
     tree,
     activeId: hasLeaf(tree, ws.activeId) ? ws.activeId : null,
-    maximizedId: hasLeaf(tree, maximizedId) ? maximizedId : null
+    maximizedId: hasLeaf(tree, maximizedId) ? maximizedId : null,
+    shown: shown === 'terminal' || hasLeaf(tree, shown) ? shown : null,
+    copy: copyOf(view) || null
   }
+}
+
+// The host's editor tabs of a project (host-only: main keeps the ones inside
+// the project's folder that guests may see, liveShare/shareTabs.js): the
+// files of its editor panes, in tree order (a diff or a commit's version is
+// not a file), and the file on screen (the editor shown, its current file).
+export function hostTabsFromWorkspace(ws) {
+  const files = []
+  let active = null
+  if (!ws || !ws.tree) return { files, active }
+  const view = shownView(ws)
+  const walk = (n) => {
+    if (!n) return
+    if (n.type !== 'leaf') return (n.children || []).forEach(walk)
+    if (n.kind !== 'editor') return
+    for (const f of n.files || []) if (f && !f.diff && typeof f.path === 'string' && !isRemotePath(f.path) && !files.includes(f.path) && files.length < 64) files.push(f.path)
+    if (view && view.shown === n.id && typeof n.activePath === 'string' && files.includes(n.activePath)) active = n.activePath
+  }
+  walk(ws.tree)
+  return { files, active }
 }
 
 // The agents whose conversation file Tessel reads (src/main/chat/
@@ -131,7 +171,8 @@ export function hostChatsFromWorkspace(ws) {
 // gives the same ids and Vue keeps the terminals (SplitNode's :key). null
 // when nothing is left. pages: the guest may see the host's browser pages
 // (its "See my browser pages"): a browser pane is kept too (getLeaf gives
-// its page view, phase 2c).
+// the guest's own browser on its address, or null when the host sent no
+// link for it: hidden, or not one the guest may see).
 export function buildGuestTree(layout, getLeaf, { pages = false } = {}) {
   const build = (node, path) => {
     if (!node) return null

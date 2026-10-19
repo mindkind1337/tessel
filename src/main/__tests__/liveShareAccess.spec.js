@@ -34,7 +34,7 @@ function model({ shared = ['ws-a', 'ws-b'], trust = createTrustStore(), saved = 
 
 describe('the rights catalog', () => {
   it('is one list of ids with their defaults, all off', () => {
-    expect(RIGHT_IDS).toEqual(['type', 'open', 'close', 'usage', 'edit', 'git', 'tasks', 'pagesView', 'pagesUse'])
+    expect(RIGHT_IDS).toEqual(['type', 'open', 'close', 'usage', 'edit', 'git', 'tasks', 'pagesView'])
     expect(SHARE_RIGHTS.every((r) => r.default === false)).toBe(true)
     expect(defaultRights()).toEqual(NONE)
     expect(NO_RIGHTS).toEqual(NONE)
@@ -52,16 +52,14 @@ describe('the rights catalog', () => {
     expect(sameRights({ type: true }, NONE)).toBe(false)
   })
 
-  it('a right that needs another is off without it, and a click gives or takes both', () => {
-    expect(neededBy('pagesUse')).toBe('pagesView')
+  it('the old "use my browser pages" is gone: a record that has it reads without it, and no click gives it', () => {
+    expect(neededBy('pagesUse')).toBe(null)
     expect(neededBy('edit')).toBe(null)
-    // A record (a peer, a file) can only lose a right this way.
+    // A record (a peer, a file) from before: only what it still means.
     expect(cleanRights({ pagesUse: true })).toEqual(NONE)
-    expect(cleanRights({ pagesUse: true, pagesView: true })).toEqual({ ...NONE, pagesUse: true, pagesView: true })
-    // Ticking "use" ticks "see"; unticking "see" unticks "use".
-    expect(setRight(NONE, 'pagesUse', true)).toEqual({ ...NONE, pagesUse: true, pagesView: true })
-    expect(setRight({ ...NONE, pagesUse: true, pagesView: true }, 'pagesView', false)).toEqual(NONE)
-    expect(setRight({ ...NONE, pagesUse: true, pagesView: true }, 'pagesUse', false)).toEqual({ ...NONE, pagesView: true })
+    expect(cleanRights({ pagesUse: true, pagesView: true })).toEqual({ ...NONE, pagesView: true })
+    expect(setRight(NONE, 'pagesUse', true)).toEqual(NONE)
+    expect(setRight(NONE, 'pagesView', true)).toEqual({ ...NONE, pagesView: true })
     expect(setRight(NONE, 'edit', true)).toEqual({ ...NONE, edit: true })
     expect(setRight({ ...NONE, git: true }, 'nope', true)).toEqual({ ...NONE, git: true })
   })
@@ -77,14 +75,14 @@ describe('the rights catalog', () => {
   it('changes one right at a time with what it needs (a person, a trusted person, an invitation)', () => {
     const { access } = model()
     const inv = access.createInvite({ projects: ['ws-a'] }).invite
-    expect(access.change({ invite: inv.id }, { right: 'pagesUse', on: true })).toBe(true)
-    expect(access.invite(inv.id).grant.rights).toEqual({ ...NONE, pagesUse: true, pagesView: true })
+    expect(access.change({ invite: inv.id }, { right: 'pagesView', on: true })).toBe(true)
+    expect(access.invite(inv.id).grant.rights).toEqual({ ...NONE, pagesView: true })
     expect(access.change({ invite: inv.id }, { right: 'pagesView', on: false })).toBe(true)
     expect(access.invite(inv.id).grant.rights).toEqual(NONE)
     const store = createTrustStore({ entries: [], save: () => {}, onChange: () => {} })
     const e = store.add({ key: newSigningKey().publicRaw, name: 'Ana', projects: [], rights: null })
-    expect(store.change(e.fp, { right: 'pagesUse', on: true })).toBe(true)
-    expect(store.get(e.fp).grant.rights).toEqual({ ...NONE, pagesUse: true, pagesView: true })
+    expect(store.change(e.fp, { right: 'pagesView', on: true })).toBe(true)
+    expect(store.get(e.fp).grant.rights).toEqual({ ...NONE, pagesView: true })
   })
 })
 

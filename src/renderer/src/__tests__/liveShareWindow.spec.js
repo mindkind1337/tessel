@@ -352,7 +352,7 @@ describe('Live Share in the window, as the host', () => {
     expect(t.api.setLayouts).not.toHaveBeenCalled()
     sharingNow(['ws-1'])
     await flush()
-    expect(lastLayouts()).toEqual([{ id: 'ws-1', layout: expect.objectContaining({ project: 'tessel', activeId: 'pane-1' }), chats: [], root: null }])
+    expect(lastLayouts()).toEqual([{ id: 'ws-1', layout: expect.objectContaining({ project: 'tessel', activeId: 'pane-1' }), chats: [], root: null, tabs: { files: [], active: null } }])
     shared.tree.title = 'npm run dev'
     await flush()
     expect(lastLayouts()[0].layout.tree.title).toBe('npm run dev')
@@ -852,7 +852,7 @@ describe('Live Share in the window: what the review found', () => {
     expect(t.api.setLayouts.mock.calls.every(([list]) => list.length === 0)).toBe(true)
     t.workspaces.value.push(reactive({ id: 'ws-1', name: 'tessel', activeId: 'pane-1', tree: { type: 'leaf', id: 'pane-1', kind: 'shell', title: 'PowerShell' } }))
     await flush()
-    expect(t.api.setLayouts).toHaveBeenLastCalledWith([{ id: 'ws-1', layout: expect.objectContaining({ project: 'tessel' }), chats: [], root: null }])
+    expect(t.api.setLayouts).toHaveBeenLastCalledWith([{ id: 'ws-1', layout: expect.objectContaining({ project: 'tessel' }), chats: [], root: null, tabs: { files: [], active: null } }])
     expect(t.ls.sharedWss().map((w) => w.id)).toEqual(['ws-1'])
     expect(t.api.share).not.toHaveBeenCalled()
     // The window has its projects back and ws-2 is not among them: out of the share.
@@ -1176,5 +1176,130 @@ describe('Live Share, as a guest: asking the host to open, and what is on screen
     t.activePane.value = 'pane-1'
     await flush()
     expect(t.api.focus).toHaveBeenLastCalledWith(null)
+  })
+})
+
+// Your screen follows the host's in its project (its tab, its active pane,
+// its editor file, the task copy it looks at) until you pick something
+// yourself; "Follow host" takes it up again. The host's editor tabs are a
+// tab here, its files through your access to the project's (lshare://);
+// closing one only hides it on your screen.
+describe('Live Share in the window, as a guest: following the host', () => {
+  let t
+  beforeEach(async () => {
+    t = setup()
+    t.api.subscribe = vi.fn(async () => ({ ok: true }))
+    t.api.onPush = (cb) => {
+      t.listeners.onPush = cb
+      return () => delete t.listeners.onPush
+    }
+    await t.ls.init()
+  })
+  afterEach(() => t.ls.dispose())
+
+  const tree = { type: 'split', dir: 'row', sizes: [40, 40, 20], children: [leaf('pane-ls1-a'), leaf('pane-ls1-b'), leaf('pane-ls1-ed', 'editor')] }
+  const status = (layout = {}) => ({
+    state: 'joined',
+    host: 'Ada',
+    session: 1,
+    panes: [pane('pane-ls1-a'), pane('pane-ls1-b')],
+    layout: { project: 'site', tree, activeId: 'pane-ls1-a', maximizedId: null, shown: 'terminal', copy: null, ...layout },
+    rights: { ...NO_RIGHTS },
+    features: ['files', 'tabs', 'links']
+  })
+  const tabs = (list, active = null) => t.listeners.onPush({ topic: 'tabs', project: 'ws-a', data: { tabs: list, active } })
+  const ws = () => t.workspaces.value[0]
+  const tabsLeaf = () => {
+    let found = null
+    const walk = (n) => {
+      if (!n || found) return
+      if (n.type === 'leaf') n.liveShare && n.liveShare.hostTabs && (found = n)
+      else n.children.forEach(walk)
+    }
+    walk(ws().tree)
+    return found
+  }
+
+  it("follows the host's active pane and tab switches (terminal, an editor tab) live", async () => {
+    t.listeners.onGuest(status())
+    await flush()
+    expect(ws().activeId).toBe('pane-ls1-a')
+    t.listeners.onGuest(status({ activeId: 'pane-ls1-b' }))
+    await flush()
+    expect(ws().activeId).toBe('pane-ls1-b')
+    // The host's editor tabs: one tab here, its files read through lshare://.
+    tabs(['src/app.js', 'README.md'], 'README.md')
+    await flush()
+    const lt = tabsLeaf()
+    expect(lt).toMatchObject({ kind: 'editor', backend: 'liveshare', files: [{ path: 'lshare://ws-a\\src\\app.js' }, { path: 'lshare://ws-a\\README.md' }] })
+    expect(t.ls.isHostTab(lt)).toBe(true)
+    // The host shows its editor, on README.md: here too.
+    t.listeners.onGuest(status({ activeId: 'pane-ls1-b', shown: 'pane-ls1-ed' }))
+    await flush()
+    expect(ws().activeId).toBe(lt.id)
+    expect(ws().view).toBe(lt.id)
+    expect(lt.activePath).toBe('lshare://ws-a\\README.md')
+    tabs(['src/app.js', 'README.md'], 'src/app.js')
+    await flush()
+    expect(lt.activePath).toBe('lshare://ws-a\\src\\app.js')
+    // Back to its terminals.
+    t.listeners.onGuest(status({ activeId: 'pane-ls1-a', shown: 'terminal' }))
+    await flush()
+    expect(ws().activeId).toBe('pane-ls1-a')
+    expect(ws().view).toBe('terminal')
+    expect(t.ls.followInfo()).toEqual({ on: true, copy: null })
+  })
+
+  it("stops when you pick something yourself; Follow host takes it up again", async () => {
+    t.listeners.onGuest(status())
+    await flush()
+    ws().activeId = 'pane-ls1-b'
+    await flush()
+    expect(t.ls.followInfo().on).toBe(false)
+    t.listeners.onGuest(status({ activeId: 'pane-ls1-a' }))
+    await flush()
+    expect(ws().activeId).toBe('pane-ls1-b')
+    expect(t.ls.followHost()).toBe(true)
+    expect(t.ls.followInfo().on).toBe(true)
+    expect(ws().activeId).toBe('pane-ls1-a')
+    // Another editor file picked by you: your own pick too.
+    tabs(['a.js', 'b.js'], 'a.js')
+    t.listeners.onGuest(status({ shown: 'pane-ls1-ed' }))
+    await flush()
+    tabsLeaf().activePath = 'lshare://ws-a\\b.js'
+    await flush()
+    expect(t.ls.followInfo().on).toBe(false)
+  })
+
+  it("the host's editor tabs: a tab the host closes goes; one you close is only hidden here; none left, no tab", async () => {
+    t.listeners.onGuest(status())
+    await flush()
+    tabs(['a.js', 'b.js', 'c.js'])
+    await flush()
+    const lt = tabsLeaf()
+    tabs(['a.js', 'c.js'])
+    await flush()
+    expect(lt.files.map((f) => f.path)).toEqual(['lshare://ws-a\\a.js', 'lshare://ws-a\\c.js'])
+    // You close c.js (the editor's own close): hidden from now on.
+    lt.files = lt.files.filter((f) => !f.path.endsWith('c.js'))
+    tabs(['a.js', 'c.js', 'd.js'])
+    await flush()
+    expect(lt.files.map((f) => f.path)).toEqual(['lshare://ws-a\\a.js', 'lshare://ws-a\\d.js'])
+    // Its whole tab closed here: hidden, never closed on the host.
+    expect(t.ls.hideHostTab(lt.id)).toBe(true)
+    expect(tabsLeaf()).toBe(null)
+    expect(t.deps.closeLeaf).not.toHaveBeenCalled()
+    // Follow host: the tabs you hid are back.
+    t.ls.followHost()
+    expect(tabsLeaf().files.map((f) => f.path)).toEqual(['lshare://ws-a\\a.js', 'lshare://ws-a\\c.js', 'lshare://ws-a\\d.js'])
+    tabs([])
+    await flush()
+    expect(tabsLeaf()).toBe(null)
+  })
+
+  it('says which task copy the host looks at', async () => {
+    t.listeners.onGuest(status({ copy: 'tessel/fix-login' }))
+    await flush()
+    expect(t.ls.followInfo()).toEqual({ on: true, copy: 'tessel/fix-login' })
   })
 })
