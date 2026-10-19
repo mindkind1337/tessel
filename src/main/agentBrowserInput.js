@@ -367,6 +367,13 @@ async function recoverRef(send, entry) {
     }
   } catch {
     // none
+  } finally {
+    // Reading the tree left the page's accessibility on: off again, as
+    // agentBrowserSnapshot.js buildSnapshot does (a busy page works harder
+    // while it stays on).
+    await Promise.resolve()
+      .then(() => send('Accessibility.disable'))
+      .catch(() => {})
   }
   return null
 }

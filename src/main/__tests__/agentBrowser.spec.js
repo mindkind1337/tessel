@@ -581,12 +581,16 @@ describe('agent browser: commands', () => {
   it('a re-rendered element still there once is found again', async () => {
     const page = pageModel()
     let tree = AX
-    const { call } = setup({ guest: fakeGuest(11, { cdp: pageCdp({ 'Accessibility.getFullAXTree': () => tree }, page) }) })
+    const { call, guest } = setup({ guest: fakeGuest(11, { cdp: pageCdp({ 'Accessibility.getFullAXTree': () => tree }, page) }) })
     await call('snapshot')
     delete page.elements[30]
     page.elements[31] = {}
     tree = { nodes: AX.nodes.map((n) => (n.nodeId === '3' ? { ...n, backendDOMNodeId: 31 } : n)) }
     expect((await call('fill', { ref: '@e1', text: 'a' })).text).toContain('@e1')
+    // Each read of the tree (the snapshot, finding the element again) turns
+    // the page's accessibility off after it: left on, it slows the page.
+    const ax = guest.sent.map(([m]) => m).filter((m) => m.startsWith('Accessibility.'))
+    expect(ax).toEqual(['Accessibility.enable', 'Accessibility.getFullAXTree', 'Accessibility.disable', 'Accessibility.getFullAXTree', 'Accessibility.disable'])
   })
 
   it('fill with an empty text clears the field (the tool keeps an empty "text")', async () => {
