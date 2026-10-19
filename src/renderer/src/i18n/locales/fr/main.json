@@ -231,6 +231,7 @@
     },
     "jsonAgents": {
       "kimiNotObject": "mcpServers de Kimi n'est pas un objet ; le fichier existant n'a pas été modifié.",
+      "museNotObject": "{{file}} a un {{key}} qui n'est pas un objet, donc Tessel n'a pas modifié le fichier.",
       "notObject": "{{file}} n'est pas un objet de paramètres.",
       "notPlainJson": "{{file}} contient des commentaires ou n'est pas du JSON simple : Tessel ne le réécrit pas. Modifiez-le à la main.",
       "readFailed": "Impossible de lire {{file}} : {{error}}",

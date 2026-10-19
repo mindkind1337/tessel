@@ -34,9 +34,14 @@ const n = (v) => (typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : 0)
 // eslint-disable-next-line no-control-regex
 const folder = (v) => (typeof v === 'string' && v.length <= 4096 && !/[\x00-\x1f]/.test(v) && (/^[a-z]:[\\/]/i.test(v) || v.startsWith('/') || v.startsWith('\\\\')) ? v : null)
 
+// Folder names newest first (YYYY, MM, DD and UUIDv7 ids all sort by time).
 async function dirs(dir, re) {
   try {
-    return (await fsp.readdir(dir, { withFileTypes: true })).filter((e) => e.isDirectory() && !e.isSymbolicLink() && re.test(e.name)).map((e) => e.name)
+    return (await fsp.readdir(dir, { withFileTypes: true }))
+      .filter((e) => e.isDirectory() && !e.isSymbolicLink() && re.test(e.name))
+      .map((e) => e.name)
+      .sort()
+      .reverse()
   } catch {
     return []
   }
@@ -51,10 +56,11 @@ async function logIn(dir) {
   }
 }
 
-// The session logs, newest first: [{ id (the conversation's), file, size,
+// The session logs, newest days first, at most `max` (the walk stops there:
+// older days are never listed): [{ id (the conversation's), file, size,
 // mtimeMs, child }]; a child's log (one level of subagent/) counts as its
 // parent's session.
-export async function listMuseSessionLogs(root) {
+export async function listMuseSessionLogs(root, max = MAX_FILES) {
   const out = []
   for (const y of await dirs(root, /^\d{4}$/))
     for (const m of await dirs(join(root, y), /^\d{2}$/))
@@ -67,8 +73,9 @@ export async function listMuseSessionLogs(root) {
             const log = await logIn(join(dir, 'subagent', c))
             if (log) out.push({ id, ...log, child: true })
           }
+          if (out.length >= max) return out.slice(0, max).sort((a, b) => b.mtimeMs - a.mtimeMs)
         }
-  return out.sort((a, b) => b.mtimeMs - a.mtimeMs).slice(0, MAX_FILES)
+  return out.sort((a, b) => b.mtimeMs - a.mtimeMs)
 }
 
 // One model call's usage -> the report's buckets, or null.

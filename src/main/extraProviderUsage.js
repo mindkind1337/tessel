@@ -430,9 +430,10 @@ export function createExtraProviderUsage({
           if (provider === 'muse') {
             const mapped = mapMuse(data)
             windows = mapped.windows
+            // Kept for Settings and the pane header once the login is checked
+            // unchanged below, even when there is no window to show (an
+            // inactive subscription then says "No subscription" there).
             musePending = { label: mapped.plan, subscribed: mapped.subscribed, checkedAt: clock(), fingerprint: login.fingerprint }
-            if (!windows.length && !mapped.subscribed)
-              refuse('unavailable', t('main.usage.museNoSubscription', 'This Meta account has no active Muse Code subscription, so it has no usage limits to show.'))
           }
           if (provider === 'opencode-go') windows = mapOpenCodeGo(data)
           if (provider === 'zcode') {
@@ -479,6 +480,8 @@ export function createExtraProviderUsage({
         if (provider === 'muse' && musePending) {
           museLivePlan = musePending
           plan = musePending.label
+          if (!windows.length && !musePending.subscribed)
+            refuse('unavailable', t('main.usage.museNoSubscription', 'This Meta account has no active Muse Code subscription, so it has no usage limits to show.'))
         }
         if (!windows.length && !unlimited)
           refuse('unavailable', t('main.usage.noWindows', 'This account did not return supported quota windows.'))
@@ -509,6 +512,8 @@ export function createExtraProviderUsage({
         ])
       } catch (error) {
         const code = error instanceof ProviderReadError ? error.code : 'network'
+        // Its sign-in refused: the plan it named is no longer known.
+        if (provider === 'muse' && (code === 'expired' || code === 'auth')) museLivePlan = null
         return {
           ok: false,
           provider,

@@ -17,6 +17,7 @@ import { spawn as nodeSpawn } from 'child_process'
 import { MODEL_PROBES, MODEL_PROBE_TIMEOUT_MS, MODEL_PROBE_MAX_OUTPUT, finalizeProbeOutput, validListedModels } from '../shared/agentModelProbe'
 import { writeFileAtomic } from './safeJson'
 import { findMuse, museServe } from './museServe'
+import { museCatalogModelList } from './museCatalog'
 
 const FILE = 'agent-models.json'
 const COMMAND = /^[\w.\-\\/: ]{1,300}$/
@@ -76,6 +77,14 @@ export function createModelLister(dir, deps = {}) {
   // An agent asked over its own protocol (Muse Code: `muse serve`, its
   // model/list query): its answer is parsed like a listing.
   async function runProtocolProbe(agent, spec) {
+    // Muse Code: the catalog it keeps on this computer first (museCatalog.js),
+    // so its binary is only started when it has none yet.
+    try {
+      const catalog = await (deps.museCatalog || museCatalogModelList)()
+      if (catalog) return finalizeProbeOutput(agent, JSON.stringify(catalog), '', 0)
+    } catch {
+      // unreadable: ask Muse itself
+    }
     const env = { ...(deps.env || process.env) }
     const file = (deps.findMsp || ((e) => findMuse({ env: e })))(env)
     if (!file) return { ok: false, reason: 'not-found', detail: spec.exe }

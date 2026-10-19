@@ -10,8 +10,8 @@ import fs from 'fs'
 import os from 'os'
 import { join } from 'path'
 import { museViewEvents, contextUsageEvent } from '../chat/transcriptView'
-import { parseMuseCatalog, createMuseCatalog } from '../museCatalog'
-import { createMuseUsageReport, museUsageBucket } from '../museUsageReport'
+import { parseMuseCatalog, createMuseCatalog, museCatalogModelList } from '../museCatalog'
+import { createMuseUsageReport, listMuseSessionLogs, museUsageBucket } from '../museUsageReport'
 import { deleteTargets } from '../sessionDetails'
 import { hasPendingAttachments } from '../chat/historyAttachments'
 import { museFooterModel, modelInLine } from '../../shared/screenModel'
@@ -103,6 +103,10 @@ describe("Muse Code's model catalog (its context windows)", () => {
       await cat.refresh()
       expect(cat.contextWindow('muse-wonder-1.0')).toBe(1007997)
       expect(cat.contextWindow('unknown')).toBe(null)
+      // The model list Settings shows, from the same file (hidden rows left out).
+      const list = await museCatalogModelList({ home, env: {} })
+      expect(list.models.map((m) => [m.modelId, m.variants])).toEqual([['muse-wonder-1.0', ['minimal', 'max']]])
+      expect(await museCatalogModelList({ home: join(home, 'nobody'), env: {} })).toBe(null)
     } finally {
       fs.rmSync(home, { recursive: true, force: true })
     }
@@ -115,6 +119,17 @@ describe('Muse Code usage report (Stats)', () => {
     home = fs.mkdtempSync(join(os.tmpdir(), 'tessel-muse-report-'))
   })
   afterEach(() => fs.rmSync(home, { recursive: true, force: true }))
+
+  it('its logs listed newest day first, the walk stopping at the cap', async () => {
+    const root = join(home, 'sessions')
+    const ids = { '2026/10/17': '01a14000-0000-7000-8000-000000000001', '2026/10/18': '01a14500-0000-7000-8000-000000000002', '2026/10/19': SID }
+    for (const [day, id] of Object.entries(ids)) {
+      fs.mkdirSync(join(root, ...day.split('/'), id), { recursive: true })
+      fs.writeFileSync(join(root, ...day.split('/'), id, 'session.jsonl'), '')
+    }
+    expect((await listMuseSessionLogs(root, 2)).map((f) => f.id).sort()).toEqual([ids['2026/10/18'], SID].sort())
+    expect(await listMuseSessionLogs(root)).toHaveLength(3)
+  })
 
   it('cached input and reasoning taken out of input and output; no price', () => {
     expect(museUsageBucket(usage(36772, 35572, 160, 13))).toEqual({ input: 1200, output: 147, reasoning: 13, cacheRead: 35572, cacheWrite: 0, cost: null })
@@ -171,7 +186,12 @@ describe('Muse Code: deleting a conversation, its footer, a guest under a model 
   it("its /models picker and /settings panel are refused where a rule limits its models", () => {
     const rule = { deny: [], later: true, known: ['muse'], models: { muse: ['muse-wonder-1.0'] } }
     expect(refusedModelSwitch(rule, 'muse', '/models')).toBe(true)
-    expect(refusedModelSwitch(rule, 'muse', '/settings')).toBe(true)
+    expect(refusedModelSwitch(rule, 'muse', '/models muse-wonder-1.0')).toBe(true)
+    for (const start of ['/s', '/se', '/set', '/settings', '/settings model', '/l', '/lo', '/local-models', '/m', '/mo']) expect(refusedModelSwitch(rule, 'muse', start)).toBe(true)
+    // Its other commands pass.
+    for (const other of ['/status', '/skills', '/stop', '/effort high', '/help']) expect(refusedModelSwitch(rule, 'muse', other)).toBe(false)
+    // Another agent's /status-like words are not Muse's panels.
+    expect(refusedModelSwitch({ ...rule, models: { claude: ['opus'] } }, 'claude', '/se')).toBe(false)
     expect(refusedModelSwitch(rule, 'muse', '/model muse-wonder-1.0')).toBe(false)
     expect(refusedModelSwitch(rule, 'muse', '/model muse-spark-1.3')).toBe(true)
     expect(refusedModelSwitch(rule, 'muse', '/effort high')).toBe(false)
