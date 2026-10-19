@@ -55,6 +55,12 @@ function tabKey(parts) {
   return (h >>> 0).toString(36)
 }
 
+// An edit's file with its rows: a changed-files entry holds a summary and
+// parses the full file (detail) only now, when it is opened.
+function fullFile(edit) {
+  return typeof edit.detail === 'function' ? edit.detail() : edit.file || null
+}
+
 export function useAgentEditActions() {
   const panel = inject('panelCtx', null)
   const linkContext = inject('nativeChatFileLinkContext', null)
@@ -79,14 +85,14 @@ export function useAgentEditActions() {
       .map((e) => firstChangedLine(e.file) || (Number.isSafeInteger(e.block?.editLine) && e.block.editLine > 0 ? e.block.editLine : null))
       .filter(Boolean)
     if (known.length) return Math.min(...known)
-    const steps = edits.flatMap((e) => editSteps(e.block, e.file || null, e.resultText || '') || [])
+    const steps = edits.flatMap((e) => editSteps(e.block, fullFile(e), e.resultText || '') || [])
     if (!steps.length) return null
     const text = await readText(target)
     return text === null ? null : locateSteps(text, steps)
   }
 
   // Opens `path` (as the tool named it) at `line` or at the edits' first change.
-  // edits: [{ block, file?, resultText? }] (the first one's block reads the path).
+  // edits: [{ block, file?, detail?, resultText? }] (the first one's block reads the path).
   async function openAt({ path, edits = [], line = null } = {}, event) {
     if (!canOpen.value || !edits.length) return false
     const target = pathOf(edits[0].block, path)
@@ -103,7 +109,7 @@ export function useAgentEditActions() {
   async function openDiff({ path, edits = [], title = '' } = {}) {
     if (!canDiff.value || !edits.length) return false
     const target = pathOf(edits[0].block, path)
-    const steps = edits.flatMap((e) => editSteps(e.block, e.file || null, e.resultText || '') || [])
+    const steps = edits.flatMap((e) => editSteps(e.block, fullFile(e), e.resultText || '') || [])
     if (!target || !steps.length) {
       panel?.toast?.(t('chat.agentEdits.noDiff', 'No diff to show for {{path}}', { path }), { kind: 'error' })
       return false

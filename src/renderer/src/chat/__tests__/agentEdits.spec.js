@@ -14,7 +14,7 @@ import {
   toolFileTarget,
   turnChangedFiles
 } from '../agentEdits.js'
-import { buildEditCards } from '../orca/native-chat-edit-cards.js'
+import { buildEditCards, buildEditSummaries } from '../orca/native-chat-edit-cards.js'
 import { editFilesFromToolPair } from '../orca/shared/native-chat-edit-normalize.js'
 
 const call = (name, input, extra = {}) => ({ type: 'tool-call', name, input, state: 'completed', ...extra })
@@ -126,12 +126,36 @@ describe("a turn's changed files", () => {
       { id: 'u2', role: 'user', blocks: [{ type: 'text', text: 'more' }] },
       { id: 'a3', role: 'assistant', blocks: [{ type: 'text', text: 'nothing' }] }
     ]
-    const turns = turnChangedFiles(messages, ['u1', 'u1', 'u1', 'u2', 'u2'], buildEditCards)
+    const turns = turnChangedFiles(messages, ['u1', 'u1', 'u1', 'u2', 'u2'], buildEditSummaries)
     expect([...turns.keys()]).toEqual(['u1'])
     const turn = turns.get('u1')
     expect(turn.files.map((f) => f.path)).toEqual(['a.js', 'b.js'])
     expect(turn.files[0].edits).toHaveLength(2)
     expect(turn.files[0].added).toBe(3)
     expect(turn.added).toBe(turn.files.reduce((n, f) => n + f.added, 0))
+  })
+
+  it('lists patches from their summaries; the full rows wait for detail()', () => {
+    const result = (output = 'ok') => ({ type: 'tool-result', output })
+    const blocks = [
+      call('apply_patch', { input: '*** Begin Patch\n*** Update File: a.js\n@@ -3,3 +3,3 @@\n keep\n-old\n+new\n*** Add File: b.md\n+hi\n*** End Patch' }),
+      result(),
+      call('apply_patch', { changes: [{ path: 'c.js', kind: 'update', diff: '@@ -10,2 +10,2 @@\n ctx\n-x\n+y' }] }),
+      result(),
+      call('Diff', { path: 'd.ts' }),
+      result('@@ -1 +1,2 @@\n-old\n+new\n+more')
+    ]
+    const messages = [{ id: 'u1', role: 'user', blocks: [{ type: 'text', text: 'go' }] }, { id: 'a1', role: 'assistant', blocks }]
+    const turn = turnChangedFiles(messages, ['u1', 'u1'], buildEditSummaries).get('u1')
+    expect(turn.files.map((f) => [f.path, f.added, f.removed])).toEqual([['a.js', 1, 1], ['b.md', 1, 0], ['c.js', 1, 1], ['d.ts', 2, 1]])
+    for (const f of turn.files) {
+      expect(f.edits[0].file).not.toHaveProperty('lines')
+      const full = f.edits[0].detail()
+      expect(full.path).toBe(f.path)
+      expect(full.lines.length).toBeGreaterThan(0)
+      // The summary's first changed line is the full rows' own.
+      expect(firstChangedLine(f.edits[0].file)).toBe(firstChangedLine(full))
+    }
+    expect(turn.files.map((f) => firstChangedLine(f.edits[0].file))).toEqual([4, 1, 11, 1])
   })
 })

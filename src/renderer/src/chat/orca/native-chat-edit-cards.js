@@ -21,7 +21,7 @@
  * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
  * SOFTWARE.
  */
-import { editFilesFromToolPair, isEditToolName } from "./shared/native-chat-edit-normalize.js";
+import { editFilesFromToolPair, editSummariesFromToolPair, isEditToolName } from "./shared/native-chat-edit-normalize.js";
 import { editFilesFromPatchText } from "./shared/native-chat-edit-patch-files.js";
 import { pairToolBlocks } from "./native-chat-tool-fold.js";
 const normalizedEdits = new WeakMap();
@@ -41,6 +41,22 @@ export const NO_EDIT_CARDS = {
     editCards: new Map(),
     consumedResults: new Set()
 };
+function toolPairOf(call, result) {
+    return {
+        name: call.name,
+        input: call.input,
+        ...call.state ? {
+            state: call.state
+        } : {},
+        ...result ? {
+            result: {
+                output: result.output,
+                isError: result.isError,
+                editPatch: result.editPatch
+            }
+        } : {}
+    };
+}
 export function buildEditCards(blocks) {
     const editCards = new Map();
     const consumedResults = new Set();
@@ -49,20 +65,7 @@ export function buildEditCards(blocks) {
         if (!call || !isEditToolName(call.name)) {
             continue;
         }
-        const files = normalizedEditFiles(call, pair.result, ()=>editFilesFromToolPair({
-                name: call.name,
-                input: call.input,
-                ...call.state ? {
-                    state: call.state
-                } : {},
-                ...pair.result ? {
-                    result: {
-                        output: pair.result.output,
-                        isError: pair.result.isError,
-                        editPatch: pair.result.editPatch
-                    }
-                } : {}
-            }));
+        const files = normalizedEditFiles(call, pair.result, ()=>editFilesFromToolPair(toolPairOf(call, pair.result)));
         if (!files || files.length === 0) {
             continue;
         }
@@ -79,7 +82,45 @@ export function buildEditCards(blocks) {
         consumedResults
     };
 }
-const diffSummaries = new WeakMap();
+// Counts-only files per call, shared by the diff rollup (buildDiffSummaries)
+// and a turn's changed files (buildEditSummaries): for a call both read, the
+// two derivations agree, so the patch is summarized once.
+const editSummaries = new WeakMap();
+function summaryEditFiles(call, result, derive) {
+    const cached = editSummaries.get(call);
+    if (cached && cached.result === result) {
+        return cached.files;
+    }
+    const files = derive();
+    editSummaries.set(call, {
+        result,
+        files
+    });
+    return files;
+}
+// Tessel: each edit call's files as a list of changed files shows them
+// (editSummariesFromToolPair: counts and first changed line, no rows), plus
+// detailed(): the full files (the expanded card's, cached with them), parsed
+// only when asked for (the user opens a file's diff).
+// -> Map call -> { files, detailed }
+export function buildEditSummaries(blocks) {
+    const summaries = new Map();
+    for (const pair of pairToolBlocks(blocks)){
+        const { call, result } = pair;
+        if (!call || !isEditToolName(call.name)) {
+            continue;
+        }
+        const detailed = ()=>normalizedEditFiles(call, result, ()=>editFilesFromToolPair(toolPairOf(call, result)));
+        const files = summaryEditFiles(call, result, ()=>editSummariesFromToolPair(toolPairOf(call, result), detailed));
+        if (files?.length) {
+            summaries.set(call, {
+                files,
+                detailed
+            });
+        }
+    }
+    return summaries;
+}
 export function buildDiffSummaries(blocks) {
     const summaries = new Map();
     for (const [index, pair] of pairToolBlocks(blocks).entries()){
@@ -91,15 +132,7 @@ export function buildDiffSummaries(blocks) {
         if (!input || typeof input !== 'object' || !('path' in input) || typeof input.path !== 'string' || Object.keys(input).some((key)=>key !== 'path')) {
             continue;
         }
-        const cached = diffSummaries.get(call);
-        let files = cached?.result === result ? cached.files : undefined;
-        if (files === undefined) {
-            files = editFilesFromPatchText(result.output, input.path, true);
-            diffSummaries.set(call, {
-                result,
-                files
-            });
-        }
+        const files = summaryEditFiles(call, result, ()=>editFilesFromPatchText(result.output, input.path, true));
         if (files?.length) {
             summaries.set(call, {
                 files,

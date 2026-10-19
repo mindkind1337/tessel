@@ -60,7 +60,8 @@ export function editFilesFromPatchText(patchText, callerPath, summaryOnly = fals
             summaryOnly ? {
                 ...metadata,
                 added: parsed && 'added' in parsed ? parsed.added : 0,
-                removed: parsed && 'removed' in parsed ? parsed.removed : 0
+                removed: parsed && 'removed' in parsed ? parsed.removed : 0,
+                firstLine: parsed && 'firstLine' in parsed ? parsed.firstLine : null
             } : finalizeEditFile({
                 ...metadata,
                 lines: parsed && 'lines' in parsed ? parsed.lines : [],
