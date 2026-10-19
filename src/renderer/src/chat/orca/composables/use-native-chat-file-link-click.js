@@ -105,7 +105,25 @@ export function useNativeChatFileLinkClick(context, options = {}) {
     // Tessel: an agent on an SSH host names the host's files: opened by their
     // virtual path in the editor (or the image viewer), over the remote file
     // system, only within the chat's project there.
+    // Tessel: a message of an agent on an SSH host whose host is not known
+    // here (an older record, a host removed since): its paths are that
+    // host's, so none opens, and never a file of this computer instead.
+    if (owner?.remote && !owner.remoteRoot && owner.remoteHost) {
+      const host = owner.remoteHost.label || t('chat.orca.fileLinks.anSshHost', 'an SSH host')
+      panel?.toast?.(t('chat.orca.fileLinks.remoteUnknownHost', 'This path is on {{host}}: Tessel cannot open it from here.', { host }), { kind: 'error' })
+      return
+    }
     if (owner?.remoteRoot) {
+      // A message outside the chat (useMessageLinks.js): its host must still
+      // be saved and connected; a link never signs in.
+      if (owner.remoteHost && owner.remoteHost.id && typeof panel?.remoteHostState === 'function') {
+        const state = panel.remoteHostState(owner.remoteHost.id) || {}
+        if (!state.saved || !state.connected) {
+          const host = (state.saved && state.label) || owner.remoteHost.label || owner.remoteHost.id
+          panel?.toast?.(t('chat.orca.fileLinks.hostNotConnected', '{{host}} is not connected', { host }), { kind: 'error' })
+          return
+        }
+      }
       let hit = parsed ? remoteLinkTarget(owner.remoteRoot, parsed.pathText) : null
       // A project saved as "~/…" and a file named by its full path (or the
       // reverse): the same folder once the host's home folder is known.
@@ -116,6 +134,14 @@ export function useNativeChatFileLinkClick(context, options = {}) {
       if (!hit) return failure('unresolved', route.pathText)
       if (!hit.inside) return failure('outside', route.pathText)
       try {
+        // A folder (written with a trailing "/"): the Files tab when it shows
+        // that project there, else the router says it is not in it.
+        if (/[\\/]$/.test(parsed.pathText)) {
+          const router = callback('openTarget') || (typeof panel?.openTarget === 'function' ? panel.openTarget : null)
+          if (!router) return failure('unresolved', route.pathText)
+          await router({ kind: 'dir', path: hit.file }, { event })
+          return
+        }
         if (fileKind(hit.file) === 'image' && (await showInLightbox(hit.file))) return
         const open = callback('openFile') || panel?.viewFile
         if (!open) return failure('unresolved', route.pathText)

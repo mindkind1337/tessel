@@ -132,7 +132,7 @@ import { taskHistory, setTaskHistory, backfillHistory, setHistoryDescriber } fro
 import { restoredSideTab } from './sideTabs'
 import { runSettingsTool } from './settingsTools'
 import { paneModels, paneModelIds } from './paneModels'
-import { buildSenderSnapshot } from './senderIdentity'
+import { buildSenderSnapshot, paneRemote } from './senderIdentity'
 import { sleepBlocker } from '../../shared/agentSleep'
 import { updateBlocker, planUpdate, autoUpdateMoment } from '../../shared/agentUpdatePlan'
 import { describeWaitingText } from './agentUpdateWhy'
@@ -3442,6 +3442,10 @@ provide('panelCtx', {
   // A pane by its id, in any workspace (or null): the Conversations tab, task
   // cards and the activity log resolve a message's paths against its pane.
   findLeaf: (id) => (typeof id === 'string' && id ? findLeaf(id) : null),
+  // An SSH host, for a message's file links on it (useMessageLinks.js):
+  // its name, whether it is still saved and whether Tessel is connected to
+  // it (nothing signs in from a link).
+  remoteHostState: (hostId) => remoteHostState(hostId),
   wakeLeaf: (id) => wakeLeaf(id),
   // A restored remote pane waiting for Connect.
   connectLeaf: (id) => connectLeaf(id),
@@ -3946,6 +3950,12 @@ function openAddProject() {
 function remoteHostLabel(hostId) {
   const target = remoteHostsState.targets.find((x) => x.id === hostId)
   return target ? target.label || target.host : hostId
+}
+// -> { label, saved, connected } (connecting counts: its files can be asked for).
+function remoteHostState(hostId) {
+  const target = remoteHostsState.targets.find((x) => x.id === hostId)
+  const s = remoteHostsState.states[hostId]
+  return { label: target ? target.label || target.host : hostId, saved: !!target, connected: !!target && (hostShared(hostId) || !!(s && (s.status === 'connected' || s.status === 'connecting'))) }
 }
 // user@host:port of a saved host and its login, for the sidebar card's
 // folder line (the saved record only: no password, no key path).
@@ -7185,10 +7195,11 @@ function senderSnapshotOf(leaf, team = null) {
   const ws = wsOfLeaf(leaf.id)
   const teamId = (team && team.id) || leaf.team || null
   const card = taskOfPane(leaf.id)
+  const onHost = paneRemote(leaf)
   return buildSenderSnapshot(leaf, {
     agentName: leaf.agentId ? programLabel(leaf) : '',
     model: paneModels[leaf.id] || leaf.headerModel || '',
-    host: leaf.remoteHostId ? { label: remoteHostLabel(leaf.remoteHostId), address: remoteHostWho(leaf.remoteHostId).address || '' } : null,
+    host: onHost ? { label: remoteHostLabel(onHost.hostId), address: remoteHostWho(onHost.hostId).address || '' } : null,
     branch: ws && gitKeyOf(ws) ? wsBranches[gitKeyOf(ws)] || '' : '',
     teamId,
     lead: !!(teamId && teamById(teamId)?.leadId === leaf.id),
@@ -10398,8 +10409,11 @@ function applyReport(task, r, from, teamId) {
   // Kept on the card; but a card that still waits (cards before it, your
   // decision) does not go to Done on a report.
   const blocked = r.outcome === 'succeeded' && blockedReason(task)
+  // An agent on an SSH host: its paths are that host's files (the card opens
+  // them there, TaskCard.vue), taken from its pane, never from the report.
+  const onHost = paneRemote(from)
   updateTask(task.id, {
-    report: { outcome: r.outcome, summary: r.summary, files: r.files || [], by: from.id, at: Date.now() },
+    report: { outcome: r.outcome, summary: r.summary, files: r.files || [], by: from.id, at: Date.now(), ...(onHost ? { remote: { hostId: onHost.hostId, path: onHost.path || '~', label: remoteHostLabel(onHost.hostId) } } : {}) },
     ...(r.outcome === 'succeeded' && !blocked ? { column: 'done' } : {})
   })
   if (blocked && teamId && from.team === teamId)

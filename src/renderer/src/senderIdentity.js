@@ -1,10 +1,23 @@
 // The sender of a team message, as the window sees the sending pane (see
 // src/shared/senderIdentity.js): built from the pane's state only, never from
 // the message, then shown as one compact line with the details on hover.
-import { cleanSender, senderLine, senderTag } from '../../shared/senderIdentity'
+import { cleanSender, senderLine, senderTag, senderRemote } from '../../shared/senderIdentity'
+import { isRemotePath, parseRemotePath } from '../../shared/remotePath'
 import { t, intlLocale } from './i18n'
 
-export { cleanSender, senderTag }
+export { cleanSender, senderTag, senderRemote }
+
+// The SSH host a pane works on, from the pane's own state (never from what its
+// agent writes): a terminal opened on a host (remoteHostId, remotePath) or a
+// chat whose agent runs there (its folder is a virtual ssh:// path).
+// -> { hostId, path } | null (a pane of this computer)
+export function paneRemote(leaf) {
+  if (!leaf || typeof leaf !== 'object') return null
+  if (typeof leaf.remoteHostId === 'string' && /^ssh-[\w-]{1,60}$/.test(leaf.remoteHostId))
+    return { hostId: leaf.remoteHostId, path: typeof leaf.remotePath === 'string' && leaf.remotePath ? leaf.remotePath : '' }
+  const p = isRemotePath(leaf.cwd) ? parseRemotePath(leaf.cwd) : null
+  return p ? { hostId: p.hostId, path: p.path } : null
+}
 
 // leaf: the sending pane. ctx (what App.vue knows around it): agentName
 // ("Claude Code"), model (its header's text, "Opus 5.5 · high"), host
@@ -12,7 +25,8 @@ export { cleanSender, senderTag }
 // no copy of its own), teamId, lead, card ({ id, title }), now.
 export function buildSenderSnapshot(leaf, ctx = {}) {
   if (!leaf || typeof leaf.id !== 'string') return null
-  const remote = !!leaf.remoteHostId
+  const onHost = paneRemote(leaf)
+  const remote = !!onHost
   const host = (remote && ctx.host) || {}
   const wt = leaf.worktree && typeof leaf.worktree === 'object' ? leaf.worktree : null
   const card = ctx.card && typeof ctx.card === 'object' ? ctx.card : null
@@ -28,9 +42,10 @@ export function buildSenderSnapshot(leaf, ctx = {}) {
     sessionId: leaf.sessionId,
     accountId: typeof leaf.accountId === 'string' ? leaf.accountId : '',
     host: remote ? 'ssh' : 'local',
-    hostLabel: remote ? host.label || leaf.remoteHostId : '',
+    hostId: remote ? onHost.hostId : '',
+    hostLabel: remote ? host.label || onHost.hostId : '',
     hostAddress: remote ? host.address : '',
-    remotePath: remote ? leaf.remotePath : '',
+    remotePath: remote ? onHost.path : '',
     worktree: wt ? wt.path : '',
     branch: (wt && wt.branch) || ctx.branch,
     teamId: ctx.teamId || leaf.team,

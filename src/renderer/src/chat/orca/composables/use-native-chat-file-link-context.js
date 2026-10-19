@@ -4,6 +4,7 @@
 // Returns computed { worktreeId, worktreePath, roots, runtimeEnvironmentId: null } or null.
 import { computed, inject, toValue, unref } from 'vue'
 import { chatRemoteRoot } from '../../remoteChatLinks.js'
+import { remoteRoot } from '../../../../../shared/remotePath.js'
 
 // The same context for a leaf without a component (Tessel: the
 // Conversations tab, task cards and the activity log resolve each message's
@@ -11,8 +12,13 @@ import { chatRemoteRoot } from '../../remoteChatLinks.js'
 export function fileLinkContextOf(leaf, panel = null, resolve = null) {
   // Tessel: a chat whose agent runs on an SSH host: its links are the
   // host's files, opened over the remote file system (remoteChatLinks.js).
-  const hostRoot = leaf && chatRemoteRoot(leaf.cwd)
+  // A terminal opened on an SSH host (an agent started there): the same,
+  // its host's folder, never the local folder the terminal started from.
+  const hostRoot = leaf && (chatRemoteRoot(leaf.cwd) || (leaf.remoteHostId ? remoteRoot(leaf.remoteHostId, leaf.remotePath || '~') : null))
   if (hostRoot) return { worktreeId: leaf.id, worktreePath: hostRoot, roots: [hostRoot], runtimeEnvironmentId: null, remote: true, remoteRoot: hostRoot }
+  // A host pane whose folder cannot be named: none of its paths opens (never
+  // a local folder in its place).
+  if (leaf && leaf.remoteHostId) return null
   const context = resolve
     ? resolve(leaf)
     : leaf && {

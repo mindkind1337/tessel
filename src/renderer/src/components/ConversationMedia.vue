@@ -66,12 +66,17 @@ const sharedBy = (item) => t('conversations.media.sharedBy', '{{who}} · {{when}
 const showLabel = computed(() => t('conversations.media.show', 'Show in conversation'))
 
 // An image file named in a message: a thumbnail only when it is this
-// computer's (an absolute path, never a guest's).
+// computer's (an absolute path, never a guest's, never one an agent on an
+// SSH host names: that is the host's file).
 const ABSOLUTE = /^(?:[A-Za-z]:[\\/]|\/(?!\/))/
 function thumbOf(item) {
   if (item.image) return item.image
   if (item.src) return { dataUrl: item.src, name: item.label }
-  if (item.path && item.type === 'image' && !props.guest && ABSOLUTE.test(item.path)) return { path: item.path, name: item.label, local: true }
+  if (item.path && item.type === 'image' && !props.guest && ABSOLUTE.test(item.path)) {
+    const ctx = props.contextOf(item)
+    if (ctx && ctx.remote) return null
+    return { path: item.path, name: item.label, local: true }
+  }
   return null
 }
 function open(item, event) {

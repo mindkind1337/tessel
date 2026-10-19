@@ -207,10 +207,15 @@ const reportLabel = computed(() => {
 })
 // The report reads as the chat shows it; its paths (and the files it lists)
 // are the card's worktree copy's when it has one, else its agent pane's
-// folder. Another board's (a Live Share host's): no path is a link.
+// folder. Another board's (a Live Share host's): no path is a link. A report
+// from an agent on an SSH host (report.remote, from its pane when Tessel took
+// the report in): that host's files, even once its pane is closed, never a
+// folder of this computer.
 const links = useMessageLinks()
 const reportContext = computed(() => {
   if (props.source) return null
+  const remote = props.task.report && props.task.report.remote
+  if (remote && typeof remote === 'object') return links.contextFor(props.task.report.by || props.task.paneId || null, { host: remote })
   const copy = props.task.worktree && props.task.worktree.path
   if (copy) return links.contextFor(null, { folder: copy })
   return props.task.paneId ? links.contextFor(props.task.paneId) : null
