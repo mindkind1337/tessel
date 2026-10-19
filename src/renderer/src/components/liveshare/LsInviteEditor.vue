@@ -12,12 +12,12 @@
 // what it now gives is given only if you tick it. Each person stays
 // editable on their own (People).
 import { ref, reactive, computed, watch, nextTick, onMounted, useId } from 'vue'
-import RightsChecks from './RightsChecks.vue'
+import RightsGrid from './RightsGrid.vue'
 import ProjectChecks from './ProjectChecks.vue'
 import LsAgents from './LsAgents.vue'
 import { cleanRights, setRight, sameRights, withAgents } from '../../../../shared/liveShareRights'
 import { grantDiff, inviteExpiry, inviteName } from '../../liveShareAccess'
-import { rightWords, rightsShort, presetRights, rightsPreset } from '../../liveShareRights'
+import { rightWords, presetRights } from '../../liveShareRights'
 import { t } from '../../i18n'
 
 const MAX_LABEL = 40
@@ -70,7 +70,6 @@ watch(
   () => {
     Object.assign(form, start())
     step.value = 'form'
-    customOpen.value = rightsPreset(form.rights) === 'custom'
   }
 )
 
@@ -96,22 +95,7 @@ function setAgents(rule) {
   form.rights = withAgents(form.rights, rule)
 }
 
-// The rights as a preset (one click), each box behind Customize: open by
-// itself for rights that match no preset.
-const PRESETS = computed(() => [
-  { id: 'view', label: t('liveShare.invite.presetView', 'View only') },
-  { id: 'collaborate', label: t('liveShare.invite.presetCollaborate', 'Collaborate') },
-  { id: 'full', label: t('liveShare.invite.presetFull', 'Full control') }
-])
-const preset = computed(() => rightsPreset(form.rights))
-const customOpen = ref(rightsPreset(form.rights) === 'custom')
-const showRightBoxes = computed(() => customOpen.value || preset.value === 'custom')
-const presetHint = computed(() => {
-  if (preset.value === 'view') return t('liveShare.invite.presetViewHint', 'They watch the shared panes and files, nothing else.')
-  if (preset.value === 'collaborate') return t('liveShare.invite.presetCollaborateHint', 'They open terminals and agents, edit files, commit and manage tasks. They never type in your terminals.')
-  if (preset.value === 'full') return t('liveShare.invite.presetFullHint', 'Every right, typing included: they can run any command on this PC as you. Only for people you trust.')
-  return t('liveShare.invite.presetCustomHint', 'Custom: {{rights}}', { rights: rightsShort(form.rights) })
-})
+// The rights as a preset (one click) or tile by tile (RightsGrid).
 // (A preset keeps the agents chosen.)
 function choosePreset(id) {
   form.rights = withAgents(presetRights(id), form.rights.agents || null)
@@ -215,17 +199,7 @@ onMounted(() => {
 
       <fieldset class="lsi-fieldset">
         <legend class="lsi-label">{{ t('liveShare.invite.rights', 'What they can do (you can change it when you let them in)') }}</legend>
-        <div class="lsi-seg" role="radiogroup" :aria-label="t('liveShare.invite.rights', 'What they can do (you can change it when you let them in)')">
-          <label v-for="p in PRESETS" :key="p.id" class="lsi-seg-item" :class="{ on: preset === p.id }" :data-test="'ls-invite-preset-' + p.id">
-            <input type="radio" :name="group + '-rights'" :value="p.id" :checked="preset === p.id" @change="choosePreset(p.id)" />
-            <span>{{ p.label }}</span>
-          </label>
-          <button type="button" class="lsi-custom" :aria-expanded="showRightBoxes" :disabled="preset === 'custom'" data-test="ls-invite-customize" @click="customOpen = !customOpen">
-            {{ t('liveShare.invite.customize', 'Customize') }}
-          </button>
-        </div>
-        <p class="lsi-preset-hint" :class="{ warn: preset === 'full' }" data-test="ls-invite-preset-hint">{{ presetHint }}</p>
-        <RightsChecks v-if="showRightBoxes" class="lsi-rights" :rights="form.rights" test-key="invite" :label="t('liveShare.invite.rights', 'What they can do (you can change it when you let them in)')" @toggle="toggleRight" />
+        <RightsGrid presets :rights="form.rights" test-key="invite" :label="t('liveShare.invite.rights', 'What they can do (you can change it when you let them in)')" @toggle="toggleRight" @preset="choosePreset" />
         <LsAgents class="lsi-agents" :rule="form.rights.agents || null" :can-type="form.rights.type === true" test-key="invite" @change="setAgents" />
       </fieldset>
 
@@ -351,41 +325,6 @@ onMounted(() => {
   color: var(--text-dim);
   font-size: 12px;
   cursor: pointer;
-}
-.lsi-custom {
-  height: 26px;
-  margin-left: 4px;
-  padding: 0 6px;
-  border: 0;
-  background: transparent;
-  color: var(--accent);
-  font: inherit;
-  font-size: 12px;
-  cursor: pointer;
-}
-.lsi-custom:hover:not(:disabled) {
-  text-decoration: underline;
-}
-.lsi-custom:disabled {
-  color: var(--text-dim);
-  cursor: default;
-}
-.lsi-custom:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 1px;
-  border-radius: 4px;
-}
-.lsi-preset-hint {
-  margin: 6px 0 0;
-  color: var(--text-dim);
-  font-size: 12px;
-  line-height: 1.4;
-}
-.lsi-preset-hint.warn {
-  color: var(--warn);
-}
-.lsi-rights {
-  margin-top: 8px;
 }
 .lsi-seg-item input {
   position: absolute;

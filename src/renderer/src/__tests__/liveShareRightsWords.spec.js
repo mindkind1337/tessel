@@ -5,7 +5,7 @@
 import { describe, expect, it } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { RIGHT_IDS } from '../../../shared/liveShareRights'
-import { hasRightWords, rightWords, shownRights, rightsShort } from '../liveShareRights'
+import { hasRightWords, rightWords, shownRights, rightsShort, presetLabel, presetRights, rightsSummary } from '../liveShareRights'
 import { initials, inviteName, inviteUses, inviteExpiry, grantDiff, accessPeople, accessError, joinedGuests, offlinePeople } from '../liveShareAccess'
 import RightsChecks from '../components/liveshare/RightsChecks.vue'
 
@@ -22,7 +22,16 @@ describe('rights: words for the catalog', () => {
   })
 
   it('the open right says what it means', () => {
-    expect(rightWords('open').label).toBe('Can open terminals and agents on your computer (they can run commands)')
+    expect(rightWords('open').label).toBe('Open terminals and agents on your computer (they can run commands)')
+  })
+
+  it('every label is an action, in the same form (no "Can open…" among them)', () => {
+    for (const r of shownRights()) expect(r.label).not.toMatch(/^Can /)
+  })
+
+  it('Type is the one right marked as running commands as you, and comes first', () => {
+    expect(shownRights()[0].id).toBe('type')
+    expect(shownRights().filter((r) => r.danger).map((r) => r.id)).toEqual(['type'])
   })
 
   it('a right without words is never shown; unknown ids are not words', () => {
@@ -45,6 +54,15 @@ describe('rights: words for the catalog', () => {
   it('a short summary', () => {
     expect(rightsShort({ type: true, open: true })).toBe('Type, Open')
     expect(rightsShort({})).toBe('Watch only')
+  })
+
+  it('presets by name, and one chip for anyone’s rights', () => {
+    expect(['view', 'collaborate', 'full', 'custom'].map(presetLabel)).toEqual(['View only', 'Collaborate', 'Full control', 'Custom'])
+    expect(rightsSummary({})).toMatchObject({ preset: 'view', text: 'View only', danger: false })
+    expect(rightsSummary(presetRights('collaborate'))).toMatchObject({ preset: 'collaborate', text: 'Collaborate', danger: false })
+    expect(rightsSummary(presetRights('full'))).toMatchObject({ preset: 'full', text: 'Full control', danger: true })
+    expect(rightsSummary({ open: true, edit: true, git: true, tasks: true })).toMatchObject({ preset: 'custom', text: 'Custom · 4', title: 'Open, Edit, Git, Tasks' })
+    expect(rightsSummary({ type: true }).danger).toBe(true)
   })
 })
 

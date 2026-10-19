@@ -288,7 +288,8 @@ describe('the Live Share dialog: the setting and the recent guest actions', () =
   })
 
   it('turns the setting off and on through main, and lists what guests changed', async () => {
-    const w = mount(LiveShareDialog, { props: { open: true, projects: [{ id: 'ws-1', name: 'site' }], projectIds: ['ws-1'] }, attachTo: document.body })
+    // The setting is in Settings, the recent actions in the overview.
+    const w = mount(LiveShareDialog, { props: { open: true, initialSection: 'settings', projects: [{ id: 'ws-1', name: 'site' }], projectIds: ['ws-1'] }, attachTo: document.body })
     await flushPromises()
     const box = w.get('[data-test="ls-hide-ignored"]')
     expect(box.element.checked).toBe(true)
@@ -296,6 +297,7 @@ describe('the Live Share dialog: the setting and the recent guest actions', () =
     await flushPromises()
     expect(setSettings).toHaveBeenCalledWith({ hideIgnored: false })
     expect(w.get('[data-test="ls-hide-ignored"]').element.checked).toBe(false)
+    await w.get('[data-test="ls-section-overview"]').trigger('click')
     const items = w.findAll('.ls-recent-item')
     expect(items.map((i) => i.get('.ls-recent-text').text())).toEqual(['Ana saved CLAUDE.md', 'Ana committed “Fix”'])
     expect(w.get('[data-test="ls-recent-2"]').classes()).toContain('flagged')
@@ -305,7 +307,7 @@ describe('the Live Share dialog: the setting and the recent guest actions', () =
 
   it('"Find me again after a restart (uses ntfy.sh)": on by default, turned off through main', async () => {
     setSettings.mockImplementation(async (patch) => ({ ok: true, settings: { hideIgnored: true, rendezvous: patch.rendezvous } }))
-    const w = mount(LiveShareDialog, { props: { open: true, projects: [{ id: 'ws-1', name: 'site' }], projectIds: ['ws-1'] }, attachTo: document.body })
+    const w = mount(LiveShareDialog, { props: { open: true, initialSection: 'settings', projects: [{ id: 'ws-1', name: 'site' }], projectIds: ['ws-1'] }, attachTo: document.body })
     await flushPromises()
     const box = w.get('[data-test="ls-rendezvous"]')
     expect(box.element.checked).toBe(true)
