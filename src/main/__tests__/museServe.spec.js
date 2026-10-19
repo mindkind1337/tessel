@@ -131,13 +131,20 @@ describe('Muse Code models (model/list)', () => {
     const dir = fs.mkdtempSync(join(os.tmpdir(), 'tessel-muse-models-'))
     try {
       const { spawn, frames } = fakeServe({ 'model/list': () => ({ result: LIST }) })
-      const lister = createModelLister(dir, { spawn, findMsp: () => 'C:\\m\\muse.exe', env: {}, now: () => 7 })
+      const lister = createModelLister(dir, { spawn, findMsp: () => 'C:\\m\\muse.exe', env: {}, now: () => 7, museCatalog: async () => null })
       const res = await lister.probe('muse')
       expect(res).toMatchObject({ ok: true, fetchedAt: 7 })
       expect(res.models.map((m) => m.id)).toEqual(['muse-spark-1.3', 'muse-spark-1.3-contributor'])
       expect(frames.map((f) => f.method)).toEqual(['initialize', 'initialized', 'model/list'])
       expect(lister.list().muse.models).toHaveLength(2)
-      expect(await createModelLister(dir, { spawn, findMsp: () => null, env: {} }).probe('muse')).toMatchObject({ ok: false, reason: 'not-found' })
+      expect(await createModelLister(dir, { spawn, findMsp: () => null, env: {}, museCatalog: async () => null }).probe('muse')).toMatchObject({ ok: false, reason: 'not-found' })
+      // Its catalog on this computer: read instead, `muse serve` never started.
+      const spawned = spawn.mock.calls.length
+      const catalog = async () => ({ models: [{ modelId: 'muse-wonder-1.0', displayLabel: 'muse-wonder-1.0', isDefault: true, variants: ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'] }] })
+      const got = await createModelLister(dir, { spawn, findMsp: () => 'C:\\m\\muse.exe', env: {}, now: () => 8, museCatalog: catalog }).probe('muse')
+      expect(got).toMatchObject({ ok: true })
+      expect(got.models.map((m) => m.id)).toEqual(['muse-wonder-1.0'])
+      expect(spawn.mock.calls.length).toBe(spawned)
     } finally {
       fs.rmSync(dir, { recursive: true, force: true })
     }

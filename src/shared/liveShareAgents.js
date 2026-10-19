@@ -276,9 +276,15 @@ const commandText = (s) => String(s || '').normalize('NFKC').replace(/\p{Cf}/gu,
 // Whether a submitted line ({ text, over } or a string) may switch to a model
 // the rule refuses for this agent: "/model" with no model (it opens the
 // agent's own picker) or with one not allowed, a start of "/model" (the
-// agent completes it), /models, /config or /settings (its model setting,
-// Muse Code's picker and panel), or a command line too
-// long to follow. Only for an agent whose models the rule limits.
+// agent completes it) or a longer word beginning with it (/models), /config
+// (its model setting), or a command line too long to follow. Muse Code also
+// changes its model in /settings and /local-models: any start of those (two
+// characters or more, which its completion turns into them) is refused there.
+// Its /model takes an id ("usage: /model [<model-id>]" in Muse Code 1.4.10),
+// so an allowed one passes. Muse 1.4.10 binds no key to its model picker
+// (its keymap has none): the shared refusedKeys are enough. Only for an
+// agent whose models the rule limits.
+const MUSE_MODEL_PANELS = ['/settings', '/local-models']
 export function refusedModelSwitch(rule, agent, submitted) {
   const list = allowedModels(rule, agent)
   if (!list) return false
@@ -288,14 +294,12 @@ export function refusedModelSwitch(rule, agent, submitted) {
   if (entry.over) return true
   const low = line.toLowerCase()
   const word = low.split(/\s/)[0]
-  if (word.length >= 2 && '/model'.startsWith(word)) {
-    if (word !== '/model') return true
-  }
+  if (word.length >= 2 && '/model'.startsWith(word) && word !== '/model') return true
+  // A longer word beginning with it (/models): completed or opened as a picker.
+  if (word.startsWith('/model') && word !== '/model') return true
   if (word.length >= 4 && '/config'.startsWith(word)) return true
   if (/^\/config\b/.test(low)) return true
-  // Muse Code's model picker (/models) and its settings panel (/settings),
-  // where its model can be changed too.
-  if (word === '/models' || (word.length >= 4 && '/settings'.startsWith(word))) return true
+  if (agent === 'muse' && MUSE_MODEL_PANELS.some((panel) => (word.length >= 2 && panel.startsWith(word)) || word.startsWith(panel))) return true
   const m = /^\/model\b\s*(\S*)/.exec(low)
   if (!m) return false
   return !m[1] || !list.some((x) => sameModel(x, m[1]))

@@ -251,6 +251,16 @@ export function jsonAgentConfig(agent, name, home) {
   return e ? entryToConfig(agent, e) : null
 }
 
+// Two JSON values alike, whatever the order of an object's keys (a list's
+// order counts).
+export function sameValue(a, b) {
+  if (a === b) return true
+  if (Array.isArray(a) || Array.isArray(b)) return Array.isArray(a) && Array.isArray(b) && a.length === b.length && a.every((v, i) => sameValue(v, b[i]))
+  if (!a || !b || typeof a !== 'object' || typeof b !== 'object') return false
+  const ka = Object.keys(a)
+  return ka.length === Object.keys(b).length && ka.every((k) => Object.hasOwn(b, k) && sameValue(a[k], b[k]))
+}
+
 // What stays the user's when Tessel rewrites its own server entry (its team
 // tools at each start): a server the user turned off stays off (Muse's
 // "enabled": false, Antigravity's "disabled": true), and Muse's timeouts.
@@ -280,9 +290,16 @@ export function setJsonAgentServer(agent, name, entry, home, { keepUser = false 
   if (agent === 'muse' && data.schema_version === undefined) data.schema_version = 1
   if (agent === 'kimi' && Object.hasOwn(data, key) && (!data[key] || typeof data[key] !== 'object' || Array.isArray(data[key])))
     return { ok: false, error: t('main.jsonAgents.kimiNotObject', 'Kimi mcpServers is not an object; the existing file was left unchanged.') }
+  // Muse: a server list that is not an object is the user's to fix, never
+  // replaced (its servers would be lost).
+  if (agent === 'muse' && Object.hasOwn(data, key) && (!data[key] || typeof data[key] !== 'object' || Array.isArray(data[key])))
+    return { ok: false, error: t('main.jsonAgents.museNotObject', '{{file}} has a {{key}} that is not an object, so Tessel left the file unchanged.', { file, key }) }
   if (!data[key] || typeof data[key] !== 'object' || Array.isArray(data[key])) data[key] = {}
   if (keepUser) entry = { ...entry, ...userKeptFields(agent, data[key][name]) }
-  if (JSON.stringify(data[key][name]) === JSON.stringify(entry)) return { ok: true, changed: false }
+  // Field by field: an agent that saves its keys in another order (Muse
+  // rewrites its settings) is not a change, so the file and its backup are
+  // left alone.
+  if (sameValue(data[key][name], entry)) return { ok: true, changed: false }
   data[key][name] = entry
   try {
     writeSettings(file, data)

@@ -37,6 +37,20 @@ describe('Muse Code: the team tools written again at each start', () => {
     // Again: nothing to change.
     expect(setJsonAgentServer('muse', 'tessel-team', entry, home, { keepUser: true })).toEqual({ ok: true, changed: false })
     expect(listJsonAgent('muse', home).servers.find((s) => s.name === 'tessel-team')).toMatchObject({ enabled: false })
+    // Muse rewrote its settings with the keys in another order: no change, no new backup.
+    const reordered = { schema_version: 1, mcpServers: { 'tessel-team': { startup_timeout_ms: 60000, enabled: false, env: { ...entry.env }, args: entry.args, command: entry.command } } }
+    put(reordered)
+    fs.rmSync(`${file()}.tessel-bak`, { force: true })
+    expect(setJsonAgentServer('muse', 'tessel-team', entry, home, { keepUser: true })).toEqual({ ok: true, changed: false })
+    expect(fs.existsSync(`${file()}.tessel-bak`)).toBe(false)
+    // A server list that is not an object: left as it is, said why.
+    for (const bad of ['oops', ['x'], null]) {
+      put({ schema_version: 1, mcpServers: bad })
+      const res = setJsonAgentServer('muse', 'tessel-team', entry, home, { keepUser: true })
+      expect(res.ok).toBe(false)
+      expect(res.error).toMatch(/not an object/)
+      expect(read().mcpServers).toEqual(bad)
+    }
     // Its older key: still one server there, none added under the new key.
     put({ schema_version: 1, mcp_servers: { 'tessel-team': { command: 'node', args: ['old.cjs'] } } })
     expect(setJsonAgentServer('muse', 'tessel-team', entry, home, { keepUser: true })).toEqual({ ok: true, changed: true })

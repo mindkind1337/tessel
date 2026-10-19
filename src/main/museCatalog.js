@@ -84,6 +84,49 @@ export function createMuseCatalog({ home = os.homedir(), env = process.env, cloc
   }
 }
 
+// The models Muse's catalog offers, in the shape of its `muse serve`
+// model/list answer ({ models: [{ modelId, displayLabel, isDefault, variants,
+// reasoningEffortVariants }] }, parseMuseModelList reads it), from its files:
+// Settings > Agents > Refresh models never starts its 480 MB binary when they
+// are there. Hidden rows (contributor and image models) are left out.
+// -> that answer, or null (no catalog yet).
+export async function museCatalogModelList({ home = os.homedir(), env = process.env } = {}) {
+  const dir = join(museDataDir(home, env), 'model-catalog')
+  let names = []
+  try {
+    names = (await fsp.readdir(dir, { withFileTypes: true })).filter((e) => e.isFile() && /\.json$/i.test(e.name)).map((e) => e.name).sort().slice(0, MAX_FILES)
+  } catch {
+    return null
+  }
+  const models = []
+  const seen = new Set()
+  for (const name of names) {
+    let o
+    try {
+      const file = join(dir, name)
+      if ((await fsp.stat(file)).size > MAX_BYTES) continue
+      o = JSON.parse(await fsp.readFile(file, 'utf8'))
+    } catch {
+      continue
+    }
+    for (const r of object(o) && Array.isArray(o.rows) ? o.rows.slice(0, 300) : []) {
+      const id = object(r) ? museModelId(r.model_id) : ''
+      if (!id || seen.has(id) || r.visibility === 'hidden') continue
+      seen.add(id)
+      const tiers = (Array.isArray(r.reasoning_effort_variants) ? r.reasoning_effort_variants : []).map((v) => (object(v) && typeof v.tier === 'string' ? v.tier : null)).filter(Boolean)
+      models.push({
+        modelId: id,
+        displayLabel: typeof r.display_label === 'string' ? r.display_label : id,
+        description: typeof r.description === 'string' ? r.description : null,
+        isDefault: r.is_default === true,
+        variants: tiers,
+        ...(typeof r.default_reasoning_effort === 'string' ? { defaultReasoningEffort: r.default_reasoning_effort } : {})
+      })
+    }
+  }
+  return models.length ? { models } : null
+}
+
 let shared = null
 export function museContextWindow(model) {
   shared = shared || createMuseCatalog()

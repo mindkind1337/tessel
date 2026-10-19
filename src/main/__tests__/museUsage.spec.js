@@ -108,6 +108,28 @@ describe('Muse Code usage: its key call', () => {
     }
   })
 
+  it('an inactive subscription is kept as the plan (Settings says "No subscription"); a refused sign-in forgets it', async () => {
+    const dir = home(LOGIN)
+    try {
+      let answer = () => new Response(JSON.stringify(ANSWER))
+      const { usage } = service(dir, () => answer())
+      await usage.read({ provider: 'muse', accountId: null })
+      expect(await usage.signIn('muse')).toMatchObject({ planType: 'Muse Code High Usage', subscribed: true })
+      answer = () => new Response(JSON.stringify({ ...ANSWER, is_subs_active: false, subs_tier_name: null, subs_usage: null }))
+      expect(await usage.read({ provider: 'muse', accountId: null })).toMatchObject({ ok: false, code: 'unavailable' })
+      expect(await usage.signIn('muse')).toMatchObject({ planType: null, subscribed: false })
+      answer = () => new Response(JSON.stringify(ANSWER))
+      await usage.read({ provider: 'muse', accountId: null })
+      answer = () => new Response('{}', { status: 401 })
+      expect(await usage.read({ provider: 'muse', accountId: null })).toMatchObject({ ok: false, code: 'expired' })
+      const s = await usage.signIn('muse')
+      expect(s.planType).toBe(null)
+      expect(s.plan).toBeUndefined()
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
   it('says why there is nothing: signed out, API key, expired login, no subscription', async () => {
     const out = home(undefined)
     const key = home({ api_key: 'mk-only', mechanism: 'api_key' })

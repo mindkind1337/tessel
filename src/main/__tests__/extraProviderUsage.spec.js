@@ -123,6 +123,8 @@ describe('explicit additional quota collectors', () => {
       'claude',
       'codex',
       'gemini',
+      // Muse Code: its quota (its key call) and its local token stats.
+      'muse',
       'cursor',
       'grok',
       'opencode',
@@ -132,6 +134,7 @@ describe('explicit additional quota collectors', () => {
     expect(result.providers.filter((p) => p.report).map((p) => p.id)).toEqual([
       'claude',
       'codex',
+      'muse',
       'grok',
       'opencode'
     ])
