@@ -3712,23 +3712,20 @@ ipcMain.handle('files:open', async (_evt, q = {}) => {
   const file = q && typeof q.file === 'string' ? q.file : ''
   if (localOnlyFor('files:open', file)) return guestFs().localOnly()
   if (isRemotePath(file)) return remoteFs.remoteOnly()
-  let ok = false
-  try {
-    ok = !!file && fs.statSync(file).isFile()
-  } catch {
-    ok = false
-  }
-  if (!ok) return { ok: false, error: t('main.error.fileNotFound', 'The file was not found.') }
-  const line = Number.isInteger(q.line) && q.line > 0 ? q.line : null
-  const col = Number.isInteger(q.col) && q.col > 0 ? q.col : null
-  // VS Code's launcher is a .cmd (run through cmd): never with a path cmd
-  // could read as a command; such a file opens in its default program.
-  if (!/[&|<>^%"]/.test(file) && (await commandExists('code'))) {
-    const res = await runQuiet('cmd.exe', ['/d', '/c', 'code', '-g', codeGotoArg(file, line, col)], { env: freshEnv(), timeout: 20000 })
-    if (res.ok) return { ok: true, with: 'code' }
-  }
-  const err = await shell.openPath(file)
-  return err ? { ok: false, error: err } : { ok: true, with: 'default' }
+  // filesOpen.js: never a program, a script or a folder; the system's own
+  // program only for media and documents. VS Code's launcher is a .cmd: a
+  // path cmd could misread starts Code.exe directly instead (no shell).
+  return openFileOutside(q || {}, {
+    shell,
+    openInCode: async (f, line, col) => {
+      const found = await whereFirst('code')
+      if (!found) return false
+      const launch = codeLaunch(codeGotoArg(f, line, col), { codeCmd: codeCmdFor(found), env: freshEnv() })
+      if (!launch) return false
+      const res = await runQuiet(launch.file, launch.args, { env: launch.env, timeout: 20000 })
+      return res.ok
+    }
+  })
 })
 // Paths named in the native chat (chatFileOpen.js): which exist (a bounded
 // batch), and a folder or a media / document file opened with the system,
