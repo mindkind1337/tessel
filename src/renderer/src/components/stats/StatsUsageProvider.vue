@@ -330,6 +330,9 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', outside))
             <span v-else-if="provider === 'opencode'">{{
               t('stats.provider.opencodeCost', 'The cost is the one OpenCode recorded for each reply, not your subscription bill.')
             }}</span>
+            <span v-else-if="provider === 'grok'">{{
+              t('stats.provider.grokCost', 'The cost is the one Grok Build recorded for each turn (API prices), not your SuperGrok subscription bill.')
+            }}</span>
             <span v-else
               >{{ t('stats.provider.claudeCost', 'API-equivalent cost is an estimate, not your subscription bill.')
               }}<template v-if="summary.hasUnpricedModels">

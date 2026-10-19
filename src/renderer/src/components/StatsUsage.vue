@@ -45,7 +45,8 @@ const PROVIDERS = computed(() => [
 const REPORTERS = {
   claude: 'claudeUsageReport',
   codex: 'codexUsageReport',
-  opencode: 'opencodeUsageReport'
+  opencode: 'opencodeUsageReport',
+  grok: 'grokUsageReport'
 }
 const PREF_KEY = 'tessel:usage-analytics'
 function readPreferences() {

@@ -6,6 +6,7 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import ProviderAccountRow from './ProviderAccountRow.vue'
 import { t, intlLocale } from '../i18n'
+import { grokPlanInfo } from '../grokPlan'
 
 const props = defineProps({
   provider: { type: String, required: true }, // 'cursor' | 'grok'
@@ -104,8 +105,11 @@ const help = computed(() => {
       : t('settings.accounts.grok.expiredShort', 'Run grok on this computer (complete sign-in if asked), then Refresh usage.')
   return ''
 })
+// Grok's tier and sign-in kind (grokPlan.js): a tag beside Refresh, its
+// details below; Free / X Basic says "No subscription".
+const plan = computed(() => (props.provider === 'grok' && signedIn.value ? grokPlanInfo(props.status?.plan) : null))
 const attention = computed(
-  () => !!props.status?.error || (signedIn.value && !fresh.value) || !!staleError.value
+  () => !!props.status?.error || (signedIn.value && !fresh.value) || !!staleError.value || !!plan.value?.warn
 )
 // Where Tessel reads the sign-in from.
 const sourceText = computed(() => {
@@ -173,6 +177,7 @@ onBeforeUnmount(() => {
     :attention="attention"
   >
     <template #actions>
+      <span v-if="plan && plan.tag" class="tag" :class="{ 'tag-warn': plan.warn }" :title="plan.title" data-test="usage-account-plan">{{ plan.tag }}</span>
       <button
         type="button"
         class="exit-btn"
@@ -200,6 +205,7 @@ onBeforeUnmount(() => {
       }}</span>
       {{ sourceText }}
     </p>
+    <p v-if="plan" class="usage-hint" data-test="usage-account-plan-details">{{ plan.title }}</p>
     <div v-if="windows.length" class="usage-account-usage" data-test="usage-account-usage">
       <p class="usage-label">
         {{

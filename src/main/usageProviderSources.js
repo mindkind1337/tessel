@@ -9,6 +9,7 @@ import { t } from './i18n'
 import { DEFAULT_PROVIDER_SETTINGS } from './providerCredentials'
 import { createGeminiRefresher } from './geminiCliOAuth'
 import { miniMaxModels } from './usageProviderMapping'
+import { grokHome, grokPlanAttention, readGrokPlanLocal } from './grokAccount'
 
 // MiniMax's usage endpoint rejects non-browser clients (Orca's
 // minimax-request-context.ts): a real browser user agent, per platform.
@@ -113,7 +114,7 @@ export function createUsageProviderSources({
         'kimi-code.json'
       )
     ],
-    grok: [path.join(env.GROK_HOME || path.join(home, '.grok'), 'auth.json')],
+    grok: [path.join(grokHome(home, env), 'auth.json')],
     cursor: [
       path.join(cursor, 'auth.json'),
       path.join(desktop, 'User', 'globalStorage', 'state.vscdb')
@@ -442,7 +443,22 @@ export function createUsageProviderSources({
         const fresh = (row) => !row.expires_at || Date.parse(row.expires_at) - clock() > 300000
         const row = rows.find(fresh) || rows[0]
         if (!row) return out
-        return { ...out, signedIn: true, email: short(row.email), teamId: short(row.team_id), tokenFresh: fresh(row) }
+        // Its plan as Grok Build last fetched it (grokAccount.js), never a token.
+        let plan = null
+        try {
+          plan = readGrokPlanLocal(home, env)
+        } catch {
+          plan = null
+        }
+        return {
+          ...out,
+          signedIn: true,
+          email: short(row.email),
+          teamId: short(row.team_id),
+          tokenFresh: fresh(row),
+          planType: plan?.label || null,
+          ...(plan ? { plan: { label: plan.label, tier: plan.tier, paid: plan.paid, kind: plan.kind, team: plan.team, source: plan.source, checkedAt: plan.checkedAt, attention: grokPlanAttention(plan) } } : {})
+        }
       }
       // Gemini CLI (oauth_creds.json): whether its login is still valid and
       // whether it can be refreshed (Settings > "Use Gemini CLI credentials").

@@ -63,6 +63,8 @@ for (const id of ['cursor', 'grok', 'hermes', 'devin', 'omp', 'muse', 'qoder']) 
 // The Antigravity CLI checks for updates itself when it starts, and has its
 // own command for it.
 OTHER_HINTS.antigravity = () => t('main.agentUpdate.hintAntigravity', 'The Antigravity CLI updates itself when it starts (or run: agy update).')
+// Grok Build too (installed with winget, `grok update` names the winget command).
+OTHER_HINTS.grok = () => t('main.agentUpdate.hintGrok', 'Grok Build updates itself when it starts (or run: grok update).')
 
 export function npmUpdateSteps(id) {
   const pkg = NPM_PACKAGES[id]

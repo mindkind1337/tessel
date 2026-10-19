@@ -54,7 +54,8 @@ import {
   reportedTranscript,
   transcriptViewRoots,
   validViewId,
-  viewEvents
+  viewEvents,
+  grokModelTimeline
 } from './transcriptView.js'
 import { createRemoteTail, remoteWindowReader, validRemoteTranscript } from './remoteTranscripts.js'
 import { isTesselDelivery } from '../../shared/tesselDelivery.js'
@@ -264,6 +265,8 @@ export function modelTimeline(agent, lines) {
   if (agent === 'muse') return museModelTimeline(lines.join('\n'))
   if (agent === 'antigravity') return antigravityModelTimeline(lines)
   if (agent === 'omp') return piModelTimeline(lines)
+  // Grok Build: the model each prompt was sent to (its update stream).
+  if (agent === 'grok') return grokModelTimeline(lines)
   const out = []
   const claude = agent === 'claude' || agent === 'openclaude'
   if (!claude && agent !== 'codex') return out

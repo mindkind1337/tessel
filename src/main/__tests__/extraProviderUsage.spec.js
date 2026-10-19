@@ -135,6 +135,7 @@ describe('explicit additional quota collectors', () => {
     expect(result.providers.filter((p) => p.report).map((p) => p.id)).toEqual([
       'claude',
       'codex',
+      'grok',
       'opencode'
     ])
     // OpenCode's token stats are local: no quota row of their own.

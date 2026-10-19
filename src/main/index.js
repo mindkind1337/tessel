@@ -182,6 +182,8 @@ import {
   installOpencodePlugin,
   installKimiHooks,
   installCodexServer,
+  installGrokServer,
+  unsafePath,
   claudeServerPresent,
   claudeServerExists,
   removeTeamHooks,
@@ -2672,6 +2674,11 @@ ipcMain.handle(
       }
       return { ok: false, script, changed, errors: [noNodeError()], version: (/const VERSION = '([^']+)'/.exec(installed) || [])[1] || null }
     }
+    // A path with a line break or NUL is never written into a settings file.
+    if (unsafePath(script) || unsafePath(node)) {
+      log.error('team', 'team tools: a path with a line break, nothing set up')
+      return { ok: false, script, changed, errors: [t('main.hooks.badPath', 'The Tessel data folder or node has a line break in its path.')], version: null }
+    }
     if (!claudeServerPresent(script, undefined, node)) {
       // Registered with another path (an older version, the other build):
       // replaced, since Claude Code refuses to add a name that exists.
@@ -2733,6 +2740,17 @@ ipcMain.handle(
       }
     } catch (err) {
       errors.push(t('main.hooks.codexFailed', 'Codex hooks: {{error}}', { error: err.message }))
+    }
+    // Grok Build: the team tools in its own config.toml (where it is installed).
+    try {
+      const grok = (await getAgents()).find((a) => a.id === 'grok')
+      if (grok && grok.available) {
+        const r = installGrokServer(script, undefined, { node })
+        if (r.error) errors.push(`Grok Build: ${r.error}`)
+        else if (r.changed) changed.push('Grok Build: MCP server tessel-team')
+      }
+    } catch (err) {
+      errors.push(`Grok Build: ${err.message}`)
     }
     // Gemini CLI hooks: its conversation, and its team messages while it works
     // and when it finishes a turn (never typed). Only where it is installed.

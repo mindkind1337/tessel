@@ -300,77 +300,85 @@ export function createOpencodeUsageReport({
         if (owner.get(e.sessionId) === f) events.push(e)
       }
     }
-    const totals = empty()
-    const allTotals = empty()
-    const allSessions = new Set()
-    const byDay = new Map()
-    const byModel = new Map()
-    const byProject = new Map()
-    const bySession = new Map()
-    for (const e of events) {
-      add(allTotals, e)
-      allSessions.add(e.sessionId)
-      const day = dayOf(e.time)
-      const model = e.model || 'unknown'
-      if (
-        (range.from && day < range.from) ||
-        (range.to && day > range.to) ||
-        (range.cwd && usageProjectKey(e.cwd) !== usageProjectKey(range.cwd)) ||
-        (range.model && model !== range.model) ||
-        (projectIn && !projectIn(e.cwd))
-      )
-        continue
-      add(totals, e)
-      if (!byDay.has(day)) byDay.set(day, { day, ...empty() })
-      add(byDay.get(day), e)
-      if (!byModel.has(model)) byModel.set(model, { model, ...empty(), sessions: new Set() })
-      add(byModel.get(model), e)
-      byModel.get(model).sessions.add(e.sessionId)
-      // Scoped to Tessel's projects: sub-folders and worktrees inside a project count as it.
-      const project = (projectIn && projectIn(e.cwd)) || e.cwd || '(unknown folder)'
-      const key = usageProjectKey(project)
-      if (!byProject.has(key))
-        byProject.set(key, {
-          cwd: project,
-          label: project.split(/[\\/]/).filter(Boolean).at(-1) || project,
-          ...empty(),
-          sessions: new Set()
-        })
-      add(byProject.get(key), e)
-      byProject.get(key).sessions.add(e.sessionId)
-      if (!bySession.has(e.sessionId))
-        bySession.set(e.sessionId, {
-          id: e.sessionId,
-          title: e.title,
-          cwd: e.cwd,
-          branch: null,
-          model,
-          first: e.time,
-          last: e.time,
-          ...empty()
-        })
-      const s = bySession.get(e.sessionId)
-      add(s, e)
-      s.first = Math.min(s.first, e.time)
-      if (e.time >= s.last) Object.assign(s, { last: e.time, model, cwd: e.cwd || s.cwd, title: e.title || s.title })
-    }
-    const byTokens = (a, b) => b.input + b.output - (a.input + a.output)
-    const withSessionCount = ({ sessions, ...entry }) => ({ ...entry, sessions: sessions.size })
-    return {
-      ok: true,
-      source: 'opencode-local',
-      provider: 'opencode',
-      generatedAt: new Date(time).toISOString(),
-      timezone,
-      range: { from: range.from, to: range.to },
-      scope: usageScope(range),
-      files: files.length,
-      totals: { ...totals, sessions: bySession.size },
-      allTotals: { ...allTotals, sessions: allSessions.size },
-      byDay: [...byDay.values()].sort((a, b) => (a.day < b.day ? -1 : 1)),
-      byModel: [...byModel.values()].map(withSessionCount).sort(byTokens),
-      byProject: [...byProject.values()].map(withSessionCount).sort(byTokens),
-      sessions: [...bySession.values()].sort((a, b) => b.last - a.last || a.id.localeCompare(b.id))
-    }
+    return usageReportFromEvents(events, { range, projectIn, dayOf, time, timezone, files: files.length, source: 'opencode-local', provider: 'opencode' })
+  }
+}
+
+// Usage events ({ sessionId, time, model, cwd, title, input, output,
+// reasoning, cacheRead, cacheWrite, cost }) -> the report the Stats page
+// reads, filtered by the query's range, model and folder (OpenCode's, and
+// Grok Build's from its session files: grokUsageReport.js).
+export function usageReportFromEvents(events, { range, projectIn, dayOf, time, timezone, files = 0, source, provider }) {
+  const totals = empty()
+  const allTotals = empty()
+  const allSessions = new Set()
+  const byDay = new Map()
+  const byModel = new Map()
+  const byProject = new Map()
+  const bySession = new Map()
+  for (const e of events) {
+    add(allTotals, e)
+    allSessions.add(e.sessionId)
+    const day = dayOf(e.time)
+    const model = e.model || 'unknown'
+    if (
+      (range.from && day < range.from) ||
+      (range.to && day > range.to) ||
+      (range.cwd && usageProjectKey(e.cwd) !== usageProjectKey(range.cwd)) ||
+      (range.model && model !== range.model) ||
+      (projectIn && !projectIn(e.cwd))
+    )
+      continue
+    add(totals, e)
+    if (!byDay.has(day)) byDay.set(day, { day, ...empty() })
+    add(byDay.get(day), e)
+    if (!byModel.has(model)) byModel.set(model, { model, ...empty(), sessions: new Set() })
+    add(byModel.get(model), e)
+    byModel.get(model).sessions.add(e.sessionId)
+    // Scoped to Tessel's projects: sub-folders and worktrees inside a project count as it.
+    const project = (projectIn && projectIn(e.cwd)) || e.cwd || '(unknown folder)'
+    const key = usageProjectKey(project)
+    if (!byProject.has(key))
+      byProject.set(key, {
+        cwd: project,
+        label: project.split(/[\\/]/).filter(Boolean).at(-1) || project,
+        ...empty(),
+        sessions: new Set()
+      })
+    add(byProject.get(key), e)
+    byProject.get(key).sessions.add(e.sessionId)
+    if (!bySession.has(e.sessionId))
+      bySession.set(e.sessionId, {
+        id: e.sessionId,
+        title: e.title,
+        cwd: e.cwd,
+        branch: null,
+        model,
+        first: e.time,
+        last: e.time,
+        ...empty()
+      })
+    const s = bySession.get(e.sessionId)
+    add(s, e)
+    s.first = Math.min(s.first, e.time)
+    if (e.time >= s.last) Object.assign(s, { last: e.time, model, cwd: e.cwd || s.cwd, title: e.title || s.title })
+  }
+  const byTokens = (a, b) => b.input + b.output - (a.input + a.output)
+  const withSessionCount = ({ sessions, ...entry }) => ({ ...entry, sessions: sessions.size })
+  return {
+    ok: true,
+    source,
+    provider,
+    generatedAt: new Date(time).toISOString(),
+    timezone,
+    range: { from: range.from, to: range.to },
+    scope: usageScope(range),
+    files,
+    totals: { ...totals, sessions: bySession.size },
+    allTotals: { ...allTotals, sessions: allSessions.size },
+    byDay: [...byDay.values()].sort((a, b) => (a.day < b.day ? -1 : 1)),
+    byModel: [...byModel.values()].map(withSessionCount).sort(byTokens),
+    byProject: [...byProject.values()].map(withSessionCount).sort(byTokens),
+    sessions: [...bySession.values()].sort((a, b) => b.last - a.last || a.id.localeCompare(b.id))
   }
 }

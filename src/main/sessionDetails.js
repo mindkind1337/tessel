@@ -20,6 +20,7 @@ import { insideDir, ompSessions, ompSessionsDir, piSessions, piSessionsDir, plai
 import { museModelFromText, museSessionLog } from './museSessions'
 import { HISTORY_LIMITS, claudeHistoryEvents, codexHistoryEvents, readLastLines, resolveHistoryAttachments } from './chat/transcriptHistory'
 import { hasPendingAttachments } from './chat/historyAttachments'
+import { GROK_SESSION_FILES, grokModelTimeline } from './chat/transcriptView'
 import { readHead, readRows } from './fileRead'
 import { rowsFromLines } from './sessionSearch/indexer'
 
@@ -72,12 +73,15 @@ function codexRolloutAnywhere(root, id) {
   return walk(root, 0)
 }
 
-// <grok sessions>/<encoded folder>/<id>/chat_history.jsonl
+// <grok sessions>/<encoded folder>/<id>/updates.jsonl (its timed update
+// stream), else an older session's chat_history.jsonl beside it.
 function grokChatFile(root, id) {
   for (const group of entries(root)) {
     if (!group.isDirectory() || group.isSymbolicLink()) continue
-    const file = join(root, group.name, id, 'chat_history.jsonl')
-    if (statOf(file)) return file
+    for (const name of GROK_SESSION_FILES) {
+      const file = join(root, group.name, id, name)
+      if (statOf(file)) return file
+    }
   }
   return null
 }
@@ -248,14 +252,18 @@ export function detailsFromLines(agent, id, headLines, tailLines, whole) {
 
 // The model a conversation ran with last, as the pane header reads it
 // (agentModel.js): Claude Code's (and its forks') latest answer, Codex's latest
-// turn, Muse's log, Pi's and OMP's model changes and answers. Grok's file
-// names none. -> { model, effort } | null
+// turn, Muse's log, Pi's and OMP's model changes and answers, the model of
+// Grok Build's latest prompt. -> { model, effort } | null
 const MODEL_TEXT = { claude: claudeTurnFromText, openclaude: claudeTurnFromText, qoder: claudeTurnFromText, codex: codexModelFromText, muse: museModelFromText }
 export function latestModel(agent, lines, headLines = []) {
   try {
     if (agent === 'pi' || agent === 'omp') {
       const m = piModelFromWire(lines.join('\n'), headLines.join('\n'))
       return m ? { model: m.model, effort: m.effort || null } : null
+    }
+    if (agent === 'grok') {
+      const m = grokModelTimeline(lines).at(-1) || grokModelTimeline(headLines).at(-1)
+      return m ? { model: m.model.slice(0, 120), effort: m.effort || null } : null
     }
     const read = MODEL_TEXT[agent]
     if (!read) return null

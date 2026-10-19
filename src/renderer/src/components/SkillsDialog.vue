@@ -45,7 +45,7 @@ const props = defineProps({
 const emit = defineEmits(['close', 'run'])
 
 // The agents that read skills (same ids as Settings > Agents).
-const ALL_AGENTS = ['claude', 'codex', 'opencode', 'copilot', 'gemini', 'antigravity', 'muse']
+const ALL_AGENTS = ['claude', 'codex', 'opencode', 'copilot', 'gemini', 'antigravity', 'muse', 'grok']
 const AGENT_NAME = {
   claude: 'Claude Code', // i18n-ignore
   codex: 'Codex', // i18n-ignore
@@ -53,7 +53,8 @@ const AGENT_NAME = {
   copilot: 'Copilot CLI', // i18n-ignore
   gemini: 'Gemini CLI', // i18n-ignore
   antigravity: 'Antigravity CLI', // i18n-ignore
-  muse: 'Muse Code' // i18n-ignore
+  muse: 'Muse Code', // i18n-ignore
+  grok: 'Grok Build' // i18n-ignore
 }
 const installed = computed(() =>
   Object.fromEntries(ALL_AGENTS.map((id) => [id, !!props.agents.find((a) => a.id === id && a.available)]))

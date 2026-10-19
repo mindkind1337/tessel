@@ -10,7 +10,8 @@ export const USAGE_PROVIDERS = Object.freeze([
   { id: 'muse', name: 'Muse Code', agents: ['muse'], report: false },
   { id: 'kimi', name: 'Kimi', agents: ['kimi'], report: false },
   { id: 'cursor', name: 'Cursor', agents: ['cursor'], report: false },
-  { id: 'grok', name: 'Grok', agents: ['grok'], report: false },
+  // Its quota (extraProviderUsage.js) and its token stats (grokUsageReport.js).
+  { id: 'grok', name: 'Grok', agents: ['grok'], report: true },
   // OpenCode's token stats (opencodeUsageReport.js); its quota is OpenCode Go.
   { id: 'opencode', name: 'OpenCode', agents: ['opencode'], report: true, quota: false },
   { id: 'opencode-go', name: 'OpenCode Go', agents: ['opencode'], report: false },

@@ -17,6 +17,8 @@ import { join, dirname } from 'path'
 import { readJson } from './fileRead'
 import { writeFileAtomic as writeAtomic } from './safeJson'
 import { t } from './i18n'
+import { grokHome } from './grokAccount'
+import { parseToml, tomlValue } from './tomlLite'
 import { hookNode, hookCommand, pluginNodeSource } from './nodePath'
 import { removeKimiHooks } from './kimiHooks'
 export { installKimiHooks, KIMI_HOOK_EVENTS } from './kimiHooks'
@@ -479,6 +481,7 @@ export async function installCodexServer(scriptPath, validate, home = os.homedir
   if (found.error) return found
   const file = join(dir, 'config.toml')
   const text = fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : ''
+  if (unsafePath(scriptPath) || unsafePath(found.node)) return { error: t('main.hooks.badPath', 'The Tessel data folder or node has a line break in its path.') }
   // TOML literal strings ('...') keep Windows backslashes as they are.
   if (scriptPath.includes("'") || found.node.includes("'")) return { error: t('main.hooks.quoteInPath', 'The Tessel data folder has a quote in its path.') }
   const { kept, ours } = splitCodexConfig(text)
@@ -489,6 +492,65 @@ export async function installCodexServer(scriptPath, validate, home = os.homedir
     const v = await validate(next)
     if (!v || !v.ok) return { error: v && v.error ? t('main.hooks.codexRejectedWhy', 'Codex would not accept the new settings, so Tessel left them as they were ({{error}}).', { error: v.error }) : t('main.hooks.codexRejected', 'Codex would not accept the new settings, so Tessel left them as they were.') }
   }
+  if (text && !fs.existsSync(`${file}.before-tessel`)) fs.copyFileSync(file, `${file}.before-tessel`)
+  writeAtomic(file, next)
+  return { changed: true }
+}
+
+// Grok Build: [mcp_servers.tessel-team] in <GROK_HOME or ~/.grok>/config.toml
+// (its own servers outrank the ones it borrows from ~/.claude.json). The
+// pane's variables reach the server through Grok's ${VAR} expansion; the team
+// tools may wait for a teammate or a card, past Grok's own timeout.
+const GROK_ENV = {
+  TESSEL_PANE_ID: '${TESSEL_PANE_ID:-}',
+  TESSEL_PROJECT_DIR: '${TESSEL_PROJECT_DIR:-}',
+  TESSEL_TEAM_SECRET: '${TESSEL_TEAM_SECRET:-}'
+}
+// What Tessel decides (command, args, env), and what stays the user's when
+// the table is there already (enabled = false, its timeouts).
+const GROK_KEPT = ['enabled', 'startup_timeout_sec', 'tool_timeout_sec', 'tool_timeouts']
+export function grokTable(scriptPath, node, kept = {}) {
+  const lines = [
+    `[mcp_servers.${SERVER_NAME}]`,
+    `command = ${tomlValue(node)}`,
+    `args = ${tomlValue([scriptPath])}`,
+    `env = ${tomlValue(GROK_ENV)}`
+  ]
+  const extra = { tool_timeout_sec: 1200, ...kept }
+  for (const k of GROK_KEPT) {
+    const v = extra[k] === undefined ? null : tomlValue(extra[k])
+    if (v !== null) lines.push(`${k} = ${v}`)
+  }
+  return lines.join('\n') + '\n'
+}
+const sameJson = (a, b) => JSON.stringify(a) === JSON.stringify(b)
+// A path Tessel writes into a settings file: one line, no NUL.
+export const unsafePath = (p) => typeof p !== 'string' || /[\r\n\0]/.test(p)
+// -> { changed: bool } or { error }. Only where Grok Build is set up (its
+// folder). The file is read as TOML first and the result read back before it
+// is written: a file Tessel cannot read, or an edit that would not read back
+// with exactly one tessel-team table, is left as it was (said as an error).
+export function installGrokServer(scriptPath, home = os.homedir(), { node, env = process.env } = {}) {
+  const dir = grokHome(home, env)
+  if (!fs.existsSync(dir)) return { changed: false }
+  const found = hookNode(scriptPath, node)
+  if (found.error) return found
+  if (unsafePath(scriptPath) || unsafePath(found.node)) return { error: t('main.hooks.badPath', 'The Tessel data folder or node has a line break in its path.') }
+  const file = join(dir, 'config.toml')
+  const text = fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : ''
+  const before = parseToml(text)
+  if (!before.ok) return { error: t('main.hooks.grokUnreadable', "Grok Build's config.toml is not valid TOML (line {{line}}: {{error}}), so Tessel left it as it was.", { line: before.line, error: before.error }) }
+  const servers = before.data.mcp_servers && typeof before.data.mcp_servers === 'object' ? before.data.mcp_servers : {}
+  const old = servers[SERVER_NAME] && typeof servers[SERVER_NAME] === 'object' && !Array.isArray(servers[SERVER_NAME]) ? servers[SERVER_NAME] : null
+  if (old && old.command === found.node && sameJson(old.args, [scriptPath]) && sameJson(old.env, GROK_ENV)) return { changed: false }
+  const kept = {}
+  for (const k of GROK_KEPT) if (old && old[k] !== undefined) kept[k] = old[k]
+  const { kept: others } = splitCodexConfig(text)
+  const want = grokTable(scriptPath, found.node, kept)
+  const next = (others.trim() ? others.replace(/\s*$/, '\n') + '\n' : '') + want
+  const after = parseToml(next)
+  const mine = after.ok && after.data.mcp_servers && after.data.mcp_servers[SERVER_NAME]
+  if (!mine || mine.command !== found.node || !sameJson(mine.args, [scriptPath])) return { error: t('main.hooks.grokNoEdit', "Tessel could not add its team tools to Grok Build's config.toml without breaking it (a tessel-team server is defined another way there), so it left it as it was.") }
   if (text && !fs.existsSync(`${file}.before-tessel`)) fs.copyFileSync(file, `${file}.before-tessel`)
   writeAtomic(file, next)
   return { changed: true }
