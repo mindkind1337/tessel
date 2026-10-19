@@ -384,10 +384,11 @@ const FIRST_LOOKUPS = [0, 5000, 10000]
 const DEAD_ADDRESS = new Set(['unreachable', 'error', 'timeout', 'closed'])
 const KEEP_FRESH_MS = 60000
 // A share taken back after a restart waits this long for its port (the
-// last Tessel can take a minute to quit), then starts on a new port and a new
-// tunnel; a tunnel that can't start (no network yet after a reboot) is tried
-// again after these waits (the last one repeated).
-const PORT_WAIT_MS = 60000
+// last Tessel can take a minute to quit; 30 s lost a share, 2026-10-18), then
+// starts on a new port and a new tunnel; a tunnel that can't start (no
+// network yet after a reboot) is tried again after these waits (the last one
+// repeated).
+const PORT_WAIT_MS = 180000
 const RELAUNCH_DELAYS = [15000, 30000, 60000, 120000, 300000]
 
 // deps: ipcMain, send(channel, payload) to the window, host (the terminal
@@ -1784,8 +1785,9 @@ export function registerLiveShare({
     if (runs && url && saved.port > 0) {
       // Its port: the last Tessel may take a while to let it go (a dev
       // restart kills it, but its processes can hold the port for several
-      // seconds; one try of 3 s lost a share you had guests in, 2026-10-18).
-      // Tried for up to PORT_WAIT_MS, every half second.
+      // seconds; one try of 3 s, then of 30 s, lost a share you had guests
+      // in: the old Tessel can take a minute to quit, 2026-10-18). Tried for
+      // up to PORT_WAIT_MS, every half second.
       let port = 0
       for (let i = 0; i < portWaitMs / 500 && !port && check() === 'ok'; i++) {
         try {

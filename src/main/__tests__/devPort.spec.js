@@ -41,6 +41,8 @@ describe('dev server port (scripts/devPort.mjs)', () => {
     expect(cfg).toMatch(/freeDevPort\(\)/)
     const main = readFileSync(join(root, 'src/main/index.js'), 'utf8')
     expect(main).not.toMatch(/localhost:5173'\)\)/)
-    expect(main).toMatch(/new URL\(process\.env\.ELECTRON_RENDERER_URL\)\.origin/)
+    expect(main).toMatch(/new URL\(devRendererUrl\)\.origin/)
+    // Only the dev build reads the variable: an installed Tessel loads its own page.
+    expect(main).toMatch(/const devRendererUrl = !app\.isPackaged && process\.env\.ELECTRON_RENDERER_URL/)
   })
 })

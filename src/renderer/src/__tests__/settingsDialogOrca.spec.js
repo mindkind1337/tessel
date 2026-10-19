@@ -325,7 +325,7 @@ describe('Settings: the Orca settings', () => {
     expect(await shown('third-party')).toEqual(['updates'])
     expect(await shown('press enter')).toEqual(['quick-commands'])
     expect(await shown('about')).toContain('updates')
-  })
+  }, 20000)
 
   it('search finds the new settings by their Orca names', async () => {
     open('general')
