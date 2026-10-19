@@ -59,7 +59,7 @@ import { prepareAgentStateHooks } from './agentStateSetup'
 import { assessNeeds } from './tesselNeeds'
 import { createClaudeUsageReport } from './claudeUsageReport'
 import { createJobCost } from './jobCost'
-import { resolveFiles, codeGotoArg, listProjectFiles } from './fileOpen'
+import { resolveFiles, codeGotoArg, listProjectFiles, defaultWslDistro } from './fileOpen'
 import { statChatPaths, openChatPath, revealChatPath } from './chatFileOpen'
 import { titleBarColors } from '../shared/themePalettes'
 import { createThemedDialog } from './themedDialog'
@@ -72,7 +72,7 @@ import { extraToolDirs, withToolDirs } from './toolDirs'
 import { AGENT_INSTALLS, checkInstall } from './agentInstalls'
 import { createInstallLogs } from './installLog'
 import { writeBoardRule } from './agentMemory'
-import { claudeImageFile, isPastedImage, isSavedPaste, PASTE_DIR } from './pastedImages'
+import { claudeImageFile, codexImageFile, isPastedImage, isSavedPaste, PASTE_DIR } from './pastedImages'
 import { createBrowserGuests, BROWSER_PARTITION } from './browserGuest'
 import { listBrowsersForImport, importFromProfile, importFromFile } from './cookieImport/importer'
 import { detectBrowsers as detectBrowsersForImport } from './cookieImport/detect'
@@ -89,7 +89,7 @@ import { createRemoteSkills } from './chat/remoteSkills'
 import { createChatImages } from './chat/chatImages'
 import { createChatImageActions } from './chat/chatImageActions'
 import { transcriptHomeFor } from './chat/transcriptHistory'
-import { createTranscriptViews } from './chat/transcriptView'
+import { createTranscriptViews, findTranscriptViewFile } from './chat/transcriptView'
 import { createTerminalConversations } from './chat/terminalConversations'
 import { createTerminalSkills } from './chat/terminalSkills'
 import { createSessionSearch } from './sessionSearch/index.js'
@@ -3700,7 +3700,12 @@ const IMAGE_MIME = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gi
 ipcMain.handle('images:get', async (_evt, q = {}) => {
   try {
     let file = q && isPastedImage(q.file) && fs.existsSync(q.file) ? q.file : null
-    if (!file && q && typeof q.sessionId === 'string') file = await claudeImageFile({ sessionId: q.sessionId, n: Number(q.n) })
+    if (!file && q && typeof q.sessionId === 'string' && q.agent === 'codex') {
+      // Codex: the image in the session's rollout (its account's own folder).
+      const roots = await accountSessions.roots({ agent: 'codex', accountId: typeof q.accountId === 'string' ? q.accountId : null }).catch(() => null)
+      const rollout = findTranscriptViewFile('codex', q.sessionId, undefined, { home: (roots && roots.codex) || null })
+      if (rollout) file = await codexImageFile({ rollout, sessionId: q.sessionId, n: Number(q.n) })
+    } else if (!file && q && typeof q.sessionId === 'string') file = await claudeImageFile({ sessionId: q.sessionId, n: Number(q.n) })
     if (!file) return { ok: false }
     const data = fs.readFileSync(file)
     if (data.length > 40 * 1024 * 1024) return { ok: false, error: t('main.error.imageTooLarge', 'The image is too large to show.') }
@@ -3718,7 +3723,20 @@ ipcMain.handle('images:openExternal', async (_evt, file) => {
 })
 // File references in a terminal (fileOpen.js): which exist, and opening one
 // at its line in VS Code when installed, else in its default program.
-ipcMain.handle('files:resolve', (_evt, q = {}) => resolveFiles(q || {}))
+// Never a sync stat here (fileOpen.js: a time limit per look); an SSH pane's
+// paths (ssh://…) are looked up over its connection.
+ipcMain.handle('files:resolve', (_evt, q = {}) => resolveFiles(q || {}, { remote: (paths) => remoteFs.statLinks(paths) }))
+// The WSL distro a WSL pane runs (wsl.exe with no -d: the default one), for
+// its terminal links (\\wsl.localhost\<distro>\…). Read once from the
+// registry, like wsl.exe does. -> string | null
+let wslDistroJob = null
+ipcMain.handle('files:wslDistro', () => {
+  if (!wslDistroJob) wslDistroJob = defaultWslDistro().then((name) => {
+    if (!name) wslDistroJob = null
+    return name
+  })
+  return wslDistroJob
+})
 ipcMain.handle('files:list', safe((root) => (lshareArg(root) ? guestFs().listProjectFiles(root) : listProjectFiles(root))))
 ipcMain.handle('files:open', async (_evt, q = {}) => {
   const file = q && typeof q.file === 'string' ? q.file : ''

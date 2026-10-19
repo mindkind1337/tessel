@@ -118,6 +118,9 @@ export const FUNCTIONS = new Set([
   '__t_ls',
   '__t_lsm',
   '__t_stats',
+  // Which of some paths in a project are files or folders (terminal links
+  // in an SSH pane): one line each, f, d or -, nothing outside the project.
+  '__t_kinds',
   '__t_read',
   '__t_write',
   '__t_mk',
@@ -318,6 +321,14 @@ __t_stats() {
   __t_root "$1" || return $?; shift
   for __f in "$@"; do
     if __p=$(__t_real "$__f") && [ -n "$__p" ] && __t_in "$__R" "$__p" && [ -f "$__p" ] && __s=$(__t_sig "$__p"); then printf '%s\\n' "$__s"; else printf '%s\\n' -; fi
+  done
+}
+__t_kinds() {
+  __t_root "$1" || return $?; shift
+  for __f in "$@"; do
+    if __p=$(__t_real "$__f") && [ -n "$__p" ] && __t_in "$__R" "$__p"; then
+      if [ -f "$__p" ]; then printf 'f\\n'; elif [ -d "$__p" ]; then printf 'd\\n'; else printf '%s\\n' -; fi
+    else printf '%s\\n' -; fi
   done
 }
 __t_read() {
