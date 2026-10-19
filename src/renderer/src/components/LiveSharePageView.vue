@@ -11,10 +11,14 @@
 // and path in yours (http(s) only; not for an address of the host's
 // computer or network), after you saw the whole address and said yes: none
 // of the host's sessions comes with it.
+// As on the host's screen, the page is a tab of its own above the panes
+// (paneViews.js isTabLeaf): its header is then the line of tabs, and its
+// address goes in the bar under it.
 import { computed, inject, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { ExternalLink, Globe, MousePointerClick } from 'lucide-vue-next'
 import { externalPageUrl } from '../../../shared/livePageUrl'
 import { t } from '../i18n'
+import ViewTabs from './ViewTabs.vue'
 
 const props = defineProps({ node: { type: Object, required: true } })
 const ctx = inject('panelCtx')
@@ -25,6 +29,8 @@ const info = computed(() => (source.value ? source.value.info() : null))
 const host = computed(() => (info.value && info.value.host) || (props.node.liveShare && props.node.liveShare.host) || '?')
 const isActive = computed(() => !!ctx.activeId && ctx.activeId.value === props.node.id)
 const isMaximized = computed(() => !!ctx.maximizedId && ctx.maximizedId.value === props.node.id)
+// The tabs above the panes, while this page is one of them (App.vue).
+const viewTabs = computed(() => (ctx.paneTabs ? ctx.paneTabs(props.node.id) : null))
 
 // --- What comes from the host --------------------------------------------------------
 const rootEl = ref(null)
@@ -44,6 +50,11 @@ function setFrame(m) {
   if (frameUrl.value) URL.revokeObjectURL(frameUrl.value)
   frameUrl.value = url
   meta.value = m.meta && typeof m.meta === 'object' ? { title: m.meta.title || '', url: m.meta.url || '' } : { title: '', url: '' }
+  // Its tab says it too (ViewTabs.vue), also once this page is out of sight.
+  if (props.node.liveShare) {
+    props.node.liveShare.pageTitle = meta.value.title
+    props.node.liveShare.pageUrl = meta.value.url
+  }
   status.value = 'live'
   reason.value = ''
 }
@@ -272,18 +283,30 @@ function activate() {
     @keydown="onKey"
     @paste="onPaste"
   >
-    <div class="pane-nav" data-test="pane-header">
+    <div class="pane-nav" :class="{ 'with-view-tabs': !!viewTabs }" data-test="pane-header">
       <div class="pane-nav-left">
-        <span class="pane-icon" :aria-label="t('liveShare.page.title', 'Browser page')"><Globe :size="15" aria-hidden="true" /></span>
-        <span class="pane-title" data-test="pane-title" :title="meta.title">{{ meta.title || t('liveShare.page.title', 'Browser page') }}</span>
-        <span v-if="meta.url" class="ls-page-url" data-test="liveshare-page-url" :title="meta.url">{{ meta.url }}</span>
+        <!-- A tab above the panes: its header is the line of tabs. -->
+        <ViewTabs
+          v-if="viewTabs"
+          :leaves="viewTabs.leaves"
+          :shown="viewTabs.shown"
+          @select="(id, path) => ctx.selectViewTab && ctx.selectViewTab(node.id, id, path)"
+          @close="(id, path) => (ctx.closeViewTab ? ctx.closeViewTab(id, path) : ctx.closeLeaf(id))"
+          @keep="(id, path) => ctx.keepViewTab && ctx.keepViewTab(id, path)"
+          @drag="(id, e) => id && ctx.beginPaneDrag && ctx.beginPaneDrag(id, e)"
+        />
+        <template v-else>
+          <span class="pane-icon" :aria-label="t('liveShare.page.title', 'Browser page')"><Globe :size="15" aria-hidden="true" /></span>
+          <span class="pane-title" data-test="pane-title" :title="meta.title">{{ meta.title || t('liveShare.page.title', 'Browser page') }}</span>
+          <span v-if="meta.url" class="ls-page-url" data-test="liveshare-page-url" :title="meta.url">{{ meta.url }}</span>
+        </template>
       </div>
       <div class="pane-nav-actions" @mousedown.stop>
         <button class="pane-nav-btn" data-test="liveshare-page-open" :disabled="!external.ok" :title="externalTitle" :aria-label="t('liveShare.page.open', 'Open this address in my own browser')" @click="openExternal">
           <ExternalLink :size="14" aria-hidden="true" />
         </button>
         <button
-          v-if="ctx.toggleMaximize"
+          v-if="ctx.toggleMaximize && !viewTabs"
           class="pane-nav-btn"
           :title="isMaximized ? t('editor.pane.restore', 'Restore pane') : t('editor.pane.maximize', 'Maximize pane')"
           :aria-label="isMaximized ? t('editor.pane.restore', 'Restore pane') : t('editor.pane.maximize', 'Maximize pane')"
@@ -301,6 +324,7 @@ function activate() {
     <div class="ls-page-bar" :class="{ use: info && info.canUse }" data-test="liveshare-page-mode">
       <MousePointerClick v-if="info && info.canUse" :size="12" aria-hidden="true" />
       <span>{{ info && info.canUse ? useLine : viewLine }}</span>
+      <span v-if="viewTabs && meta.url" class="ls-page-url" data-test="liveshare-page-url" :title="meta.url">{{ meta.url }}</span>
     </div>
     <div class="ls-page-body">
       <img

@@ -855,7 +855,9 @@ export function createLiveShareWindow(deps) {
     // Your own active pane stays yours (the keyboard never jumps to the
     // host's pane while you type): the host's is taken once, when it is
     // there; after that only when yours is gone.
-    const hostActive = p.layout && leafIn(p.layout.activeId, p.id) ? p.layout.activeId : null
+    // (The host's browser page on screen counts too, when you see its pages:
+    // its tab comes up, as on the host's screen.)
+    const hostActive = p.layout && (leafIn(p.layout.activeId, p.id) || (built && hasLeaf(built, p.layout.activeId))) ? p.layout.activeId : null
     if (f.takeActive && hostActive) {
       ws.activeId = hostActive
       f.takeActive = false

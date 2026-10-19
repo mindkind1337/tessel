@@ -332,14 +332,27 @@ describe('Live Share trusted people over the wire', () => {
     expect(file).toEqual([expect.objectContaining({ name: 'Simpa', grant: { projects: ['ws-a'], rights: { ...NO_RIGHTS, type: false, open: false, close: true } } })])
     expect(s.host.guests()[0]).toMatchObject({ trusted: true, trustable: true })
     // Leaves on purpose, comes back with another invitation (and a new
-    // reconnect key): no question, its trusted grant (not that invitation's).
+    // reconnect key): no question, its trusted grant plus the projects that
+    // invitation offers (added to its trusted entry); its rights stay the
+    // trusted ones.
     first.client.leave()
     await until(() => s.host.guests().length === 0)
     const again = await settled(guest(s, other.id, 'Simpa', { identityKey }))
     expect(again.closed).toBe(null)
-    expect(ids(again)).toEqual(['ws-a'])
+    expect(ids(again)).toEqual(['ws-a', 'ws-b'])
     expect(again.rights[0]).toEqual({ ...NO_RIGHTS, type: false, open: false, close: true })
     expect(s.t.asked).toHaveLength(1)
+    expect(file[0].grant.projects).toEqual(['ws-a', 'ws-b'])
+    // Taken away by the host, it does not come back with the same invitation.
+    const tid = trustId(trust.list()[0].fp)
+    expect(s.host.change(tid, { project: 'ws-b', on: false })).toBe(true)
+    await until(() => ids(again).length === 1)
+    again.client.leave()
+    await until(() => s.host.guests().length === 0)
+    const fourthJoin = await settled(guest(s, other.id, 'Simpa', { identityKey }))
+    expect(ids(fourthJoin)).toEqual(['ws-a'])
+    fourthJoin.client.leave()
+    await until(() => s.host.guests().length === 0)
     // This Tessel restarts and shares anew (a new access model, a new code):
     // the trust file brings it back.
     s.host.stop()
@@ -348,7 +361,7 @@ describe('Live Share trusted people over the wire', () => {
     const fresh = inviteOf(next, { label: 'Anyone', projects: ['ws-b'] })
     const third = await settled(guest(next, fresh.id, 'Simpa', { identityKey }))
     expect(third.closed).toBe(null)
-    expect(ids(third)).toEqual(['ws-a'])
+    expect(ids(third)).toEqual(['ws-a', 'ws-b'])
     expect(t2.asked).toEqual([])
     // Rate limits and blocks still apply: a blocked invitation lets no one in, trusted or not.
     for (let i = 0; i < 8; i++) {
@@ -365,6 +378,39 @@ describe('Live Share trusted people over the wire', () => {
     third.client.leave()
     const fourth = await settled(guest(next, fresh.id, 'Simpa', { identityKey }))
     expect(fourth.closed).toBe('expired')
+  })
+
+  // 2026-10-19: a trusted person whose entry listed only a project of an
+  // earlier share joined a new share (a new invitation offering the project
+  // shared now) and saw nothing until the host shared its old project too.
+  it('a trusted person joining a new share with a new invitation sees the projects that invitation offers at once', async () => {
+    let file = []
+    const identityKey = newSigningKey()
+    const trust = createTrustStore({ save: (entries) => (file = entries) })
+    // Trusted in an earlier share, with a project not shared now.
+    trust.add({ key: identityKey.publicRaw, name: 'Maxim', projects: ['ws-old'], rights: { type: true } })
+    const s = await share({ trust, t: fakeTessel({ 'ws-a': ['a1', 'a2'] }) })
+    const inv = inviteOf(s, { projects: ['ws-a'] })
+    const r = await settled(guest(s, inv.id, 'Maxim', { identityKey }))
+    expect(r.closed).toBe(null)
+    expect(s.t.asked).toEqual([])
+    // In the welcome itself: its project and its panes, nothing re-ticked.
+    expect(r.lists[0].map((p) => p.id)).toEqual(['ws-a'])
+    expect(r.lists[0][0].panes.map((p) => p.id)).toEqual(['a1', 'a2'])
+    await until(() => r.screens.a1 && r.screens.a2)
+    expect(r.rights[0]).toEqual({ ...NO_RIGHTS, type: true, open: false, close: false })
+    // Kept: its old project too (seen again when it is shared again).
+    expect(file[0].grant.projects).toEqual(['ws-old', 'ws-a'])
+    expect(s.host.guests()[0]).toMatchObject({ trusted: true, projects: ['ws-a'] })
+  })
+
+  it('a guest trusted from the prompt gets what the host ticked, not the rest of its invitation', async () => {
+    const s = await share()
+    const inv = inviteOf(s, { projects: ['ws-a', 'ws-b'] })
+    s.t.answers.Simpa = { yes: true, projects: ['ws-a'], trust: true }
+    const r = await settled(guest(s, inv.id, 'Simpa', { identityKey: newSigningKey() }))
+    expect(ids(r)).toEqual(['ws-a'])
+    expect(s.trust.list()[0].grant.projects).toEqual(['ws-a'])
   })
 
   it('trust can be given later from People, and taken back: then asked again', async () => {

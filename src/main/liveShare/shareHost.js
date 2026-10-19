@@ -1481,7 +1481,9 @@ export function createShareHost({ secret = null, hostName, callbacks, log = () =
     // the host's window checks there is room in the list first).
     if (answer !== true && answer.trust === true && identity && trust) {
       const e = trust.add({ key: identity, name: g.name, projects: grant.projects, rights: grant.rights })
-      if (e) return admitTrusted(g, key, inv, e.fp)
+      // (What the host just gave it is all it gets: the invitation's other
+      // projects are not added.)
+      if (e) return admitTrusted(g, key, inv, e.fp, { answered: true })
       log(`guest ${g.name || '?'} let in without trust: the trusted list is full`)
     }
     g.person = access.addPerson({ key, name: g.name, sid: g.entry.sid, via: inv.id, identity: g.identity, grant })
@@ -1493,13 +1495,18 @@ export function createShareHost({ secret = null, hostName, callbacks, log = () =
 
   // A trusted identity in, through an invitation: its one person entry (taken
   // over with this reconnect key; the connection it had ends), no new use
-  // for an invitation it used already.
-  function admitTrusted(g, key, inv, fp) {
+  // for an invitation it used already. The first time it uses an invitation,
+  // the shared projects that invitation offers are added to what it is
+  // trusted with (shareAccess.js trustedInviteProjects), so it sees them the
+  // moment it is in; not when the host just answered its join (answered:
+  // its answer is what it gets).
+  function admitTrusted(g, key, inv, fp, { answered = false } = {}) {
     const claim = access.claimTrusted(fp, { key, name: g.name, sid: g.entry.sid, via: inv.id, identity: g.identity })
     if (!claim) {
       g.byHost = true
       return drop(g, 'busy')
     }
+    if (!answered && access.trustedInviteProjects(inv, fp)) log(`guest ${g.name || '?'} (trusted) given the projects of invitation ${inv.id}`)
     for (const other of [...guests.values()]) if (other !== g && other.person && (other.person === claim.person || claim.replaced.includes(other.person.hash))) drop(other, 'replaced')
     g.person = claim.person
     welcome(g)

@@ -12,6 +12,7 @@ import { docPathOf, samePath, pathKey } from '../editor/editorTabs'
 import { docs } from '../editor/documents'
 import { tabLabel } from '../editor/tabLabels'
 import { BLANK_URL, displayUrl, hostOf } from '../../../shared/browserUrl'
+import { isLiveSharePage } from '../paneViews'
 import PageAudioButton from './PageAudioButton.vue'
 
 const props = defineProps({
@@ -53,6 +54,13 @@ function editorTabs(leaf) {
   })
 }
 function browserTab(leaf) {
+  // A Live Share host's page (a guest's screen): the title its frames gave
+  // (LiveSharePageView.vue), else "Browser page"; the host's to close, never
+  // the guest's.
+  if (isLiveSharePage(leaf)) {
+    const label = leaf.liveShare.pageTitle || t('liveShare.page.title', 'Browser page')
+    return { key: leaf.id, id: leaf.id, path: null, kind: 'browser', label, hint: leaf.liveShare.pageUrl || label, fixed: true }
+  }
   const url = leaf.url && leaf.url !== BLANK_URL ? leaf.url : ''
   const label = leaf.title || (url && hostOf(url)) || t('app.viewTabs.browser', 'Browser')
   return { key: leaf.id, id: leaf.id, path: null, kind: 'browser', label, hint: url ? displayUrl(url) : label, leaf }
@@ -67,14 +75,14 @@ const isActive = (tab) => tab.id === props.shown && (!tab.path || tab.current)
 // An editor's or a browser's tab pulled moves that pane (not its x); the
 // line's free space moves the pane it sits in (id null).
 function onTabPointerDown(e, tab) {
-  if (e.button !== 0 || tab.kind === 'terminal' || (e.target.closest && e.target.closest('button'))) return
+  if (e.button !== 0 || tab.kind === 'terminal' || tab.fixed || (e.target.closest && e.target.closest('button'))) return
   emit('drag', tab.id, e)
 }
 function onStripPointerDown(e) {
   if (e.button === 0 && e.target === e.currentTarget) emit('drag', null, e)
 }
 function onAuxClick(e, tab) {
-  if (e.button === 1 && tab.kind !== 'terminal') emit('close', tab.id, tab.path)
+  if (e.button === 1 && tab.kind !== 'terminal' && !tab.fixed) emit('close', tab.id, tab.path)
 }
 </script>
 
@@ -117,7 +125,7 @@ function onAuxClick(e, tab) {
       <PageAudioButton v-if="tab.leaf" :leaf="tab.leaf" />
       <span v-if="tab.dirty" class="view-tab-dirty" :title="t('app.viewTabs.unsaved', 'Unsaved changes')" aria-hidden="true"></span>
       <button
-        v-if="tab.kind !== 'terminal'"
+        v-if="tab.kind !== 'terminal' && !tab.fixed"
         type="button"
         class="view-tab-close"
         tabindex="-1"

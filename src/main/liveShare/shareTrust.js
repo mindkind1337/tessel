@@ -3,7 +3,9 @@
 // A trusted person gets into this host's Live Share without the accept
 // prompt, with the projects and rights kept here, whenever it joins (with
 // any live invitation of the share; after its connection drops; after this
-// Tessel restarts; in a later share). Trust is tied to the guest's identity
+// Tessel restarts; in a later share); the first time it joins with an
+// invitation, the shared projects that invitation offers are added to its
+// projects (shareAccess.js trustedInviteProjects). Trust is tied to the guest's identity
 // key (shareCrypto.js signIdentity: an Ed25519 key made once on the guest's
 // computer, which it proves it holds on every join), never to a name or a
 // code; a guest whose Tessel has no identity key can't be trusted. The host
