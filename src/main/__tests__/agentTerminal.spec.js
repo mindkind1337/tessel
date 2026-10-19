@@ -72,6 +72,7 @@ function fakeWindow({ target = OWN, approve = { allow: true }, run = { state: 'c
         return { agent: 'Ada', terminals: [{ ...USER, busy: null }, { ...PEER, busy: null }] }
       case 'stoppedNotice':
       case 'abort':
+      case 'expire':
         return { ok: true }
       default:
         throw new Error(`unexpected op ${params.op}`)
@@ -202,6 +203,20 @@ describe('agent terminal: approval', () => {
     const { at } = make(win)
     await at.handle(signed('run', { command: 'git status', explanation: 'x', goal: 'y', mode: 'sync' }))
     expect(win.ops()).toEqual(['host', 'prepare', 'approve', 'run'])
+  })
+
+  it('no answer from the window in time: the command does not run, and its card is told to end', async () => {
+    const win = fakeWindow({
+      approve: () => {
+        throw new CliError('timeout', 'Tessel’s window did not answer in time.')
+      }
+    })
+    const { at } = make(win)
+    await expect(at.handle(signed('run', { command: 'make', explanation: 'x', goal: 'y', mode: 'sync' }))).rejects.toMatchObject({ code: 'approval_timeout' })
+    expect(win.ops()).toEqual(['host', 'prepare', 'approve', 'expire'])
+    const cardId = win.calls[2].card.cardId
+    expect(typeof cardId).toBe('string')
+    expect(win.calls[3]).toMatchObject({ op: 'expire', agent: AGENT, cardId })
   })
 
   it('a skipped command does not run', async () => {

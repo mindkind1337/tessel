@@ -241,6 +241,8 @@ export function createAgentAccounts({ verify, ask, log = null, now = () => Date.
     } catch (err) {
       if (err && err.code === 'timeout') {
         info(`${tag}: no answer from the window`)
+        // Its card must not stay up: an Allow there now would do nothing.
+        ask('accountTarget', { agent: pane, op: 'expire', token: plan.token }).catch(() => {})
         throw fail('approval_timeout', 'No answer in time: nothing was restarted.')
       }
       throw err

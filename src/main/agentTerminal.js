@@ -366,8 +366,13 @@ export function createAgentTerminal({ verify, settings = () => ({ enabled: true 
 
   // The user's answer on the approval card.
   async function card(agentPane, t, c) {
-    const answer = await ask('terminalTarget', { agent: agentPane, op: 'approve', terminal: t.id, card: c }, { timeoutMs: APPROVAL_TIMEOUT_MS }).catch((err) => {
-      if (err && err.code === 'timeout') throw fail('approval_timeout', 'The user did not answer in time.')
+    // Its id: the card ends on screen too when this side stops waiting.
+    const cardId = crypto.randomUUID()
+    const answer = await ask('terminalTarget', { agent: agentPane, op: 'approve', terminal: t.id, card: { ...c, cardId } }, { timeoutMs: APPROVAL_TIMEOUT_MS }).catch((err) => {
+      if (err && err.code === 'timeout') {
+        ask('terminalTarget', { agent: agentPane, op: 'expire', cardId }).catch(() => {})
+        throw fail('approval_timeout', 'The user did not answer in time.')
+      }
       throw err
     })
     allowedNow()

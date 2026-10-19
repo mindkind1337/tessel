@@ -89,6 +89,7 @@ function make(extra = {}) {
     paneState: (id) => (id === 'p-kepler' ? 'working' : null),
     approve: vi.fn(async () => ({ allow: true })),
     dismiss: vi.fn(),
+    expire: vi.fn(),
     restart: vi.fn(async () => 'ok'),
     switched: vi.fn(),
     later: (fn, ms) => timers.push({ fn, ms }),
@@ -444,5 +445,22 @@ describe('account_switch_panes: the card, then the restarts', () => {
     answerCard({ allow: false })
     expect(await asking).toMatchObject({ allow: false, cancelled: true })
     expect(env.at._cooldown.has('p-lead')).toBe(false)
+  })
+
+  it('the main process stopped waiting for its card: the card ends, and an Allow there afterwards switches nothing', async () => {
+    const env = make()
+    let answerCard
+    env.deps.approve.mockImplementationOnce(() => new Promise((r) => (answerCard = r)))
+    const plan = await env.at.handle({ agent: 'p-lead', op: 'plan', panes: ['Curie'], account: MAX_ID })
+    const asking = env.at.handle({ agent: 'p-lead', op: 'approve', token: plan.token })
+    await vi.waitFor(() => expect(answerCard).toBeTypeOf('function'))
+    expect(await env.at.handle({ agent: 'p-lead', op: 'expire', token: plan.token })).toEqual({ ok: true })
+    expect(env.deps.expire).toHaveBeenCalledWith(plan.token)
+    answerCard({ allow: true })
+    expect(await asking).toMatchObject({ allow: true })
+    // The plan is gone: nothing runs, and the agent waits before asking again.
+    await expect(env.at.handle({ agent: 'p-lead', op: 'switch', token: plan.token })).rejects.toMatchObject({ code: 'not_allowed' })
+    expect(env.deps.restart).not.toHaveBeenCalled()
+    expect(env.at._cooldown.has('p-lead')).toBe(true)
   })
 })

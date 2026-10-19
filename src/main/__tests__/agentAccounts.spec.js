@@ -128,7 +128,7 @@ function fakeWindow({ plan, approve = { allow: true }, results, list = LIST } = 
           { id: 'p-kepler', name: 'Kepler', project: 'Visual Code', status: 'failed' }
         ]
       }
-    if (params.op === 'abort') return { ok: true }
+    if (params.op === 'abort' || params.op === 'expire') return { ok: true }
     throw new Error(`unexpected op ${params.op}`)
   })
   return { ask, calls, ops: () => calls.map((c) => c.op) }
@@ -222,7 +222,10 @@ describe('account_switch_panes', () => {
       }
     })
     await expect(make(silent).acc.handle(signed('switch', { panes: ['Curie'], account: MAX_ID }))).rejects.toMatchObject({ code: 'approval_timeout' })
-    expect(silent.ops()).toEqual(['plan', 'approve'])
+    // The window never answered: its card is told to end (an Allow there
+    // later would do nothing).
+    expect(silent.ops()).toEqual(['plan', 'approve', 'expire'])
+    expect(silent.calls[2]).toMatchObject({ op: 'expire', agent: AGENT, token: PLAN.token })
   })
 
   it('a switch the window refuses (wrong agent, wrong machine, unknown pane, no subscription, two sign-ins) is never shown to the user', async () => {

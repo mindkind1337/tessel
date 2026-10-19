@@ -823,6 +823,11 @@
       "snapNote": "{{command}} : un paquet communautaire, pas celui de l’éditeur ; il demande sudo (votre mot de passe, et un compte autorisé à l’utiliser).",
       "installSnap": "Installer avec snap (sudo)"
     },
+    "agentApproval": {
+      "expiredTitle": "Cette demande a expiré",
+      "expiredText": "Rien n’a été fait : l’agent peut redemander s’il en a encore besoin.",
+      "expiredOk": "OK"
+    },
     "agentAccounts": {
       "account": "Compte",
       "agent": "Agent",

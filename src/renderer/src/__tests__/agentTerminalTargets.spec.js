@@ -61,6 +61,7 @@ function setup({ typing = false, quality = 'none', respond = true, mode = undefi
     activeTerminal: () => shell,
     approve: vi.fn(async () => ({ allow: true })),
     dismissApprovals: vi.fn(),
+    expireApproval: vi.fn(),
     notifyAgent: vi.fn(),
     toast: vi.fn(),
     stoppedNotice: vi.fn(),
@@ -289,6 +290,15 @@ describe('security review: opening and abandoning', () => {
     await ask(targets, { op: 'abort' })
     expect(deps.dismissApprovals).toHaveBeenCalledWith('pane-ada')
     expect((await settle(run, 100)).state).toBe('cancelled')
+  })
+
+  it('the main process stopped waiting for a card: it ends on screen, even with the tools turned off', async () => {
+    const { targets, deps } = setup()
+    expect(await ask(targets, { op: 'expire', cardId: 'card-1' })).toEqual({ ok: true })
+    expect(deps.expireApproval).toHaveBeenCalledWith('card-1')
+    deps.enabled = () => false
+    expect(await targets.handle({ agent: 'gone', op: 'expire', cardId: 'card-2' })).toEqual({ ok: true })
+    expect(deps.expireApproval).toHaveBeenLastCalledWith('card-2')
   })
 })
 

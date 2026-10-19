@@ -85,6 +85,7 @@ export const ownTerminalOf = (agentId) => (l) => l.kind !== 'browser' && l.opene
 //   activeTerminal() -> leaf | null    the user's active pane, when a terminal
 //   approve(card) -> Promise<{ allow, command, action, remember }>
 //   dismissApprovals(agentPane): its approval cards are answered no
+//   expireApproval(cardId): the main process stopped waiting for that card
 //   notifyAgent(agentLeaf, text)       a notice in its inbox
 //   toast(text, opts)
 //   stoppedNotice({ agentLeaf, agentLabel, leaf, name })
@@ -531,6 +532,12 @@ export function createAgentTerminalTargets(deps) {
   // --- The requests ---------------------------------------------------------------------
   // { agent, op, ... } -> the answer for src/main/agentTerminal.js
   async function handle(req = {}) {
+    // The main process stopped waiting for this card: it ends on screen too
+    // (even if its agent's pane is gone or the setting was turned off).
+    if (req.op === 'expire') {
+      if (typeof req.cardId === 'string' && typeof deps.expireApproval === 'function') deps.expireApproval(req.cardId)
+      return { ok: true }
+    }
     if (!deps.enabled()) throw refuse('disabled', 'The user turned off "Let agents use terminals" (Tessel Settings > Agents).') // i18n-ignore
     const { ws, leaf: agentLeaf } = agentOf(req.agent)
     const agentLabel = deps.paneLabel(agentLeaf)

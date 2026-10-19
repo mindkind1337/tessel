@@ -112,6 +112,7 @@ const SCOPE_WORDS = { system: 'its own sign-in', tessel: 'added in Tessel', defa
 //   paneState(paneId) -> 'working' | 'approval' | ... | null
 //   approve(card, agentPane, { ms }) -> Promise<{ allow, timedOut, block }>   the card
 //   dismiss(agentPane)                 its card answered no (its tool call went away)
+//   expire(token)                      its card ends (the main process stopped waiting)
 //   restart(paneId, accountId) -> Promise<'ok' | 'failed' | 'not_started' | 'busy'>
 //   switched({ agentLabel, account, count })   a notice for the user
 //   later(fn, ms), now(), newToken()
@@ -464,6 +465,17 @@ export function createAgentAccountTargets(deps) {
         deps.dismiss(agentPane)
       }
       for (const [k, p] of plans) if (p.agentPane === agentPane) plans.delete(k)
+      return { ok: true }
+    }
+    // The main process stopped waiting for this card (no answer in its
+    // time): the card ends, and the switch can no longer be allowed.
+    if (params.op === 'expire') {
+      const p = typeof params.token === 'string' ? plans.get(params.token) : null
+      if (p && p.agentPane === agentPane) {
+        plans.delete(params.token)
+        cooldown.set(agentPane, now() + COOLDOWN_MS)
+      }
+      if (typeof params.token === 'string' && typeof deps.expire === 'function') deps.expire(params.token)
       return { ok: true }
     }
     if (!enabled()) throw refuse('disabled', 'The user turned off "Let agents move panes to another account" (Tessel Settings > Agents).') // i18n-ignore

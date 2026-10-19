@@ -95,6 +95,7 @@ import { onTerminalControl, onTerminalLog, forgetTerminal } from './agentTermina
 import { rulesOfAction } from '../../shared/terminalRules'
 import AgentCommandApproval from './components/AgentCommandApproval.vue'
 import AgentAccountApproval from './components/AgentAccountApproval.vue'
+import AgentApprovalExpired from './components/AgentApprovalExpired.vue'
 import GitHubDialog from './components/GitHubDialog.vue'
 import LinearDialog from './components/LinearDialog.vue'
 import { createExternalIssueStarter } from './externalIssues'
@@ -10767,8 +10768,18 @@ const AGENT_APPROVAL_MS = 5 * 60 * 1000 - 5000
 // A pause between two cards: a second click meant for the first never lands
 // on the next one (its Allow is armed later still, approvalArming.js).
 const APPROVAL_GAP_MS = 400
-const approvalCard = ref(null) // { card, resolve }
+// A shallow ref: the entry read back is the very one shown (a deep ref hands
+// back a proxy, and the card's own timer, comparing it with its entry, never
+// ended a card: one stayed on screen long after its agent was told no).
+const approvalCard = shallowRef(null) // { card, resolve, agentPane, until, expired }
 let approvalClosedAt = 0
+// How long a card that ended without the user's answer stays on screen as
+// "This request expired": a click there no longer seems to do anything.
+const APPROVAL_EXPIRED_SHOW_MS = 4000
+// Requests that ended on the other side (the main process gave up waiting):
+// card id (an account switch's token, a terminal card's cardId) -> time.
+const expiredApprovals = new Map()
+const approvalId = (card) => (card && (card.token || card.cardId)) || null
 // Two lines of cards for the one place on screen: the terminal tools' cards
 // first; an account switch's card (agentAccounts.js) waits while one of
 // them waits, and the time a terminal card waits behind an account card is
@@ -10783,7 +10794,8 @@ function askAgentApproval(card, agentPane = null, { ms = AGENT_APPROVAL_MS } = {
   const lane = card && card.kind === 'accounts' ? 'accounts' : 'terminal'
   let until = Date.now() + ms
   const asked = Date.now()
-  const dropped = () => agentPane && (droppedApprovals.get(agentPane) || 0) >= asked
+  const id = approvalId(card)
+  const dropped = () => (agentPane && (droppedApprovals.get(agentPane) || 0) >= asked) || (id && expiredApprovals.has(id))
   let waiting = lane === 'terminal'
   if (waiting) terminalCardsWaiting++
   const doneWaiting = () => {
@@ -10802,10 +10814,12 @@ function askAgentApproval(card, agentPane = null, { ms = AGENT_APPROVAL_MS } = {
     if (dropped()) return { allow: false }
     if (Date.now() >= until) return { allow: false, timedOut: true }
     return new Promise((resolve) => {
-      const entry = { card, resolve, agentPane }
+      const entry = { card, resolve, agentPane, until, expired: false }
       approvalCard.value = entry
+      // A hidden or minimized window may run this late: a click after its
+      // time is checked against the clock too (answerAgentApproval).
       setTimeout(() => {
-        if (approvalCard.value === entry) answerAgentApproval({ allow: false, timedOut: true })
+        if (approvalCard.value === entry) expireAgentApproval({ allow: false, timedOut: true })
       }, Math.max(1000, until - Date.now()))
     })
   }
@@ -10814,12 +10828,50 @@ function askAgentApproval(card, agentPane = null, { ms = AGENT_APPROVAL_MS } = {
   approvalLanes[lane] = p.catch(() => null)
   return p
 }
+// The card on screen ends without the user's answer (its time ran out, its
+// agent's call went away, the main process stopped waiting): the request is
+// answered now, and the card turns into "This request expired: nothing was
+// done" for a few seconds, its buttons gone.
+function expireAgentApproval(answer) {
+  const entry = approvalCard.value
+  if (!entry || entry.expired) return
+  const shown = { ...entry, expired: true }
+  approvalCard.value = shown
+  entry.resolve(answer || { allow: false })
+  setTimeout(() => {
+    if (approvalCard.value === shown) closeExpiredApproval()
+  }, APPROVAL_EXPIRED_SHOW_MS)
+}
+function closeExpiredApproval() {
+  if (!approvalCard.value || !approvalCard.value.expired) return
+  approvalCard.value = null
+  approvalClosedAt = Date.now()
+}
 function dismissAgentApprovals(agentPane) {
   droppedApprovals.set(agentPane, Date.now())
-  if (approvalCard.value && approvalCard.value.agentPane === agentPane) answerAgentApproval({ allow: false })
+  if (approvalCard.value && approvalCard.value.agentPane === agentPane) expireAgentApproval({ allow: false })
+}
+// The main process gave up waiting for this card (its own timeout): it ends
+// here too, on screen or still queued.
+function expireAgentApprovalById(id) {
+  if (typeof id !== 'string' || !id) return
+  const t = Date.now()
+  for (const [k, at] of expiredApprovals) if (t - at > 15 * 60 * 1000) expiredApprovals.delete(k)
+  expiredApprovals.set(id, t)
+  if (approvalCard.value && approvalId(approvalCard.value.card) === id) expireAgentApproval({ allow: false, timedOut: true })
+}
+// The window shows again: a card whose time passed while its timer was held
+// back ends now.
+function checkAgentApprovalTime() {
+  const entry = approvalCard.value
+  if (entry && !entry.expired && Date.now() >= entry.until) expireAgentApproval({ allow: false, timedOut: true })
 }
 function answerAgentApproval(answer) {
   const entry = approvalCard.value
+  if (entry && entry.expired) return closeExpiredApproval()
+  // Past its time (its timer held back in a hidden window): the request is
+  // over, and the click must not look like it worked.
+  if (entry && Date.now() >= entry.until) return expireAgentApproval({ allow: false, timedOut: true })
   approvalCard.value = null
   if (entry) approvalClosedAt = Date.now()
   if (entry) entry.resolve(answer || { allow: false })
@@ -10841,6 +10893,14 @@ async function enableTerminalAutoApprove() {
   settings.agentTerminalAutoApprove = true
   return true
 }
+// A card's timer held back while the window was hidden or minimized: checked
+// again the moment the user is back.
+document.addEventListener('visibilitychange', checkAgentApprovalTime)
+window.addEventListener('focus', checkAgentApprovalTime)
+onBeforeUnmount(() => {
+  document.removeEventListener('visibilitychange', checkAgentApprovalTime)
+  window.removeEventListener('focus', checkAgentApprovalTime)
+})
 function workspaceRulesKey(ws) {
   return String((ws.remote && `${ws.remote.hostId}:${ws.remote.path}`) || ws.cwd || ws.id || '')
 }
@@ -10929,6 +10989,7 @@ const agentTerminalTargets = createAgentTerminalTargets({
   },
   closeTerminal: (id) => closeLeaf(id, { force: true }),
   dismissApprovals: (agentPane) => dismissAgentApprovals(agentPane),
+  expireApproval: (cardId) => expireAgentApprovalById(cardId),
   activeTerminal: () => {
     const ws = currentWs.value
     return ws && ws.activeId ? findLeafIn(ws.tree, ws.activeId) : null
@@ -11047,6 +11108,7 @@ const agentAccountTargets = createAgentAccountTargets({
   },
   approve: (card, agentPane, opts) => askAgentApproval(card, agentPane, opts),
   dismiss: (agentPane) => dismissAgentApprovals(agentPane),
+  expire: (token) => expireAgentApprovalById(token),
   // The pane menu's Restart on <account>, as it is.
   async restart(id, accountId) {
     if (restartingLeaves.has(id)) return 'busy'
@@ -13686,18 +13748,19 @@ onBeforeUnmount(() => {
     />
 
     <AgentAccountApproval
-      v-if="approvalCard && approvalCard.card.kind === 'accounts'"
+      v-if="approvalCard && !approvalCard.expired && approvalCard.card.kind === 'accounts'"
       :key="approvalCard.card.token"
       :card="approvalCard.card"
       @answer="answerAgentApproval"
     />
     <AgentCommandApproval
-      v-if="approvalCard && approvalCard.card.kind !== 'accounts'"
+      v-if="approvalCard && !approvalCard.expired && approvalCard.card.kind !== 'accounts'"
       :key="approvalCard.card.command + approvalCard.card.kind"
       :card="approvalCard.card"
       @answer="answerAgentApproval"
       @configure="openSettingsAt('agents', 'set-agent-terminal')"
     />
+    <AgentApprovalExpired v-if="approvalCard && approvalCard.expired" @close="closeExpiredApproval" />
 
     <NewTaskDialog
       v-if="newTaskOpen"
