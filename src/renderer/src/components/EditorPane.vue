@@ -569,11 +569,22 @@ async function enterDiff(d, m) {
 // A diff tab: its sides from git (Orca's getDiff): staged is HEAD -> index
 // (read-only); unstaged is the index -> the file, its document on the right
 // (editable, saved like the file); untracked is nothing -> the file.
+// An agent's edit (area 'agent', opened from the chat): both sides come with
+// the tab (the file before the edit and now, or the edit's own snippets),
+// read-only.
+const diffReadOnlyText = computed(() => {
+  const dff = diffInfo.value
+  if (dff && dff.area === 'agent')
+    return dff.snippet
+      ? t('editor.diff.agentSnippet', 'Agent edit: the edit alone (the file has changed since)')
+      : t('editor.diff.agentReadOnly', 'Agent edit: read-only')
+  return dff && dff.area === 'staged' ? t('editor.diff.stagedReadOnly', 'Staged: read-only') : t('editor.diff.readOnly', 'Read-only')
+})
 async function enterDiffTab(f) {
   if (!monaco || !f || !f.diff) return
   const dff = f.diff
   const d = activeDoc.value
-  const editableSide = dff.area !== 'staged' && dff.area !== 'commit' && dff.area !== 'branch'
+  const editableSide = dff.area !== 'staged' && dff.area !== 'commit' && dff.area !== 'branch' && dff.area !== 'agent'
   // The file's document is still loading: wait for it (the watch comes back).
   if (editableSide && d && d.loading) return
   const docReady = editableSide && d && !d.error && !d.loading && !!modelOf(d.path)
@@ -589,7 +600,8 @@ async function enterDiffTab(f) {
   try {
     // A version Local History kept (the explorer's Timeline): it -> the file
     // (its document on the right, editable).
-    if (dff.area === 'local') {
+    if (dff.area === 'agent') r = { ok: true, original: String(dff.original || ''), modified: String(dff.modified || ''), exists: false }
+    else if (dff.area === 'local') {
       const lh = window.shellApi.localHistory
       const kept = lh && lh.read ? await lh.read({ path: dff.full, id: dff.local }) : null
       if (!kept || !kept.ok) r = { ok: false, error: t('editor.diff.localUnreadable', 'This version of the file could not be read.') }
@@ -641,7 +653,7 @@ async function enterDiffTab(f) {
   diffBusy.value = false
   // Review notes are for the changes not committed yet, not a past commit
   // (nor a version Local History kept).
-  if (dff.area !== 'commit' && dff.area !== 'branch' && dff.area !== 'local') attachNotes(dff)
+  if (dff.area !== 'commit' && dff.area !== 'branch' && dff.area !== 'local' && dff.area !== 'agent') attachNotes(dff)
   updateRichText()
   // Orca opens a diff at its first change.
   if (!props.node.reveal) {
@@ -1265,7 +1277,7 @@ onBeforeUnmount(() => {
           diffBusy ? t('editor.viewer.reading', 'Reading…') : diffNote
         }}</span>
         <span v-if="diffInfo && diffReadOnly && !diffBusy && mode === 'diff'" class="ed-note-inline" data-test="diff-readonly">{{
-          diffInfo.area === 'staged' ? t('editor.diff.stagedReadOnly', 'Staged: read-only') : t('editor.diff.readOnly', 'Read-only')
+          diffReadOnlyText
         }}</span>
         <span class="ed-spacer"></span>
         <span v-if="docReadOnly && (mode === 'edit' || mode === 'diff' || mode === 'changes')" class="ed-state" :class="{ warn: docDisconnected }" :title="lockedText" data-test="editor-locked">{{

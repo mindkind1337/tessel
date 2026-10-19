@@ -246,6 +246,49 @@ describe('Codex rollout', () => {
   })
 })
 
+// The chat's clickable edits (renderer/src/chat/agentEdits.js): where each
+// tool ran and where an edit landed, from what the agent recorded.
+describe('edit locations', () => {
+  it("Codex: each tool call carries its turn's cwd (a worktree copy's after a turn_context moved it)", () => {
+    const patch = '*** Begin Patch\n*** Update File: src/a.js\n@@\n-a\n+b\n*** End Patch'
+    const events = codexHistoryEvents(
+      [
+        { timestamp: ts(0), type: 'session_meta', payload: { id: CODEX_ID, cwd: 'C:\\p' } },
+        { timestamp: ts(1), type: 'event_msg', payload: { type: 'user_message', message: 'Edit it' } },
+        { timestamp: ts(2), type: 'response_item', payload: { type: 'custom_tool_call', name: 'apply_patch', call_id: 'c1', input: patch } },
+        { timestamp: ts(3), type: 'event_msg', payload: { type: 'task_complete' } },
+        { timestamp: ts(4), type: 'turn_context', payload: { cwd: 'C:\\p.worktrees\\t1' } },
+        { timestamp: ts(4), type: 'event_msg', payload: { type: 'user_message', message: 'Again' } },
+        { timestamp: ts(5), type: 'response_item', payload: { type: 'custom_tool_call', name: 'apply_patch', call_id: 'c2', input: patch } },
+        { timestamp: ts(6), type: 'turn_context', payload: { cwd: '\\\\server\\share' } },
+        { timestamp: ts(7), type: 'response_item', payload: { type: 'custom_tool_call', name: 'apply_patch', call_id: 'c3', input: patch } }
+      ].map((r) => JSON.stringify(r)),
+      CODEX_ID
+    )
+    const tools = events.filter((e) => e.type === 'tool' && e.name)
+    expect(tools.map((e) => e.cwd)).toEqual(['C:\\p', 'C:\\p.worktrees\\t1', 'C:\\p.worktrees\\t1'])
+    expect(tools[0].input).toBe(patch)
+  })
+
+  it("Claude: a tool carries its line's cwd, and an edit's result its first changed line", () => {
+    const events = claudeHistoryEvents(
+      [
+        { type: 'user', uuid: 'u1', timestamp: ts(1), cwd: 'C:\\proj', message: { content: 'go' } },
+        { type: 'assistant', uuid: 'a1', timestamp: ts(2), cwd: 'C:\\proj', message: { id: 'm1', content: [{ type: 'tool_use', id: 't1', name: 'Edit', input: { file_path: 'C:\\proj\\a.js', old_string: 'x', new_string: 'y' } }] } },
+        {
+          type: 'user',
+          uuid: 'u2',
+          timestamp: ts(3),
+          message: { content: [{ type: 'tool_result', tool_use_id: 't1', content: 'ok' }] },
+          toolUseResult: { structuredPatch: [{ oldStart: 10, oldLines: 3, newStart: 10, newLines: 3, lines: [' keep', ' keep', '-x', '+y'] }] }
+        }
+      ].map((r) => JSON.stringify(r))
+    )
+    expect(events.find((e) => e.type === 'tool')).toMatchObject({ id: 't1', cwd: 'C:\\proj' })
+    expect(events.find((e) => e.type === 'toolResult')).toMatchObject({ id: 't1', editLine: 12 })
+  })
+})
+
 describe('readLastLines', () => {
   it('returns null for a missing file', () => {
     expect(readLastLines(join(tmp, 'none.jsonl'), 1024)).toBeNull()

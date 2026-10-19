@@ -38,6 +38,9 @@ function isSessionNotice(message, block) {
 }
 export function buildNativeChatTranscriptSlots(input) {
     const { messages, turnKeys, latestUserIndex, currentTurnKey, receipts, turnStatuses, turnDiffs, showTurnStatus, expandedTurnKeys, isWorking, lifecycleWorking } = input;
+    // Tessel: the files each turn changed (chat/agentEdits.js turnChangedFiles),
+    // drawn under its last row like the diff rollup.
+    const turnChanges = input.turnChanges ?? new Map();
     const foldRows = messages.map((message, index)=>{
         const content = deriveNativeChatRowContent(message.blocks);
         return {
@@ -62,9 +65,10 @@ export function buildNativeChatTranscriptSlots(input) {
         const candidateStatus = index === latestUserIndex ? turnStatuses.active : message.role === 'user' && turnKey ? turnStatuses.completedByTurn[turnKey] : undefined;
         const status = showTurnStatus && candidateStatus?.workedSeconds != null ? candidateStatus : undefined;
         const turnDiff = turnKey && turnKeys[index + 1] !== turnKey ? turnDiffs.get(turnKey) : undefined;
+        const changedFiles = turnKey && turnKeys[index + 1] !== turnKey ? turnChanges.get(turnKey) : undefined;
         const folded = foldedRows.has(index);
         const drawsRow = receipt !== undefined || !folded && nativeChatRowRendersContent(message.blocks);
-        if (!drawsRow && status === undefined && turnDiff === undefined) {
+        if (!drawsRow && status === undefined && turnDiff === undefined && changedFiles === undefined) {
             continue;
         }
         slots.push({
@@ -77,10 +81,11 @@ export function buildNativeChatTranscriptSlots(input) {
             folded,
             turnFolds: turnKey !== undefined && foldableTurnKeys.has(turnKey),
             turnDiff,
+            changedFiles,
             estimatedHeight: estimateNativeChatRowHeight(nativeChatRowContentMetrics(message), {
                 hasReceipt: receipt !== undefined,
                 hasStatus: status !== undefined,
-                hasTurnDiff: turnDiff !== undefined,
+                hasTurnDiff: turnDiff !== undefined || changedFiles !== undefined,
                 folded
             })
         });

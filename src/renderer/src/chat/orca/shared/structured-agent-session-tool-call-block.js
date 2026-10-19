@@ -56,6 +56,17 @@ export function structuredAgentSessionToolCallBlock(action) {
         } : {},
         ...action.webSearchResults !== undefined ? {
             webSearchResults: action.webSearchResults
+        } : {},
+        // Tessel: the folders its paths are read against and the first line
+        // its edit changed (journalAdapter.js; renderer/src/chat/agentEdits.js).
+        ...typeof action.cwd === 'string' ? {
+            cwd: action.cwd
+        } : {},
+        ...typeof action.folder === 'string' ? {
+            folder: action.folder
+        } : {},
+        ...Number.isSafeInteger(action.editLine) ? {
+            editLine: action.editLine
         } : {}
     };
 }
