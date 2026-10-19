@@ -88,12 +88,30 @@ export function modelAllowed(rule, agent, model) {
   return list.some((m) => sameModel(m, model))
 }
 
-// Whether a guest may type in a pane running this agent with this model
-// ({ agent, model }: a shell has no agent, and is always allowed here).
+// Whether a rule keeps anything from guests (a rule that allows every agent,
+// every model and the agents added later keeps nothing).
+export function ruleRestricts(rule) {
+  const r = cleanAgentRule(rule)
+  return !!r && (r.deny.length > 0 || !r.later || Object.keys(r.models).length > 0)
+}
+
+// Whether a guest may type in a pane, from what runs in it: { agent, models,
+// others } (agent: the pane's agent, null for a shell; models: the ids its
+// model is known by, from each source that says it: all must be allowed,
+// and none known counts as refused when the rule limits that agent's
+// models; others: other agents found running in it, each checked too, their
+// model unknown).
 export function paneTypeAllowed(rule, pane) {
-  const agent = pane && typeof pane.agent === 'string' ? pane.agent : null
+  if (!pane) return true
+  const agent = typeof pane.agent === 'string' && pane.agent ? pane.agent : null
+  const others = Array.isArray(pane.others) ? pane.others.filter((x) => typeof x === 'string' && x) : []
+  for (const id of others) if (!agentAllowed(rule, id) || allowedModels(rule, id)) return false
   if (!agent) return true
-  return modelAllowed(rule, agent, pane.model || '')
+  if (!agentAllowed(rule, agent)) return false
+  const list = allowedModels(rule, agent)
+  if (!list) return true
+  const models = (Array.isArray(pane.models) ? pane.models : [pane.model]).filter((m) => typeof m === 'string' && m)
+  return models.length > 0 && models.every((m) => list.some((x) => sameModel(x, m)))
 }
 
 // The host's agents a guest may see in its "open" menu: the allowed ones,
@@ -169,41 +187,112 @@ export function sameAgentRule(a, b) {
 
 // --- Switching models by typing ---------------------------------------------------
 // A guest switching an allowed agent to another model types /model (Claude
-// Code, Codex, Gemini, Grok...). What it types in a pane is followed here as
-// the agent's input line would read it (each guest and pane its own line):
-// printable text added, Backspace taking one back, Ctrl+C or Ctrl+U
-// clearing it, Enter submitting it. -> { line (what stays typed), submitted
-// (the lines Enter sent) }.
-const MAX_LINE = 400
-export function followTypedLine(line, data) {
-  let cur = typeof line === 'string' ? line : ''
+// Code, Codex, Gemini, Grok...) or opens /config. What it types in a pane is
+// followed as the agent's input line would read it (each person and pane its
+// own line, across its reconnects): text inserted at the cursor, the arrows,
+// Home and End, Backspace and Delete, Ctrl+W, Ctrl+U and Ctrl+K, Ctrl+C
+// clearing it, Enter submitting it. Best effort: an agent's own keys can
+// still change what it reads, so while a rule limits an agent's models, the
+// keys that bring back or complete text Tessel can't see (Tab, Up and Down,
+// Home, Ctrl+A, Alt+letter) are refused there outright (refusedKeys), and a
+// switch Tessel did not see is caught afterwards (the host's safety net).
+//
+// state: { text, cursor, over } (over: the line went past MAX_LINE, its end
+// not kept). -> { state, submitted: [{ text, over }] }
+export const MAX_LINE = 400
+const emptyLine = () => ({ text: '', cursor: 0, over: false })
+export function followTypedLine(state, data) {
+  const st = state && typeof state === 'object' && typeof state.text === 'string' ? { text: state.text, cursor: Math.max(0, Math.min(state.cursor | 0, state.text.length)), over: !!state.over } : emptyLine()
   const submitted = []
   const text = typeof data === 'string' ? data : ''
+  const insert = (ch) => {
+    if (st.text.length >= MAX_LINE) {
+      st.over = true
+      return
+    }
+    st.text = st.text.slice(0, st.cursor) + ch + st.text.slice(st.cursor)
+    st.cursor += ch.length
+  }
   for (let i = 0; i < text.length; i++) {
     const ch = text[i]
     if (ch === '\r' || ch === '\n') {
-      submitted.push(cur)
-      cur = ''
-    } else if (ch === '\x7f' || ch === '\b') cur = cur.slice(0, -1)
-    else if (ch === '\x03' || ch === '\x15') cur = ''
+      submitted.push({ text: st.text, over: st.over })
+      Object.assign(st, emptyLine())
+    } else if (ch === '\x7f' || ch === '\b') {
+      if (st.cursor > 0) {
+        st.text = st.text.slice(0, st.cursor - 1) + st.text.slice(st.cursor)
+        st.cursor--
+      }
+    } else if (ch === '\x03') Object.assign(st, emptyLine())
+    else if (ch === '\x15') {
+      st.text = st.text.slice(st.cursor)
+      st.cursor = 0
+    } else if (ch === '\x0b') st.text = st.text.slice(0, st.cursor)
+    else if (ch === '\x17') {
+      const before = st.text.slice(0, st.cursor).replace(/\S+\s*$/, '')
+      st.text = before + st.text.slice(st.cursor)
+      st.cursor = before.length
+    } else if (ch === '\x01') st.cursor = 0
+    else if (ch === '\x05') st.cursor = st.text.length
+    else if (ch === '\x02') st.cursor = Math.max(0, st.cursor - 1)
+    else if (ch === '\x06') st.cursor = Math.min(st.text.length, st.cursor + 1)
     else if (ch === '\x1b') {
-      // An escape sequence (arrows, bracketed paste marks): skipped whole.
-      // eslint-disable-next-line no-control-regex -- escape sequences are what it skips
-      const m = /^\x1b(\[[0-9;?]*[ -/]*[@-~]|O.|.)/.exec(text.slice(i))
-      if (m) i += m[0].length - 1
-    } else if (ch >= ' ') cur = (cur + ch).slice(-MAX_LINE)
+      // eslint-disable-next-line no-control-regex -- escape sequences are what it reads
+      const m = /^\x1b(?:\[([0-9;?]*)([ -/]*[@-~])|O(.)|(.))?/s.exec(text.slice(i))
+      i += m[0].length - 1
+      const key = m[2] ? (m[1] || '') + m[2] : m[3] ? 'O' + m[3] : ''
+      if (key === 'D' || key === 'OD') st.cursor = Math.max(0, st.cursor - 1)
+      else if (key === 'C' || key === 'OC') st.cursor = Math.min(st.text.length, st.cursor + 1)
+      else if (key === 'H' || key === 'OH' || key === '1~' || key === '7~') st.cursor = 0
+      else if (key === 'F' || key === 'OF' || key === '4~' || key === '8~') st.cursor = st.text.length
+      else if (key === '3~') st.text = st.text.slice(0, st.cursor) + st.text.slice(st.cursor + 1)
+    } else if (ch >= ' ') insert(ch)
   }
-  return { line: cur, submitted }
+  return { state: st, submitted }
 }
 
-// Whether a submitted line switches to a model the rule refuses for this
-// agent: "/model" with no model (it opens the agent's own picker, where any
-// model can be chosen) or with one not allowed. Only for an agent whose
-// models the rule limits.
+// Keys that bring back or complete text Tessel can't follow: Tab, Up and
+// Down (history), Home and Ctrl+A (then an edit at the start), Alt+letter
+// (agents' own shortcuts, Claude Code's Alt+P model picker included).
+export function refusedKeys(data) {
+  const text = typeof data === 'string' ? data : ''
+  if (text.includes('\t') || text.includes('\x01')) return true
+  // eslint-disable-next-line no-control-regex -- escape sequences are what it reads
+  const re = /\x1b(?:\[([0-9;?]*)([ -/]*[@-~])|O(.)|(.))?/gs
+  let m
+  while ((m = re.exec(text))) {
+    if (m[2] && /^(?:[0-9;]*[ABH]|1~|7~)$/.test((m[1] || '') + m[2])) return true
+    if (m[3] && 'ABH'.includes(m[3])) return true
+    // ESC then a character: Alt+that key (a lone Esc at the end is Esc).
+    if (m[4] !== undefined && m[4] !== '\x1b') return true
+  }
+  return false
+}
+
+// A typed line as an agent's command reads it: compatibility forms folded
+// (a fullwidth ／ is a /), invisible format characters dropped.
+const commandText = (s) => String(s || '').normalize('NFKC').replace(/\p{Cf}/gu, '').trimStart()
+
+// Whether a submitted line ({ text, over } or a string) may switch to a model
+// the rule refuses for this agent: "/model" with no model (it opens the
+// agent's own picker) or with one not allowed, a start of "/model" (the
+// agent completes it), /config (its model setting), or a command line too
+// long to follow. Only for an agent whose models the rule limits.
 export function refusedModelSwitch(rule, agent, submitted) {
   const list = allowedModels(rule, agent)
   if (!list) return false
-  const m = /^\s*\/model\b\s*(\S*)/i.exec(String(submitted || ''))
+  const entry = typeof submitted === 'string' ? { text: submitted, over: false } : submitted || {}
+  const line = commandText(entry.text)
+  if (!line.startsWith('/')) return false
+  if (entry.over) return true
+  const low = line.toLowerCase()
+  const word = low.split(/\s/)[0]
+  if (word.length >= 2 && '/model'.startsWith(word)) {
+    if (word !== '/model') return true
+  }
+  if (word.length >= 4 && '/config'.startsWith(word)) return true
+  if (/^\/config\b/.test(low)) return true
+  const m = /^\/model\b\s*(\S*)/.exec(low)
   if (!m) return false
   return !m[1] || !list.some((x) => sameModel(x, m[1]))
 }

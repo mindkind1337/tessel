@@ -40,7 +40,8 @@ function fakeTessel() {
       { id: 'codex', name: 'Codex' }
     ],
     shareRule: null,
-    panes: { c1: { agent: 'claude', model: 'sonnet' }, x1: { agent: 'codex', model: '' } },
+    panes: { s1: { agent: null, models: [] }, c1: { agent: 'claude', models: ['sonnet'] }, x1: { agent: 'codex', models: [] } },
+    breaches: [],
     callbacks: {
       projects: () => [{ id: 'ws-a', layout: layoutOf('A', ['s1', 'c1', 'x1']), panes: ['s1', 'c1', 'x1'].map(pane) }],
       snapshot: async (id) => ({ data: `screen of ${id}`, cols: 80, rows: 24 }),
@@ -51,6 +52,7 @@ function fakeTessel() {
       agents: () => t.agents,
       agentDefault: () => t.shareRule,
       paneAgent: (id) => t.panes[id] || null,
+      onRuleBreach: (b) => t.breaches.push(b),
       askApproval: async () => true
     }
   }
@@ -83,9 +85,10 @@ describe('Live Share: agents guests may use (host enforcement)', () => {
     const port = await host.start()
     return { secret, port }
   }
-  async function joined({ port, secret }, name) {
+  async function joined({ port, secret }, name, back = null) {
     const r = recorder()
-    r.client = createShareGuest({ url: `ws://127.0.0.1:${port}/`, secret, name, signingKey: newSigningKey(), callbacks: r.callbacks })
+    r.key = back ? back.key : newSigningKey()
+    r.client = createShareGuest({ url: `ws://127.0.0.1:${port}/`, secret, name, signingKey: r.key, ...(back ? { back: true, hostKey: back.hostKey } : {}), callbacks: { ...r.callbacks, onHostKey: (k) => (r.hostKey = k) } })
     r.client.connect()
     await until(() => r.states.includes('joined') && r.projects)
     return r
@@ -229,5 +232,113 @@ describe('Live Share: agents guests may use (host enforcement)', () => {
     await until(() => alex.notices.length)
     expect(alex.notices[0]).toMatchObject({ code: 'agent-denied', agent: 'Gemini' })
     expect(t.opened).toHaveLength(1)
+  })
+
+  it('takes nothing in a pane it does not know yet, or one being checked, from a guest whose rule limits agents (and everything without a rule)', async () => {
+    const t = fakeTessel()
+    t.panes = { s1: { agent: null, models: [] }, x1: { agent: 'codex', models: [], unsure: true } }
+    const conn = await share(t)
+    const alex = await joined(conn, 'Alex')
+    await grant(alex, 'Alex', withAgents(ALL, setAgentAllowed(null, 'claude', false, HOST_IDS)))
+    await until(() => alex.screens.c1)
+    alex.client.write('c1', 'a')
+    alex.client.write('x1', 'b')
+    alex.client.write('s1', 'ls\r')
+    await until(() => t.writes.length === 1)
+    await wait(40)
+    expect(t.writes).toEqual([['s1', 'ls\r']])
+    expect(alex.notices.map((n) => n.code)).toEqual(['checking', 'checking'])
+    // No rule that limits anything: as before.
+    await grant(alex, 'Alex', ALL)
+    alex.client.write('c1', 'a')
+    await until(() => t.writes.length === 2)
+  })
+
+  it('checks every agent found running in a pane, and every source of its model', async () => {
+    const t = fakeTessel()
+    // Codex started from the Claude pane (Claude's ! mode, say).
+    t.panes.c1 = { agent: 'claude', models: ['sonnet'], others: ['codex'] }
+    const alex = await joined(await share(t), 'Alex')
+    await grant(alex, 'Alex', withAgents(ALL, setAgentAllowed(null, 'codex', false, HOST_IDS)))
+    await until(() => alex.screens.c1)
+    alex.client.write('c1', 'x')
+    await until(() => alex.notices.length)
+    expect(alex.notices[0]).toMatchObject({ code: 'type-denied', agent: 'Codex' })
+    // Back at its shell prompt (Claude quit): a shell.
+    t.panes.c1 = { agent: null, models: [], others: [] }
+    alex.client.write('c1', 'y')
+    await until(() => t.writes.length === 1)
+    // Two sources of its model, one left out: refused.
+    t.panes.c1 = { agent: 'claude', models: ['sonnet', 'opus'] }
+    await grant(alex, 'Alex', withAgents(ALL, setAgentModels(null, 'claude', ['sonnet'], HOST_IDS)))
+    alex.client.write('c1', 'z')
+    await until(() => alex.notices.some((n) => n.code === 'model-denied'))
+    // Limited models and its model not known: refused too.
+    t.panes.c1 = { agent: 'claude', models: [] }
+    alex.client.write('c1', 'z')
+    await wait(60)
+    expect(t.writes).toHaveLength(1)
+  })
+
+  it('refuses the keys it can’t follow where models are limited, and follows a line across a reconnect', async () => {
+    const t = fakeTessel()
+    const conn = await share(t)
+    const alex = await joined(conn, 'Alex')
+    await grant(alex, 'Alex', withAgents(ALL, setAgentModels(null, 'claude', ['sonnet'], HOST_IDS)))
+    await until(() => alex.screens.c1)
+    for (const k of ['\t', '\x1b[A', '\x1bp', '\x01', '\x1b[H']) alex.client.write('c1', k)
+    alex.client.write('x1', '\t')
+    await until(() => t.writes.length === 1)
+    await wait(40)
+    expect(t.writes).toEqual([['x1', '\t']])
+    // "/mo" then the connection drops; back, it types "del opus" + Enter.
+    alex.client.write('c1', '/mo')
+    await until(() => t.writes.length === 2)
+    alex.client.disconnect()
+    const back = await joined(conn, 'Alex', alex)
+    await until(() => back.screens.c1)
+    back.client.write('c1', 'del opus\r')
+    await until(() => back.notices.some((n) => n.code === 'model-denied'))
+    expect(t.writes).toHaveLength(2)
+  })
+
+  it('presses Esc in a pane that switched to a left-out model soon after the guest typed there, and tells the host', async () => {
+    const t = fakeTessel()
+    const alex = await joined(await share(t), 'Alex')
+    await grant(alex, 'Alex', withAgents(ALL, setAgentModels(null, 'claude', ['sonnet'], HOST_IDS)))
+    await until(() => alex.screens.c1)
+    alex.client.write('c1', 'hello\r')
+    await until(() => t.writes.length === 1)
+    t.panes.c1 = { agent: 'claude', models: ['opus'] }
+    host.paneChanged('c1')
+    expect(t.writes.at(-1)).toEqual(['c1', '\x1b'])
+    expect(t.breaches).toEqual([expect.objectContaining({ pane: 'c1', agent: 'Claude Code', model: 'opus', guest: expect.objectContaining({ name: 'Alex' }) })])
+    // Once per pane in a while; a pane nobody typed in: nothing.
+    host.paneChanged('c1')
+    host.paneChanged('x1')
+    expect(t.breaches).toHaveLength(1)
+  })
+
+  it('keeps the invitation’s agents rule when the host’s answer is a plain yes', async () => {
+    const t = fakeTessel()
+    const rule = setAgentAllowed(null, 'claude', false, HOST_IDS)
+    const secret = newSecret()
+    host = createShareHost({ secret, hostName: 'Ada', callbacks: t.callbacks })
+    const port = await host.start()
+    const inv = host.invites()[0]
+    expect(host.updateInvite(inv.id, { rights: withAgents(ALL, rule) }).ok).toBe(true)
+    const alex = await joined({ port, secret }, 'Alex')
+    expect(alex.rights.at(-1).agents).toEqual(rule)
+    expect(guestOf('Alex').rights.agents).toEqual(rule)
+  })
+
+  it('opens with a picked model only one the host lists for that agent', async () => {
+    const t = fakeTessel()
+    const alex = await joined(await share(t), 'Alex')
+    await grant(alex, 'Alex', ALL)
+    alex.client.open({ kind: 'agent', agent: 'claude', project: 'ws-a', model: 'made-up' })
+    alex.client.open({ kind: 'agent', agent: 'claude', project: 'ws-a', model: 'opus' })
+    await until(() => t.opened.length === 2)
+    expect(t.opened.map(([, s]) => s.model)).toEqual([undefined, 'opus'])
   })
 })

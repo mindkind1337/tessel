@@ -16,7 +16,9 @@ import {
   setAgentModels,
   sameAgentRule,
   followTypedLine,
-  refusedModelSwitch
+  refusedModelSwitch,
+  refusedKeys,
+  ruleRestricts
 } from '../liveShareAgents'
 import { cleanRights, sameRights, setRight, withAgents, NO_RIGHTS } from '../liveShareRights'
 
@@ -28,7 +30,7 @@ describe('agents rule: defaults and old records', () => {
     expect(agentAllowed(null, 'claude')).toBe(true)
     expect(modelAllowed(null, 'claude', 'opus')).toBe(true)
     expect(allowedModels(null, 'claude')).toBe(null)
-    expect(paneTypeAllowed(null, { agent: 'claude', model: 'opus' })).toBe(true)
+    expect(paneTypeAllowed(null, { agent: 'claude', models: ['opus'] })).toBe(true)
   })
 
   it('loads rights saved before rules as all allowed, with no agents key', () => {
@@ -79,8 +81,8 @@ describe('agents rule: what it allows', () => {
     expect(modelAllowed(r, 'claude', 'opus')).toBe(false)
     expect(modelAllowed(r, 'claude', '')).toBe(true)
     expect(modelAllowed(r, 'codex', 'anything')).toBe(true)
-    expect(paneTypeAllowed(r, { agent: 'claude', model: 'opus' })).toBe(false)
-    expect(paneTypeAllowed(r, { agent: null, model: '' })).toBe(true)
+    expect(paneTypeAllowed(r, { agent: 'claude', models: ['opus'] })).toBe(false)
+    expect(paneTypeAllowed(r, { agent: null, models: [] })).toBe(true)
     expect(agentAllowed(setAgentModels(null, 'claude', [], HOST), 'claude')).toBe(false)
     expect(allowedModels(setAgentModels(r, 'claude', null, HOST), 'claude')).toBe(null)
   })
@@ -133,23 +135,83 @@ describe('agents rule: agents the host adds later', () => {
 })
 
 describe('agents rule: /model typed in a pane', () => {
-  it('follows the typed line: keys, Backspace, Ctrl+C, escape sequences, Enter', () => {
-    let s = followTypedLine('', '/mo')
-    s = followTypedLine(s.line, 'dx\x7fel')
-    expect(s).toEqual({ line: '/model', submitted: [] })
-    s = followTypedLine(s.line, ' opus\x1b[D\r')
-    expect(s.submitted).toEqual(['/model opus'])
-    expect(s.line).toBe('')
-    expect(followTypedLine('abc', '\x03x').line).toBe('x')
+  const R = setAgentModels(null, 'claude', ['sonnet'], HOST)
+  // Each write as the host takes it: refused keys first, then the line.
+  function typed(chunks) {
+    let state = null
+    for (const c of chunks) {
+      if (refusedKeys(c)) return 'refused'
+      const r = followTypedLine(state, c)
+      if (r.submitted.some((x) => refusedModelSwitch(R, 'claude', x))) return 'refused'
+      state = r.state
+    }
+    return 'passed'
+  }
+
+  it('follows the line as the agent reads it: cursor moves, Backspace, Delete, Ctrl+W/U/K, Ctrl+C, Enter', () => {
+    let r = followTypedLine(null, '/mo')
+    r = followTypedLine(r.state, 'dx\x7fel')
+    expect(r.state.text).toBe('/model')
+    r = followTypedLine(r.state, ' opus\x1b[D\r')
+    expect(r.submitted).toEqual([{ text: '/model opus', over: false }])
+    expect(followTypedLine({ text: 'abc', cursor: 3 }, '\x03x').state.text).toBe('x')
+    expect(followTypedLine(null, 'ab\x1b[D\x1b[D/').state.text).toBe('/ab')
+    expect(followTypedLine(null, 'xyz\x1b[D\x1b[D\x1b[3~').state.text).toBe('xz')
+    expect(followTypedLine(null, 'one two\x17').state.text).toBe('one ')
+    expect(followTypedLine(null, 'abc\x1b[D\x0b').state.text).toBe('ab')
+    // Past MAX_LINE: the start kept, marked.
+    const long = followTypedLine(null, '/model' + ' '.repeat(500) + 'opus').state
+    expect(long.text.startsWith('/model')).toBe(true)
+    expect(long.over).toBe(true)
   })
 
-  it('refuses a switch to a model left out, or the picker, only for an agent whose models are limited', () => {
-    const r = setAgentModels(null, 'claude', ['sonnet'], HOST)
-    expect(refusedModelSwitch(r, 'claude', '/model opus')).toBe(true)
-    expect(refusedModelSwitch(r, 'claude', '/model')).toBe(true)
-    expect(refusedModelSwitch(r, 'claude', '  /MODEL Sonnet')).toBe(false)
-    expect(refusedModelSwitch(r, 'claude', 'explain /model opus')).toBe(false)
-    expect(refusedModelSwitch(r, 'codex', '/model gpt-4')).toBe(false)
+  it('refuses every way to switch to a left-out model the review found', () => {
+    for (const chunks of [
+      ['/model opus\r'],
+      ['/model\r'],
+      ['/mo\r'],
+      ['/mod\t opus\r'],
+      ['model opus', '\x1b[H', '/', '\r'],
+      ['model opus\x01/\r'],
+      ['/modelx opus', '\x1b[D\x1b[D\x1b[D\x1b[D\x1b[D', '\x7f', '\r'],
+      ['\x1b[A\r'],
+      ['\x1bp'],
+      ['/model' + ' '.repeat(400) + 'opus\r'],
+      ['\x1b[200~/model opus\x1b[201~\r'],
+      ['/mod', 'el op', 'us\r'],
+      ['/MODEL OPUS\r'],
+      ['/model=opus\r'],
+      ['/config\r'],
+      ['/model sonnet\x17opus\r'],
+      ['／model opus\r'],
+      ['/model sonnet\rhello\r/model opus\r']
+    ])
+      expect([chunks, typed(chunks)]).toEqual([chunks, 'refused'])
+  })
+
+  it('lets through allowed switches, prompts, Esc and the arrows that only move', () => {
+    for (const chunks of [['/model sonnet\r'], ['/MODEL Sonnet\r'], ['hello there\r'], ['\x1b'], ['abc\x1b[D\x1b[Cd\r'], ['explain /model opus\r']]) expect([chunks, typed(chunks)]).toEqual([chunks, 'passed'])
+    expect(refusedModelSwitch(R, 'codex', '/model gpt-4')).toBe(false)
     expect(refusedModelSwitch(null, 'claude', '/model opus')).toBe(false)
+  })
+})
+
+describe('agents rule: a pane as guests may type in it', () => {
+  it('says whether a rule keeps anything from guests', () => {
+    expect(ruleRestricts(null)).toBe(false)
+    expect(ruleRestricts(setAgentLater(null, true, HOST))).toBe(false)
+    expect(ruleRestricts(setAgentLater(null, false, HOST))).toBe(true)
+    expect(ruleRestricts(setAgentAllowed(null, 'claude', false, HOST))).toBe(true)
+  })
+
+  it('checks every agent running in it and every source of its model; an unknown model counts as refused where models are limited', () => {
+    const r = setAgentModels(setAgentAllowed(null, 'codex', false, HOST), 'claude', ['sonnet'], HOST)
+    expect(paneTypeAllowed(r, { agent: null, models: [] })).toBe(true)
+    expect(paneTypeAllowed(r, { agent: 'claude', models: ['sonnet'] })).toBe(true)
+    expect(paneTypeAllowed(r, { agent: 'claude', models: ['sonnet', 'opus'] })).toBe(false)
+    expect(paneTypeAllowed(r, { agent: 'claude', models: [] })).toBe(false)
+    expect(paneTypeAllowed(r, { agent: 'claude', models: ['sonnet'], others: ['codex'] })).toBe(false)
+    expect(paneTypeAllowed(r, { agent: null, models: [], others: ['codex'] })).toBe(false)
+    expect(paneTypeAllowed(r, { agent: 'grok', models: [] })).toBe(true)
   })
 })

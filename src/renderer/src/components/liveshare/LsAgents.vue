@@ -12,7 +12,7 @@
 // what it allows.
 import { ref, reactive, computed, inject, useId } from 'vue'
 import { ChevronDown } from 'lucide-vue-next'
-import { cleanAgentRule, agentAllowed, allowedModels, setAgentAllowed, setAgentLater, setAgentModels } from '../../../../shared/liveShareAgents'
+import { cleanAgentRule, agentAllowed, allowedModels, setAgentAllowed, setAgentLater, setAgentModels, ruleRestricts } from '../../../../shared/liveShareAgents'
 import { t } from '../../i18n'
 
 const props = defineProps({
@@ -27,6 +27,8 @@ const props = defineProps({
   busy: { type: Boolean, default: false },
   // Starts open (the share's setting); else behind its summary line.
   startOpen: { type: Boolean, default: false },
+  // The subject may type (the limits then hold only partly: said next to it).
+  canType: { type: Boolean, default: false },
   // For data-test: ls-agents-<testKey>-...
   testKey: { type: String, default: '' }
 })
@@ -70,6 +72,7 @@ function summaryOf(rule) {
 const summary = computed(() => (following.value ? t('liveShare.agents.following', 'As the share’s setting: {{summary}}', { summary: summaryOf(shared.value) }) : summaryOf(shown.value)))
 
 const later = computed(() => !shown.value || shown.value.later)
+const limits = computed(() => ruleRestricts(shown.value))
 const allowedNow = (id) => agentAllowed(shown.value, id)
 const onlyModels = (id) => allowedModels(shown.value, id)
 const modelOn = (a, m) => {
@@ -175,8 +178,10 @@ const lastModel = (a, m) => {
           <span class="lsa-hint">{{ t('liveShare.agents.laterHint', 'Agents you install or subscribe to after this.') }}</span>
         </span>
       </label>
-      <p class="lsa-hint" :data-test="key('hint')">{{ t('liveShare.agents.hint', 'They still see the panes of agents you leave out, but can’t open them, type in them or switch them to a model you leave out. A terminal they can type in can still start any program.') }}</p>
+      <p class="lsa-hint" :data-test="key('hint')">{{ t('liveShare.agents.hint2', 'They still see the panes of agents you leave out, but can’t open them or type in them; Tessel also refuses switching an agent to a model you leave out (best effort).') }}</p>
+      <p class="lsa-hint lsa-caveat" :data-test="key('caveat')">{{ t('liveShare.agents.typeCaveat', 'Anyone who can type — in a terminal or in an agent you allow — can still start any program, including agents and models you leave out. These limits fully hold only for guests who can’t type.') }}</p>
     </div>
+    <p v-if="canType && limits" class="lsa-warn" role="note" :data-test="key('type-warn')">{{ t('liveShare.agents.typeWarn', 'They can type: anyone who can type — in a terminal or in an agent you allow — can still start any program, including agents and models you leave out.') }}</p>
   </div>
 </template>
 
@@ -277,6 +282,12 @@ const lastModel = (a, m) => {
   flex-direction: column;
   gap: 2px;
   padding-left: 22px;
+}
+.lsa-warn {
+  margin: 0;
+  color: var(--warn);
+  font-size: 11.5px;
+  overflow-wrap: anywhere;
 }
 .lsa-hint {
   margin: 0;

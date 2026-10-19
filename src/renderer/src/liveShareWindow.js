@@ -143,7 +143,8 @@ export function rightsText(rights) {
   // panes.
   const rule = cleanAgentRule(rights.agents)
   if (!rule || (!rule.deny.length && rule.later && !Object.keys(rule.models).length)) return text
-  return `${text} ${t('liveShare.rights.agentsLimited', 'Some of the host’s agents or models are not for guests: you can watch their panes, not open or type in them.')}`
+  const limited = `${text} ${t('liveShare.rights.agentsLimited', 'Some of the host’s agents or models are not for guests: you can watch their panes, not open or type in them.')}`
+  return rights.type === true ? `${limited} ${t('liveShare.rights.agentsTypeCaveat', 'Anyone who can type — in a terminal or in an agent the host allows — can still start any program, including agents and models left out. These limits fully hold only for guests who can’t type.')}` : limited
 }
 
 // A Live Share project's name in a guest's sidebar: the host's project, then
@@ -663,6 +664,14 @@ export function createLiveShareWindow(deps) {
     }
     const request = typeof req.request === 'string' ? req.request : null
     if (req.action === 'task') return applyTask(req)
+    // A pane a guest typed in switched to an agent or a model that guest may
+    // not use (main pressed Esc in it): said, so you can look.
+    if (req.action === 'ruleBreach') {
+      const name = (req.guest && req.guest.name) || t('liveShare.guest', 'A guest')
+      const what = [req.agent, req.model].filter((x) => typeof x === 'string' && x).join(' · ') || t('liveShare.toast.thatAgent', 'that agent')
+      deps.showToast(t('liveShare.toast.ruleBreach', '{{name}} typed in a pane that now runs {{what}}, which you don’t let guests use. Tessel pressed Esc there: check that pane.', { name, what }), { kind: 'error', timeout: 15000 })
+      return
+    }
     // An image a guest pasted (main saved it): pasted into your pane while the
     // guest still may type there (liveSharePaste.js).
     if (req.action === 'pasteImage') {
@@ -1662,6 +1671,7 @@ export function createLiveShareWindow(deps) {
     if (n && n.code === 'limit') deps.showToast(t('liveShare.toast.limit', '{{host}}’s Tessel limits how often guests open or close panes. Wait a minute.', { host: state.guest.host || '?' }), { timeout: 6000 })
     else if (n && n.code === 'agent') noAgent()
     else if (n && (n.code === 'agent-denied' || n.code === 'type-denied' || n.code === 'model-denied')) agentDenied(n.code, n.agent, n.model)
+    else if (n && n.code === 'checking') deps.showToast(t('liveShare.toast.checking', '{{host}}’s Tessel is checking what runs in this pane: type again in a moment.', { host: state.guest.host || '?' }), { timeout: 4000 })
   }
   // The host's agents rule refused something (shareHost.js): opening an
   // agent, typing in its pane (watching it stays), or a model.
@@ -1970,8 +1980,11 @@ export function createLiveShareWindow(deps) {
     feeds.dispose()
   }
 
+  // Whether one of your panes is in a project you share now.
+  const sharesPane = (id) => hostSharing() && !!projectOfPane(id)
   return {
     state,
+    sharesPane,
     init,
     dispose,
     isGuestWs,

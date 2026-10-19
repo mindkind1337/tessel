@@ -648,6 +648,11 @@ describe('Live Share in the window, as the host', () => {
     ])
   })
 
+  it('says when a pane a guest typed in switched to what that guest may not use (main pressed Esc there)', async () => {
+    t.listeners.onHostRequest({ action: 'ruleBreach', guest: { id: 'g1', name: 'Alex' }, pane: 'pane-1', agent: 'Claude Code', model: 'opus' })
+    expect(t.toasts.at(-1)).toBe('Alex typed in a pane that now runs Claude Code · opus, which you don’t let guests use. Tessel pressed Esc there: check that pane.')
+  })
+
   it('tells main each agent’s models (the "Agents guests may use" lists)', async () => {
     t.agentList.value = [{ id: 'claude', name: 'Claude Code', models: [{ id: 'opus', label: 'Opus' }, { id: 'bad' }, 'no'] }]
     await flush()
@@ -1196,6 +1201,8 @@ describe('Live Share, as a guest: asking the host to open, and what is on screen
     expect(t.toasts.at(-1)).toBe('Ada doesn’t let guests use opus with Claude Code.')
     t.listeners.onNotice({ code: 'model-denied', agent: 'Claude Code', model: '' })
     expect(t.toasts.at(-1)).toBe('Ada doesn’t let guests switch Claude Code to that model.')
+    t.listeners.onNotice({ code: 'checking' })
+    expect(t.toasts.at(-1)).toBe('Ada’s Tessel is checking what runs in this pane: type again in a moment.')
   })
 
   it('a host from before that list: no host menu, and nothing asked without the right', async () => {

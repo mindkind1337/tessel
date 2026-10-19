@@ -138,7 +138,7 @@ const waitingText = (g) => (g.code ? t('liveShare.share.guestWaitingCode', 'Wait
             <span class="lsd-sub">{{ t('liveShare.people.can', 'Can') }}</span>
             <RightsChecks compact :rights="p.rights || {}" :test-key="p.id" :busy="busyRight(p)" :label="t('liveShare.share.rightsLabel', 'What {{name}} can do', { name: personName(p) })" @toggle="(id, on) => setRight(p, id, on)" />
           </div>
-          <LsAgents :rule="(p.rights && p.rights.agents) || null" :busy="ctx.busy(p.id + ':agents')" :test-key="p.id" @change="(rule) => setAgents(p, rule)" />
+          <LsAgents :rule="(p.rights && p.rights.agents) || null" :can-type="!!(p.rights && p.rights.type)" :busy="ctx.busy(p.id + ':agents')" :test-key="p.id" @change="(rule) => setAgents(p, rule)" />
         </div>
         <p v-if="p.trusted" class="lsd-hint">{{ t('liveShare.people.trustedHint', 'Trusted: what you change here is kept for next time.') }}</p>
 

@@ -115,7 +115,8 @@ import { createShareHost, cleanAgents, isAgentId } from './liveShare/shareHost.j
 import { cleanProjectIds, cleanName, isProjectId, MAX_PROJECTS } from './liveShare/shareGrant.js'
 import { createTrustStore, isTrustId, trustId, MAX_TRUSTED, MAX_TRUSTED_PROJECTS } from './liveShare/shareTrust.js'
 import { cleanRights, isRightId } from '../shared/liveShareRights'
-import { cleanAgentRule, effectiveAgentRule, paneTypeAllowed, agentAllowed, modelAllowed, isModelId } from '../shared/liveShareAgents'
+import { cleanAgentRule, effectiveAgentRule, paneTypeAllowed, agentAllowed, modelAllowed, allowedModels, ruleRestricts, isModelId } from '../shared/liveShareAgents'
+import { listProcesses, agentsInTrees, KNOWN_AGENT_IDS } from './agentDetect'
 import { createShareGuest } from './liveShare/shareGuest.js'
 import { encodeInvite, decodeInvite, newSecret, newSigningKey, exportSigningKey, importSigningKey } from './liveShare/shareCrypto.js'
 import { ensureCloudflared, startTunnel, waitReachable, waitRegistered, tunnelLogTail, endLeftoverTunnel, tunnelState, stopTunnelPid, stopTunnelLater, processState } from './liveShare/shareTunnel.js'
@@ -465,6 +466,9 @@ export function registerLiveShare({
   localHistory = null,
   sessionHistory = null,
   readTerminal = null,
+  // The processes running now (agentDetect.js listProcesses): what really
+  // runs in a pane a guest types in (guests' agents rules).
+  listProcs = listProcesses,
   pageById = null,
   rendezvous = null,
   relayUrlOk = isTunnelUrl,
@@ -1033,6 +1037,9 @@ export function registerLiveShare({
   // The guests' copy of each shared project's board (project -> { tasks,
   // json }), made from what the window sends; pushed when it changed.
   let boards = new Map()
+  // project -> Map(card id -> the pane that asked its pending question):
+  // host-only.
+  let gateAskers = new Map()
   function pushBoard(s, project) {
     const b = boards.get(project)
     if (b && sharing === s && s.server) s.server.push('tasks', project, null, { tasks: b.tasks })
@@ -1051,6 +1058,16 @@ export function registerLiveShare({
     // An answer goes to the agent that asked: without the type right, only
     // one of the choices it offered (never free text typed to an agent).
     if (req.op === 'tasks.answer' && ctx.rights.type !== true && !(card.gate && card.gate.status === 'pending' && card.gate.options.includes(args.answer))) return { ok: false, code: 'not-allowed' }
+    // Free text goes to the agent that asked: only one the guest's agents
+    // rule lets it type in (one of the choices it offered is fine).
+    if (req.op === 'tasks.answer' && !(card.gate && card.gate.options.includes(args.answer))) {
+      const rule = effectiveAgentRule(ctx.rights.agents, shareSettings.agents)
+      if (ruleRestricts(rule)) {
+        const by = gateAskers.get(req.project)?.get(card.id)
+        const pane = by ? paneView(by) : null
+        if (!pane || pane.unsure || !paneTypeAllowed(rule, pane)) return { ok: false, code: 'not-allowed' }
+      }
+    }
     if (!ctx.recheck() || sharing !== s) return { ok: false, code: 'revoked' }
     const request = `t${nextTask++}`
     const res = await new Promise((resolve) => {
@@ -1115,7 +1132,11 @@ export function registerLiveShare({
     // (The type right: checked by the server before it came here, and again below.)
     if (ctx.rights.type !== true) return { ok: false, code: 'forbidden' }
     // Nor in a pane of an agent or a model its agents rule leaves out.
-    if (!paneTypeAllowed(effectiveAgentRule(ctx.rights.agents, shareSettings.agents), paneAgents.get(a.pane))) return { ok: false, code: 'forbidden' }
+    const pasteRule = effectiveAgentRule(ctx.rights.agents, shareSettings.agents)
+    if (ruleRestricts(pasteRule)) {
+      const pane = paneView(a.pane)
+      if (!pane || pane.unsure || !paneTypeAllowed(pasteRule, pane)) return { ok: false, code: 'forbidden' }
+    }
     // One upload and one minute's images per person, whatever its connection.
     const owner = typeof ctx.person === 'string' ? ctx.person : ctx.guest.id
     if (req.op === 'paste.part') return pasteUploads.part(owner, req.project, a)
@@ -1176,9 +1197,99 @@ export function registerLiveShare({
   // ('usage', shareUsage.js: never a reading taken for them).
   const agentsFeed = createAgentsFeed({ push: (project, data) => sharing?.server?.push('agents', project, null, data) })
   let rawPanes = new Map() // project -> the window's panes
-  // What runs in each pane shared ({ agent, model }: an agent or chat pane),
-  // for the guests' agents rules (shareHost.js paneAgent): host-only.
+  // What runs in each pane shared, as the window says it ({ agent (null: a
+  // shell), models (the ids its model is known by), pid (its shell's, an
+  // agent pane on this computer), local }), for the guests' agents rules
+  // (shareHost.js paneAgent): host-only.
   let paneAgents = new Map()
+  // What really runs under an agent pane's shell (agentsInTrees), looked at
+  // when a guest types in it: { pid, agents, at, unsure, enterAt }. After a
+  // guest's Enter there (it may have quit the agent or started another), the
+  // pane is unsure until a look that started after that Enter.
+  let running = new Map()
+  const RUNNING_FRESH_MS = 10000
+  const RUNNING_AFTER_ENTER_MS = 700
+  let runningBusy = false
+  let runningAgain = false
+  let runningTimer = null
+  const runningWanted = new Set()
+  function lookSoon(id, delay = 0) {
+    runningWanted.add(id)
+    if (runningTimer) return
+    runningTimer = setTimeout(() => {
+      runningTimer = null
+      lookNow()
+    }, delay)
+    runningTimer.unref?.()
+  }
+  async function lookNow() {
+    if (runningBusy) {
+      runningAgain = true
+      return
+    }
+    const shells = {}
+    for (const id of runningWanted) {
+      const p = paneAgents.get(id)
+      if (p && p.pid) shells[id] = p.pid
+    }
+    runningWanted.clear()
+    if (!Object.keys(shells).length) return
+    runningBusy = true
+    const started = Date.now()
+    try {
+      const procs = await Promise.resolve(listProcs()).catch(() => null)
+      if (!procs) return
+      const found = agentsInTrees(procs, shells)
+      for (const [id, agents] of Object.entries(found)) {
+        const p = paneAgents.get(id)
+        if (!p || p.pid !== shells[id]) continue
+        const was = running.get(id)
+        const enterAt = was ? was.enterAt || 0 : 0
+        running.set(id, { pid: shells[id], agents, at: Date.now(), unsure: enterAt > started, enterAt })
+        if (enterAt > started) lookSoon(id, RUNNING_AFTER_ENTER_MS)
+        if (!was || was.agents.join() !== agents.join()) sharing?.server?.paneChanged(id)
+      }
+    } finally {
+      runningBusy = false
+      if (runningAgain) {
+        runningAgain = false
+        lookSoon('', 0)
+      }
+    }
+  }
+  // A pane as a guest's agents rule sees it (shareHost.js paneAgent): what
+  // the window says, corrected by what really runs under its shell (an agent
+  // Tessel can recognise, on this computer): back at its shell prompt, it is
+  // a shell; another agent running there counts too. Not looked at yet, or
+  // being looked at again after an Enter: unsure. null: not known yet.
+  function paneView(id) {
+    const p = paneAgents.get(id)
+    if (!p) return null
+    const out = { agent: p.agent, models: p.models, others: [] }
+    if (!p.agent || !p.pid || !p.local || !KNOWN_AGENT_IDS.includes(p.agent)) return out
+    const r = running.get(id)
+    if (!r || r.pid !== p.pid) {
+      lookSoon(id)
+      return { ...out, unsure: true }
+    }
+    if (r.unsure) return { ...out, unsure: true }
+    if (Date.now() - r.at > RUNNING_FRESH_MS) lookSoon(id)
+    if (!r.agents.length) return { agent: null, models: [], others: [] }
+    if (r.agents.includes(p.agent)) return { ...out, others: r.agents.filter((x) => x !== p.agent) }
+    return { agent: null, models: [], others: r.agents }
+  }
+  // A guest typed in a pane: an Enter in an agent pane makes it unsure until
+  // the host looked again.
+  function paneTyped(id, data) {
+    const p = paneAgents.get(id)
+    if (!p || !p.agent || !p.pid || !p.local || !/[\r\n]/.test(String(data || ''))) return
+    const r = running.get(id)
+    if (r) {
+      r.unsure = true
+      r.enterAt = Date.now()
+    }
+    lookSoon(id, RUNNING_AFTER_ENTER_MS)
+  }
   let paneChildren = new Map() // project -> Map(pane id -> { agent, sessionId, accountId })
   let histories = new Map() // project -> records (hostHistory)
   let historyCosts = new Map() // project -> { at, costs }: figures read here
@@ -1263,6 +1374,9 @@ export function registerLiveShare({
     usageOff?.()
     usageOff = null
     rawPanes = new Map()
+    paneAgents = new Map()
+    running = new Map()
+    runningWanted.clear()
     paneChildren = new Map()
     histories = new Map()
     historyCosts = new Map()
@@ -1595,10 +1709,14 @@ export function registerLiveShare({
     hostRequests.set(request, { action, guestId: guest.id, spec, at: t0 })
     send('liveShare:hostRequest', { action, request, spec, guest })
   }
+  const sameModels = (a, b) => (!a && !b) || (Array.isArray(a) && Array.isArray(b) && a.length === b.length && a.every((x) => b.includes(x)))
   function checkRequests(list) {
     for (const [request, r] of [...hostRequests]) {
       const g = list.find((x) => x.id === r.guestId && x.state === 'joined')
-      if (g && g.projects.includes(r.spec.project) && (r.action !== 'open' || (g.rights && g.rights.open))) continue
+      // (An agent: still one its agents rule allows, with the models it allows.)
+      const rule = r.spec.kind === 'agent' && sharing?.server ? sharing.server.agentRuleOf(g ? g.id : '') : null
+      const agentOk = r.spec.kind !== 'agent' || (agentAllowed(rule, r.spec.agent) && (!r.spec.model || modelAllowed(rule, r.spec.agent, r.spec.model)) && sameModels(allowedModels(rule, r.spec.agent), r.spec.models))
+      if (g && agentOk && g.projects.includes(r.spec.project) && (r.action !== 'open' || (g.rights && g.rights.open))) continue
       cancelRequest(request)
     }
   }
@@ -1640,7 +1758,11 @@ export function registerLiveShare({
         write: (id, data) => host.send('write', { id, data }),
         agents: () => hostAgents,
         agentDefault: () => shareSettings.agents || null,
-        paneAgent: (id) => paneAgents.get(id) || null,
+        paneAgent: (id) => paneView(id),
+        paneTyped: (id, data) => paneTyped(id, data),
+        // A pane a guest typed in switched to what its rule refuses (Esc was
+        // pressed in it): the host's window says so.
+        onRuleBreach: (b) => sharing === s && send('liveShare:hostRequest', { action: 'ruleBreach', guest: { id: b.guest.id, name: b.guest.name }, pane: b.pane, agent: b.agent, model: b.model }),
         openPane: (spec, guest) => requestOpen('open', spec, guest),
         askOpen: (spec, guest) => requestOpen('ask-open', spec, guest),
         closePane: (id, guest) => send('liveShare:hostRequest', { action: 'close', id, guest }),
@@ -3122,6 +3244,8 @@ export function registerLiveShare({
       keep()
       info(`guests ${rule ? 'now use only the agents the share allows' : 'may use every agent'}`)
       sharing?.server?.agentRuleChanged()
+      // Requests to open waiting for an answer: still allowed?
+      if (sharing?.server) checkRequests(sharing.server.guests())
       pushHost()
     }
     return { ok: true, settings: { ...shareSettings } }
@@ -3134,8 +3258,12 @@ export function registerLiveShare({
     const keep = new Set(s.projects || [])
     for (const item of (Array.isArray(list) ? list : []).slice(0, MAX_PROJECTS)) {
       if (!item || !keep.has(item.project)) continue
-      // Its cards' own copies, for the review (host-only).
+      // Its cards' own copies, for the review (host-only), and the panes
+      // that asked their questions.
       taskCopies.set(item.project, hostTaskCopies(item.tasks))
+      const askers = new Map()
+      for (const c of Array.isArray(item.tasks) ? item.tasks.slice(0, 2000) : []) if (c && typeof c.id === 'string' && c.gate && typeof c.gate.by === 'string') askers.set(c.id, c.gate.by)
+      gateAskers.set(item.project, askers)
       const tasks = guestTasks(item.tasks, projectRoots(item.project))
       const json = JSON.stringify(tasks)
       if (boards.get(item.project)?.json === json) continue
@@ -3144,6 +3272,7 @@ export function registerLiveShare({
     }
     for (const id of [...boards.keys()]) if (!keep.has(id)) boards.delete(id)
     for (const id of [...taskCopies.keys()]) if (!keep.has(id)) taskCopies.delete(id)
+    for (const id of [...gateAskers.keys()]) if (!keep.has(id)) gateAskers.delete(id)
   })
   // Phase 2b. The window's panes of the projects shared, as their headers
   // and the Dashboard show them: [{ project, panes }] (sharePanels.js: the
@@ -3154,10 +3283,22 @@ export function registerLiveShare({
     const keep = new Set(s.projects || [])
     for (const item of (Array.isArray(list) ? list : []).slice(0, MAX_PROJECTS)) if (item && keep.has(item.project) && Array.isArray(item.panes)) rawPanes.set(item.project, item.panes)
     for (const id of [...rawPanes.keys()]) if (!keep.has(id)) rawPanes.delete(id)
+    const before = paneAgents
     paneAgents = new Map()
     for (const panes of rawPanes.values())
-      for (const p of panes.slice(0, 256))
-        if (p && typeof p.id === 'string' && (p.kind === 'agent' || p.kind === 'chat') && isAgentId(p.agentId)) paneAgents.set(p.id, { agent: p.agentId, model: str(p.modelId, 120) })
+      for (const p of panes.slice(0, 256)) {
+        if (!p || typeof p.id !== 'string') continue
+        const agent = (p.kind === 'agent' || p.kind === 'chat') && isAgentId(p.agentId) ? p.agentId : null
+        const models = agent ? (Array.isArray(p.modelIds) ? p.modelIds : [p.modelId]).filter(isModelId).slice(0, 4) : []
+        // (A chat pane has no process of its own: what the window says.)
+        const pid = agent && p.kind === 'agent' && Number.isSafeInteger(p.pid) && p.pid > 0 ? p.pid : null
+        paneAgents.set(p.id, { agent, models, pid, local: p.local === true })
+      }
+    // What runs in a pane changed: the guests' safety net.
+    for (const [id, e] of paneAgents) {
+      const was = before.get(id)
+      if (!was || was.agent !== e.agent || was.models.join('\n') !== e.models.join('\n')) s.server.paneChanged(id)
+    }
     for (const id of agentsFeed.projects()) {
       if (keep.has(id)) continue
       agentsFeed.drop(id)

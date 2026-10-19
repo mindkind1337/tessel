@@ -226,7 +226,7 @@ onMounted(() => {
         </div>
         <p class="lsi-preset-hint" :class="{ warn: preset === 'full' }" data-test="ls-invite-preset-hint">{{ presetHint }}</p>
         <RightsChecks v-if="showRightBoxes" class="lsi-rights" :rights="form.rights" test-key="invite" :label="t('liveShare.invite.rights', 'What they can do (you can change it when you let them in)')" @toggle="toggleRight" />
-        <LsAgents class="lsi-agents" :rule="form.rights.agents || null" test-key="invite" @change="setAgents" />
+        <LsAgents class="lsi-agents" :rule="form.rights.agents || null" :can-type="form.rights.type === true" test-key="invite" @change="setAgents" />
       </fieldset>
 
       <fieldset class="lsi-fieldset">

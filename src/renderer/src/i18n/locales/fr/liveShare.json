@@ -91,7 +91,8 @@
       "gitPart": "indexer et faire des commits",
       "tasksPart": "gérer ses tâches",
       "pagesViewPart": "voir ses pages de navigateur",
-      "agentsLimited": "Certains agents ou modèles de l’hôte ne sont pas pour les invités : vous pouvez regarder leurs volets, pas les ouvrir ni y taper."
+      "agentsLimited": "Certains agents ou modèles de l’hôte ne sont pas pour les invités : vous pouvez regarder leurs volets, pas les ouvrir ni y taper.",
+      "agentsTypeCaveat": "Toute personne qui peut taper — dans un terminal ou dans un agent que l’hôte autorise — peut toujours lancer n’importe quel programme, y compris les agents et modèles exclus. Ces limites ne tiennent pleinement que pour les invités qui ne peuvent pas taper."
     },
     "ask": {
       "title": "{{name}} veut rejoindre votre Live Share",
@@ -183,7 +184,9 @@
       "typeDenied": "{{host}} ne laisse pas les invités utiliser {{agent}} : vous pouvez regarder son volet, pas y taper.",
       "modelDenied": "{{host}} ne laisse pas les invités utiliser {{model}} avec {{agent}}.",
       "modelSwitchDenied": "{{host}} ne laisse pas les invités passer {{agent}} à ce modèle.",
-      "agentDenied": "{{host}} ne laisse pas les invités utiliser {{agent}}."
+      "agentDenied": "{{host}} ne laisse pas les invités utiliser {{agent}}.",
+      "ruleBreach": "{{name}} a tapé dans un volet qui exécute maintenant {{what}}, que vous ne laissez pas utiliser aux invités. Tessel y a appuyé sur Échap : vérifiez ce volet.",
+      "checking": "Le Tessel de {{host}} vérifie ce qui s’exécute dans ce volet : retapez dans un instant."
     },
     "toolbar": {
       "label": "Live Share",
@@ -575,8 +578,10 @@
       "allModelsLater": "Tous les modèles (y compris les nouveaux)",
       "later": "Autoriser les agents que j’ajoute plus tard",
       "laterHint": "Les agents que vous installez ou auxquels vous vous abonnez après ceci.",
-      "hint": "Ils voient toujours les volets des agents que vous excluez, mais ne peuvent pas les ouvrir, y taper ni les passer à un modèle que vous excluez. Un terminal où ils peuvent taper peut toujours lancer n’importe quel programme.",
-      "changed": "les agents qu’ils peuvent utiliser (la nouvelle liste)"
+      "changed": "les agents qu’ils peuvent utiliser (la nouvelle liste)",
+      "hint2": "Ils voient toujours les volets des agents que vous excluez, mais ne peuvent ni les ouvrir ni y taper ; Tessel refuse aussi de passer un agent à un modèle que vous excluez (au mieux).",
+      "typeCaveat": "Toute personne qui peut taper — dans un terminal ou dans un agent que vous autorisez — peut toujours lancer n’importe quel programme, y compris les agents et modèles que vous excluez. Ces limites ne tiennent pleinement que pour les invités qui ne peuvent pas taper.",
+      "typeWarn": "Ils peuvent taper : toute personne qui peut taper — dans un terminal ou dans un agent que vous autorisez — peut toujours lancer n’importe quel programme, y compris les agents et modèles que vous excluez."
     }
   }
 }

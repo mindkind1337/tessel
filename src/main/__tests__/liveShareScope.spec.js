@@ -105,6 +105,10 @@ describe('rules by name', () => {
       expect(isProtectedRel(p), p).toBe(true)
     for (const p of ['src/a.js', '.mcp.json.bak', 'claude/settings.json', 'claude.md.txt', 'gitignore', 'lint-staged.js', ''])
       expect(isProtectedRel(p), p).toBe(false)
+    // Other agents' settings and instructions (what they run, their MCP
+    // servers and models).
+    for (const p of ['opencode.json', 'sub/opencode.jsonc', '.opencode/agent/x.md', 'crush.json', '.crush.json', '.aider.conf.yml', '.continue/config.yaml', '.windsurf/rules/a.md', '.kiro/steering/x.md', '.goosehints', '.grok/settings.json', '.roo/rules.md', '.qwen/settings.json'])
+      expect(isProtectedRel(p), p).toBe(true)
     // The folder the project's git runs hooks from (core.hooksPath).
     expect(isProtectedRel('tools/hooks/pre-commit', ['tools/hooks'])).toBe(true)
     expect(isProtectedRel('tools/hooksx/a', ['tools/hooks'])).toBe(false)

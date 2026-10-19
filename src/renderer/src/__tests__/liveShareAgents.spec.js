@@ -51,7 +51,8 @@ describe('Agents guests may use: the share’s setting', () => {
     expect(root.find('[data-test="ls-agents-share-follow"]').exists()).toBe(false)
     expect(root.find('[data-test="ls-agents-share-agent-claude"]').text()).toBe('Claude Code')
     expect(root.find('[data-test="ls-agents-share-later"] input').element.checked).toBe(true)
-    expect(root.find('[data-test="ls-agents-share-hint"]').text()).toContain('can’t open them, type in them or switch them to a model you leave out')
+    expect(root.find('[data-test="ls-agents-share-hint"]').text()).toContain('can’t open them or type in them')
+    expect(root.find('[data-test="ls-agents-share-caveat"]').text()).toBe('Anyone who can type — in a terminal or in an agent you allow — can still start any program, including agents and models you leave out. These limits fully hold only for guests who can’t type.')
     await tick(w, '[data-test="ls-agents-share-agent-claude"] input')
     expect(lastArg(api.setSettings)).toEqual({ agents: { deny: ['claude'], later: true, known: ['claude', 'codex'], models: {} } })
     w.unmount()
@@ -94,6 +95,14 @@ describe('Agents guests may use: an invitation, a person, a trusted person', () 
     await w.find('[data-test="ls-invite-save"]').trigger('click')
     await flushPromises()
     expect(lastArg(api.createInvite).rights.agents).toEqual({ deny: ['codex', 'claude'], later: true, known: ['claude', 'codex'], models: {} })
+    w.unmount()
+  })
+
+  it('next to a person who can type, says the limits hold only partly', async () => {
+    const own = { deny: ['claude'], later: true, known: ['claude', 'codex'], models: {} }
+    const w = await openAt('people', sharing({ guests: [guest({ rights: { ...NO_RIGHTS, type: true, agents: own } }), guest({ id: 'g2', name: 'Eve', rights: { ...NO_RIGHTS, agents: own } })] }))
+    expect(w.find('[data-test="ls-agents-g1-type-warn"]').text()).toContain('can still start any program, including agents and models you leave out')
+    expect(w.find('[data-test="ls-agents-g2-type-warn"]').exists()).toBe(false)
     w.unmount()
   })
 
@@ -144,5 +153,7 @@ describe('Agents guests may use, as a guest', () => {
     expect(rightsText(open)).toBe('You can watch and open terminals and agents.')
     expect(rightsText({ ...open, agents: { deny: [], later: true, known: [], models: {} } })).toBe('You can watch and open terminals and agents.')
     expect(rightsText({ ...open, agents: { deny: ['claude'], later: true, known: [], models: {} } })).toBe('You can watch and open terminals and agents. Some of the host’s agents or models are not for guests: you can watch their panes, not open or type in them.')
+    // A guest who can type: said plainly that the limits hold only partly.
+    expect(rightsText({ ...open, type: true, agents: { deny: ['claude'], later: true, known: [], models: {} } })).toMatch(/Anyone who can type — in a terminal or in an agent the host allows — can still start any program, including agents and models left out\. These limits fully hold only for guests who can’t type\.$/)
   })
 })

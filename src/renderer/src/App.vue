@@ -3413,6 +3413,7 @@ provide('panelCtx', {
   // and who watches, types in or reads each pane (LiveSharePresence).
   liveShareReaders: (id) => liveShare.readersOf(id),
   liveSharePresence: (id) => liveShare.presenceOf(id),
+  liveShareSharesPane: (id) => liveShare.sharesPane(id),
   // ...a page of a shared project: "Hide this page from guests". As a guest:
   // a host's page here (your own browser on its address: "Follow host" on
   // it; an address only the host's side opens: its note).
@@ -6393,6 +6394,8 @@ function hostPaneRow(h) {
 function liveSharePaneRows(wsId) {
   const p = sidebarProjects.value.find((x) => x.id === wsId)
   if (!p) return []
+  const home = workspaces.value.find((w) => w.id === wsId)
+  const local = !!home && !home.remote
   return p.panes
     .filter((x) => !x.liveShare)
     .map((x) => {
@@ -6403,8 +6406,12 @@ function liveSharePaneRows(wsId) {
         kind: agent ? x.kind : 'shell',
         agentId: x.agentId,
         model: agent ? x.headerModel || paneModels[x.id] || '' : '',
-        // The model's id (host-only: guests' agents rules are checked with it).
-        modelId: x.kind === 'chat' ? x.model || '' : agent ? paneModelIds[x.id] || '' : '',
+        // Host-only, for guests' agents rules: the ids its model is known by
+        // (each source that says it), and its shell's process on this
+        // computer (main looks at what really runs under it).
+        modelIds: x.kind === 'chat' ? (x.model ? [x.model] : []) : agent ? paneModelIds[x.id] || [] : [],
+        pid: x.kind === 'agent' && Number.isInteger(x.pid) ? x.pid : null,
+        local: local && !/wsl/i.test(x.shellId || ''),
         state: agent ? x.state : null,
         sleeping: !!x.sleeping,
         since: x.since || 0,

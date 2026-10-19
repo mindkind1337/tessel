@@ -403,6 +403,43 @@ function paneOffScreenNow() {
     return false
   }
 }
+// What the agent's own files say it runs (its conversation, its settings,
+// its launch arguments), apart from what its screen shows: a Live Share host
+// checks guests' agents rules with both (a guest's draft on the screen can't
+// pass for the model). null: not read, or nothing said.
+const sessionModel = ref(null)
+function modelQuery(n) {
+  return {
+    agentId: n.agentId,
+    sessionId: n.sessionId,
+    // Its launch arguments too: a --model or --effort Tessel added (a
+    // default from Settings > Agents) beats its settings file.
+    command: [n.agentCommand, launchArgsOf(n), n.detectedCommand].filter(Boolean).join(' '),
+    cwd: n.startDir,
+    launchedAt: n.launchedAt || 0,
+    // An agent on an SSH host: its conversation file is there.
+    ...(n.remoteHostId ? { remoteHostId: n.remoteHostId } : {}),
+    // A managed account (Codex): its conversations are in that account's home.
+    ...(typeof n.accountId === 'string' ? { accountId: n.accountId } : {}),
+    chosenModel:
+      n.sessionOptions && typeof n.sessionOptions.model === 'string'
+        ? n.sessionOptions.model
+        : n.modelChoice && typeof n.modelChoice.model === 'string'
+          ? n.modelChoice.model
+          : undefined
+  }
+}
+// The model read from the screen (Cursor, Antigravity, Codex): in a pane you
+// share, its files are read too (sessionModel), not for the header.
+function readSessionModel(n) {
+  if (!ctx.liveShareSharesPane || !ctx.liveShareSharesPane(n.id)) return
+  Promise.resolve(window.shellApi.agentModel(modelQuery(n)))
+    .then((res) => {
+      if (res && res.keep) return
+      sessionModel.value = res && res.model && res.source !== 'screen' ? String(res.model) : null
+    })
+    .catch(() => {})
+}
 async function refreshModel() {
   if (!isAgent.value || !window.shellApi.agentModel) {
     if (!isAgent.value) agentModel.value = null
@@ -432,6 +469,7 @@ async function refreshModel() {
       if (seen) {
         delete n.modelChoice
         agentModel.value = { model: seen.model, name: seen.name, effort: seen.effort, source: 'screen' }
+        readSessionModel(n)
         return
       }
     }
@@ -442,6 +480,7 @@ async function refreshModel() {
       if (seen) {
         delete n.modelChoice
         agentModel.value = { model: seen.model, name: seen.name, effort: seen.effort, source: 'screen' }
+        readSessionModel(n)
         return
       }
     }
@@ -453,30 +492,15 @@ async function refreshModel() {
       if (seen) {
         delete n.modelChoice
         agentModel.value = { model: seen.model, ...(seen.name ? { name: seen.name } : {}), effort: seen.effort, source: 'screen' }
+        readSessionModel(n)
         return
       }
     }
-    let res = await window.shellApi.agentModel({
-      agentId: n.agentId,
-      sessionId: n.sessionId,
-      // Its launch arguments too: a --model or --effort Tessel added (a
-      // default from Settings > Agents) beats its settings file.
-      command: [n.agentCommand, launchArgsOf(n), n.detectedCommand].filter(Boolean).join(' '),
-      cwd: n.startDir,
-      launchedAt: n.launchedAt || 0,
-      // An agent on an SSH host: its conversation file is there.
-      ...(n.remoteHostId ? { remoteHostId: n.remoteHostId } : {}),
-      // A managed account (Codex): its conversations are in that account's home.
-      ...(typeof n.accountId === 'string' ? { accountId: n.accountId } : {}),
-      chosenModel:
-        n.sessionOptions && typeof n.sessionOptions.model === 'string'
-          ? n.sessionOptions.model
-          : n.modelChoice && typeof n.modelChoice.model === 'string'
-            ? n.modelChoice.model
-            : undefined
-    })
+    let res = await window.shellApi.agentModel(modelQuery(n))
     // Its account could not be read (removed meanwhile): what it showed stays.
     if (res && res.keep) return
+    // What its own files say (never its screen), kept for a Live Share host.
+    sessionModel.value = res && res.model && res.source !== 'screen' ? String(res.model) : null
     // Antigravity CLI: the id or label it reports, as its model list names it
     // (a variant id "gemini-4-argon-high" -> Gemini 4 Argon, high).
     if (n.agentId === 'antigravity' && res && res.model) {
@@ -575,23 +599,31 @@ const effectiveModelId = computed(() => {
   const byDefault = list.find((m) => m.isDefault)
   return (byDefault || list[0]).id
 })
-// For a Live Share host (guests' agents rules): the model's id. What the
-// header shows, matched to the agent's list; shown but not listed: the shown
-// text as is (a rule that lists models never matches it); nothing shown
-// yet: the model it was started with, else the list's default.
-const enforcedModelId = computed(() => {
-  if (!isAgent.value) return ''
-  const shown = agentModel.value && agentModel.value.model
+// For a Live Share host (guests' agents rules): the ids the model is known
+// by, from each source that says it (what the pane shows, what the agent's
+// own files say), each matched to the agent's list; shown but not listed:
+// the shown text as is (a rule that lists models never matches it). Nothing
+// said yet: the model it was started with, else the list's default.
+const enforcedModelIds = computed(() => {
+  if (!isAgent.value) return []
   const list = paneModelList.value
-  if (shown) return list.length ? effectiveModelIdOf(list, shown) || String(shown) : String(shown)
-  const chosen = props.node.sessionOptions && props.node.sessionOptions.model
-  if (typeof chosen === 'string' && chosen) return chosen
-  return effectiveModelId.value || ''
+  const idOf = (shown) => (list.length ? effectiveModelIdOf(list, shown) || String(shown) : String(shown))
+  const out = []
+  const shown = agentModel.value && agentModel.value.model
+  if (shown) out.push(idOf(shown))
+  if (sessionModel.value) out.push(idOf(sessionModel.value))
+  if (!out.length) {
+    const chosen = props.node.sessionOptions && props.node.sessionOptions.model
+    if (typeof chosen === 'string' && chosen) out.push(chosen)
+    else if (effectiveModelId.value) out.push(effectiveModelId.value)
+  }
+  return [...new Set(out)]
 })
 watch(
-  enforcedModelId,
-  (id) => {
-    if (id) paneModelIds[props.node.id] = id
+  () => enforcedModelIds.value.join('\n'),
+  () => {
+    const ids = enforcedModelIds.value
+    if (ids.length) paneModelIds[props.node.id] = ids
     else delete paneModelIds[props.node.id]
   },
   { immediate: true }
