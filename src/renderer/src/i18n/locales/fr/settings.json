@@ -1077,6 +1077,16 @@
       "trial": "Essai jusqu’au {{date}}",
       "paneWarnPayment": "Ce panneau tourne sur un compte Claude qui a un problème de paiement. Pour le déplacer : Paramètres > Comptes de fournisseurs d’IA > Où vous êtes connecté > Basculer des panneaux…",
       "paneWarnNone": "Ce panneau tourne sur un compte Claude sans abonnement. Pour le déplacer : Paramètres > Comptes de fournisseurs d’IA > Où vous êtes connecté > Basculer des panneaux…"
+    },
+    "grokPlan": {
+      "apiKey": "Clé API xAI (facturée au jeton)",
+      "teamNamed": "Équipe : {{team}}",
+      "team": "Compte d'équipe",
+      "subscription": "Abonnement grok.com / X",
+      "sourceLive": "selon xAI",
+      "sourceCli": "tel que Grok Build l'a enregistré",
+      "apiKeyShort": "Clé API",
+      "paneWarn": "Cette connexion Grok n'a pas d'abonnement SuperGrok ni X Premium+ : Grok Build peut refuser de fonctionner."
     }
   },
   "signedIn": {

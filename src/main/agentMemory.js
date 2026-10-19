@@ -8,6 +8,8 @@
 //   OpenCode     ~/.config/opencode/AGENTS.md
 //   Copilot CLI  ~/.copilot/copilot-instructions.md
 //   Cline        ~/Documents/Cline/Rules/tessel-task-board.md (a file of its own)
+//   Grok Build   <GROK_HOME or ~/.grok>/rules/tessel-task-board.md (its home
+//                rules folder, read in every project; a file of its own)
 // Tessel's part sits between two markers and is the only part it writes: the
 // rest of the file is the user's and is kept as it is.
 import fs from 'fs'
@@ -44,6 +46,8 @@ export function memoryFile(agent, home = os.homedir(), env = process.env) {
       return join(home, '.copilot', 'copilot-instructions.md')
     case 'cline':
       return join(home, 'Documents', 'Cline', 'Rules', 'tessel-task-board.md')
+    case 'grok':
+      return join(env.GROK_HOME || join(home, '.grok'), 'rules', 'tessel-task-board.md')
     default:
       return null
   }

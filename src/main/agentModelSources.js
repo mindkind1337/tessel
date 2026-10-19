@@ -32,6 +32,14 @@
 //   Continue    ~/.continue/index/globalContext.json { cliSelectedModel }
 //               (its /model pick, a name of config.yaml's models), else the
 //               first chat model config.yaml lists.
+//   Grok Build  <GROK_HOME or ~/.grok>/sessions/<folder>/<id>/summary.json
+//               { current_model_id, reasoning_effort, updated_at } (written
+//               at each turn and each /model or /effort); its config.toml
+//               [models] default / default_reasoning_effort; else the default
+//               model its last settings fetch named (settings_cache.json
+//               settings.default_model) and that model's default effort and
+//               name in models_cache.json (models.<id>.info { name,
+//               reasoning_efforts: [{ value, default }] }).
 //   Crush, Goose, Aider, Mistral Vibe: the model their settings name.
 import fs from 'fs'
 import os from 'os'
@@ -709,6 +717,83 @@ function vibeSettings(cwd, home) {
   return null
 }
 
+// --- Grok Build -------------------------------------------------------------------------
+
+export const grokHomeDir = (home) => envDir(process.env.GROK_HOME) || join(home, '.grok')
+const grokEffort = (v) => {
+  const s = str(v)
+  return s && ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'].includes(s.toLowerCase()) ? s.toLowerCase() : null
+}
+// summary.json -> { model, effort, at } or null.
+export function grokSummaryModel(o) {
+  const model = o && modelId(o.current_model_id)
+  if (!model) return null
+  return { model, effort: grokEffort(o.reasoning_effort), ...when(timeOf(o.updated_at) || timeOf(o.last_active_at)) }
+}
+export function grokSummaryFile(id, home = os.homedir()) {
+  if (typeof id !== 'string' || !/^[A-Za-z0-9_-]{6,80}$/.test(id)) return null
+  const root = join(grokHomeDir(home), 'sessions')
+  return remembered(`grok|${root}|${id}`, () => {
+    for (const d of entries(root)) {
+      if (!d.isDirectory() || d.isSymbolicLink()) continue
+      const file = join(root, d.name, id, 'summary.json')
+      if (statOf(file)) return file
+    }
+    return null
+  })
+}
+// models_cache.json: a model's name and default effort ({ name, effort } or null).
+export function grokCatalogEntry(cache, id) {
+  const info = cache && cache.models && typeof cache.models === 'object' && cache.models[id] && cache.models[id].info
+  if (!info || typeof info !== 'object') return null
+  const efforts = Array.isArray(info.reasoning_efforts) ? info.reasoning_efforts : []
+  const picked = efforts.find((e) => e && e.default === true)
+  const name = str(info.name)
+  return { name: name ? name.slice(0, 80) : null, effort: grokEffort(picked && picked.value) || grokEffort(info.reasoning_effort) }
+}
+function grokCatalog(home) {
+  return bySize('grok-models', join(grokHomeDir(home), 'models_cache.json'), (f) => readJson(f))
+}
+const grokNamed = (found, home) => {
+  const entry = grokCatalogEntry(grokCatalog(home), found.model)
+  return entry && entry.name ? { ...found, name: entry.name } : found
+}
+function grokSession(id, home) {
+  const file = grokSummaryFile(id, home)
+  if (!file) return null
+  const found = bySize('grok', file, (f) => grokSummaryModel(readJson(f)))
+  return found ? grokNamed(found, home) : null
+}
+// config.toml's [models] default and default_reasoning_effort -> { model,
+// effort } or null.
+export function grokConfigModel(text) {
+  const models = tomlKeys(text).get('models') || new Map()
+  const model = modelId(models.get('default'))
+  return model ? { model, effort: grokEffort(models.get('default_reasoning_effort')) } : null
+}
+// The settings' default (config.toml), else the one Grok Build's settings
+// fetch named; an effort the config does not set: that model's default.
+function grokSettings(home) {
+  const dir = grokHomeDir(home)
+  const config = grokConfigModel(readText(join(dir, 'config.toml')))
+  let found = config
+  if (!found) {
+    const cache = bySize('grok-settings', join(dir, 'settings_cache.json'), (f) => {
+      const o = readJson(f)
+      try {
+        return o && typeof o.payload === 'string' ? JSON.parse(o.payload) : o
+      } catch {
+        return null
+      }
+    })
+    const model = modelId(cache && cache.settings && cache.settings.default_model)
+    found = model ? { model, effort: null } : null
+  }
+  if (!found) return null
+  const entry = grokCatalogEntry(grokCatalog(home), found.model)
+  return { model: found.model, effort: found.effort || (entry && entry.effort) || null, ...(entry && entry.name ? { name: entry.name } : {}) }
+}
+
 // --- For agentModel.js -----------------------------------------------------------------
 
 // The model a pane's running session names, or null: { model, effort,
@@ -732,6 +817,7 @@ export function sessionModelOf(agentId, { sessionId = null, cwd = null, launched
     if (agentId === 'kilo') return opencodeDbModel(opencodeDbFile(home, 'kilo'), { cwd, since: launchedAt })
     if (agentId === 'zcode') return opencodeDbModel(zcodeDbFile(home), { sessionId })
     if (agentId === 'openclaw') return openclawSession(home)
+    if (agentId === 'grok') return grokSession(sessionId, home)
   } catch {
     return null
   }
@@ -751,6 +837,7 @@ export function settingsModelOf(agentId, cwd, home = os.homedir()) {
     if (agentId === 'goose') return gooseSettings(home)
     if (agentId === 'aider') return aiderSettings(cwd, home)
     if (agentId === 'vibe') return vibeSettings(cwd, home)
+    if (agentId === 'grok') return grokSettings(home)
   } catch {
     return null
   }
@@ -793,7 +880,10 @@ export function modelWatchTargets(home = os.homedir()) {
     { agent: 'continue', dir: join(home, '.continue', 'index'), match: /^globalContext\.json$/ },
     { agent: 'continue', dir: join(home, '.continue'), match: /^config\.yaml$/ },
     { agent: 'openclaude', dir: join(home, '.openclaude'), match: /^settings\.json$/ },
-    { agent: 'vibe', dir: envDir(process.env.VIBE_HOME) || join(home, '.vibe'), match: /^config\.toml$/ }
+    { agent: 'vibe', dir: envDir(process.env.VIBE_HOME) || join(home, '.vibe'), match: /^config\.toml$/ },
+    // Grok Build: its settings, and each session's summary (each turn, /model, /effort).
+    { agent: 'grok', dir: grokHomeDir(home), match: /^(config\.toml|settings_cache\.json)$/ },
+    { agent: 'grok', dir: join(grokHomeDir(home), 'sessions'), match: /^summary\.json$/, recursive: true }
   ]
   return out
 }

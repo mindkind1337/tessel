@@ -12,7 +12,7 @@ import { basename, join } from 'path'
 import { grokSessions, insideDir, museHistorySessions, ompSessions, ompSessionsDir, piSessions, piSessionsDir, sessionDirs } from '../agentSessionSources.js'
 import { listSessions, qoderDir, qoderTextLine } from '../agentSessions.js'
 import { claudeHistoryEvents, codexHistoryEvents } from '../chat/transcriptHistory.js'
-import { grokViewEvents, museViewEvents, ompViewEvents } from '../chat/transcriptView.js'
+import { GROK_SESSION_FILES, grokViewEvents, museViewEvents, ompViewEvents } from '../chat/transcriptView.js'
 import { museRecords } from '../museSessions.js'
 
 // Small on purpose: a slice is one step of the background work, between two timers.
@@ -97,13 +97,14 @@ export function listSources({ home = os.homedir(), since = 0, titles = true } = 
   }
   const grokRoot = sessionDirs(home).grok
   for (const s of safe(() => grokSessions(home, { since }))) {
+    // Its update stream (timed), else an older session's chat_history.jsonl.
+    let found = null
     for (const group of dirs(grokRoot)) {
-      const file = join(grokRoot, group.name, s.id, 'chat_history.jsonl')
-      if (group.isDirectory() && fs.existsSync(file)) {
-        add('grok', grokRoot, file, { id: s.id, cwd: s.cwd, title: s.title })
-        break
-      }
+      if (!group.isDirectory()) continue
+      found = GROK_SESSION_FILES.map((name) => join(grokRoot, group.name, s.id, name)).find((f) => fs.existsSync(f)) || null
+      if (found) break
     }
+    if (found) add('grok', grokRoot, found, { id: s.id, cwd: s.cwd, title: s.title })
   }
   for (const s of safe(() => piSessions(home, { since }))) add('pi', piSessionsDir(home), s.file, { id: s.id, cwd: s.cwd, title: s.title })
   for (const s of safe(() => ompSessions(home, { since }))) add('omp', ompSessionsDir(home), s.file, { id: s.id, cwd: s.cwd, title: s.title })

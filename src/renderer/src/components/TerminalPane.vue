@@ -43,8 +43,9 @@ import {
 import { promptShowsPlaceholder } from '../promptCheck'
 import { detectTaskDone } from '../agentLimit'
 import { modelLabel } from '../../../shared/modelLabel'
-import { paneAccount, accountChoices, accountSubscription } from '../accountChoices'
+import { paneAccount, accountChoices, accountSubscription, shortAccount } from '../accountChoices'
 import { planInfo, paneWarnText } from '../claudePlan'
+import { grokPlanInfo, grokSignIn, refreshGrokSignIn } from '../grokPlan'
 import { HOST_ACCOUNT_AGENTS, hostAccountChoices, hostEntry, hostPaneAccount, isDefaultHostAccount, recheckAfterTurn, refreshHostAccounts, unwatchHostAccounts, watchHostAccounts } from '../hostAccounts'
 import { modelFromScreen, modelFromSwitchLine } from '../../../shared/screenModel'
 import { findFileRefs } from '../../../shared/fileLinks'
@@ -164,7 +165,21 @@ const remoteChildrenSource = computed(() => {
 const accountInfo = computed(() => {
   if (!isAgent.value) return null
   if (props.node.remoteHostId) return hostPaneAccount(props.node.remoteHostId, props.node.agentId, props.node.hostAccount, remoteHostName.value)
+  // Grok Build: the one sign-in on this computer, with its tier
+  // ("name · SuperGrok"; grokPlan.js).
+  if (props.node.agentId === 'grok') return grokAccount.value
   return paneAccount(props.node.agentId, props.node.accountId)
+})
+const grokPlan = computed(() => {
+  const s = props.node.agentId === 'grok' && !props.node.remoteHostId ? grokSignIn() : null
+  return s && s.signedIn ? grokPlanInfo(s.plan) : null
+})
+const grokAccount = computed(() => {
+  const s = props.node.agentId === 'grok' && !props.node.remoteHostId ? grokSignIn() : null
+  if (!s || !s.signedIn) return null
+  const plan = grokPlan.value
+  const who = shortAccount(s.email) || t('accounts.choice.account', 'Account')
+  return { name: plan && plan.tag ? `${who} · ${plan.tag}` : who, title: [s.email || who, plan ? plan.title : ''].filter(Boolean).join('\n'), signedIn: true }
 })
 // On an SSH host: whether this pane's account is the one new panes use there.
 const onHostDefault = computed(() => {
@@ -195,7 +210,7 @@ const accountPlan = computed(() => {
   }
   return planInfo(accountSubscription('claude', n.accountId))
 })
-const planWarn = computed(() => (accountPlan.value && accountPlan.value.attention ? { short: accountPlan.value.warnText, text: paneWarnText(accountPlan.value), title: [paneWarnText(accountPlan.value), accountPlan.value.title].join('\n') } : null))
+const planWarn = computed(() => (grokPlan.value && grokPlan.value.warn ? { short: grokPlan.value.warnText, text: t('accounts.grokPlan.paneWarn', 'This Grok sign-in has no SuperGrok or X Premium+ subscription: Grok Build may refuse to work.'), title: grokPlan.value.title } : accountPlan.value && accountPlan.value.attention ? { short: accountPlan.value.warnText, text: paneWarnText(accountPlan.value), title: [paneWarnText(accountPlan.value), accountPlan.value.title].join('\n') } : null))
 const accountTitle = computed(() => (accountInfo.value ? [accountInfo.value.title, ...accountNotesOf(true)].join('\n') : ''))
 const accountChipLabel = computed(() => (accountInfo.value ? t('pane.account.chip', 'Account: {{account}}', { account: accountTitle.value }) : ''))
 // An agent on an SSH host follows its accounts there: read when it opens and
@@ -3099,6 +3114,14 @@ function onTerminalBell() {
   if (ctx.terminalBell) ctx.terminalBell(props.node, { visible: isActive.value && document.hasFocus() })
 }
 
+// A Grok pane reads the sign-in's tier for its header (once a minute at most).
+watch(
+  () => props.node.agentId === 'grok' && !props.node.remoteHostId,
+  (grok) => {
+    if (grok) refreshGrokSignIn()
+  },
+  { immediate: true }
+)
 onMounted(() => {
   const theme = paneTheme()
   term = new Terminal({

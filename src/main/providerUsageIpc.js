@@ -7,6 +7,7 @@ import { join, resolve, isAbsolute } from 'node:path'
 import os from 'node:os'
 import { createExtraProviderUsage } from './extraProviderUsage'
 import { createOpencodeUsageReport } from './opencodeUsageReport'
+import { createGrokUsageReport } from './grokUsageReport'
 import { t } from './i18n'
 import { createUsagePoller } from './usagePoller'
 import { USAGE_PROVIDERS, validHiddenUsageProviders } from '../shared/usageProviders'
@@ -101,6 +102,7 @@ export function registerProviderUsage({
   log,
   listAgents = async () => [],
   opencodeReport = createOpencodeUsageReport(),
+  grokReport = createGrokUsageReport(),
   send = () => {},
   getWindow = () => null,
   poller: givenPoller,
@@ -237,6 +239,18 @@ export function registerProviderUsage({
   // OpenCode's usage report (tokens and recorded cost), from its own
   // databases on this computer. Only its filter errors (Tessel's own words)
   // cross IPC.
+  // Grok Build's usage report (each turn's tokens and recorded cost), from
+  // its own session files on this computer (grokUsageReport.js).
+  ipcMain.handle('usage:grokReport', async (_event, query) => {
+    try {
+      return await grokReport(query || {})
+    } catch (error) {
+      return {
+        ok: false,
+        error: error instanceof Error && error.message ? error.message : t('main.usage.grokReportFailed', 'Could not read Grok Build usage.')
+      }
+    }
+  })
   ipcMain.handle('usage:opencodeReport', async (_event, query) => {
     try {
       return await opencodeReport(query || {})

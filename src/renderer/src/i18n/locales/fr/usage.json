@@ -177,7 +177,9 @@
       "codexTokens": "Les entrées en cache et la sortie de raisonnement sont des sous-ensembles, pas des tokens supplémentaires.",
       "claudeTokens": "Les lectures et écritures en cache s'ajoutent aux entrées ; les écritures en cache d'une heure sont un sous-ensemble de toutes les écritures en cache.",
       "scopeOpenCode": "Historique OpenCode sur cet ordinateur",
-      "opencodeTurns": "Lignes d’utilisation enregistrées : une par session quand OpenCode garde les totaux de session, sinon une par réponse."
+      "opencodeTurns": "Lignes d’utilisation enregistrées : une par session quand OpenCode garde les totaux de session, sinon une par réponse.",
+      "scopeGrok": "Historique de Grok Build sur cet ordinateur",
+      "grokTurns": "Tours terminés, une ligne par modèle utilisé dans un tour."
     },
     "percent": {
       "used": "{{n}} % utilisés",
@@ -323,7 +325,8 @@
       "opencodeCost": "Le coût est celui qu’OpenCode a enregistré pour chaque réponse, pas votre facture d’abonnement.",
       "recentOther": "Sessions locales {{name}} les plus récentes dans ce périmètre.",
       "about": "À propos de ces chiffres",
-      "readFailed": "Impossible de lire l'utilisation de {{name}}."
+      "readFailed": "Impossible de lire l'utilisation de {{name}}.",
+      "grokCost": "Le coût est celui que Grok Build a enregistré pour chaque tour (prix de l'API), pas la facture de votre abonnement SuperGrok."
     },
     "share": {
       "title": "Partager l'utilisation",

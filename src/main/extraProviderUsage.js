@@ -21,6 +21,7 @@ import { retryAfterMs } from './usagePoller'
 import { createAntigravityCliUsage } from './antigravityCliUsage'
 import { createAntigravityPlan } from './antigravityPlan'
 import { createMuseUsage } from './museUsage'
+import { grokPlanAttention, grokUserPlan } from './grokAccount'
 
 // The console's server-function id for its workspaces list (stable, from Orca).
 const OPENCODE_WORKSPACES_ID = 'def39973159c7f0483d8793a822b8dbb10d067e12c65455fcb4608459ba0234f'
@@ -32,6 +33,8 @@ export const USAGE_URLS = Object.freeze({
   cursorLegacy: 'https://cursor.com/api/usage',
   grok: 'https://cli-chat-proxy.grok.com/v1/billing?format=credits',
   grokMonthly: 'https://cli-chat-proxy.grok.com/v1/billing',
+  // Grok Build's own profile call (its sign-in's enrichment): the tier.
+  grokUser: 'https://cli-chat-proxy.grok.com/v1/user',
   'opencode-go': 'https://opencode.ai/zen/go/v1/usage',
   // OpenCode's legacy console, with the session cookie saved in Settings (Orca's
   // opencode-go-usage-fetcher.ts): its workspaces, then a workspace's Go status.
@@ -47,7 +50,7 @@ export const USAGE_URLS = Object.freeze({
   zcodeDev: 'https://dev.bigmodel.cn/api/monitor/usage/quota/limit'
 })
 // Internal endpoints of a provider's read, never a provider of their own.
-const SUB_REQUESTS = ['geminiProject', 'cursorLegacy', 'grokMonthly', 'opencodeWorkspaces', 'opencodeConsole', 'minimaxCn', 'zcodeCn', 'zcodeDev']
+const SUB_REQUESTS = ['geminiProject', 'cursorLegacy', 'grokMonthly', 'grokUser', 'opencodeWorkspaces', 'opencodeConsole', 'minimaxCn', 'zcodeCn', 'zcodeDev']
 // Providers read from their own CLI instead of a web endpoint: Antigravity's
 // `agy /usage` (antigravityCliUsage.js), Muse Code's `muse serve` usage/read
 // (museUsage.js).
@@ -74,6 +77,9 @@ export function createExtraProviderUsage({
   museUsage = createMuseUsage(cliEnv ? { env: cliEnv } : {})
 } = {}) {
   const sequences = new Map()
+  // Grok's tier as its profile call last answered (grokAccount.js), kept in
+  // memory only: the tier, team and organization names, never a token.
+  let grokLivePlan = null
   // The providers to read: installed ones, and the ones a key saved in
   // Settings links (a GLM Coding Plan key without ZCode, named after its plan).
   async function installedProviders() {
@@ -196,7 +202,13 @@ export function createExtraProviderUsage({
   return {
     capabilities,
     // Cursor and Grok: who is signed in, for Settings (no token).
-    signIn: (provider) => sources.signIn?.(provider),
+    // Grok: the tier its profile call last gave wins over the one its CLI cached.
+    async signIn(provider) {
+      const s = await sources.signIn?.(provider)
+      if (provider !== 'grok' || !s || !s.signedIn || !grokLivePlan || (s.plan && s.plan.kind === 'api-key')) return s
+      const plan = { ...(s.plan || {}), ...grokLivePlan, team: grokLivePlan.team || s.plan?.team || null }
+      return { ...s, planType: plan.label || s.planType || null, plan: { ...plan, attention: grokPlanAttention(plan) } }
+    },
     async read({ provider, accountId } = {}) {
       const sequence = (sequences.get(provider) || 0) + 1
       if (
@@ -338,7 +350,8 @@ export function createExtraProviderUsage({
           refuse('response', t('main.usage.unreadable', 'The usage response could not be read.'))
         }
         let windows = [],
-          unlimited = false
+          unlimited = false,
+          plan = null
         if (provider === 'gemini') {
           const project = await fetch('geminiProject', {
             metadata: { ideType: 'GEMINI_CLI', pluginType: 'GEMINI' }
@@ -396,6 +409,16 @@ export function createExtraProviderUsage({
           if (provider === 'grok') {
             windows = mapGrok(data)
             if (!windows.length) windows = mapGrok(await fetch('grokMonthly'))
+            // Its tier, as the CLI's profile call gives it: shown with the
+            // usage; a failure there leaves the usage as read.
+            try {
+              const live = grokUserPlan(await fetch('grokUser'))
+              if (live) grokLivePlan = { ...live, source: 'live', checkedAt: clock() }
+            } catch (error) {
+              if (error?.code === 'auth' || error?.code === 'expired') grokLivePlan = null
+            }
+            // Else the one Grok Build cached itself (settings_cache.json).
+            plan = grokLivePlan?.label || (await Promise.resolve(sources.signIn?.('grok')).catch(() => null))?.planType || null
           }
           if (provider === 'opencode-go') windows = mapOpenCodeGo(data)
           if (provider === 'zcode') {
@@ -442,7 +465,8 @@ export function createExtraProviderUsage({
           source: 'live',
           observedAt: clock(),
           windows,
-          ...(unlimited ? { unlimited: true } : {})
+          ...(unlimited ? { unlimited: true } : {}),
+          ...(plan ? { plan } : {})
         }
       }
       try {

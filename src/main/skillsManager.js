@@ -19,6 +19,7 @@
 //   Gemini CLI   ~/.gemini/skills            .gemini/skills    (and the .agents folders)
 //   Antigravity  ~/.gemini/config/skills     .agents/skills    (agy, checked with its /skills)
 //   Muse Code    ~/.config/muse/skills       .agents/skills    (and the Claude, Codex and .agents folders)
+//   Grok Build   <GROK_HOME or ~/.grok>/skills   .grok/skills  (and the Claude and .agents folders)
 import fs from 'node:fs/promises'
 import fsSync from 'node:fs'
 import path from 'node:path'
@@ -29,7 +30,7 @@ import { skillFrontmatter } from './chat/skills.js'
 import { readTar, gunzipCapped } from './skillsTar'
 import { writeFileAtomic } from './safeJson'
 
-export const SKILL_AGENTS = ['claude', 'codex', 'opencode', 'copilot', 'gemini', 'antigravity', 'muse']
+export const SKILL_AGENTS = ['claude', 'codex', 'opencode', 'copilot', 'gemini', 'antigravity', 'muse', 'grok']
 
 export const SKILL_CAPS = {
   files: 1000, // files in one skill
@@ -81,10 +82,11 @@ export function safeRelPath(rel, caps = SKILL_CAPS) {
 // agents it installs for. A folder read by several agents is listed once.
 export function skillRoots({ home = os.homedir(), env = process.env, cwd = null } = {}) {
   const codexHome = env.CODEX_HOME || path.join(home, '.codex')
+  const grokHome = env.GROK_HOME || path.join(home, '.grok')
   const config = env.XDG_CONFIG_HOME || path.join(home, '.config')
   const roots = [
-    { scope: 'user', path: path.join(home, '.claude', 'skills'), seenBy: ['claude', 'opencode', 'copilot', 'muse'], installFor: ['claude'] },
-    { scope: 'user', path: path.join(home, '.agents', 'skills'), seenBy: ['codex', 'opencode', 'copilot', 'gemini', 'muse'], installFor: ['codex'] },
+    { scope: 'user', path: path.join(home, '.claude', 'skills'), seenBy: ['claude', 'opencode', 'copilot', 'muse', 'grok'], installFor: ['claude'] },
+    { scope: 'user', path: path.join(home, '.agents', 'skills'), seenBy: ['codex', 'opencode', 'copilot', 'gemini', 'muse', 'grok'], installFor: ['codex'] },
     { scope: 'user', path: path.join(codexHome, 'skills'), seenBy: ['codex', 'muse'], installFor: [] },
     { scope: 'user', path: path.join(config, 'opencode', 'skills'), seenBy: ['opencode'], installFor: ['opencode'] },
     { scope: 'user', path: path.join(home, '.copilot', 'skills'), seenBy: ['copilot'], installFor: ['copilot'] },
@@ -92,17 +94,20 @@ export function skillRoots({ home = os.homedir(), env = process.env, cwd = null 
     // The Antigravity CLI's own (not Gemini CLI's ~/.gemini/skills).
     { scope: 'user', path: path.join(home, '.gemini', 'config', 'skills'), seenBy: ['antigravity'], installFor: ['antigravity'] },
     // Muse Code's own (it also reads the Claude Code, Codex and .agents ones).
-    { scope: 'user', path: path.join(config, 'muse', 'skills'), seenBy: ['muse'], installFor: ['muse'] }
+    { scope: 'user', path: path.join(config, 'muse', 'skills'), seenBy: ['muse'], installFor: ['muse'] },
+    // Grok Build's own (it also reads the Claude Code and .agents ones).
+    { scope: 'user', path: path.join(grokHome, 'skills'), seenBy: ['grok'], installFor: ['grok'] }
   ]
   if (typeof cwd === 'string' && path.isAbsolute(cwd)) {
     const at = (...parts) => path.join(cwd, ...parts)
     roots.push(
-      { scope: 'project', path: at('.claude', 'skills'), seenBy: ['claude', 'opencode', 'copilot', 'muse'], installFor: ['claude'] },
-      { scope: 'project', path: at('.agents', 'skills'), seenBy: ['codex', 'opencode', 'copilot', 'gemini', 'antigravity', 'muse'], installFor: ['codex', 'antigravity', 'muse'] },
+      { scope: 'project', path: at('.claude', 'skills'), seenBy: ['claude', 'opencode', 'copilot', 'muse', 'grok'], installFor: ['claude'] },
+      { scope: 'project', path: at('.agents', 'skills'), seenBy: ['codex', 'opencode', 'copilot', 'gemini', 'antigravity', 'muse', 'grok'], installFor: ['codex', 'antigravity', 'muse'] },
       { scope: 'project', path: at('.codex', 'skills'), seenBy: ['codex', 'muse'], installFor: [] },
       { scope: 'project', path: at('.opencode', 'skills'), seenBy: ['opencode'], installFor: ['opencode'] },
       { scope: 'project', path: at('.github', 'skills'), seenBy: ['copilot'], installFor: ['copilot'] },
-      { scope: 'project', path: at('.gemini', 'skills'), seenBy: ['gemini'], installFor: ['gemini'] }
+      { scope: 'project', path: at('.gemini', 'skills'), seenBy: ['gemini'], installFor: ['gemini'] },
+      { scope: 'project', path: at('.grok', 'skills'), seenBy: ['grok'], installFor: ['grok'] }
     )
   }
   const byKey = new Map()

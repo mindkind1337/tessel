@@ -181,6 +181,7 @@ import {
   installOpencodePlugin,
   installKimiHooks,
   installCodexServer,
+  installGrokServer,
   claudeServerPresent,
   claudeServerExists,
   removeTeamHooks,
@@ -2727,6 +2728,17 @@ ipcMain.handle(
       }
     } catch (err) {
       errors.push(t('main.hooks.codexFailed', 'Codex hooks: {{error}}', { error: err.message }))
+    }
+    // Grok Build: the team tools in its own config.toml (where it is installed).
+    try {
+      const grok = (await getAgents()).find((a) => a.id === 'grok')
+      if (grok && grok.available) {
+        const r = installGrokServer(script, undefined, { node })
+        if (r.error) errors.push(`Grok Build: ${r.error}`)
+        else if (r.changed) changed.push('Grok Build: MCP server tessel-team')
+      }
+    } catch (err) {
+      errors.push(`Grok Build: ${err.message}`)
     }
     // Gemini CLI hooks: its conversation, and its team messages while it works
     // and when it finishes a turn (never typed). Only where it is installed.

@@ -339,7 +339,7 @@ describe('install from GitHub', () => {
     const res = await installSkill({ id: pkg.id, agents: ['codex'], scope: 'user', home, env, sources })
     expect(res.ok).toBe(true)
     // Each result says which chosen agent it is for, and who else reads that folder.
-    expect(res.results[0]).toMatchObject({ agents: ['codex'], seenBy: ['codex', 'opencode', 'copilot', 'gemini', 'muse'] })
+    expect(res.results[0]).toMatchObject({ agents: ['codex'], seenBy: ['codex', 'opencode', 'copilot', 'gemini', 'muse', 'grok'] })
     const dest = path.join(home, '.agents', 'skills', 'pdf')
     expect(fs.readFileSync(path.join(dest, 'forms', 'fill.py'), 'utf8')).toBe('print(2)')
     expect(sources.get(dest)).toMatchObject({ kind: 'github', repo: 'r', path: 'skills/pdf' })

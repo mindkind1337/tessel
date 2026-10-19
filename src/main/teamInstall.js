@@ -13,7 +13,7 @@
 // added, updated or removed; everything else is left as it is.
 import fs from 'fs'
 import os from 'os'
-import { join, dirname } from 'path'
+import { join, dirname, isAbsolute } from 'path'
 import { readJson } from './fileRead'
 import { writeFileAtomic as writeAtomic } from './safeJson'
 import { t } from './i18n'
@@ -489,6 +489,38 @@ export async function installCodexServer(scriptPath, validate, home = os.homedir
     const v = await validate(next)
     if (!v || !v.ok) return { error: v && v.error ? t('main.hooks.codexRejectedWhy', 'Codex would not accept the new settings, so Tessel left them as they were ({{error}}).', { error: v.error }) : t('main.hooks.codexRejected', 'Codex would not accept the new settings, so Tessel left them as they were.') }
   }
+  if (text && !fs.existsSync(`${file}.before-tessel`)) fs.copyFileSync(file, `${file}.before-tessel`)
+  writeAtomic(file, next)
+  return { changed: true }
+}
+
+// Grok Build: [mcp_servers.tessel-team] in <GROK_HOME or ~/.grok>/config.toml
+// (its own servers outrank the ones it borrows from ~/.claude.json). The
+// pane's variables reach the server through Grok's ${VAR} expansion; the team
+// tools may wait for a teammate or a card, past Grok's own timeout.
+export function grokTable(scriptPath, node) {
+  return (
+    `[mcp_servers.${SERVER_NAME}]\n` +
+    `command = '${node}'\n` +
+    `args = ['${scriptPath}']\n` +
+    'env = { TESSEL_PANE_ID = "${TESSEL_PANE_ID:-}", TESSEL_PROJECT_DIR = "${TESSEL_PROJECT_DIR:-}", TESSEL_TEAM_SECRET = "${TESSEL_TEAM_SECRET:-}" }\n' +
+    `tool_timeout_sec = 1200\n`
+  )
+}
+// -> { changed: bool } or { error }. Only where Grok Build is set up (its folder).
+export function installGrokServer(scriptPath, home = os.homedir(), { node, env = process.env } = {}) {
+  const own = typeof env.GROK_HOME === 'string' && env.GROK_HOME.trim() && isAbsolute(env.GROK_HOME.trim()) ? env.GROK_HOME.trim() : ''
+  const dir = own || join(home, '.grok')
+  if (!fs.existsSync(dir)) return { changed: false }
+  const found = hookNode(scriptPath, node)
+  if (found.error) return found
+  if (scriptPath.includes("'") || found.node.includes("'")) return { error: t('main.hooks.quoteInPath', 'The Tessel data folder has a quote in its path.') }
+  const file = join(dir, 'config.toml')
+  const text = fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : ''
+  const { kept, ours } = splitCodexConfig(text)
+  const want = grokTable(scriptPath, found.node)
+  if (ours.trim() === want.trim()) return { changed: false }
+  const next = (kept.trim() ? kept.replace(/\s*$/, '\n') + '\n' : '') + want
   if (text && !fs.existsSync(`${file}.before-tessel`)) fs.copyFileSync(file, `${file}.before-tessel`)
   writeAtomic(file, next)
   return { changed: true }

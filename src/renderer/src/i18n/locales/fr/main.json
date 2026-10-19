@@ -172,7 +172,8 @@
       "registryTooLarge": "réponse du registre trop volumineuse",
       "registryUnreadable": "réponse du registre illisible",
       "hintInstaller": "Relancez son installateur pour le mettre à jour.",
-      "hintAntigravity": "L'Antigravity CLI se met à jour seule à son démarrage (ou lancez : agy update)."
+      "hintAntigravity": "L'Antigravity CLI se met à jour seule à son démarrage (ou lancez : agy update).",
+      "hintGrok": "Grok Build se met à jour tout seul au démarrage (ou lancez : grok update)."
     },
     "agents": {
       "alreadyGenerating": "Un message est déjà en cours de génération.",
@@ -633,7 +634,8 @@
       "museApiKey": "Muse Code est connecté avec une clé API : il est facturé au jeton, sans quota d’abonnement à afficher.",
       "museNothingYet": "Muse Code n’a pas encore vu l’utilisation de votre abonnement. Envoyez-lui une demande, puis actualisez.",
       "museConfig": "Muse Code n’a pas pu charger ses réglages ou sa connexion. Lancez muse pour voir pourquoi.",
-      "noUsageLimits": "Anthropic ne donne aucune limite d’utilisation pour ce compte Claude."
+      "noUsageLimits": "Anthropic ne donne aucune limite d’utilisation pour ce compte Claude.",
+      "grokReportFailed": "Impossible de lire l'utilisation de Grok Build."
     },
     "reset": {
       "notSaved": "Le résultat de la réinitialisation n'a pas pu être enregistré dans l'historique local.",

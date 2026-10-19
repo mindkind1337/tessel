@@ -11,7 +11,9 @@
 // lines become the events the chat journal replays (transcriptHistory.js's
 // builder), so the chat UI renders them as it renders any chat.
 //
-// Where: Grok: <GROK_HOME or ~/.grok>/sessions/<encoded folder>/<id>/chat_history.jsonl;
+// Where: Grok Build: <GROK_HOME or ~/.grok>/sessions/<encoded folder>/<id>/updates.jsonl
+// (its ACP update stream, each line timed: what /resume replays), else the
+// chat_history.jsonl beside it (older sessions; its lines have no time);
 // OpenClaude (Claude Code's format): ~/.openclaude/projects/<project>/<id>.jsonl;
 // OMP: <OMP_CODING_AGENT_DIR or ~/.omp/agent/sessions>/<folder slug>/<time>_<id>.jsonl (a session's own
 // sub-folders, its task sub-agents', are not searched);
@@ -50,7 +52,7 @@ import { realInside } from '../agentChildren.js'
 import { ompSessionsDir } from '../agentSessionSources.js'
 import { museConversation, museSessionLog, museSessionsDir } from '../museSessions.js'
 import { HISTORY_LIMITS, ATTACHMENT_LIMITS, resolveHistoryAttachments, claudeHistoryEvents, codexHistoryEvents, createBuilder, findTranscript } from './transcriptHistory.js'
-import { imageFromPath, resolveHistoryAttachmentsCached } from './historyAttachments.js'
+import { imageFromBase64, imageFromPath, imageFromUrl, resolveHistoryAttachmentsCached } from './historyAttachments.js'
 import { createRemoteDrives } from './remoteDrives.js'
 import { createRemoteTail, remoteWindowReader, validRemoteTranscript } from './remoteTranscripts.js'
 
@@ -151,13 +153,7 @@ export function findTranscriptViewFile(agent, id, roots = transcriptViewRoots(),
     if (!realInside(base, join(root, 'projects'), true)) return null
     file = claudeTranscriptIn(root, id)
   } else if (agent === 'grok') {
-    for (const group of dirNames(root)) {
-      const candidate = join(root, group, id, 'chat_history.jsonl')
-      if (fs.existsSync(candidate)) {
-        file = candidate
-        break
-      }
-    }
+    file = grokSessionFile(root, id)
   } else {
     for (const group of dirNames(root)) {
       let names = []
@@ -279,7 +275,192 @@ function parseArgs(v) {
   }
 }
 
+// A session's file: its update stream (updates.jsonl, timed: what /resume
+// replays), else its chat_history.jsonl (an older Grok Build's, untimed), in
+// any folder group of its sessions root. -> the path or null (checked inside
+// the root by the caller).
+export const GROK_SESSION_FILES = ['updates.jsonl', 'chat_history.jsonl']
+export function grokSessionFile(root, id) {
+  if (typeof root !== 'string' || !isAbsolute(root) || typeof id !== 'string' || !TOKEN_ID.test(id)) return null
+  for (const group of dirNames(root)) {
+    for (const name of GROK_SESSION_FILES) {
+      const candidate = join(root, group, id, name)
+      if (fs.existsSync(candidate)) return candidate
+    }
+  }
+  return null
+}
+
+// ---- Grok Build's update stream (updates.jsonl) -------------------------------
+// One ACP notification a line: { timestamp (s), method: 'session/update' or
+// '_x.ai/session/update', params: { sessionId, update: { sessionUpdate, ... },
+// _meta: { agentTimestampMs, totalTokens } } }. Read: user_message_chunk (your
+// prompt: text and images, its _meta naming the model and the prompt's index),
+// agent_thought_chunk and agent_message_chunk (the answer, in chunks),
+// tool_call and tool_call_update (its result once completed or failed),
+// config_option_update (a model or effort picked), turn_completed (the turn's
+// end, its stop_reason and usage: tokens, cost, the model that answered).
+// Hook runs and command lists are not the conversation.
+export function grokUpdateOf(line) {
+  if (typeof line !== 'string' || !line.includes('"sessionUpdate"')) return null
+  const r = parse(line)
+  const p = obj(r && r.params)
+  const u = obj(p && p.update)
+  if (!u || typeof u.sessionUpdate !== 'string') return null
+  const meta = obj(p._meta) || {}
+  const sec = typeof r.timestamp === 'number' && Number.isFinite(r.timestamp) ? (r.timestamp < 1e11 ? r.timestamp * 1000 : r.timestamp) : null
+  const at = typeof meta.agentTimestampMs === 'number' && Number.isFinite(meta.agentTimestampMs) ? meta.agentTimestampMs : sec
+  return { at, kind: u.sessionUpdate, u, meta, inner: obj(u._meta) || {} }
+}
+
+// An ACP content block's image: inline (data, mimeType), a data: URL or a
+// local file (uri, or a resource_link to an image file).
+function grokImage(c, source) {
+  if (!c) return null
+  if (c.type === 'image') {
+    if (str(c.data)) return imageFromBase64(c.data, c.mimeType, undefined, source)
+    return str(c.uri) ? imageFromUrl(c.uri, undefined, source) : { kind: 'image', source }
+  }
+  if (c.type === 'resource_link' && /\.(png|jpe?g|gif|webp)$/i.test(str(c.uri) || '')) return imageFromUrl(c.uri, str(c.name) || undefined, source)
+  return null
+}
+
+// A tool result's content: [{ type: 'content', content: { type: 'text' |
+// 'image', ... } }, { type: 'diff', path, newText }...] -> { text, images }.
+function grokToolContent(content) {
+  const texts = []
+  const images = []
+  for (const item of Array.isArray(content) ? content : []) {
+    const o = obj(item)
+    if (!o) continue
+    const c = o.type === 'content' ? obj(o.content) : o
+    if (c && c.type === 'text' && str(c.text)) texts.push(c.text)
+    else if (o.type === 'diff' && str(o.path)) texts.push(o.path)
+    else {
+      const img = grokImage(c, 'tool')
+      if (img) images.push(img)
+    }
+  }
+  return { text: texts.join('\n'), images }
+}
+// Its rawOutput when the content says nothing: an MCP tool's output, a search's.
+function grokRawOutput(raw) {
+  const o = obj(raw)
+  if (!o) return typeof raw === 'string' ? raw : ''
+  const out = obj(o.output)
+  return str(o.output) || str(out && (out.OkayOutput || out.ErrorOutput)) || str(o.content) || str(o.result) || str(o.stdout) || ''
+}
+
+export function grokUpdateViewEvents(lines, limits = HISTORY_LIMITS) {
+  const b = createBuilder(limits)
+  const tools = toolQueue(b)
+  const done = new Set()
+  let prompt = null // { key, idx, texts, images, at } of the prompt being read
+  let seg = 0 // a new message after a tool call, a turn's end or a change of kind
+  let lastKind = null
+  const flushPrompt = () => {
+    if (!prompt) return
+    const p = prompt
+    prompt = null
+    tools.clear()
+    b.user(p.key, p.texts.join(''), p.at, p.images)
+    seg++
+    lastKind = null
+  }
+  lines.forEach((line, index) => {
+    const g = grokUpdateOf(line)
+    if (!g) return
+    const { u, at, kind } = g
+    if (kind === 'user_message_chunk') {
+      const c = obj(u.content) || {}
+      const idx = g.inner.promptIndex
+      if (prompt && idx !== undefined && prompt.idx !== idx) flushPrompt()
+      if (!prompt) prompt = { key: `grok-u-${index}`, idx, texts: [], images: [], at } // i18n-ignore id
+      if (c.type === 'text' && typeof c.text === 'string') prompt.texts.push(c.text)
+      else {
+        const img = grokImage(c, 'user')
+        if (img) prompt.images.push(img)
+      }
+      return
+    }
+    if (kind === 'hook_execution' || kind === 'available_commands_update') return
+    flushPrompt()
+    if (kind === 'agent_message_chunk' || kind === 'agent_thought_chunk') {
+      const c = obj(u.content)
+      if (!c || c.type !== 'text' || typeof c.text !== 'string' || !c.text) return
+      const k = kind === 'agent_message_chunk' ? 'assistant' : 'thinking'
+      if (lastKind !== k) {
+        seg++
+        lastKind = k
+      }
+      b.message(k, `grok-${seg}`, c.text, at, '') // i18n-ignore id
+      return
+    }
+    if (kind === 'tool_call') {
+      const id = str(u.toolCallId)
+      seg++
+      lastKind = null
+      if (id && b.hasTool(id)) return
+      const tool = obj(g.inner['x.ai/tool'])
+      tools.call(id, str(tool && tool.name) || str(u.title) || 'tool', u.rawInput ?? {}, at, str(tool && tool.label) || undefined) // i18n-ignore tool name
+      return
+    }
+    if (kind === 'tool_call_update') {
+      const id = str(u.toolCallId)
+      const status = str(u.status)
+      if (!id || (status !== 'completed' && status !== 'failed') || done.has(id)) return
+      done.add(id)
+      const { text: out, images } = grokToolContent(u.content)
+      tools.result(id, out || grokRawOutput(u.rawOutput), status === 'failed', at, images)
+      return
+    }
+    if (kind === 'turn_completed') {
+      b.endTurn(str(u.stop_reason) === 'cancelled' ? 'interrupted' : 'completed', at)
+      seg++
+      lastKind = null
+    }
+  })
+  flushPrompt()
+  return b.finish()
+}
+
+// The model (and effort) of each prompt, oldest first: [{ t, model, effort }]
+// (Conversations: the model each line ran with). A prompt's _meta names the
+// model it was sent to; a config_option_update names a model or effort picked
+// (/model, /effort) before the next one.
+const GROK_EFFORTS = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']
+export function grokModelTimeline(lines) {
+  const out = []
+  let model = ''
+  let effort = null
+  for (const line of lines || []) {
+    if (typeof line !== 'string' || !(line.includes('"modelId"') || line.includes('config_option_update'))) continue
+    const g = grokUpdateOf(line)
+    if (!g || !g.at) continue
+    let nextModel = model
+    let nextEffort = effort
+    if (g.kind === 'user_message_chunk' && str(g.inner.modelId)) nextModel = g.inner.modelId
+    else if (g.kind === 'config_option_update') {
+      for (const o of Array.isArray(g.u.configOptions) ? g.u.configOptions : []) {
+        const opt = obj(o)
+        const value = opt && str(opt.currentValue)
+        if (!value) continue
+        const what = `${str(opt.category) || ''} ${str(opt.id) || ''}`.toLowerCase()
+        if (/model/.test(what)) nextModel = value
+        else if (/thought|effort|reason/.test(what) && GROK_EFFORTS.includes(value.toLowerCase())) nextEffort = value.toLowerCase()
+      }
+    } else continue
+    if (!nextModel || (nextModel === model && nextEffort === effort)) continue
+    model = nextModel
+    effort = nextEffort
+    out.push({ t: g.at, model, effort })
+  }
+  return out
+}
+
+// Older sessions (chat_history.jsonl): the model's own messages, untimed.
 export function grokViewEvents(lines, limits = HISTORY_LIMITS) {
+  if ((lines || []).some((l) => typeof l === 'string' && l.includes('"sessionUpdate"') && grokUpdateOf(l))) return grokUpdateViewEvents(lines, limits)
   const b = createBuilder(limits)
   const tools = toolQueue(b)
   lines.forEach((line, index) => {
@@ -818,6 +999,14 @@ export function contextUsageEvent(agent, lines) {
       const used = last ? n(last.total_tokens) || n(last.input_tokens) + n(last.output_tokens) : 0
       if (!used) continue
       return { type: 'contextUsage', usedTokens: used, windowTokens: n(info.model_context_window) || null }
+    }
+    if (agent === 'grok') {
+      // Grok Build: the request's size its updates note (_meta.totalTokens).
+      if (!line.includes('"totalTokens"')) continue
+      const g = grokUpdateOf(line)
+      const used = g ? n(g.meta.totalTokens) : 0
+      if (used) return { type: 'contextUsage', usedTokens: used, windowTokens: null }
+      continue
     }
     if (agent !== 'claude' && agent !== 'openclaude') return null
     if (!line.includes('"usage"')) continue
