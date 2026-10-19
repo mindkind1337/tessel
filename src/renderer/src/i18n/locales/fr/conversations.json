@@ -71,6 +71,47 @@
       "note": "dans son terminal"
     },
     "last": "Dernier message {{when}}",
-    "empty2": "Rien n'a encore été dit. Les messages d'équipe et vos échanges avec les agents s'affichent ici."
+    "empty2": "Rien n'a encore été dit. Les messages d'équipe et vos échanges avec les agents s'affichent ici.",
+    "type": {
+      "links": "Liens",
+      "images": "Images",
+      "videos": "Vidéos",
+      "files": "Fichiers",
+      "folders": "Dossiers",
+      "code": "Code",
+      "hint": "Seulement les messages avec : {{type}} ({{count}})",
+      "aria": "Messages qui partagent"
+    },
+    "view": {
+      "aria": "Afficher",
+      "messages": "Messages",
+      "media": "Médias : tout ce qui a été partagé"
+    },
+    "media": {
+      "count_one": "{{count}} élément partagé",
+      "count_other": "{{count}} éléments partagés",
+      "count": "{{count}} éléments partagés",
+      "empty": "Rien de partagé dans ces conversations : aucun lien, image, vidéo, fichier, dossier ni code.",
+      "visual": "Images et vidéos",
+      "links": "Liens",
+      "paths": "Fichiers et dossiers",
+      "code": "Code",
+      "showMore_one": "Afficher {{count}} de plus",
+      "showMore_other": "Afficher {{count}} de plus",
+      "showMore": "Afficher {{count}} de plus",
+      "sharedBy": "{{who}} · {{when}}",
+      "show": "Afficher dans la conversation",
+      "image": "Image",
+      "imageGone": "{{name}} : n’est plus sur cet ordinateur",
+      "imageRemote": "{{name}} : sur l’hôte SSH",
+      "moreImages": "+{{count}}",
+      "moreImagesHint_one": "{{count}} autre image non affichée",
+      "moreImagesHint_other": "{{count}} autres images non affichées",
+      "moreImagesHint": "{{count}} autres images non affichées"
+    },
+    "waiting": {
+      "offline": "Non lu : {{names}} (leur hôte {{hosts}} n’est pas connecté)",
+      "reading": "Lecture depuis leur hôte : {{names}}"
+    }
   }
 }

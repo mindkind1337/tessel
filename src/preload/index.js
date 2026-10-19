@@ -622,7 +622,9 @@ const api = {
   // What you and each terminal agent said in its terminal, for the
   // Conversations tab (src/main/chat/terminalConversations.js).
   conversations: {
-    terminal: (q) => ipcRenderer.invoke('conversations:terminal', q)
+    terminal: (q) => ipcRenderer.invoke('conversations:terminal', q),
+    // A line's image by its key: { ok, dataUrl } (a thumbnail come into view).
+    image: (key) => ipcRenderer.invoke('conversations:image', key)
   },
   // Read-only conversation views of terminal agents (src/main/chat/transcriptView.js).
   transcriptView: {

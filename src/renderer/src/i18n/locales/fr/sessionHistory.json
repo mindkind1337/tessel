@@ -121,7 +121,10 @@
       "latestTurns": "Derniers échanges",
       "noPreview": "Aucun aperçu de conversation disponible",
       "workingDirectory": "Répertoire de travail",
-      "model": "Modèle"
+      "model": "Modèle",
+      "latestImages_one": "Dernières images ({{count}})",
+      "latestImages_other": "Dernières images ({{count}})",
+      "latestImages": "Dernières images ({{count}})"
     },
     "subagents": {
       "count": "Sous-agents ({{count}})",
