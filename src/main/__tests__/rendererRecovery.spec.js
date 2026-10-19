@@ -348,7 +348,7 @@ describe('the main window wiring', () => {
   const createWindow = main.slice(main.indexOf('function createWindow()'), main.indexOf('// Windows takes a taskbar button'))
 
   it('the window installs recovery with the same page load as at start', () => {
-    expect(createWindow).toMatch(/const loadPage = \(\) =>[\s\S]{0,200}loadURL\(process\.env\.ELECTRON_RENDERER_URL\)[\s\S]{0,120}loadFile\(/)
+    expect(createWindow).toMatch(/const loadPage = \(\) =>[\s\S]{0,200}loadURL\(devRendererUrl\)[\s\S]{0,120}loadFile\(/)
     expect(createWindow).toMatch(/loadPage\(\)\.catch/)
     expect(createWindow).toMatch(/installRendererRecovery\(\{\s*win,\s*loadPage,/)
     expect(createWindow).toMatch(/isQuitting: \(\) => appQuitting \|\| shutdownDone/)

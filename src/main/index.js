@@ -5041,9 +5041,14 @@ function createWindow() {
   })
   // The dev window's own server (electron.vite.config.mjs: 127.0.0.1, a port
   // checked free), never another program's on "localhost".
+  // Only the dev build reads ELECTRON_RENDERER_URL: an installed Tessel always
+  // loads its own page (a variable left in the environment, inherited from a
+  // dev Tessel or set by anything else, made it load that address instead,
+  // with the window's full rights).
+  const devRendererUrl = !app.isPackaged && process.env.ELECTRON_RENDERER_URL ? process.env.ELECTRON_RENDERER_URL : null
   const devOrigin = (() => {
     try {
-      return process.env.ELECTRON_RENDERER_URL ? new URL(process.env.ELECTRON_RENDERER_URL).origin : null
+      return devRendererUrl ? new URL(devRendererUrl).origin : null
     } catch {
       return null
     }
@@ -5070,13 +5075,11 @@ function createWindow() {
   const win = mainWindow
   // The window's page, at start and when it is reloaded after a crash.
   const loadPage = () =>
-    process.env.ELECTRON_RENDERER_URL
-      ? win.loadURL(process.env.ELECTRON_RENDERER_URL)
-      : win.loadFile(join(__dirname, '../renderer/index.html'))
+    devRendererUrl ? win.loadURL(devRendererUrl) : win.loadFile(join(__dirname, '../renderer/index.html'))
   // Still loading after a minute: said in the log (on 2026-10-13 the window
   // waited 28 minutes on the dev server, blank, and nothing said so).
   const slowLoad = setTimeout(
-    () => log.warn('window', `the page is still loading after 60 s (${process.env.ELECTRON_RENDERER_URL || 'renderer/index.html'})`),
+    () => log.warn('window', `the page is still loading after 60 s (${devRendererUrl || 'renderer/index.html'})`),
     60000
   )
   loadPage().catch((err) => log.error('window', `the page did not load: ${err.message}`)).finally(() => clearTimeout(slowLoad))
