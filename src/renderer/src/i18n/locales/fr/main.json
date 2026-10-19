@@ -1144,5 +1144,11 @@
   "main.rendererRecovery.launchFailedAdvice": "Le système a refusé de le démarrer. Libérez de la mémoire ou fermez d’autres applications, puis cliquez sur Réessayer. Si cela se reproduit, réinstallez Tessel.",
   "main.rendererRecovery.crashLoopMessage": "La fenêtre a planté à répétition et ne se recharge plus d’elle-même.",
   "main.rendererRecovery.crashLoopDetail": "Tessel a tenté de la rétablir {{recoveryCount}} fois de suite sans succès.",
-  "main.rendererRecovery.crashLoopAdvice": "C’est souvent un problème de pilote graphique ou d’installation. Rechargez pour réessayer, ou quittez et redémarrez Tessel."
+  "main.rendererRecovery.crashLoopAdvice": "C’est souvent un problème de pilote graphique ou d’installation. Rechargez pour réessayer, ou quittez et redémarrez Tessel.",
+  "main.chatImage.cannotSave": "Cette image ne peut pas être enregistrée.",
+  "main.chatImage.cannotOpen": "Cette image ne peut pas être ouverte.",
+  "main.chatImage.saveTitle": "Enregistrer l’image",
+  "main.chatImage.filter": "Image",
+  "main.chatImage.saveFailed": "L’image n’a pas pu être enregistrée à cet endroit.",
+  "main.chatImage.openFailed": "L’image n’a pas pu être ouverte."
 }

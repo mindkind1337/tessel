@@ -1,6 +1,7 @@
 // After Orca's NativeChatTranscriptChrome.tsx (MIT, Copyright (c) 2026 Lovecast Inc.):
 // the transcript images' visibility, one IntersectionObserver for all of them
 // (a preview loads its image only while near the viewport).
+import { t } from '../../../i18n'
 
 const visibilityListeners = new Map()
 let visibilityObserver = null
@@ -42,9 +43,24 @@ export function renderableImageSource(source) {
 // The reference's isNativeChatPastedImagePath (native-chat-image-paste.ts). Not
 // imported from chat/orca/native-chat-image-paste.js: that module still imports
 // a terminal-pane file Tessel does not have.
+// Tessel: its own copies of a pasted image: %TEMP%\tessel-paste\image-*.png
+// (a terminal's paste), %TEMP%\tessel-paste\chat\img_<id>.<ext> (a chat's
+// paste, drop or pick); the reference's orca-paste-*.png is kept.
 export function isNativeChatPastedImagePath(path) {
-  const base = path.split(/[\\/]/).findLast(Boolean) ?? path
-  return /^orca-paste-.+\.png$/i.test(base)
+  const text = String(path ?? '')
+  const base = text.split(/[\\/]/).findLast(Boolean) ?? text
+  if (/^orca-paste-.+\.png$/i.test(base)) return true
+  if (!/[\\/]tessel-paste[\\/]/i.test(text)) return false
+  return /^(?:img_[0-9a-f]{24}\.(?:png|jpe?g|gif|webp)|image-\d+\.png)$/i.test(base)
+}
+
+// The name an image shows under: "Pasted image" for one pasted in a terminal
+// (the transcript's 'pasted' source) or one of Tessel's paste copies, else
+// its own name, its file's name, or "Image".
+export function imageLabel(block) {
+  if (!block) return t('chat.orca.markdown.image', 'Image')
+  if (block.source === 'pasted' || (block.path && isNativeChatPastedImagePath(block.path))) return t('chat.orca.composer.pastedImageLabel', 'Pasted image')
+  return block.alt?.trim() || (block.path ? basename(block.path) : t('chat.orca.markdown.image', 'Image'))
 }
 
 export function basename(path) {

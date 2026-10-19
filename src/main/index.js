@@ -87,6 +87,7 @@ import { remoteSpawnAvailable, remoteSpawnFor } from './chat/remoteProcess'
 import { remoteSessionDetails, remoteTranscriptExists } from './chat/remoteTranscripts'
 import { createRemoteSkills } from './chat/remoteSkills'
 import { createChatImages } from './chat/chatImages'
+import { createChatImageActions } from './chat/chatImageActions'
 import { transcriptHomeFor } from './chat/transcriptHistory'
 import { createTranscriptViews } from './chat/transcriptView'
 import { createTerminalConversations } from './chat/terminalConversations'
@@ -1318,6 +1319,11 @@ app.whenReady().then(() => {
 // Images attached to chat messages: Tessel's own copies (chat/chatImages.js).
 const chatImages = createChatImages({ nativeImage, log })
 chatImages.sweep()
+// The chat's image viewer: Save as, and a copy to open in an image tab
+// (chat/chatImageActions.js).
+const chatImageActions = createChatImageActions({ dialog, getWindow: () => mainWindow, downloadsDir: () => app.getPath('downloads') })
+chatImageActions.sweep()
+chatImageActions.register(ipcMain)
 // The usage indicator's live readings (usagePoller.js ingest), set once the
 // usage service is registered below.
 let usageLiveIngest = null
@@ -3817,10 +3823,11 @@ ipcMain.handle('files:view', (_evt, file) => {
     return { ok: false, error: err.message }
   }
 })
-ipcMain.handle('files:viewImage', async (_evt, file) => {
+ipcMain.handle('files:viewImage', async (_evt, file, opts) => {
   try {
     if (lshareArg(file)) return await guestFs().readImage(file)
-    return isRemotePath(file) ? await remoteFs.readImage(file) : readImageForView(file)
+    const maxBytes = opts && Number.isSafeInteger(opts.maxBytes) ? opts.maxBytes : undefined
+    return isRemotePath(file) ? await remoteFs.readImage(file) : readImageForView(file, { maxBytes })
   } catch (err) {
     return { ok: false, error: err.message }
   }

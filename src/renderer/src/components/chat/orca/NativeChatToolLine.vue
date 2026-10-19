@@ -12,6 +12,9 @@
  *   initiallyExpanded (true), disclosureKey, onLinkClick(event, url).
  * Tessel: the preview and the input detail are cut from an input masked with
  *   maskSecrets first; a call the agent's stop cut short says "Stopped".
+ *   The images its result carries (a screenshot, an image file it read:
+ *   the result block's images / imagesMore) show under its output as
+ *   thumbnails, one viewer for them all (NativeChatImageAttachments).
  */
 import { computed } from 'vue'
 import { ChevronRight } from 'lucide-vue-next'
@@ -27,6 +30,7 @@ import NativeChatToolName from './NativeChatToolName.vue'
 import NativeChatCommandMetadata from './NativeChatCommandMetadata.vue'
 import NativeChatSearchResults from './NativeChatSearchResults.vue'
 import NativeChatDiffView from './NativeChatDiffView.vue'
+import NativeChatImageAttachments from './NativeChatImageAttachments.vue'
 
 const props = defineProps({
   block: { type: Object, required: true },
@@ -66,8 +70,15 @@ const body = computed(() => {
   return null
 })
 const hasResults = computed(() => isCall.value && (props.block.webSearchResults?.length ?? 0) > 0)
+// Tessel: the result's images (image-ref blocks) and how many it left out.
+const resultBlock = computed(() => (isCall.value ? props.result : isResult.value ? props.block : null))
+const images = computed(() => (Array.isArray(resultBlock.value?.images) ? resultBlock.value.images : []))
+const imagesMore = computed(() => (Number.isSafeInteger(resultBlock.value?.imagesMore) ? resultBlock.value.imagesMore : 0))
+const hasImages = computed(() => images.value.length > 0 || imagesMore.value > 0)
+// A result that is only images shows no empty text box.
+const showBody = computed(() => body.value !== null && (Boolean(body.value.output) || !hasImages.value))
 const hasDetail = computed(
-  () => diff.value !== null || body.value !== null || (inputDisplay.value?.hasDetail ?? false) || hasResults.value
+  () => diff.value !== null || body.value !== null || (inputDisplay.value?.hasDetail ?? false) || hasResults.value || hasImages.value
 )
 const stopped = computed(() => isStoppedToolCall(props.block))
 const stoppedText = computed(() => t('chat.orca.tool.stopped', 'Stopped'))
@@ -109,9 +120,17 @@ function toggle() {
       <NativeChatDiffView v-if="diff" :lines="diff" />
       <pre v-if="!diff && detail" class="nc-tool-line__pre nc-scrollbar-sleek">{{ detail }}</pre>
       <pre
-        v-if="body"
+        v-if="showBody"
         :class="['nc-tool-line__pre', 'nc-scrollbar-sleek', body.isError ? 'nc-tool-line__pre--error' : null]"
       >{{ truncateToolDetail(body.output) }}</pre>
+      <NativeChatImageAttachments
+        v-if="hasImages"
+        :blocks="images"
+        :more="imagesMore"
+        :enable-preview="true"
+        :runtime-context="null"
+        variant="tool"
+      />
     </div>
   </div>
 </template>

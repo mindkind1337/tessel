@@ -23,6 +23,7 @@ import {
 import { formatFileLinkLocation } from '../../../chat/orca/shared/file-link-location.js'
 import { inlineCodeFileLink, splitTextNode } from './comment-markdown-native-chat-file-links.js'
 import ExpandableMarkdownImage from './ExpandableMarkdownImage.vue'
+import NativeChatMarkdownLocalImage from './NativeChatMarkdownLocalImage.vue'
 
 const TEXT_NODE = 3
 const ELEMENT_NODE = 1
@@ -438,8 +439,30 @@ function isCodeLink(element) {
   return kids.length === 1 && kids[0].nodeType === ELEMENT_NODE && kids[0].localName === 'code'
 }
 
+// Tessel: "[Image #N]" in a message whose images show (linkImageMarkers):
+// a small chip that opens the viewer at that image.
+export const IMAGE_MARKER_HREF = /^#tessel-image-([1-9]\d{0,3})$/
+
 function renderAnchor(element, ctx, state, className) {
   const href = safeHref(element.getAttribute('href'))
+  const marker = href && ctx.onImageMarker ? IMAGE_MARKER_HREF.exec(href) : null
+  if (marker) {
+    const n = Number(marker[1])
+    return h(
+      'button',
+      {
+        type: 'button',
+        class: 'cm-image-marker',
+        'data-test': 'cm-image-marker',
+        onClick: (event) => {
+          event.stopPropagation()
+          event.preventDefault()
+          ctx.onImageMarker(n, event)
+        }
+      },
+      renderChildren(element, ctx, state)
+    )
+  }
   return h(
     'a',
     {
@@ -595,17 +618,20 @@ export function createCompactRenderers() {
       if (!isTrustedCompactImageSrc(src)) {
         if (!localSrc) return alt ? h('span', null, alt) : null
         const href = safeHref(localSrc)
-        return h(
-          'a',
-          {
-            href,
-            target: '_blank',
-            rel: 'noreferrer',
-            class: 'cm-c-link',
-            ...anchorHandlers(href, ctx)
-          },
-          alt || localSrc
-        )
+        const link = () =>
+          h(
+            'a',
+            {
+              href,
+              target: '_blank',
+              rel: 'noreferrer',
+              class: 'cm-c-link',
+              ...anchorHandlers(href, ctx)
+            },
+            alt || localSrc
+          )
+        // Tessel: shown inline once read (the link until then).
+        return h(NativeChatMarkdownLocalImage, { path: localSrc, alt, variant: 'compact', link })
       }
       if (ctx.expandImages) {
         return h(ExpandableMarkdownImage, { src, alt, variant: 'compact' })
@@ -659,17 +685,20 @@ export function createDocumentRenderers() {
         // remote one is never fetched, its text stays.
         if (localSrc) {
           const href = safeHref(localSrc)
-          return h(
-            'a',
-            {
-              href,
-              target: '_blank',
-              rel: 'noreferrer',
-              class: 'cm-d-link',
-              ...anchorHandlers(href, ctx)
-            },
-            alt || localSrc
-          )
+          const link = () =>
+            h(
+              'a',
+              {
+                href,
+                target: '_blank',
+                rel: 'noreferrer',
+                class: 'cm-d-link',
+                ...anchorHandlers(href, ctx)
+              },
+              alt || localSrc
+            )
+          // Tessel: shown inline once read (the link until then).
+          return h(NativeChatMarkdownLocalImage, { path: localSrc, alt, variant: 'document', link })
         }
         return alt ? h('span', null, alt) : null
       }
@@ -722,6 +751,34 @@ function rewriteProse(text) {
           })
     )
     .join('')
+}
+
+// Tessel: "[Image #N]" (a terminal's pasted image) becomes a link to that
+// image (#tessel-image-N, drawn as a chip by renderAnchor), outside code and
+// when not already a link.
+const IMAGE_MARKER_TEXT = /(?<!!)\[Image #([1-9]\d{0,3})\](?!\()/g
+export function linkImageMarkers(markdown) {
+  const text = String(markdown ?? '')
+  if (!/\[Image #\d/.test(text)) return text
+  let fence = null
+  return text
+    .split('\n')
+    .map((line) => {
+      const marker = /^\s{0,3}(`{3,}|~{3,})/.exec(line)
+      if (fence) {
+        if (marker && marker[1][0] === fence[0] && marker[1].length >= fence.length) fence = null
+        return line
+      }
+      if (marker) {
+        fence = marker[1]
+        return line
+      }
+      return line
+        .split(/(`+[^`]*`+)/)
+        .map((part, i) => (i % 2 === 1 ? part : part.replace(IMAGE_MARKER_TEXT, (whole, n) => `[Image #${n}](#tessel-image-${n})`))) // i18n-ignore
+        .join('')
+    })
+    .join('\n')
 }
 
 export function protectLocalMarkdownLinks(markdown) {

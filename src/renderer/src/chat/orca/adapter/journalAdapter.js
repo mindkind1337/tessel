@@ -13,7 +13,7 @@
 // with the items and submissions that changed, or null when nothing did.
 import { agentJournalSubmissionKey } from '../shared/agent-session-journal-item-key.js'
 import { normalizeSubagentState, MAX_SUBAGENT_FIELD_CHARS, subagentGroupFallbackText } from '../shared/native-chat-subagent-summary.js'
-import { fileRefBlocks, imageRefBlocks } from '../native-chat-images.js'
+import { fileRefBlocks, imageRefBlocks, moreImagesBlocks, toolResultImages, withoutImagePlaceholders } from '../native-chat-images.js'
 import { t } from '../../../i18n'
 
 // Output kept in a tool row: the same bound as the main process's journal.
@@ -316,10 +316,15 @@ export function createJournalAdapter({ now = Date.now, epoch = 'tessel', fence =
       case 'user': {
         if (!ev.id) break
         const itemId = agentJournalSubmissionKey(String(ev.id))
-        const body = { kind: 'message', role: 'user', blocks: [{ type: 'text', text: String(ev.text ?? '') }] }
         // Tessel's addition: its attached images (thumbnails while this window has them).
-        // A history message: its images (data: URLs) and its other files (chips).
-        const pictures = ev.origin === 'team' ? [] : [...imageRefBlocks(ev.images), ...fileRefBlocks(ev.files)]
+        // A history message: its images (data: URLs, or what is known of a
+        // file: gone, on the SSH host) and its other files (chips); the
+        // "[image]" words of its text go where its images show, and those
+        // it could not list end its images as "+N more images".
+        const shown = ev.origin === 'team' ? [] : [...imageRefBlocks(ev.images), ...moreImagesBlocks(ev.imagesMore)]
+        const text = shown.length ? withoutImagePlaceholders(ev.text) : String(ev.text ?? '')
+        const body = { kind: 'message', role: 'user', blocks: [{ type: 'text', text }] }
+        const pictures = ev.origin === 'team' ? [] : [...shown, ...fileRefBlocks(ev.files)]
         if (pictures.length) body.blocks = [...pictures, ...(body.blocks[0].text ? body.blocks : [])]
         // Tessel's addition: a teammate's message, labelled as such. Its
         // "(message <id>, reply to <id>) " header is for the agent (to answer
@@ -393,14 +398,17 @@ export function createJournalAdapter({ now = Date.now, epoch = 'tessel', fence =
         }
         const linkage = childLinkage(ev)
         if (!isChild(ev)) openTurnFor(lastUserItemId, at)
-        put(itemId, { kind: 'tool-call', name: String(ev.name ?? ''), input: relativeToolInput(parseInput(ev.input), folder()), callId: String(ev.id), state, ...(prior && prior.body.output ? { output: prior.body.output } : {}) }, linkage, at)
+        put(itemId, { kind: 'tool-call', name: String(ev.name ?? ''), input: relativeToolInput(parseInput(ev.input), folder()), callId: String(ev.id), state, ...(prior && prior.body.output ? { output: prior.body.output } : {}), ...(prior && prior.body.images ? { images: prior.body.images, imagesMore: prior.body.imagesMore } : {}) }, linkage, at)
         break
       }
       case 'toolResult': {
         if (!ev.id) break
         const itemId = `tool:${ev.id}` // i18n-ignore
         if (!items.has(itemId)) put(itemId, { kind: 'tool-call', name: '', input: null, callId: String(ev.id), state: 'running' }, childLinkage(ev), at)
-        revise(itemId, { state: ev.isError ? 'failed' : 'completed', output: bounded(ev.text) })
+        // Tessel: the images it got back (a screenshot, an image file read),
+        // shown on its card; the "[image]" lines of its text then go.
+        const pictures = toolResultImages(ev)
+        revise(itemId, { state: ev.isError ? 'failed' : 'completed', output: bounded(pictures ? withoutImagePlaceholders(ev.text) : ev.text), ...(pictures ? pictures : {}) })
         break
       }
       case 'approval': {

@@ -205,7 +205,8 @@ const api = {
     ackClose: () => ipcRenderer.send('editor:closeAck'),
     closeWindow: () => ipcRenderer.send('editor:closeWindow')
   },
-  viewImage: (file) => ipcRenderer.invoke('files:viewImage', file),
+  // opts: { maxBytes } (a local image over it is refused before it is read).
+  viewImage: (file, opts) => ipcRenderer.invoke('files:viewImage', file, opts && typeof opts === 'object' ? { maxBytes: opts.maxBytes } : undefined),
   openPdf: (file) => ipcRenderer.invoke('files:openPdf', file),
   // A project's files for Jump to file: root -> { ok, files, truncated }.
   listFiles: (root) => ipcRenderer.invoke('files:list', root),
@@ -601,6 +602,11 @@ const api = {
     // A terminal agent's chat view: its images' files (Tessel's copies) for
     // the agent's input -> { ok, paths }.
     imagePaths: (opts) => ipcRenderer.invoke('chat:imagePaths', opts),
+    // The chat's image viewer (src/main/chat/chatImageActions.js): Save as
+    // -> { ok, path } | { ok: false, canceled }, and a copy of a shown image
+    // to open in an image tab -> { ok, path }.
+    imageSaveAs: (opts) => ipcRenderer.invoke('chatImages:saveAs', opts),
+    imageViewCopy: (opts) => ipcRenderer.invoke('chatImages:viewCopy', opts),
     onEvent: (cb) => subscribe('chat:event', cb)
   },
   // Search in what was said in the agents' conversations (src/main/sessionSearch).
