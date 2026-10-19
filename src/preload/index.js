@@ -784,6 +784,7 @@ const api = {
     // Guest: an image pasted (or a file dropped: { file }) into a host's
     // pane, sent to the host. Host: its window pasted one ({ request, ok, code }).
     pasteImage: (id, from = {}) => ipcRenderer.invoke('liveShare:pasteImage', id, from && typeof from.file === 'string' ? { file: from.file } : {}),
+    pasteCheck: (request) => ipcRenderer.invoke('liveShare:pasteCheck', typeof request === 'string' ? request : ''),
     pasteDone: ({ request, ok, code } = {}) => ipcRenderer.send('liveShare:pasteDone', { request, ok: ok === true, code }),
     // Phase 2b. Host: the shared projects' panes as their headers show them,
     // and their finished tasks. Guest: a panel's request to the host (a

@@ -358,7 +358,8 @@ export function stripTerminalReplies(data) {
 //                             'scm' or 'tasks'): Promise<{ ok: true, data } |
 //                             { ok: false, code, detail? }>; req: { op,
 //                             project, args } as the guest sent them (args
-//                             unchecked); ctx: { guest (publicGuest's), rights
+//                             unchecked); ctx: { guest (publicGuest's), person
+//                             (who asks, across its connections), rights
 //                             (the guest's now), recheck() (true while the
 //                             guest still may: called right before a change),
 //                             cancelled(), spend('git') (one more git run of
@@ -800,6 +801,9 @@ export function createShareHost({ secret = null, hostName, callbacks, log = () =
     const shared = { uses: new Set() }
     const ctx = {
       guest: publicGuest(g),
+      // Who asks across its connections (a trusted identity, or its person):
+      // what a request counts per person beyond these budgets.
+      person: trustedOf(g) ? `t:${trustedOf(g).fp}` : `p:${g.person.hash}`,
       rights: { ...rights },
       recheck: () => stands(g, entry),
       cancelled: () => entry.cancelled || g.reqs.get(entry.id) !== entry,

@@ -72,7 +72,7 @@ import { extraToolDirs, withToolDirs } from './toolDirs'
 import { AGENT_INSTALLS, checkInstall } from './agentInstalls'
 import { createInstallLogs } from './installLog'
 import { writeBoardRule } from './agentMemory'
-import { claudeImageFile, isPastedImage, PASTE_DIR } from './pastedImages'
+import { claudeImageFile, isPastedImage, isSavedPaste, PASTE_DIR } from './pastedImages'
 import { createBrowserGuests, BROWSER_PARTITION } from './browserGuest'
 import { listBrowsersForImport, importFromProfile, importFromFile } from './cookieImport/importer'
 import { detectBrowsers as detectBrowsersForImport } from './cookieImport/detect'
@@ -107,7 +107,7 @@ import { watchLoopLag } from './loopLag'
 import { createIpcTiming } from './ipcTiming'
 import { PANE_HISTORY_CHARS } from '../shared/paneHistory'
 import { registerLiveShare } from './liveShare'
-import { createPasteImages, isImageFile } from './liveShare/sharePaste.js'
+import { createPasteImages, isImageFile, PASTE_LIMITS } from './liveShare/sharePaste.js'
 import { listProcesses, treeOf, waitForExit, killPids, listProcessNames, runningWork, stopProcessSnapshots, pidRunning } from './processTree'
 import { pipeName, trimBuffer } from './ptyProtocol'
 import { createUpdater } from './updater'
@@ -3664,17 +3664,28 @@ ipcMain.handle('clipboard:sendImageToHost', async (event, hostId) => {
   return remoteFs.pasteImage(typeof hostId === 'string' ? hostId : '', img.toPNG())
 })
 // An image file for a terminal on an SSH host: one a Live Share guest
-// pasted (saved here with the pasted images, sent as it is), or an image
-// file dropped on the pane (made a PNG first). Sent there, its path on the
+// pasted (saved here with the pasted images, by Tessel's own name), or an
+// image file dropped on the pane. Always decoded and made a PNG again (its
+// size checked first, a regular file only). Sent there, its path on the
 // host given back. -> { ok, path } | { ok: false, error }
+const HOST_IMAGE_BYTES = 20 * 1024 * 1024
 ipcMain.handle('clipboard:sendImageFileToHost', async (event, hostId, file) => {
   if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents) return { ok: false, error: 'not allowed' } // i18n-ignore internal
-  const host = typeof hostId === 'string' ? hostId : ''
-  if (isPastedImage(file) && fs.existsSync(file)) return remoteFs.pasteImage(host, fs.readFileSync(file))
-  if (!isImageFile(file) || !fs.existsSync(file)) return { ok: false, error: t('main.remoteFs.noImageFile', 'That file is not an image.') }
+  const notImage = { ok: false, error: t('main.remoteFs.noImageFile', 'That file is not an image.') }
+  if (!isSavedPaste(file) && !isImageFile(file)) return notImage
+  let st
+  try {
+    st = fs.lstatSync(file)
+  } catch {
+    return notImage
+  }
+  if (!st.isFile()) return notImage
+  if (st.size > HOST_IMAGE_BYTES) return { ok: false, error: t('main.remoteFs.imageTooBig', 'The image is too large to send (over 20 MB).') }
   const img = nativeImage.createFromPath(file)
-  if (img.isEmpty()) return { ok: false, error: t('main.remoteFs.noImageFile', 'That file is not an image.') }
-  return remoteFs.pasteImage(host, img.toPNG())
+  if (img.isEmpty()) return notImage
+  const size = img.getSize()
+  if (size.width * size.height > PASTE_LIMITS.pixels) return { ok: false, error: t('main.remoteFs.imageTooManyPixels', 'The image is too large to send (over 25 megapixels).') }
+  return remoteFs.pasteImage(typeof hostId === 'string' ? hostId : '', img.toPNG())
 })
 // [Image #N] clicked in a Claude Code pane: the image Tessel pasted, or the
 // one in the pane's conversation, for Tessel's own viewer. -> { ok, file, src }

@@ -11,7 +11,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import fs from 'fs'
 import os from 'os'
-import { join } from 'path'
+import { join, basename } from 'path'
 import { registerLiveShare } from '../liveShare'
 import { createShareGuest } from '../liveShare/shareGuest'
 import { newSigningKey, decodeInvite } from '../liveShare/shareCrypto'
@@ -116,8 +116,13 @@ describe('an image a guest sends, checked (sharePaste.js)', () => {
     expect(checkPng(makePng(8001, 10), ni)).toEqual({ ok: false, code: 'too-large' })
     expect(checkPng(makePng(10, 9000), ni)).toEqual({ ok: false, code: 'too-large' })
     expect(checkPng(makePng(10, 10, Buffer.alloc(PASTE_LIMITS.bytes)), ni)).toEqual({ ok: false, code: 'too-large' })
+    // A few hundred bytes that say 8000 x 8000 (256 MB decoded): over the
+    // 25 megapixels, never decoded either.
+    expect(checkPng(makePng(8000, 8000), ni)).toEqual({ ok: false, code: 'too-large' })
+    expect(checkPng(makePng(5001, 5000), ni)).toEqual({ ok: false, code: 'too-large' })
     expect(ni.createFromBuffer).not.toHaveBeenCalled()
-    expect(checkPng(makePng(8000, 8000), ni).ok).toBe(true)
+    expect(checkPng(makePng(5000, 5000), ni).ok).toBe(true)
+    expect(checkPng(makePng(8000, 3000), ni).ok).toBe(true)
   })
 
   it('is sent in parts of 512 KB, each under the 1 MB a guest\u2019s message may be', () => {
@@ -180,10 +185,17 @@ describe('the host\u2019s uploads (createPasteUploads)', () => {
     expect(u.part('g4', 'ws-1', part(newUploadId(), 0, 2, 'a'))).toEqual({ ok: false, code: 'busy' })
     // A minute without a part: dropped (room again).
     now += PASTE_LIMITS.uploadMs
-    expect(u.part('g4', 'ws-1', part(newUploadId(), 0, 2, 'a'))).toEqual({ ok: true })
+    const slow = newUploadId()
+    expect(u.part('g4', 'ws-1', part(slow, 0, 4, 'a'))).toEqual({ ok: true })
     expect(u.size()).toBe(1)
-    // Guests gone: their uploads go.
-    u.keep([])
+    // A part every 50 s keeps it within the minute, but not past two minutes
+    // from its first part: dropped, its place free.
+    now += 50000
+    expect(u.part('g4', 'ws-1', part(slow, 1, 4, 'a'))).toEqual({ ok: true })
+    now += 50000
+    expect(u.part('g4', 'ws-1', part(slow, 2, 4, 'a'))).toEqual({ ok: true })
+    now += 20000
+    expect(u.part('g4', 'ws-1', part(slow, 3, 4, 'a'))).toEqual({ ok: false, code: 'bad-args' })
     expect(u.size()).toBe(0)
     // Six images a minute per guest.
     for (let i = 0; i < 7; i++) {
@@ -221,6 +233,28 @@ describe('the host\u2019s uploads (createPasteUploads)', () => {
     fs.writeFileSync(fake, 'not really')
     expect(images.fromFile(fake)).toEqual({ ok: false, code: 'not-image' })
     expect(images.fromFile(join(dir, 'gone.png'))).toEqual({ ok: false, code: 'not-image' })
+    clip = ni.createFromBuffer(makePng(6000, 6000))
+    expect(images.fromClipboard()).toEqual({ ok: false, code: 'too-large' })
+  })
+
+  it('keeps guests’ images within their quota on the host: the oldest go first, other images stay', () => {
+    const dir = newDir()
+    const images = createPasteImages({ nativeImage: fakeNativeImage(), clipboard: { readImage: () => EMPTY }, dir, limits: { ...PASTE_LIMITS, keepFiles: 3, keepBytes: 1000 } })
+    fs.writeFileSync(join(dir, 'image-1.png'), 'a local paste')
+    const saved = []
+    for (let i = 0; i < 5; i++) {
+      const file = images.save(makePng(1, 1, Buffer.from(`n${i}`)))
+      fs.utimesSync(file, new Date(Date.now() - (10 - i) * 1000), new Date(Date.now() - (10 - i) * 1000))
+      saved.push(file)
+    }
+    const left = fs.readdirSync(dir).sort()
+    expect(left.filter((f) => f.startsWith('guest-image-'))).toHaveLength(3)
+    expect(left).toContain('image-1.png')
+    for (const f of saved.slice(2)) expect(fs.existsSync(f)).toBe(true)
+    for (const f of saved.slice(0, 2)) expect(fs.existsSync(f)).toBe(false)
+    // Bytes too: one big image makes room by itself.
+    const big = images.save(makePng(1, 1, Buffer.alloc(960)))
+    expect(fs.readdirSync(dir).filter((f) => f.startsWith('guest-image-'))).toEqual([basename(big)])
   })
 })
 
@@ -296,7 +330,7 @@ describe('registerLiveShare: a guest pastes an image into a host\u2019s pane', (
   }
 
   it('Ctrl+V: sent in parts, saved by the host as a new PNG with its own name, pasted by its window, listed in Recent guest actions', async () => {
-    const { host, guest, hostDir, clip, localId } = await setUp()
+    const { host, guest, hostDir, clip, localId, guestId } = await setUp()
     // Over 1 MB: three parts.
     const pixels = Buffer.alloc(PASTE_LIMITS.part * 2 + 100, 3)
     clip.image = fakeNativeImage().createFromBuffer(Buffer.concat([makePng(1200, 900, pixels), TRAILER, Buffer.from('C:\\Users\\alex\\secret.txt')]))
@@ -320,6 +354,17 @@ describe('registerLiveShare: a guest pastes an image into a host\u2019s pane', (
     await windowAnswers(host, false, 'not-found')
     await expect(again).resolves.toEqual({ ok: false, code: 'not-found' })
     expect(host.events('liveShare:guestAction')).toHaveLength(before)
+
+    // Right before it pastes, the window asks main again: yes while main waits
+    // and the guest may type there; no once the right is gone or main is done.
+    const third = guest.handle['liveShare:pasteImage'](null, localId, {})
+    const pending = await until(() => host.events('liveShare:hostRequest').find((r) => r.action === 'pasteImage' && !r.answered))
+    expect(await host.handle['liveShare:pasteCheck'](null, pending.request)).toEqual({ ok: true })
+    await host.handle['liveShare:access'](null, { subject: guestId, right: 'type', on: false })
+    expect(await host.handle['liveShare:pasteCheck'](null, pending.request)).toEqual({ ok: false })
+    await expect(third).resolves.toEqual({ ok: false, code: 'revoked' })
+    expect(await host.handle['liveShare:pasteCheck'](null, pending.request)).toEqual({ ok: false })
+    expect(await host.handle['liveShare:pasteCheck'](null, 'p999')).toEqual({ ok: false })
   })
 
   it('a dropped image file goes the same way; another file, an image too large, no image: refused on the guest\u2019s side, nothing sent', async () => {
@@ -357,8 +402,9 @@ describe('registerLiveShare: a guest pastes an image into a host\u2019s pane', (
   it('a guest that sends what it likes: the host checks the right, the pane, the parts and the bytes, and chooses the path', async () => {
     const { host, hostDir, invite } = await setUp()
     const { url, secret } = decodeInvite(invite)
-    const raw = { states: [], projects: null, rights: [] }
-    const client = createShareGuest({ url, secret, name: 'Raw', signingKey: newSigningKey(), callbacks: { onState: (s) => raw.states.push(s), onProjects: (p) => (raw.projects = p), onRights: (r) => raw.rights.push(r) } })
+    const raw = { states: [], projects: null, rights: [], hostKey: null }
+    const key = newSigningKey()
+    const client = createShareGuest({ url, secret, name: 'Raw', signingKey: key, callbacks: { onState: (s) => raw.states.push(s), onProjects: (p) => (raw.projects = p), onRights: (r) => raw.rights.push(r), onHostKey: (k) => (raw.hostKey = k) } })
     clients.push(client)
     client.connect()
     const ask = await until(() => host.events('liveShare:ask').find((x) => x.name === 'Raw'))
@@ -399,5 +445,19 @@ describe('registerLiveShare: a guest pastes an image into a host\u2019s pane', (
     await expect(pasting).resolves.toEqual({ ok: true, data: {} })
     expect(req.file.startsWith(hostDir)).toBe(true)
     expect(req.file).not.toContain('evil')
+
+    // Its images a minute are its person's: four counted above (whatever came
+    // of them), two more now, and the seventh is refused, after a reconnect too.
+    for (let i = 0; i < 2; i++) await expect(send(Buffer.from('not an image at all, just bytes'))).resolves.toEqual({ ok: false, code: 'not-image' })
+    client.disconnect()
+    await until(() => !host.last('liveShare:host').guests.some((g) => g.name === 'Raw' && g.state === 'joined'))
+    const back = { states: [], projects: null }
+    const again = createShareGuest({ url, secret, name: 'Raw', signingKey: key, back: true, hostKey: raw.hostKey, callbacks: { onState: (s) => back.states.push(s), onProjects: (p) => (back.projects = p) } })
+    clients.push(again)
+    again.connect()
+    await until(() => back.states.includes('joined') && back.projects)
+    const one = newUploadId()
+    await expect(again.request('paste.part', 'ws-1', { pane: 'pane-1', upload: one, index: 0, count: 1, data: makePng(4, 4).toString('base64') })).resolves.toMatchObject({ ok: true })
+    await expect(again.request('paste.image', 'ws-1', { pane: 'pane-1', upload: one })).resolves.toEqual({ ok: false, code: 'busy' })
   })
 })

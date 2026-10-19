@@ -396,7 +396,7 @@ describe('TerminalPane status integration', () => {
     expect(ctx.toast).toHaveBeenCalledWith('Cedric has not let you type in this pane: the image was not pasted.', expect.objectContaining({ kind: 'error' }))
     window.shellApi.liveShare.pasteImage = vi.fn(async () => ({ ok: false, code: 'too-large' }))
     await ctrlV(term)
-    expect(ctx.toast).toHaveBeenLastCalledWith('The image is too large to send (10 MB and 8000 × 8000 pixels at most).', expect.objectContaining({ kind: 'error' }))
+    expect(ctx.toast).toHaveBeenLastCalledWith('The image is too large to send (10 MB, 8000 pixels a side and 25 megapixels at most).', expect.objectContaining({ kind: 'error' }))
   })
 
   it('a guest without the right to type: nothing sent, said why', async () => {
@@ -433,6 +433,10 @@ describe('TerminalPane status integration', () => {
     expect(term.pasted).toEqual(['/home/deploy/.tessel-server/paste/image-4-aa11bb.png'])
     window.shellApi.sendImageFileToHost = vi.fn(async () => ({ ok: false, error: 'not connected' }))
     await expect(getPane('test-pane').pasteImageFile('C:\\Temp\\tessel-paste\\guest-image-3-ab12cd34.png')).resolves.toEqual({ ok: false, code: 'failed' })
+    expect(term.pasted).toHaveLength(1)
+    // The guest lost the right (or main gave up) while the copy was sent: not pasted.
+    window.shellApi.sendImageFileToHost = vi.fn(async () => ({ ok: true, path: '/home/deploy/.tessel-server/paste/image-5-cc22dd.png' }))
+    await expect(getPane('test-pane').pasteImageFile('C:\\Temp\\tessel-paste\\guest-image-4-ab12cd34.png', async () => false)).resolves.toEqual({ ok: false, code: 'revoked' })
     expect(term.pasted).toHaveLength(1)
   })
 

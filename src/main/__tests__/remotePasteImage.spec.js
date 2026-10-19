@@ -6,7 +6,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import fs from 'fs'
 import os from 'os'
 import { join } from 'path'
-import { createRemoteFs } from '../remoteFs'
+import { createRemoteFs, remotePastePath } from '../remoteFs'
 import { FUNCTIONS } from '../remoteShell'
 import { gitSh, fakeSpawn, posixPath } from './fixtures/fakeSsh'
 
@@ -24,6 +24,15 @@ const hosts = {
 const PNG = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.from(Array.from({ length: 3000 }, (_, i) => i % 256))])
 
 describe('a pasted image sent to a host: before anything reaches it', () => {
+  it('takes back only a path in ~/.tessel-server/paste with no control character (a \r pasted would be an Enter)', () => {
+    expect(remotePastePath('/home/deploy/.tessel-server/paste/image-1-abc123.png\n')).toBe('/home/deploy/.tessel-server/paste/image-1-abc123.png')
+    expect(remotePastePath('/home/de\rploy/.tessel-server/paste/image-1-abc123.png\n')).toBe('')
+    expect(remotePastePath('/home/x\x1b[2J/.tessel-server/paste/image-1-abc123.png')).toBe('')
+    expect(remotePastePath('/home/x\x7f/.tessel-server/paste/image-1-abc123.png')).toBe('')
+    expect(remotePastePath('/home/x/.tessel-server/paste/image-1.png; rm -rf ~')).toBe('')
+    expect(remotePastePath('relative/.tessel-server/paste/image-1.png')).toBe('')
+  })
+
   it('the host function is on the allow list', () => {
     expect(FUNCTIONS.has('__t_paste')).toBe(true)
   })

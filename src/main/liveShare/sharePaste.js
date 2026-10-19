@@ -10,7 +10,8 @@
 // Both need the type right on the pane's project (the host's own check,
 // shareHost.js). The host keeps one upload per guest at a time, for a minute
 // at most, decodes what came (a real PNG, its size read from its header
-// before anything is decoded), makes it a new PNG (nothing else of the
+// before anything is decoded: a few hundred KB can say 8000 x 8000, 256 MB
+// once decoded; so width x height is capped too), makes it a new PNG (nothing else of the
 // guest's bytes is kept), saves it under its own folder for pasted images
 // with a name it chooses, and pastes that path into the pane as a local
 // image paste would (liveShare.js, the host's window).
@@ -24,10 +25,14 @@ import { join } from 'path'
 export const PASTE_LIMITS = Object.freeze({
   bytes: 10 * 1024 * 1024, // one image's PNG at most
   side: 8000, // its width and height at most
+  pixels: 25 * 1000 * 1000, // and both together (decoded, 4 bytes each: 100 MB)
   part: 512 * 1024, // one part's bytes (base64 in a request under 1 MB)
   imagesPerMinute: 6, // images one guest pastes in a minute
   uploadMs: 60 * 1000, // an upload with no new part this long is dropped
-  uploadsAtOnce: 3 // uploads the host holds at once, all guests together
+  uploadMaxMs: 2 * 60 * 1000, // and one not finished this long after its first part
+  uploadsAtOnce: 3, // uploads the host holds at once, all guests together
+  keepFiles: 50, // guests' images kept on the host at most (the oldest go)
+  keepBytes: 200 * 1024 * 1024 // and their bytes
 })
 export const MAX_PARTS = Math.ceil(PASTE_LIMITS.bytes / PASTE_LIMITS.part)
 
@@ -55,6 +60,8 @@ export function pngSize(buf) {
   return width > 0 && height > 0 ? { width, height } : null
 }
 
+const tooBig = (size, limits) => size.width > limits.side || size.height > limits.side || size.width * size.height > limits.pixels
+
 // An image's bytes checked and made again: a PNG within the caps (its size
 // read from its header first, so nothing too big is ever decoded), that
 // decodes to that size, as a new PNG. -> { ok: true, png, width, height } |
@@ -64,7 +71,7 @@ export function checkPng(buf, nativeImage, limits = PASTE_LIMITS) {
   if (buf.length > limits.bytes) return { ok: false, code: 'too-large' }
   const size = pngSize(buf)
   if (!size) return { ok: false, code: 'not-image' }
-  if (size.width > limits.side || size.height > limits.side) return { ok: false, code: 'too-large' }
+  if (tooBig(size, limits)) return { ok: false, code: 'too-large' }
   let png
   try {
     const img = nativeImage.createFromBuffer(buf)
@@ -87,16 +94,19 @@ export function splitParts(png, part = PASTE_LIMITS.part) {
   return parts
 }
 
-// The host's uploads in progress: one per guest (a new one replaces the one
-// it had), in order, within the caps, dropped after a minute without a part.
-// owner: the guest's connection id.
+// The host's uploads in progress: one per person (a new one replaces the one
+// it had; its other connections share it), in order, within the caps,
+// dropped after a minute without a part or two minutes after its first one
+// (a guest trickling parts can't hold a place). owner: the guest's person
+// (a reconnect counts its images within the same minute).
 export function createPasteUploads({ now = Date.now, limits = PASTE_LIMITS } = {}) {
-  const uploads = new Map() // owner -> { id, pane, project, count, parts: [Buffer], bytes, at }
+  const uploads = new Map() // owner -> { id, pane, project, count, parts: [Buffer], bytes, at, started }
   const times = new Map() // owner -> times of its last pastes (a minute)
   const maxParts = Math.ceil(limits.bytes / limits.part)
   function sweep() {
     const t = now()
-    for (const [owner, u] of [...uploads]) if (t - u.at >= limits.uploadMs) uploads.delete(owner)
+    for (const [owner, u] of [...uploads]) if (t - u.at >= limits.uploadMs || t - u.started >= limits.uploadMaxMs) uploads.delete(owner)
+    for (const [owner, list] of [...times]) if (!list.some((x) => t - x < 60000)) times.delete(owner)
   }
   // One part: { ok: true } | { ok: false, code }.
   function part(owner, project, args) {
@@ -111,7 +121,7 @@ export function createPasteUploads({ now = Date.now, limits = PASTE_LIMITS } = {
       // A new upload: the guest's earlier one goes; one more needs room.
       if (u) uploads.delete(owner)
       if (uploads.size >= limits.uploadsAtOnce) return { ok: false, code: 'busy' }
-      u = { id: upload, pane, project, count, parts: [], bytes: 0, at: now() }
+      u = { id: upload, pane, project, count, parts: [], bytes: 0, at: now(), started: now() }
       uploads.set(owner, u)
     } else if (!u || u.id !== upload || u.pane !== pane || u.project !== project || u.count !== count || u.parts.length !== index) {
       return { ok: false, code: 'bad-args' }
@@ -147,12 +157,6 @@ export function createPasteUploads({ now = Date.now, limits = PASTE_LIMITS } = {
   return {
     part,
     take,
-    // Guests gone: their uploads and counts go.
-    keep(owners) {
-      const set = new Set(owners)
-      for (const owner of [...uploads.keys()]) if (!set.has(owner)) uploads.delete(owner)
-      for (const owner of [...times.keys()]) if (!set.has(owner)) times.delete(owner)
-    },
     clear() {
       uploads.clear()
       times.clear()
@@ -172,7 +176,7 @@ export function createPasteImages({ nativeImage, clipboard, dir, limits = PASTE_
   function asPng(img) {
     if (!img || img.isEmpty()) return { ok: false, code: 'no-image' }
     const size = img.getSize()
-    if (size.width > limits.side || size.height > limits.side) return { ok: false, code: 'too-large' }
+    if (tooBig(size, limits)) return { ok: false, code: 'too-large' }
     return checkPng(img.toPNG(), nativeImage, limits)
   }
   return {
@@ -190,16 +194,33 @@ export function createPasteImages({ nativeImage, clipboard, dir, limits = PASTE_
       const res = asPng(nativeImage.createFromPath(path))
       return res.ok || res.code !== 'no-image' ? res : { ok: false, code: 'not-image' }
     },
-    // A checked PNG saved with a name of the host's (images a day old go).
+    // A checked PNG saved with a name of the host's (images a day old go,
+    // and guests' oldest past keepFiles or keepBytes: they can't fill the disk).
     save(png) {
       files.mkdirSync(dir, { recursive: true })
       const dayAgo = Date.now() - 24 * 60 * 60 * 1000
+      const guests = []
       for (const f of files.readdirSync(dir)) {
         try {
-          if (files.statSync(join(dir, f)).mtimeMs < dayAgo) files.unlinkSync(join(dir, f))
+          const st = files.statSync(join(dir, f))
+          if (st.mtimeMs < dayAgo) files.unlinkSync(join(dir, f))
+          else if (/^guest-image-.*\.png$/.test(f) && st.isFile()) guests.push({ f, at: st.mtimeMs, size: st.size })
         } catch {
           /* in use or gone */
         }
+      }
+      guests.sort((a, b) => a.at - b.at || (a.f < b.f ? -1 : 1))
+      let bytes = guests.reduce((sum, x) => sum + x.size, 0) + png.length
+      let count = guests.length + 1
+      for (const x of guests) {
+        if (count <= limits.keepFiles && bytes <= limits.keepBytes) break
+        try {
+          files.unlinkSync(join(dir, x.f))
+        } catch {
+          /* in use: counted anyway */
+        }
+        count--
+        bytes -= x.size
       }
       const file = join(dir, `guest-image-${Date.now()}-${crypto.randomBytes(4).toString('hex')}.png`)
       files.writeFileSync(file, png)

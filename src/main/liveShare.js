@@ -1021,8 +1021,34 @@ export function registerLiveShare({
   // answered with liveShare:pasteDone). Only a terminal pane of that project.
   const PASTE_WAIT_MS = 10000
   const pasteUploads = createPasteUploads()
-  const pasteRequests = new Map() // request id -> { resolve, timer, guestId }
+  const pasteRequests = new Map() // request id -> { resolve, timer, guestId, recheck }
   let nextPaste = 1
+  // Images are decoded one at a time, whoever sent them (each blocks this
+  // process a moment), a few waiting at most.
+  const DECODES_WAITING = 3
+  let decodeTail = Promise.resolve()
+  let decodesWaiting = 0
+  function decodeInTurn(bytes) {
+    if (decodesWaiting >= DECODES_WAITING) return Promise.resolve({ ok: false, code: 'busy' })
+    decodesWaiting++
+    const run = decodeTail.then(
+      () =>
+        new Promise((resolve) =>
+          setImmediate(() => {
+            try {
+              resolve(images.check(bytes))
+            } catch {
+              resolve({ ok: false, code: 'not-image' })
+            }
+          })
+        )
+    )
+    decodeTail = run.then(
+      () => {},
+      () => {}
+    )
+    return run.finally(() => decodesWaiting--)
+  }
   addOps(PASTE_OPS, (req, ctx, s) => pasteRequest(req, ctx, s))
   const paneTitle = (project, id) => {
     const l = layoutLeaves(layouts.get(project)).find((x) => x.id === id)
@@ -1034,11 +1060,12 @@ export function registerLiveShare({
     if (!isPaneId(a.pane) || homes(s).get(a.pane) !== req.project) return { ok: false, code: 'not-found' }
     // (The type right: checked by the server before it came here, and again below.)
     if (ctx.rights.type !== true) return { ok: false, code: 'forbidden' }
-    const owner = ctx.guest.id
+    // One upload and one minute's images per person, whatever its connection.
+    const owner = typeof ctx.person === 'string' ? ctx.person : ctx.guest.id
     if (req.op === 'paste.part') return pasteUploads.part(owner, req.project, a)
     const got = pasteUploads.take(owner, req.project, a)
     if (!got.ok) return got
-    const png = images.check(got.bytes)
+    const png = await decodeInTurn(got.bytes)
     if (!png.ok) {
       info(`guest ${cleanName(ctx.guest.name) || '?'}: an image refused (${png.code})`)
       return { ok: false, code: png.code }
@@ -1057,7 +1084,9 @@ export function registerLiveShare({
         resolve({ ok: false, code: 'unavailable' })
       }, PASTE_WAIT_MS)
       timer.unref?.()
-      pasteRequests.set(request, { resolve, timer, guestId: owner })
+      // The window asks again right before it pastes (liveShare:pasteCheck):
+      // an SSH host's copy can take a while.
+      pasteRequests.set(request, { resolve, timer, guestId: ctx.guest.id, recheck: () => ctx.recheck() && sharing === s && homes(s).get(a.pane) === req.project })
       send('liveShare:hostRequest', { action: 'pasteImage', request, id: a.pane, project: req.project, file, guest: ctx.guest })
     })
     if (res.ok) noteAction(ctx.guest, { op: req.op, project: req.project, args: { paneTitle: paneTitle(req.project, a.pane) } })
@@ -1538,9 +1567,8 @@ export function registerLiveShare({
           for (const id of [...asks.keys()]) if (!list.some((g) => g.id === id && g.state === 'waiting')) asks.delete(id)
           checkRequests(list)
           endTaskRequests('revoked', (r) => !list.some((g) => g.id === r.guestId && g.state === 'joined' && g.rights && g.rights.tasks && g.projects.includes(r.project)))
-          // A guest gone: its image upload goes; one that lost the type right:
-          // its paste waiting for the window is called off.
-          pasteUploads.keep(list.filter((g) => g.state === 'joined').map((g) => g.id))
+          // A guest that lost the type right (or left): its paste waiting
+          // for the window is called off (an upload it left ends on its own).
           endPasteRequests((r) => !list.some((g) => g.id === r.guestId && g.state === 'joined' && g.rights && g.rights.type))
           pushHost()
         },
@@ -3029,6 +3057,16 @@ export function registerLiveShare({
   // A guest's image for a host's pane (its local id here): from: { file }
   // for a file dropped, else the clipboard's.
   ipcMain.handle('liveShare:pasteImage', (_evt, id, from) => (typeof id === 'string' ? guestPasteImage(id, from && typeof from === 'object' ? from : {}) : { ok: false, code: 'not-found' }))
+  // The window, right before it pastes a guest's image: still asked for (main
+  // did not give up on it), the guest still with the right, the pane still shared?
+  ipcMain.handle('liveShare:pasteCheck', (_evt, request) => {
+    const r = typeof request === 'string' ? pasteRequests.get(request) : null
+    try {
+      return { ok: !!r && r.recheck() === true }
+    } catch {
+      return { ok: false }
+    }
+  })
   // The window's answer to a guest's image paste: { request, ok, code }.
   ipcMain.on('liveShare:pasteDone', (_evt, { request, ok, code } = {}) => {
     const r = typeof request === 'string' ? pasteRequests.get(request) : null

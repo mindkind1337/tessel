@@ -3,7 +3,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import fs from 'fs'
 import os from 'os'
 import { join } from 'path'
-import { imageInEntry, claudeImageFile, isPastedImage } from '../pastedImages'
+import { imageInEntry, claudeImageFile, isPastedImage, isSavedPaste } from '../pastedImages'
 
 const SID = '6da350a1-326a-4f43-b9cc-9fae8081edcc'
 const PNG_A = Buffer.from('first image').toString('base64')
@@ -53,5 +53,20 @@ describe('[Image #N] in a Claude Code conversation', () => {
     expect(isPastedImage('C:\\Windows\\System32\\calc.exe', out)).toBe(false)
     expect(isPastedImage(join(out, '..', 'secret.png'), out)).toBe(false)
     expect(isPastedImage(join(out, 'image.exe'), out)).toBe(false)
+    // A folder whose name only starts the same is not it; one inside it is (screenshots).
+    expect(isPastedImage(`${out}-evil${join('/', 'x.png')}`, out)).toBe(false)
+    expect(isPastedImage(join(out, 'agent-browser', 'browser-1.png'), out)).toBe(true)
+    expect(isPastedImage(out, out)).toBe(false)
+  })
+
+  it('a saved paste sent on to an SSH host: right in the folder, by Tessel’s own name', () => {
+    expect(isSavedPaste(join(out, 'image-1712345678901.png'), out)).toBe(true)
+    expect(isSavedPaste(join(out, 'guest-image-1712345678901-ab12cd34.png'), out)).toBe(true)
+    expect(isSavedPaste(join(out, 'agent-browser', 'image-1.png'), out)).toBe(false)
+    expect(isSavedPaste(`${out}-evil${join('/', 'image-1.png')}`, out)).toBe(false)
+    expect(isSavedPaste(join(out, 'browser-1.png'), out)).toBe(false)
+    expect(isSavedPaste(join(out, 'image-1.jpg'), out)).toBe(false)
+    expect(isSavedPaste(join(out, '..', 'image-1.png'), out)).toBe(false)
+    expect(isSavedPaste(42, out)).toBe(false)
   })
 })

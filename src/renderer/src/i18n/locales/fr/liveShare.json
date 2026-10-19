@@ -545,7 +545,7 @@
     },
     "paste": {
       "forbidden": "{{host}} ne vous a pas donné le droit de taper dans ce panneau : l'image n'a pas été collée.",
-      "tooLarge": "L'image est trop grande pour être envoyée (10 Mo et 8000 × 8000 pixels au maximum).",
+      "tooLarge": "L'image est trop grande pour être envoyée (10 Mo, 8000 pixels de côté et 25 mégapixels au maximum).",
       "notImage": "Ce n'est pas une image que Tessel peut lire.",
       "noImage": "Le presse-papiers ne contient pas d'image.",
       "busy": "Les images sont envoyées trop vite : réessayez dans un instant.",

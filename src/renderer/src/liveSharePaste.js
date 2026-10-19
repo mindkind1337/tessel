@@ -12,14 +12,17 @@ import { t } from './i18n'
 import { getPane } from './paneRegistry'
 
 // req: main's { request, id (your pane), project, file, guest }; stands(): the
-// guest still in, with the type right, seeing that project; answer(ok, code).
-export async function pasteForGuest(req, { stands, answer }) {
+// guest still in, with the type right, seeing that project; check(): main
+// still waits for it and the access model still says yes (asked again right
+// before the path is pasted: an SSH host's copy can take a while);
+// answer(ok, code).
+export async function pasteForGuest(req, { stands, check = null, answer }) {
   const pane = req && typeof req.id === 'string' ? getPane(req.id) : null
   if (!req || typeof req.file !== 'string' || !stands()) return answer(false, 'revoked')
   if (!pane || typeof pane.pasteImageFile !== 'function') return answer(false, 'not-found')
   let res = null
   try {
-    res = await pane.pasteImageFile(req.file)
+    res = await pane.pasteImageFile(req.file, async () => stands() && (!check || (await check()) === true))
   } catch {
     res = null
   }
@@ -35,7 +38,7 @@ export function pasteFailText(code, host) {
     case 'revoked':
       return t('liveShare.paste.forbidden', '{{host}} has not let you type in this pane: the image was not pasted.', { host: name })
     case 'too-large':
-      return t('liveShare.paste.tooLarge', 'The image is too large to send (10 MB and 8000 × 8000 pixels at most).')
+      return t('liveShare.paste.tooLarge', 'The image is too large to send (10 MB, 8000 pixels a side and 25 megapixels at most).')
     case 'not-image':
       return t('liveShare.paste.notImage', 'That is not an image Tessel can read.')
     case 'no-image':

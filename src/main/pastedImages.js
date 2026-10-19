@@ -7,7 +7,7 @@
 // The image found is saved as a file (once) so the system viewer opens it.
 import fs from 'fs'
 import os from 'os'
-import { join } from 'path'
+import { join, resolve, relative, isAbsolute, dirname, basename } from 'path'
 import readline from 'readline'
 import { claudeTranscript } from './agentModel'
 
@@ -66,12 +66,18 @@ export async function claudeImageFile({ sessionId, n }, home = os.homedir(), out
   return path
 }
 
-// A file Tessel may open for a pane: one it saved itself (pasted images).
+// A file Tessel may open for a pane: one it saved itself (pasted images,
+// screenshots), inside its folder once resolved (not a folder whose name
+// only starts the same, like tessel-paste-other).
 export function isPastedImage(file, dir = PASTE_DIR) {
-  return (
-    typeof file === 'string' &&
-    file.toLowerCase().startsWith(dir.toLowerCase()) &&
-    !file.includes('..') &&
-    /\.(png|jpe?g|gif|webp)$/i.test(file)
-  )
+  if (typeof file !== 'string' || !file || file.includes('\0') || !/\.(png|jpe?g|gif|webp)$/i.test(file)) return false
+  const rel = relative(resolve(dir), resolve(file))
+  return !!rel && !rel.startsWith('..') && !isAbsolute(rel)
+}
+// An image pasted in a pane, as Tessel named it, right in its folder (a
+// local paste's image-<time>.png, a Live Share guest's guest-image-....png).
+export function isSavedPaste(file, dir = PASTE_DIR) {
+  if (typeof file !== 'string' || !file || file.includes('\0')) return false
+  const full = resolve(file)
+  return dirname(full).toLowerCase() === resolve(dir).toLowerCase() && /^(guest-image|image)-[\w-]+\.png$/i.test(basename(full))
 }

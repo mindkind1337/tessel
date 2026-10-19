@@ -2306,7 +2306,9 @@ async function dropOnSshPane(paths) {
 }
 // Host: an image a Live Share guest pasted, saved here by main: its path
 // pasted as an image pasted here would be (an SSH host gets its own copy).
-async function pasteImageFile(file) {
+// still(): asked right before the path is pasted (the guest may have lost
+// the right, or main given up, while an SSH host's copy was sent).
+async function pasteImageFile(file, still = null) {
   if (!term || exited.value || typeof file !== 'string' || !file) return { ok: false, code: 'unavailable' }
   let path = file
   if (props.node.remoteHostId) {
@@ -2319,6 +2321,8 @@ async function pasteImageFile(file) {
     if (!res || !res.ok || !term) return { ok: false, code: 'failed' }
     path = res.path
   }
+  if (still && !(await still())) return { ok: false, code: 'revoked' }
+  if (!term) return { ok: false, code: 'unavailable' }
   const claude = props.node.agentId === 'claude' && !props.node.remoteHostId
   const before = claude ? Math.max(0, ...imageNumbersOnScreen()) : 0
   term.paste(path)

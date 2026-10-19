@@ -620,7 +620,11 @@ export function createLiveShareWindow(deps) {
     // guest still may type there (liveSharePaste.js).
     if (req.action === 'pasteImage') {
       const guestId = (req.guest && req.guest.id) || null
-      return pasteForGuest(req, { stands: () => hostSharing() && guestMay(guestId, 'type') && guestSees(guestId, req.project) && projectOfPane(req.id) === req.project, answer: (ok, code) => api()?.pasteDone?.({ request: request || '', ok, code }) })
+      return pasteForGuest(req, {
+        stands: () => hostSharing() && guestMay(guestId, 'type') && guestSees(guestId, req.project) && projectOfPane(req.id) === req.project,
+        check: async () => !!(await Promise.resolve(api()?.pasteCheck?.(request || '')).catch(() => null))?.ok,
+        answer: (ok, code) => api()?.pasteDone?.({ request: request || '', ok, code })
+      })
     }
     if (!hostSharing()) return requestDone(request)
     const who = (req.guest && req.guest.name) || t('liveShare.guest', 'A guest')

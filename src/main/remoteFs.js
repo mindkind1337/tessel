@@ -118,6 +118,13 @@ export function parseFingerprint(out, max = FP_PATHS_BYTES) {
   return { rels: [...rels] }
 }
 
+// The path __t_paste gives back for a pasted image: in ~/.tessel-server/paste,
+// with no control character anywhere (a \r pasted would be an Enter), or ''.
+export function remotePastePath(out) {
+  const path = String(out || '').replace(/\r?\n$/, '')
+  return /^\/[^\x00-\x1f\x7f]*\/\.tessel-server\/paste\/image-[0-9a-z-]+\.png$/.test(path) ? path : ''
+}
+
 export function checkRemoteName(name) {
   const n = String(name || '').trim()
   if (!n) return t('main.explorer.noName', 'Give it a name.')
@@ -1589,8 +1596,8 @@ ${root}`, () => gitWorktreesNow(root))
     const name = `${Date.now()}-${crypto.randomBytes(3).toString('hex')}`
     const res = await call(hostId, '__t_paste', [name], { cap: 4096, upload: png, timeoutMs: 30000 + Math.ceil(png.length / (512 * 1024)) * 1000, op: 'save' })
     if (!res || res.error) return { ok: false, error: (res && res.error) || t('main.remoteFs.pasteFailed', 'The image could not be written on the host.') }
-    const path = res.rc === 0 ? res.out.toString('utf8').trim() : ''
-    if (!/^\/[^\n\0]*\/\.tessel-server\/paste\/image-[0-9a-z-]+\.png$/.test(path)) return { ok: false, error: t('main.remoteFs.pasteFailed', 'The image could not be written on the host.') }
+    const path = res.rc === 0 ? remotePastePath(res.out.toString('utf8')) : ''
+    if (!path) return { ok: false, error: t('main.remoteFs.pasteFailed', 'The image could not be written on the host.') }
     return { ok: true, path }
   }
 
