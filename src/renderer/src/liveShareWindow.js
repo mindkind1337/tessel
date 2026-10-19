@@ -108,6 +108,7 @@ const REASONS = {
   error: () => t('liveShare.reason.error', 'The connection failed.'),
   lost: () => t('liveShare.reason.lost', 'The connection to the host was lost and did not come back.'),
   'rejoin-refused': () => t('liveShare.reason.rejoinRefused', 'The host no longer knows this Tessel: join again with an invite code.'),
+  'old-code': () => t('liveShare.reason.oldCode', 'This code’s address no longer answers, and the code is too old to find the host again: ask the host for a new code.'),
   outdated: () => t('liveShare.reason.outdated', 'Your Tessel is too old for the host’s Live Share: update Tessel and join again.'),
   protocol: () => t('liveShare.reason.protocol', 'The two Tessels do not speak the same Live Share: update both and join again.'),
   'host-unverified': () => t('liveShare.reason.hostUnverified', 'The host could not prove it is the same Tessel as before: join again with an invite code, and check the code with the host.'),
@@ -295,14 +296,20 @@ export function createLiveShareWindow(deps) {
     }))
   }
 
-  // Before you start: the projects picked last time that are still there,
-  // else the project on screen (or your first one when a Live Share project
-  // is on screen).
+  // Before you start: the projects picked last time that are still there
+  // (this window's, else the ones main kept from the last share: a restart
+  // forgets the window's), else the project on screen (or your first one
+  // when a Live Share project is on screen).
   function prepareShare() {
     if (hostSharing() || hostStarting()) return
     const kept = state.pickedIds.filter((id) => localWs(id))
     if (kept.length) {
       state.pickedIds = kept
+      return
+    }
+    const last = (Array.isArray(state.host.lastProjectIds) ? state.host.lastProjectIds : []).filter((id) => localWs(id))
+    if (last.length) {
+      state.pickedIds = last
       return
     }
     const cur = deps.currentWs()
@@ -353,8 +360,14 @@ export function createLiveShareWindow(deps) {
     return t('liveShare.toast.joinedProjects', '{{name}} joined {{project}} and {{count}} more.', { name, project: names[0], count: names.length - 1 })
   }
 
+  // A share that came back by itself after a restart: said once.
+  let resumedShown = null
   function onHost(s) {
     if (!s) return
+    if (s.resumed && s.resumed !== resumedShown) {
+      resumedShown = s.resumed
+      deps.showToast(t('liveShare.toast.resumed', 'Your Live Share started again: your guests reconnect by themselves.'), { timeout: 6000 })
+    }
     const before = new Map(state.host.guests.map((g) => [g.id, g]))
     const wasOn = hostSharing() || hostStarting()
     const lastShared = sharedIds()

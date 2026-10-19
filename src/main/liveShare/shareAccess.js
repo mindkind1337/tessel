@@ -727,9 +727,10 @@ export function createAccess({ now = Date.now, trust = null, isOnline = () => fa
     invites: () => [...invites.values()],
     codeOf: (id) => (invites.get(id) ? codes.get(invites.get(id).sid) : null),
     hasCode: (sid) => codes.has(sid),
-    // Every code's secret (invitations' and the earlier ones people need):
-    // the topics the share says its address on (shareRendezvous.js).
-    secrets: () => [...codes.values()].map((c) => c.secret),
+    // The secrets of the invitations that still let new guests in (not
+    // expired, revoked, blocked or used up): their topics are where the share
+    // says its address for a first join (shareRendezvous.js).
+    liveSecrets: () => [...invites.values()].filter((inv) => !usable(inv) && codes.has(inv.sid)).map((inv) => codes.get(inv.sid).secret),
     usable,
     prune,
     createInvite,

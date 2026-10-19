@@ -301,6 +301,18 @@ function setHideIgnored(event) {
     return r
   })
 }
+// The relay (main's): "Find me again after a restart", on unless turned off.
+const rendezvous = computed(() => !(host.value.settings && host.value.settings.rendezvous === false))
+function setRendezvous(event) {
+  const box = event && event.target
+  const want = box ? !!box.checked : !rendezvous.value
+  if (box) box.checked = rendezvous.value
+  run('setting:rendezvous', async () => {
+    const r = await api.setSettings({ rendezvous: want })
+    if (r && r.ok && r.settings) host.value = { ...host.value, settings: { ...r.settings } }
+    return r
+  })
+}
 // What guests changed lately (main's, newest first): the last few here.
 const RECENT_SHOWN = 8
 const recentActions = computed(() => (Array.isArray(host.value.actions) ? host.value.actions : []).slice(0, RECENT_SHOWN))
@@ -465,6 +477,13 @@ function tabKeys(event, list, current, set) {
               <span class="ls-setting-text">
                 <span>{{ t('liveShare.setting.hideIgnored', 'Hide ignored and secret files from guests') }}</span>
                 <span class="ls-hint">{{ t('liveShare.setting.hideIgnoredHint', 'Files git ignores and files that look like secrets (.env, keys, credentials) stay out of guests’ Files, search and Changes. .git and .tessel are always hidden.') }}</span>
+              </span>
+            </label>
+            <label class="ls-setting">
+              <input type="checkbox" :checked="rendezvous" :disabled="pending.has('setting:rendezvous')" data-test="ls-rendezvous" @change="setRendezvous" />
+              <span class="ls-setting-text">
+                <span>{{ t('liveShare.setting.rendezvous', 'Find me again after a restart (uses ntfy.sh)') }}</span>
+                <span class="ls-hint">{{ t('liveShare.setting.rendezvousHint', 'When your address changes, Tessel leaves it, encrypted, on the free ntfy.sh relay so your guests find you (and looks there for a host’s when you are a guest). Off: nothing is sent there, and codes stop working when your address changes.') }}</span>
               </span>
             </label>
           </div>

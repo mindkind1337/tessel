@@ -303,6 +303,20 @@ describe('the Live Share dialog: the setting and the recent guest actions', () =
     w.unmount()
   })
 
+  it('"Find me again after a restart (uses ntfy.sh)": on by default, turned off through main', async () => {
+    setSettings.mockImplementation(async (patch) => ({ ok: true, settings: { hideIgnored: true, rendezvous: patch.rendezvous } }))
+    const w = mount(LiveShareDialog, { props: { open: true, projects: [{ id: 'ws-1', name: 'site' }], projectIds: ['ws-1'] }, attachTo: document.body })
+    await flushPromises()
+    const box = w.get('[data-test="ls-rendezvous"]')
+    expect(box.element.checked).toBe(true)
+    expect(box.element.closest('label').textContent).toContain('ntfy.sh')
+    await box.setValue(false)
+    await flushPromises()
+    expect(setSettings).toHaveBeenCalledWith({ rendezvous: false })
+    expect(w.get('[data-test="ls-rendezvous"]').element.checked).toBe(false)
+    w.unmount()
+  })
+
   it('says when no guest changed anything yet', async () => {
     hostStatus.actions = []
     const w = mount(LiveShareDialog, { props: { open: true, projects: [{ id: 'ws-1', name: 'site' }], projectIds: ['ws-1'] }, attachTo: document.body })

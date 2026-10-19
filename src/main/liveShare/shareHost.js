@@ -393,8 +393,10 @@ export function stripTerminalReplies(data) {
 // in), knownAt, secrets (its earlier secrets), inviteExpires, guard (its
 // block). access: a share taken back (accessState()). trust: the trusted
 // people (shareTrust.js; none without it). hostKey: the share's signing key
-// (shareCrypto.js newSigningKey).
-export function createShareHost({ secret = null, hostName, callbacks, log = () => {}, now = Date.now, known = [], knownAt = null, secrets = [], inviteExpires = null, guard = null, access: saved = null, trust = null, hostKey = newSigningKey() }) {
+// (shareCrypto.js newSigningKey). rendezvousSecret: the share's own secret
+// for the relay (shareRendezvous.js), given in each signed welcome: where a
+// guest let in finds the share's new address after it moved.
+export function createShareHost({ secret = null, hostName, callbacks, log = () => {}, now = Date.now, known = [], knownAt = null, secrets = [], inviteExpires = null, guard = null, access: saved = null, trust = null, hostKey = newSigningKey(), rendezvousSecret = null }) {
   const guests = new Map() // id -> guest (a connection)
   let wss = null
   let pingTimer = null
@@ -1330,7 +1332,9 @@ export function createShareHost({ secret = null, hostName, callbacks, log = () =
     // guest checks it with the key it got the first time).
     const proof = { hostKey: hostKey.publicRaw.toString('base64'), hostSig: signBinding(hostKey, g.binding).toString('base64') }
     const agents = speaksAgents(g) && callbacks.agents ? { agents: cleanAgents(callbacks.agents()) } : {}
-    send(g, { t: 'welcome', host: hostName, protocol: SHARE_PROTOCOL, features: [...hostFeatures], projects: mine, rights: { ...g.rights }, ...agents, ...proof })
+    // The share's rendezvous secret (inside the sealed channel).
+    const rdv = Buffer.isBuffer(rendezvousSecret) && rendezvousSecret.length === 32 ? { rdv: rendezvousSecret.toString('base64') } : {}
+    send(g, { t: 'welcome', host: hostName, protocol: SHARE_PROTOCOL, features: [...hostFeatures], projects: mine, rights: { ...g.rights }, ...agents, ...proof, ...rdv })
     for (const id of where.keys()) subscribe(g, id)
   }
 
@@ -2142,9 +2146,9 @@ export function createShareHost({ secret = null, hostName, callbacks, log = () =
     },
     // To keep across a restart of this Tessel: invitations, codes, people.
     accessState: () => access.toJSON(),
-    // The secrets of every code that still lets someone in or back
-    // (shareRendezvous.js: where the share says its address).
-    codeSecrets: () => access.secrets(),
+    // The secrets of the invitations that still let new guests in
+    // (shareRendezvous.js: where the share says its address for a first join).
+    liveCodeSecrets: () => access.liveSecrets(),
     guests: () => [...guests.values()].filter((g) => !inHandshake(g)).map(publicGuest)
   }
 }

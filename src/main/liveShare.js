@@ -114,10 +114,10 @@ import { cleanProjectIds, cleanName, isProjectId, MAX_PROJECTS } from './liveSha
 import { createTrustStore, isTrustId, trustId, MAX_TRUSTED, MAX_TRUSTED_PROJECTS } from './liveShare/shareTrust.js'
 import { cleanRights, isRightId } from '../shared/liveShareRights'
 import { createShareGuest } from './liveShare/shareGuest.js'
-import { encodeInvite, decodeInvite, newSigningKey, exportSigningKey, importSigningKey } from './liveShare/shareCrypto.js'
+import { encodeInvite, decodeInvite, newSecret, newSigningKey, exportSigningKey, importSigningKey } from './liveShare/shareCrypto.js'
 import { ensureCloudflared, startTunnel, waitReachable, waitRegistered, tunnelLogTail, endLeftoverTunnel, tunnelState, stopTunnelPid, stopTunnelLater, processState } from './liveShare/shareTunnel.js'
 import { createSessionFile, createKeptFile } from './liveShare/sharePersist.js'
-import { createPublisher, rendezvousKeys, newestAddress, withBase, REPUBLISH_MS } from './liveShare/shareRendezvous.js'
+import { createPublisher, rendezvousKeys, newestAddress, withBase, isTunnelUrl, REPUBLISH_MS } from './liveShare/shareRendezvous.js'
 import { OFFLINE_KEEP_MS } from './liveShare/shareAccess.js'
 import { pidRunning as pidAlive } from './processTree.js'
 import { trimBuffer, HOST_BUFFER_BYTES } from './ptyProtocol.js'
@@ -416,8 +416,12 @@ const RELAUNCH_DELAYS = [15000, 30000, 60000, 120000, 300000]
 // browser page of the window, any session); without them, guests get none of
 // it. rendezvous: the relay where a share says its address and a guest finds
 // it (liveShare/shareRendezvous.js createRelay: { publish, latest }); without
-// it, neither (tests). timing: { portWaitMs, relaunchDelays, lookupDelays,
-// firstLookups } (tests: the waits above).
+// it, neither (tests); relayUrlOk(url): the addresses taken from it (a quick
+// tunnel's; tests: theirs). protect: { available(), encrypt(text),
+// decrypt(text) } (Electron's safeStorage: DPAPI on Windows), what seals the
+// saved share and session on disk; without it, plain JSON. timing: {
+// portWaitMs, relaunchDelays, lookupDelays, firstLookups, publisher (its
+// gapMs, retryDelays, minGapMs) } (tests: the waits above).
 export function registerLiveShare({
   ipcMain,
   send,
@@ -445,6 +449,8 @@ export function registerLiveShare({
   pageById = null,
   pageDeps = {},
   rendezvous = null,
+  relayUrlOk = isTunnelUrl,
+  protect = null,
   timing = {}
 }) {
   const info = (msg) => log?.info?.('liveshare', msg)
@@ -454,7 +460,34 @@ export function registerLiveShare({
   const hostFile = createSessionFile(join(dataDir, 'liveshare-host.json'), { maxAgeMs: Infinity })
   const guestFile = createSessionFile(join(dataDir, 'liveshare-guest.json'), { maxAgeMs: OFFLINE_KEEP_MS })
   // Where the share says its address (shareRendezvous.js).
-  const publisher = rendezvous ? createPublisher({ relay: rendezvous, log: info }) : null
+  const publisher = rendezvous ? createPublisher({ relay: rendezvous, log: info, urlOk: relayUrlOk, ...(timing.publisher || {}) }) : null
+  // The relay is used only while the setting says so ("Find me again after
+  // a restart", on unless turned off).
+  const relayOn = () => !!rendezvous && shareSettings.rendezvous !== false
+  // The saved share and session hold keys and secrets: sealed by the OS
+  // (DPAPI) when it can; a file saved plain (by an earlier Tessel) is still
+  // read, and sealed at its next save. null: sealed, and can't be opened now.
+  function sealRecord(data) {
+    try {
+      if (protect && protect.available()) {
+        const sealed = protect.encrypt(JSON.stringify(data))
+        if (typeof sealed === 'string' && sealed) return { sealed }
+      }
+    } catch {
+      /* kept plain */
+    }
+    return data
+  }
+  function openRecord(saved) {
+    if (!saved || typeof saved.sealed !== 'string') return saved || null
+    try {
+      if (!protect || !protect.available()) return null
+      const data = JSON.parse(protect.decrypt(saved.sealed))
+      return data && typeof data === 'object' ? { ...data, v: saved.v, savedAt: saved.savedAt } : null
+    } catch {
+      return null
+    }
+  }
   const portWaitMs = timing.portWaitMs ?? PORT_WAIT_MS
   const relaunchDelays = timing.relaunchDelays || RELAUNCH_DELAYS
   const lookupDelays = timing.lookupDelays || LOOKUP_DELAYS
@@ -559,9 +592,14 @@ export function registerLiveShare({
       retry: s && s.retry ? { ...s.retry } : null,
       // A kept share starting again by itself (its Cancel is Stop sharing).
       restarting: !!(s && s.kept && s.state !== 'sharing'),
+      // When a share came back by itself after a restart (the window says it
+      // once): for a couple of minutes.
+      resumed: s && s.state === 'sharing' && s.resumedAt && Date.now() - s.resumedAt < 120000 ? s.resumedAt : null,
       // The share's settings (also while not sharing), and what guests
       // changed lately (newest first; only while sharing).
       settings: { ...shareSettings },
+      // The projects last shared (the dialog ticks them first next time).
+      lastProjectIds: [...lastProjects],
       actions: live ? actions.map((a) => ({ ...a })) : [],
       // Phase 2c: the projects whose activity guests follow (the window
       // sends it while they do), and the pages they watch.
@@ -656,7 +694,25 @@ export function registerLiveShare({
   // The share's settings, kept across shares: hideIgnored ("Hide ignored and
   // secret files from guests", on unless turned off).
   const settingsRead = settingsFile.read()
-  let shareSettings = { ...DEFAULT_SHARE_SETTINGS, ...(settingsRead.status === 'ok' && settingsRead.data.hideIgnored === false ? { hideIgnored: false } : {}) }
+  // rendezvous: "Find me again after a restart (uses ntfy.sh)", on unless
+  // turned off (off: no call to the relay, as host or guest).
+  let shareSettings = {
+    ...DEFAULT_SHARE_SETTINGS,
+    rendezvous: true,
+    ...(settingsRead.status === 'ok' && settingsRead.data.hideIgnored === false ? { hideIgnored: false } : {}),
+    ...(settingsRead.status === 'ok' && settingsRead.data.rendezvous === false ? { rendezvous: false } : {})
+  }
+  // The projects last shared (the window's ids), kept here too: a share
+  // started again from the dialog after a restart ticks them first, not only
+  // the project on screen.
+  let lastProjects = settingsRead.status === 'ok' ? cleanProjectIds(Array.isArray(settingsRead.data.lastProjects) ? settingsRead.data.lastProjects : []) : []
+  const writeSettings = () => settingsFile.write({ hideIgnored: shareSettings.hideIgnored, rendezvous: shareSettings.rendezvous, lastProjects })
+  function rememberProjects(ids) {
+    const next = cleanProjectIds(ids)
+    if (!next.length || (next.length === lastProjects.length && next.every((x, i) => x === lastProjects[i]))) return
+    lastProjects = next
+    writeSettings()
+  }
   const scope = createShareScope()
   const requests = createShareRequests({ scope, log })
   // The ops guests may ask for, by name: what each needs and costs
@@ -1296,7 +1352,7 @@ export function registerLiveShare({
     // share Stop sharing just deleted.)
     if (!s || !s.server || s.cancelled || !(s.state === 'sharing' || s.kept)) return
     const live = s.state === 'sharing' && s.tunnel
-    hostFile.write({
+    hostFile.write(sealRecord({
       format: 2,
       url: live ? s.tunnel.url : s.lastUrl || null,
       port: live ? s.port : 0,
@@ -1305,26 +1361,31 @@ export function registerLiveShare({
       hostKey: exportSigningKey(s.hostKey),
       projectIds: [...(s.projects || [])],
       access: s.server.accessState(),
-      relaySeq: s.relaySeq || 0
-    })
+      // The share's rendezvous secret, its last counter, and where its address
+      // was said (not said again after a restart at the same address).
+      shareSecret: s.shareSecret.toString('base64'),
+      relaySeq: s.relaySeq || 0,
+      relay: live && publisher ? { url: s.tunnel.url, at: s.publishedAt || 0, topics: publisher.said(s.tunnel.url) } : null
+    }))
   }
 
-  // Where the share is now, said on the relay for each of its codes
-  // (shareRendezvous.js). force: every code again (a new address, or the
-  // relay about to forget); otherwise only the codes not yet said at this
-  // address (a new invitation, a new code).
-  function publishAddress(s, force = false) {
-    if (!publisher || sharing !== s || s.state !== 'sharing' || !s.tunnel || !s.server) return
-    if (force) s.publishedAt = Date.now()
-    publisher.publish({
-      url: s.tunnel.url,
-      hostKey: s.hostKey,
-      secrets: s.server.codeSecrets(),
-      // Never lower than the last one said (saved with the share), and never
-      // behind the clock.
-      nextSeq: () => (s.relaySeq = Math.max((s.relaySeq || 0) + 1, Date.now())),
-      force
-    })
+  // The topics a share says its address on (shareRendezvous.js): its own
+  // (for the guests it let in) and each invitation that still lets new
+  // guests in.
+  const relaySecrets = (s) => [s.shareSecret, ...(s.server ? s.server.liveCodeSecrets() : [])]
+  // Never lower than the last one said (saved with the share), and never
+  // behind the clock.
+  const nextSeq = (s) => () => (s.relaySeq = Math.max((s.relaySeq || 0) + 1, Date.now()))
+  // Where the share is now, said on the relay. refresh: every topic again
+  // (the relay about to forget); otherwise only the topics not yet said at
+  // this address (a new address, a new invitation).
+  function publishAddress(s, refresh = false) {
+    if (!publisher || !relayOn() || sharing !== s || s.state !== 'sharing' || !s.tunnel || !s.server) return
+    if (refresh || !s.publishedAt || s.publishedUrl !== s.tunnel.url) {
+      s.publishedAt = Date.now()
+      s.publishedUrl = s.tunnel.url
+    }
+    publisher.publish({ url: s.tunnel.url, hostKey: s.hostKey, secrets: relaySecrets(s), nextSeq: nextSeq(s), refresh })
   }
 
   // Requests to open sent to the window (opened at once with the right, or
@@ -1364,6 +1425,7 @@ export function registerLiveShare({
     return createShareHost({
       hostName: s.hostName,
       hostKey: s.hostKey,
+      rendezvousSecret: s.shareSecret,
       log: info,
       trust,
       ...extra,
@@ -1486,7 +1548,10 @@ export function registerLiveShare({
     hostFile.clear()
     const s = sharing
     if (!s) return
+    // Said on the relay too, so guests offline now end when they look.
+    const marker = reason === 'stopped' && s.kept && s.server && publisher && relayOn() ? { hostKey: s.hostKey, secrets: relaySecrets(s), nextSeq: nextSeq(s) } : null
     teardown(s, reason, { now })
+    if (marker) publisher.stop(marker).catch(() => {})
     sharing = error ? { state: 'error', error, guests: [] } : null
     info(`sharing stopped (${reason})`)
     pushHost()
@@ -1608,10 +1673,16 @@ export function registerLiveShare({
       s.state = 'sharing'
       s.retry = null
       s.tries = 0
+      // Back after a restart (not a tunnel lost while sharing): said once.
+      if (s.resuming) {
+        s.resuming = false
+        s.resumedAt = Date.now()
+      }
       info(`sharing again at ${s.tunnel.url}`)
       saveHost()
       watchHost(s)
-      publishAddress(s, true)
+      // A new address: said on the relay (debounced there).
+      publishAddress(s)
       pushHost()
     } catch (err) {
       if (cancelled()) return
@@ -1645,7 +1716,7 @@ export function registerLiveShare({
   // project shared).
   async function startSharing({ name, projects, invite = {} } = {}) {
     if (sharing && sharing.state !== 'error') return { ok: true, ...hostStatus() }
-    const s = { state: 'preparing', guests: [], progress: null, cancelled: false, hostName: str(name, 40) || defaultShareName(), hostKey: newSigningKey(), projects: cleanProjectIds(projects) }
+    const s = { state: 'preparing', guests: [], progress: null, cancelled: false, hostName: str(name, 40) || defaultShareName(), hostKey: newSigningKey(), shareSecret: newSecret(), projects: cleanProjectIds(projects) }
     sharing = s
     pushHost()
     try {
@@ -1658,10 +1729,11 @@ export function registerLiveShare({
       s.state = 'sharing'
       // From now on it is kept until Stop sharing (a restart starts it again).
       s.kept = true
+      rememberProjects(s.projects)
       info(`sharing at ${s.tunnel.url}`)
       saveHost()
       watchHost(s)
-      publishAddress(s, true)
+      publishAddress(s)
       pushHost()
       return { ok: true, ...hostStatus() }
     } catch (err) {
@@ -1675,6 +1747,11 @@ export function registerLiveShare({
       if (sharing === s) stopSharing('error', message)
       return { ok: false, error: message }
     }
+  }
+
+  const shareSecretOf = (saved) => {
+    const b = typeof saved.shareSecret === 'string' ? Buffer.from(saved.shareSecret, 'base64') : null
+    return b && b.length === 32 ? b : newSecret()
   }
 
   // A saved share's keys, projects and access ({ hostKey, projects, extra },
@@ -1725,9 +1802,15 @@ export function registerLiveShare({
   async function takeShareBack() {
     const run = ++resumeRun
     const stops = stopRun
-    const saved = hostFile.read()
-    if (!saved) {
+    const raw = hostFile.read()
+    if (!raw) {
       await endLeftoverTunnel(dataDir, { queryState, kill }).catch(() => false)
+      return false
+    }
+    const saved = openRecord(raw)
+    // Sealed, and the OS can't open it now: kept as it is for a next try.
+    if (!saved) {
+      warn('the saved share can not be opened now: kept for the next start')
       return false
     }
     const pid = Number(saved.pid) || 0
@@ -1737,7 +1820,10 @@ export function registerLiveShare({
     const end = async (why) => {
       info(`share not taken back: ${why}`)
       if (pid) await stopTunnelPid(dataDir, pid, { queryState, kill }).catch(() => false)
-      hostFile.clearIf((x) => x && (Number(x.pid) || 0) === pid && x.url === saved.url)
+      hostFile.clearIf((x) => {
+        const o = openRecord(x)
+        return !!o && (Number(o.pid) || 0) === pid && o.url === saved.url
+      })
       return false
     }
     // Still the one to take it back? Stopped meanwhile: ended; quitting,
@@ -1769,6 +1855,9 @@ export function registerLiveShare({
       hostKey: restored.hostKey,
       projects: restored.projects,
       kept: true,
+      resuming: true,
+      // (A share saved before it had one gets one now.)
+      shareSecret: shareSecretOf(saved),
       relaySeq: Number.isSafeInteger(saved.relaySeq) && saved.relaySeq > 0 ? saved.relaySeq : 0,
       lastUrl: url
     }
@@ -1814,11 +1903,21 @@ export function registerLiveShare({
           stopNow: () => stopTunnelLater(dataDir, pid)
         }
         s.state = 'sharing'
+        s.resuming = false
+        s.resumedAt = Date.now()
         sharing = s
         info(`sharing taken back after a restart (${url})`)
+        // Its address was said already: not again (only what is missing),
+        // until the relay is about to forget it.
+        const r = saved.relay
+        if (publisher && r && r.url === url && Number.isFinite(r.at) && Date.now() - r.at < REPUBLISH_MS) {
+          publisher.seed(url, r.topics)
+          s.publishedAt = r.at
+          s.publishedUrl = url
+        }
         saveHost()
         watchHost(s)
-        publishAddress(s, true)
+        publishAddress(s)
         pushHost()
         return true
       }
@@ -1862,6 +1961,7 @@ export function registerLiveShare({
     if (on && projects.length >= MAX_PROJECTS) return { ok: false, reason: 'full', max: MAX_PROJECTS }
     if (!on && projects.length <= 1) return { ok: false, reason: 'last' }
     s.projects = on ? [...projects, id] : projects.filter((x) => x !== id)
+    rememberProjects(s.projects)
     info(on ? 'a project added to the share' : 'a project taken out of the share')
     if (sharing === s) changedNow()
     if (!on) {
@@ -2105,22 +2205,45 @@ export function registerLiveShare({
   // and the last relay message it took (an older one is refused).
   function saveGuest(g) {
     if (joined !== g || !g.admitted || !g.hostKey) return
-    guestFile.write({ invite: g.invite, name: g.name, key: exportSigningKey(g.signingKey), hostKey: g.hostKey.toString('base64'), url: g.url, relaySeq: g.relaySeq || 0 })
+    guestFile.write(
+      sealRecord({
+        invite: g.invite,
+        name: g.name,
+        key: exportSigningKey(g.signingKey),
+        hostKey: g.hostKey.toString('base64'),
+        url: g.url,
+        relaySeq: g.relaySeq || 0,
+        shareSecret: g.shareSecret ? g.shareSecret.toString('base64') : null,
+        reachedAt: g.reachedAt || Date.now()
+      })
+    )
   }
 
-  // The host's newest address from the relay (shareRendezvous.js): taken
-  // when it opens with this guest's code, is signed with the host's key when
-  // this guest knows it, and is newer than the last one taken. true: this
-  // guest moved there (connect again).
+  // The host's newest address from the relay (shareRendezvous.js), on the
+  // share's topic (its secret came with the welcome) and the code's: taken
+  // only when signed with the host's key (pinned by its welcome, or named by
+  // a TS2 code; none known: never asked) and newer than the last one taken.
+  // true: this guest moved there (connect again). The host stopped sharing:
+  // this guest's session ends.
   async function lookUpAddress(g) {
-    if (!rendezvous) return false
-    const keys = rendezvousKeys(g.secret)
-    if (!keys) return false
-    const texts = await rendezvous.latest(keys.topic)
-    if (joined !== g) return false
-    const best = newestAddress(texts, { secret: g.secret, hostKey: g.hostKey || g.codeHostKey || null, after: g.relaySeq || 0 })
+    const hostKey = g.hostKey || g.codeHostKey || null
+    if (!relayOn() || !hostKey) return false
+    let best = null
+    for (const secret of [g.shareSecret, g.secret]) {
+      const keys = secret ? rendezvousKeys(secret) : null
+      if (!keys) continue
+      const texts = await rendezvous.latest(keys.topic)
+      if (joined !== g) return false
+      const said = newestAddress(texts, { secret, hostKey, after: g.relaySeq || 0, urlOk: relayUrlOk })
+      if (said && (!best || said.seq > best.seq)) best = said
+    }
     if (!best) return false
     g.relaySeq = best.seq
+    if (best.stopped) {
+      info('the host stopped sharing (said on the rendezvous relay)')
+      endGuest(g, 'stopped')
+      return false
+    }
     const url = withBase(best.url, g.url)
     if (!url) return false
     const moved = url !== g.url
@@ -2134,6 +2257,8 @@ export function registerLiveShare({
   // back on a new tunnel since the code was made): the relay asked a few
   // times (FIRST_LOOKUPS) for its newest address; none: it ends as it did.
   function findHostFirst(g, reason) {
+    // A TS1 code (no host key in it): its own address only; a new code then.
+    if (!g.codeHostKey) return endGuest(g, 'old-code')
     const delay = firstLookups[g.firstLookups++]
     if (g.firstLookups === 1) info('the invite code’s address did not answer: asking the rendezvous relay for the host’s newest one')
     clearTimeout(g.retry && g.retry.timer)
@@ -2270,12 +2395,15 @@ export function registerLiveShare({
   function reconnectLater(g) {
     if (joined !== g) return
     const r = g.retry || (g.retry = { since: Date.now(), tries: 0, timer: null, lookups: 0, lookupAt: 0 })
+    // The host not reached for as long as it keeps a guest offline (it
+    // stopped sharing meanwhile, say): over.
+    if (Date.now() - (g.reachedAt || r.since) > OFFLINE_KEEP_MS) return endGuest(g, 'lost')
     const delay = r.tries < RECONNECT_DELAYS.length ? RECONNECT_DELAYS[r.tries] : Date.now() - r.since > RECONNECT_SLOW_AFTER_MS ? RECONNECT_SLOW_MS : RECONNECT_DELAYS[RECONNECT_DELAYS.length - 1]
     r.tries++
     clearTimeout(r.timer)
     r.timer = setTimeout(async () => {
       if (joined !== g || g.state !== 'reconnecting' || g.retry !== r) return
-      if (rendezvous && r.tries >= 2 && Date.now() >= (r.lookupAt || 0)) {
+      if (relayOn() && r.tries >= 2 && Date.now() >= (r.lookupAt || 0)) {
         r.lookupAt = Date.now() + lookupDelays[Math.min(r.lookups++, lookupDelays.length - 1)]
         await lookUpAddress(g).catch(() => false)
         if (joined !== g || g.state !== 'reconnecting' || g.retry !== r) return
@@ -2301,6 +2429,9 @@ export function registerLiveShare({
         onHostKey: (key) => {
           if (joined === g && g.client === client) g.hostKey = key
         },
+        onRendezvous: (secret) => {
+          if (joined === g && g.client === client) g.shareSecret = secret
+        },
         onState: (state, extra) => {
           if (joined !== g || g.client !== client) return
           if (extra?.host) g.host = cleanName(extra.host)
@@ -2313,6 +2444,7 @@ export function registerLiveShare({
             g.admitted = true
             g.retry = null
             g.reason = null
+            g.reachedAt = Date.now()
             saveGuest(g)
             // What the window follows on the host, asked again.
             resubscribe(g)
@@ -2423,7 +2555,7 @@ export function registerLiveShare({
             return
           }
           // A first join that never reached the host: it may be elsewhere.
-          if (!g.leaving && !g.admitted && !g.reached && rendezvous && DEAD_ADDRESS.has(reason) && g.firstLookups < firstLookups.length) return findHostFirst(g, reason)
+          if (!g.leaving && !g.admitted && !g.reached && relayOn() && DEAD_ADDRESS.has(reason) && g.firstLookups < firstLookups.length) return findHostFirst(g, reason)
           endGuest(g, reason)
         }
       }
@@ -2436,7 +2568,7 @@ export function registerLiveShare({
 
   // url, relaySeq: a session taken back after a restart (its last address,
   // the last relay message it took).
-  function joinSession({ invite, name, signingKey = null, hostKey = null, url = null, relaySeq = 0 } = {}) {
+  function joinSession({ invite, name, signingKey = null, hostKey = null, url = null, relaySeq = 0, shareSecret = null, reachedAt = null } = {}) {
     const code = decodeInvite(invite)
     if (!code) return { ok: false, error: t('main.liveShare.badInvite', 'This is not a Tessel Live Share invite code.') }
     if (joined) leaveSession('replaced')
@@ -2484,6 +2616,10 @@ export function registerLiveShare({
       // The share's key a TS2 code names (null: a TS1 code).
       codeHostKey: code.hostKey || null,
       relaySeq: Number.isSafeInteger(relaySeq) && relaySeq > 0 ? relaySeq : 0,
+      // The share's rendezvous secret (from the host's welcome), and when the
+      // host was last reached.
+      shareSecret: Buffer.isBuffer(shareSecret) && shareSecret.length === 32 ? shareSecret : null,
+      reachedAt: Number.isFinite(reachedAt) ? reachedAt : null,
       reached: false,
       firstLookups: 0,
       invite: String(invite).trim(),
@@ -2523,7 +2659,10 @@ export function registerLiveShare({
   function resumeGuest() {
     // Quitting or an update starting meanwhile: kept for the next Tessel.
     if (quitting || suspended) return false
-    const saved = guestFile.read()
+    const raw = guestFile.read()
+    const saved = openRecord(raw)
+    // Sealed, and the OS can't open it now: kept for a next try.
+    if (raw && !saved) return false
     const signingKey = saved && typeof saved.invite === 'string' ? importSigningKey(saved.key) : null
     const hostKey = saved && typeof saved.hostKey === 'string' ? Buffer.from(saved.hostKey, 'base64') : null
     if (!signingKey || !hostKey || hostKey.length !== 32 || joined) {
@@ -2531,7 +2670,8 @@ export function registerLiveShare({
       return false
     }
     info('joining again the session left by a restart')
-    return joinSession({ invite: saved.invite, name: saved.name, signingKey, hostKey, url: typeof saved.url === 'string' ? saved.url : null, relaySeq: saved.relaySeq }).ok
+    const shareSecret = typeof saved.shareSecret === 'string' ? Buffer.from(saved.shareSecret, 'base64') : null
+    return joinSession({ invite: saved.invite, name: saved.name, signingKey, hostKey, url: typeof saved.url === 'string' ? saved.url : null, relaySeq: saved.relaySeq, shareSecret, reachedAt: saved.reachedAt }).ok
   }
 
   // Quitting or an update: a session the host let this guest in is kept for
@@ -2693,12 +2833,23 @@ export function registerLiveShare({
   // The share's settings: { hideIgnored } (kept across shares). A change
   // counts for every request from now on.
   ipcMain.handle('liveShare:setSettings', (_evt, patch = {}) => {
+    const keep = writeSettings
     if (patch && typeof patch.hideIgnored === 'boolean' && patch.hideIgnored !== shareSettings.hideIgnored) {
       shareSettings = { ...shareSettings, hideIgnored: patch.hideIgnored }
-      settingsFile.write({ hideIgnored: shareSettings.hideIgnored })
+      keep()
       scope.invalidate()
       info(`guests ${shareSettings.hideIgnored ? 'no longer see' : 'now see'} ignored and secret files`)
       if (shareSettings.hideIgnored) hideNow()
+      pushHost()
+    }
+    // The relay: off, nothing more is said there or asked of it; on again,
+    // the share's address is said at once.
+    if (patch && typeof patch.rendezvous === 'boolean' && patch.rendezvous !== shareSettings.rendezvous) {
+      shareSettings = { ...shareSettings, rendezvous: patch.rendezvous }
+      keep()
+      info(`the rendezvous relay is ${patch.rendezvous ? 'on' : 'off'}`)
+      if (!patch.rendezvous) publisher?.forget()
+      else if (sharing) publishAddress(sharing, true)
       pushHost()
     }
     return { ok: true, settings: { ...shareSettings } }

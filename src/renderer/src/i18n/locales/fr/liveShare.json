@@ -135,6 +135,7 @@
       "error": "La connexion a échoué.",
       "lost": "La connexion à l'hôte a été perdue et n'est pas revenue.",
       "rejoinRefused": "L'hôte ne connaît plus ce Tessel : rejoignez-le de nouveau avec un code d'invitation.",
+      "oldCode": "L'adresse de ce code ne répond plus, et ce code est trop ancien pour retrouver l'hôte : demandez-lui un nouveau code.",
       "outdated": "Votre Tessel est trop ancien pour le Live Share de l'hôte : mettez Tessel à jour et rejoignez de nouveau.",
       "outdatedHost": "Le Tessel de l'hôte est trop ancien pour ce Live Share : l'hôte doit mettre Tessel à jour.",
       "protocol": "Les deux Tessel ne parlent pas le même Live Share : mettez-les à jour tous les deux et rejoignez de nouveau.",
@@ -169,6 +170,7 @@
       "joinedProjects_one": "{{name}} a rejoint {{project}} et {{count}} autre projet.",
       "joinedProjects_other": "{{name}} a rejoint {{project}} et {{count}} autres projets.",
       "blocked2": "Plusieurs connexions ont utilisé le code de « {{label}} » sans entrer : il ne fait plus entrer personne. Faites-lui un nouveau code dans Live Share.",
+      "resumed": "Votre Live Share a redémarré : vos invités se reconnectent tout seuls.",
       "openAsked": "Demande envoyée à {{host}} : ça s'ouvre après son accord.",
       "noProject": "{{host}} ne partage plus ce projet avec vous.",
       "openFailed": "La demande n'a pas pu être envoyée à {{host}} : la connexion est peut-être coupée.",
@@ -529,7 +531,9 @@
     },
     "setting": {
       "hideIgnored": "Masquer aux invités les fichiers ignorés et secrets",
-      "hideIgnoredHint": "Les fichiers ignorés par git et ceux qui ressemblent à des secrets (.env, clés, identifiants) restent hors des Fichiers, de la recherche et des Changements des invités. .git et .tessel sont toujours masqués."
+      "hideIgnoredHint": "Les fichiers ignorés par git et ceux qui ressemblent à des secrets (.env, clés, identifiants) restent hors des Fichiers, de la recherche et des Changements des invités. .git et .tessel sont toujours masqués.",
+      "rendezvous": "Me retrouver après un redémarrage (utilise ntfy.sh)",
+      "rendezvousHint": "Quand votre adresse change, Tessel la dépose, chiffrée, sur le relais gratuit ntfy.sh pour que vos invités vous retrouvent (et y cherche celle d'un hôte quand vous êtes invité). Désactivé : rien n'y est envoyé, et les codes cessent de fonctionner quand votre adresse change."
     },
     "recent": {
       "title": "Actions récentes des invités",

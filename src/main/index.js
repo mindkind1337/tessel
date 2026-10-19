@@ -4157,6 +4157,13 @@ liveShare = registerLiveShare({
   // changes, and a guest whose address went dead finds the new one there
   // (sealed and signed: liveShare/shareRendezvous.js).
   rendezvous: createRelay(),
+  // The saved share and session (keys, invitation secrets) sealed with
+  // DPAPI on disk.
+  protect: {
+    available: () => safeStorage.isEncryptionAvailable(),
+    encrypt: (text) => safeStorage.encryptString(text).toString('base64'),
+    decrypt: (text) => safeStorage.decryptString(Buffer.from(text, 'base64'))
+  },
   // Phase 2c: a shared project's past conversations (masked there), what
   // its terminal agents said, and its browser pages (any of the browser's
   // sessions: the host's window lists them, checked against the share).

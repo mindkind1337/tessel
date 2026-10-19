@@ -58,15 +58,15 @@ function fakeRelay() {
     publish: vi.fn(async (topic, text) => {
       if (!topics.has(topic)) topics.set(topic, [])
       topics.get(topic).push(text)
-      return true
+      return { ok: true, limited: false }
     }),
     latest: vi.fn(async (topic) => [...(topics.get(topic) || [])])
   }
 }
 
-const FAST = { portWaitMs: 1500, relaunchDelays: [200], lookupDelays: [100], firstLookups: [0, 100, 200] }
+const FAST = { portWaitMs: 1500, relaunchDelays: [200], lookupDelays: [100], firstLookups: [0, 100, 200], publisher: { gapMs: 0, minGapMs: 0, retryDelays: [50] } }
 
-function fakeMain({ dataDir = newDataDir(), resume = false, relay = null, timing = FAST } = {}) {
+function fakeMain({ dataDir = newDataDir(), resume = false, relay = null, timing = FAST, protect = null } = {}) {
   const m = {
     handle: {},
     on: {},
@@ -97,6 +97,9 @@ function fakeMain({ dataDir = newDataDir(), resume = false, relay = null, timing
     pidRunning: () => tunnel.alive,
     resume,
     rendezvous: relay,
+    // The share's address here is ws://127.0.0.1 (no quick tunnel).
+    relayUrlOk: () => true,
+    protect,
     timing
   })
   m.dataDir = dataDir
@@ -135,7 +138,7 @@ async function shareAndJoin(relay) {
 // the share's key.
 function relayAddress(relay, code) {
   const c = decodeInvite(code)
-  return newestAddress(relay.topics.get(rendezvousKeys(c.secret).topic) || [], { secret: c.secret, hostKey: c.hostKey })
+  return newestAddress(relay.topics.get(rendezvousKeys(c.secret).topic) || [], { secret: c.secret, hostKey: c.hostKey, urlOk: () => true })
 }
 
 describe('a share kept across restarts', () => {
@@ -146,13 +149,14 @@ describe('a share kept across restarts', () => {
     const code = codeOf(started)
     expect(code.startsWith('TS2.')).toBe(true)
     const c = decodeInvite(code)
-    await until(() => relay.publish.mock.calls.length >= 1)
-    const said = relayAddress(relay, code)
+    const said = await until(() => relayAddress(relay, code))
     expect(said.url).toBe(new URL(c.url).origin.replace(/^http/, 'ws') + '/')
-    for (const [topic, text] of relay.publish.mock.calls) {
-      expect(topic).toBe(rendezvousKeys(c.secret).topic)
-      expect(text).not.toContain('127.0.0.1')
-    }
+    // Two topics: the share's own (for the guests it lets in) and the
+    // invitation's.
+    const shareSecret = Buffer.from(JSON.parse(fs.readFileSync(hostFile(host), 'utf8')).shareSecret, 'base64')
+    await until(() => relay.publish.mock.calls.length >= 2)
+    expect(new Set(relay.publish.mock.calls.map(([t]) => t))).toEqual(new Set([rendezvousKeys(c.secret).topic, rendezvousKeys(shareSecret).topic]))
+    for (const [, text] of relay.publish.mock.calls) expect(text).not.toContain('127.0.0.1')
     // A new invitation's code is said too, at once.
     const made = await host.handle['liveShare:createInvite'](null, { label: 'More' })
     await until(() => relayAddress(relay, made.invite.code))
@@ -309,7 +313,9 @@ describe('a share kept across restarts', () => {
     onExit(1)
     await until(() => tunnel.starts === 2 && host.last('liveShare:host').state === 'sharing')
     expect(host.last('liveShare:host').invites[0].id).toBe(started.invites[0].id)
-    await until(() => relay.publish.mock.calls.length > sharedBefore)
+    // The same address here (the same port): not said again.
+    await new Promise((r) => setTimeout(r, 100))
+    expect(relay.publish.mock.calls.length).toBe(sharedBefore)
   })
 
   it('Stop sharing ends it for good: nothing comes back at the next start, guests are told it ended', async () => {
@@ -356,5 +362,142 @@ describe('a share kept across restarts', () => {
     expect(await next.api.resumed).toEqual([false, true])
     await until(() => next.events('liveShare:guest').find((s) => s.state === 'joined' && s.panes.length))
     expect(host.events('liveShare:ask')).toHaveLength(1)
+  })
+
+  it('a TS1 code whose address is dead is never sent elsewhere by the relay: ask for a new code', async () => {
+    const relay = fakeRelay()
+    const host = fakeMain({ relay })
+    const started = await host.handle['liveShare:start'](null, { name: 'Ada', projects: ['ws-1'], invite: { lifetime: 'day' } })
+    const c = decodeInvite(codeOf(started))
+    const ts1 = encodeInvite({ url: c.url, secret: c.secret })
+    host.api.stopAll()
+    tunnel.alive = false
+    const next = fakeMain({ dataDir: host.dataDir, resume: true, relay })
+    await next.api.resumed
+    const late = fakeMain({ relay })
+    await late.handle['liveShare:join'](null, { invite: ts1, name: 'Late' })
+    await until(() => late.last('liveShare:guest')?.state === 'ended')
+    expect(late.last('liveShare:guest').reason).toBe('old-code')
+    expect(relay.latest).not.toHaveBeenCalled()
+  })
+
+  it('a guest let in finds the share on its own topic, even once its invitation is used up', async () => {
+    const relay = fakeRelay()
+    const host = fakeMain({ relay })
+    const guest = fakeMain({ relay })
+    const started = await host.handle['liveShare:start'](null, { name: 'Ada', projects: ['ws-1'], invite: { lifetime: 'never', maxUses: 1 } })
+    showLayout(host)
+    await guest.handle['liveShare:join'](null, { invite: codeOf(started), name: 'Alex' })
+    const ask = await until(() => host.last('liveShare:ask'))
+    await host.handle['liveShare:approve'](null, { guestId: ask.guestId, yes: true, projects: ['ws-1'] })
+    await until(() => guest.last('liveShare:guest')?.state === 'joined')
+    const codeTopic = rendezvousKeys(decodeInvite(codeOf(started)).secret).topic
+    host.api.stopAll()
+    tunnel.alive = false
+    const before = relay.publish.mock.calls.length
+    const next = fakeMain({ dataDir: host.dataDir, resume: true, relay })
+    await next.api.resumed
+    showLayout(next)
+    // Used up: its topic is no longer said; the share's is.
+    await until(() => relay.publish.mock.calls.length > before)
+    expect(relay.publish.mock.calls.slice(before).map(([t]) => t)).not.toContain(codeTopic)
+    await until(() => guest.events('liveShare:guest').some((s, i, all) => s.state === 'joined' && all.slice(0, i).some((x) => x.state === 'reconnecting')), 15000)
+  }, 20000)
+
+  it('Stop sharing says "stopped" on the relay: a guest offline then ends when it looks', async () => {
+    const relay = fakeRelay()
+    const { host, guest } = await shareAndJoin(relay)
+    guest.api.stopAll()
+    const before = relay.publish.mock.calls.length
+    await host.handle['liveShare:stop']()
+    tunnel.alive = false
+    await until(() => relay.publish.mock.calls.length >= before + 2)
+    const again = fakeMain({ dataDir: guest.dataDir, resume: true, relay })
+    await again.api.resumed
+    await until(() => again.last('liveShare:guest')?.state === 'ended', 15000)
+    expect(again.last('liveShare:guest').reason).toBe('stopped')
+    expect(fs.existsSync(guestFile(again))).toBe(false)
+  }, 20000)
+
+  it('a guest that has not reached its host for as long as hosts keep guests offline gives up', async () => {
+    const relay = fakeRelay()
+    const { host, guest } = await shareAndJoin(relay)
+    guest.api.stopAll()
+    host.api.stopAll()
+    const file = guestFile(guest)
+    const saved = JSON.parse(fs.readFileSync(file, 'utf8'))
+    fs.writeFileSync(file, JSON.stringify({ ...saved, reachedAt: Date.now() - 31 * 24 * 60 * 60 * 1000 }))
+    const again = fakeMain({ dataDir: guest.dataDir, resume: true, relay })
+    await again.api.resumed
+    await until(() => again.last('liveShare:guest')?.state === 'ended', 10000)
+    expect(again.last('liveShare:guest').reason).toBe('lost')
+  })
+
+  it('"Find me again after a restart" off: no call to the relay, as host or guest', async () => {
+    const relay = fakeRelay()
+    const host = fakeMain({ relay })
+    expect((await host.handle['liveShare:setSettings'](null, { rendezvous: false })).settings.rendezvous).toBe(false)
+    const started = await host.handle['liveShare:start'](null, { name: 'Ada', projects: ['ws-1'] })
+    showLayout(host)
+    host.api.stopAll()
+    tunnel.alive = false
+    // The next Tessel keeps the setting.
+    const next = fakeMain({ dataDir: host.dataDir, resume: true, relay })
+    await next.api.resumed
+    expect(next.last('liveShare:host').settings.rendezvous).toBe(false)
+    const late = fakeMain({ relay, dataDir: host.dataDir })
+    await late.handle['liveShare:join'](null, { invite: codeOf(started), name: 'Late' })
+    await until(() => late.last('liveShare:guest')?.state === 'ended')
+    expect(relay.publish).not.toHaveBeenCalled()
+    expect(relay.latest).not.toHaveBeenCalled()
+    // On again: said at once.
+    await next.handle['liveShare:setSettings'](null, { rendezvous: true })
+    await until(() => relay.publish.mock.calls.length >= 1)
+  })
+
+  it('the saved share is sealed by the OS when it can; a plain file of an earlier Tessel is still read', async () => {
+    // A stand-in for safeStorage: reversible, and nothing in clear.
+    const protect = { available: () => true, encrypt: (t) => 'P' + Buffer.from(t).toString('hex'), decrypt: (t) => Buffer.from(t.slice(1), 'hex').toString() }
+    const relay = fakeRelay()
+    const host = fakeMain({ relay, protect })
+    const started = await host.handle['liveShare:start'](null, { name: 'Ada', projects: ['ws-1'] })
+    const text = fs.readFileSync(hostFile(host), 'utf8')
+    const c = decodeInvite(codeOf(started))
+    expect(text).not.toContain(c.secret.toString('base64'))
+    expect(JSON.parse(text).sealed).toMatch(/^P/)
+    host.api.stopAll()
+    // The OS can't open it now: kept, not deleted.
+    const locked = fakeMain({ dataDir: host.dataDir, resume: true, relay, protect: { ...protect, available: () => false } })
+    expect(await locked.api.resumed).toEqual([false, false])
+    expect(fs.existsSync(hostFile(host))).toBe(true)
+    const next = fakeMain({ dataDir: host.dataDir, resume: true, relay, protect })
+    expect(await next.api.resumed).toEqual([true, false])
+    expect(codeOf(next.last('liveShare:host'))).toBe(codeOf(started))
+    // A plain file (an earlier Tessel): read, then sealed at its next save.
+    const plain = fakeMain({ relay })
+    await plain.handle['liveShare:start'](null, { name: 'Bo', projects: ['ws-1'] })
+    plain.api.stopAll()
+    const migrated = fakeMain({ dataDir: plain.dataDir, resume: true, relay, protect })
+    expect(await migrated.api.resumed).toEqual([true, false])
+    expect(JSON.parse(fs.readFileSync(hostFile(plain), 'utf8')).sealed).toMatch(/^P/)
+  })
+
+  it('a share back after a restart is said once to the window (its toast)', async () => {
+    const host = fakeMain()
+    await host.handle['liveShare:start'](null, { name: 'Ada', projects: ['ws-1'] })
+    expect(host.last('liveShare:host').resumed).toBe(null)
+    host.api.stopAll()
+    const next = fakeMain({ dataDir: host.dataDir, resume: true })
+    await next.api.resumed
+    expect(next.last('liveShare:host').resumed).toBeGreaterThan(0)
+  })
+
+  it('the projects last shared are kept in the data folder: after Stop sharing and a restart, the dialog gets them to tick', async () => {
+    const host = fakeMain()
+    await host.handle['liveShare:start'](null, { name: 'Ada', projects: ['ws-1'] })
+    expect((await host.handle['liveShare:share'](null, { id: 'ws-2', shared: true })).ok).toBe(true)
+    await host.handle['liveShare:stop']()
+    const next = fakeMain({ dataDir: host.dataDir })
+    expect((await next.handle['liveShare:state']()).host.lastProjectIds).toEqual(['ws-1', 'ws-2'])
   })
 })

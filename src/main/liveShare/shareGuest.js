@@ -83,7 +83,8 @@ const BYE_REASONS = new Set(['stopped', 'restarting', 'denied', 'removed', 'repl
 // onRestart(id) (the pane restarted on the host: a new screen follows),
 // onRights(rights), onNotice(code), onClosed(reason) (once, at the end),
 // onAgents(list) (the agents the host lists: [{ id, name }], unchecked).
-// onHostKey(raw) (the host's key, from the first welcome). onFeatures(list)
+// onHostKey(raw) (the host's key, from the first welcome). onRendezvous(secret)
+// (the share's rendezvous secret, from each welcome). onFeatures(list)
 // (what the host speaks beyond the protocol, from each welcome), onChat(id,
 // message) (an agent pane's conversation: { ok, events, truncated, code }),
 // onPush(topic, project, key, data) (a subscription's news, unchecked),
@@ -237,6 +238,12 @@ export function createShareGuest({ url, secret, name, signingKey, identityKey = 
         if (!bindingSigned(key, binding, sig) || (hostKey ? !key.equals(hostKey) : back)) return finish('host-unverified')
         if (!back) callbacks.onHostKey?.(key)
         welcomed = true
+        // The share's rendezvous secret (shareRendezvous.js), from the host
+        // just checked.
+        if (typeof msg.rdv === 'string') {
+          const rdv = Buffer.from(msg.rdv, 'base64')
+          if (rdv.length === 32) callbacks.onRendezvous?.(rdv)
+        }
         // What it may do first: the window takes it as the starting point.
         if (msg.rights) callbacks.onRights?.(rightsOf(msg.rights))
         hostSpeaks = new Set(cleanFeatures(msg.features))

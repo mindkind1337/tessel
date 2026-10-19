@@ -367,6 +367,20 @@ describe('Live Share in the window, as the host', () => {
     expect(lastLayouts()[0].layout.maximizedId).toBe(null)
   })
 
+  it('after a restart (nothing picked in this window), ticks the projects main kept from the last share, not only the one on screen', async () => {
+    twoProjects()
+    t.listeners.onHost({ state: 'off', projectIds: [], guests: [], lastProjectIds: ['ws-2', 'ws-gone'] })
+    t.ls.prepareShare()
+    expect(t.ls.chosenIds()).toEqual(['ws-2'])
+  })
+
+  it('a share back after a restart says so once (a toast)', async () => {
+    twoProjects()
+    sharingNow(['ws-1'], { resumed: 1234 })
+    sharingNow(['ws-1'], { resumed: 1234 })
+    expect(t.toasts.filter((x) => /started again/.test(x))).toHaveLength(1)
+  })
+
   it('picks the projects before you start: several, at least one', async () => {
     twoProjects()
     t.ls.prepareShare()
