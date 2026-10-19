@@ -87,6 +87,64 @@ const raw = computed(() => {
   return b ? { box: b.box, html: b.body.split('__UID__').join(gid) } : null
 })
 const png = computed(() => PNG_ICONS[k.value] || null)
+
+// Every logo is drawn into the same frame so no agent looks bigger than another:
+// its tight bounds (the PNGs are cropped square to their content, brandSvgs.js
+// boxes are the measured content bounds, the drawn marks below list theirs) are
+// scaled to MARK units of the 24 box and centred. Full-bleed square tiles read
+// heavier than a transparent mark of the same size, so they get a smaller frame
+// and one corner radius for all of them.
+const MARK = 20
+const TILE = 18.5
+const TILE_RADIUS = 4.25
+// Tight bounds of the marks drawn in this file, in their 24-unit drawing.
+const DRAWN_BOX = {
+  claude: '0.82 0.14 21.72 23.2',
+  codex: '0.16 0 23.68 24',
+  openai: '0.16 0 23.68 24',
+  opencode: '4 2 16 20',
+  opencode2: '4 2 16 20',
+  gemini: '1.5 1.5 21 21',
+  powershell: '1 3 22 18',
+  pwsh: '1 3 22 18',
+  cmd: '1.4 2.9 21.2 18.2',
+  gitbash: '2.04 2.04 19.92 19.92',
+  bash: '2.04 2.04 19.92 19.92',
+  git: '2.04 2.04 19.92 19.92',
+  wsl: '2 3.5 20 17'
+}
+// Logos that are a filled square (their own background), not a mark on transparency.
+const TILES = new Set([
+  'kilo',
+  'codebuff',
+  'commandcode',
+  'crush',
+  'cursor',
+  'devin',
+  'droid',
+  'freebuff',
+  'hermes',
+  'kimi',
+  'kiro',
+  'mimocode',
+  'trae',
+  'zcode'
+])
+const box = computed(() => {
+  if (DRAWN_BOX[k.value]) return DRAWN_BOX[k.value]
+  if (raw.value) return raw.value.box
+  if (png.value) return '0 0 64 64'
+  return null
+})
+// Marks that read heavier or lighter than the rest at MARK size: solid blocks and
+// filled discs nudged down, the hollow Gemini sparkle up, by eye (the way icon
+// grids give squares and circles their own keylines).
+const OPTICAL = { omp: TILE, pi: TILE, goose: 19, continue: 19, gemini: 21 }
+const tile = computed(() => TILES.has(k.value))
+const frame = computed(() => {
+  const s = OPTICAL[k.value] || (tile.value ? TILE : MARK)
+  return { x: 12 - s / 2, s }
+})
 </script>
 
 <template>
@@ -98,116 +156,144 @@ const png = computed(() => PNG_ICONS[k.value] || null)
     fill="none"
     aria-hidden="true"
   >
-    <!-- Claude -->
-    <g v-if="k === 'claude'" stroke="#d97757" stroke-width="2.3" stroke-linecap="round">
-      <line v-for="(r, i) in claudeRays" :key="i" :x1="r.x1" :y1="r.y1" :x2="r.x2" :y2="r.y2" />
+    <defs v-if="tile">
+      <clipPath :id="`${gid}-tile`">
+        <rect :x="frame.x" :y="frame.x" :width="frame.s" :height="frame.s" :rx="TILE_RADIUS" />
+      </clipPath>
+    </defs>
+    <g v-if="box" :clip-path="tile ? `url(#${gid}-tile)` : null">
+      <svg
+        :x="frame.x"
+        :y="frame.x"
+        :width="frame.s"
+        :height="frame.s"
+        :viewBox="box"
+        overflow="visible"
+      >
+        <!-- Claude -->
+        <g v-if="k === 'claude'" stroke="#d97757" stroke-width="2.3" stroke-linecap="round">
+          <line v-for="(r, i) in claudeRays" :key="i" :x1="r.x1" :y1="r.y1" :x2="r.x2" :y2="r.y2" />
+        </g>
+
+        <!-- Grok, Cline, Copilot CLI, Qwen Code, Ollama...: their own icons (brandSvgs.js) -->
+        <!-- eslint-disable-next-line vue/no-v-html -->
+        <g v-else-if="raw" v-html="raw.html" />
+
+        <!-- The other agents' logos (Orca's) -->
+        <image v-else-if="png" width="64" height="64" :href="png" />
+
+        <!-- Codex / OpenAI blossom -->
+        <path v-else-if="k === 'codex' || k === 'openai'" :d="OPENAI_PATH" fill="#ececec" />
+
+        <!-- OpenCode (and OpenCode 2): its "O" (opencode.ai/brand, dark version), as tall as the others -->
+        <g v-else-if="k === 'opencode' || k === 'opencode2'">
+          <path d="M8 10h8v8H8Z" fill="#4b4646" />
+          <path fill-rule="evenodd" d="M4 2h16v20H4ZM8 6v12h8V6Z" fill="#f1ecec" />
+        </g>
+
+        <!-- Gemini sparkle -->
+        <template v-else-if="k === 'gemini'">
+          <defs>
+            <linearGradient :id="gid" x1="3" y1="21" x2="21" y2="3" gradientUnits="userSpaceOnUse">
+              <stop offset="0" stop-color="#4285f4" />
+              <stop offset="0.55" stop-color="#9b72cb" />
+              <stop offset="1" stop-color="#d96570" />
+            </linearGradient>
+          </defs>
+          <path
+            d="M12 1.5C12 7.3 16.7 12 22.5 12 16.7 12 12 16.7 12 22.5 12 16.7 7.3 12 1.5 12 7.3 12 12 7.3 12 1.5Z"
+            :fill="`url(#${gid})`"
+          />
+        </template>
+
+        <!-- Windows PowerShell / PowerShell 7 -->
+        <template v-else-if="k === 'powershell' || k === 'pwsh'">
+          <path
+            d="M6 4h16l-4 16H2Z"
+            :fill="k === 'pwsh' ? '#34507a' : '#2671be'"
+            :stroke="k === 'pwsh' ? '#34507a' : '#2671be'"
+            stroke-width="2"
+            stroke-linejoin="round"
+          />
+          <path
+            d="M7 8l5 4-6.5 4.5"
+            stroke="#fff"
+            stroke-width="1.9"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          />
+          <path d="M12 16.5h4.5" stroke="#fff" stroke-width="1.9" stroke-linecap="round" />
+        </template>
+
+        <!-- Command Prompt -->
+        <template v-else-if="k === 'cmd'">
+          <rect
+            x="2"
+            y="3.5"
+            width="20"
+            height="17"
+            rx="2.5"
+            fill="#0c0c0c"
+            stroke="#5a5a5a"
+            stroke-width="1.2"
+          />
+          <path
+            d="M6 9.5l3.2 2.5L6 14.5"
+            stroke="#e6e6e6"
+            stroke-width="1.7"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          />
+          <path d="M11 15h6" stroke="#e6e6e6" stroke-width="1.7" stroke-linecap="round" />
+        </template>
+
+        <!-- Git / Git Bash -->
+        <template v-else-if="k === 'gitbash' || k === 'bash' || k === 'git'">
+          <rect
+            x="4.2"
+            y="4.2"
+            width="15.6"
+            height="15.6"
+            rx="2.6"
+            transform="rotate(45 12 12)"
+            fill="#f05032"
+          />
+          <path
+            d="M9.3 7.6l5 5M12 10.3v6"
+            stroke="#fff"
+            stroke-width="1.5"
+            stroke-linecap="round"
+          />
+          <circle cx="12" cy="10.3" r="1.5" fill="#fff" />
+          <circle cx="14.6" cy="12.9" r="1.5" fill="#fff" />
+          <circle cx="12" cy="16.3" r="1.5" fill="#fff" />
+        </template>
+
+        <!-- WSL -->
+        <template v-else-if="k === 'wsl'">
+          <rect x="2" y="3.5" width="20" height="17" rx="3" fill="#e95420" />
+          <path
+            d="M6.5 9.5l3.2 2.5-3.2 2.5"
+            stroke="#fff"
+            stroke-width="1.8"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          />
+          <path d="M11.5 15h6" stroke="#fff" stroke-width="1.8" stroke-linecap="round" />
+        </template>
+      </svg>
     </g>
 
-    <!-- Cline, Copilot CLI, Qwen Code, Ollama: their own icons -->
-    <!-- eslint-disable-next-line vue/no-v-html -->
-    <svg v-else-if="raw" x="1" y="1" width="22" height="22" :viewBox="raw.box" v-html="raw.html" />
-
-    <!-- The other agents' logos (Orca's) -->
-    <image v-else-if="png" x="1" y="1" width="22" height="22" :href="png" preserveAspectRatio="xMidYMid meet" />
-
-    <!-- Codex / OpenAI blossom -->
-    <path v-else-if="k === 'codex' || k === 'openai'" :d="OPENAI_PATH" fill="#ececec" />
-
-    <!-- OpenCode (and OpenCode 2): its "O" (opencode.ai/brand, dark version), as tall as the others -->
-    <g v-else-if="k === 'opencode' || k === 'opencode2'">
-      <path d="M8 10h8v8H8Z" fill="#4b4646" />
-      <path fill-rule="evenodd" d="M4 2h16v20H4ZM8 6v12h8V6Z" fill="#f1ecec" />
-    </g>
-
-    <!-- Gemini sparkle -->
-    <template v-else-if="k === 'gemini'">
-      <defs>
-        <linearGradient :id="gid" x1="3" y1="21" x2="21" y2="3" gradientUnits="userSpaceOnUse">
-          <stop offset="0" stop-color="#4285f4" />
-          <stop offset="0.55" stop-color="#9b72cb" />
-          <stop offset="1" stop-color="#d96570" />
-        </linearGradient>
-      </defs>
-      <path
-        d="M12 1.5C12 7.3 16.7 12 22.5 12 16.7 12 12 16.7 12 22.5 12 16.7 7.3 12 1.5 12 7.3 12 12 7.3 12 1.5Z"
-        :fill="`url(#${gid})`"
-      />
-    </template>
-
-    <!-- Windows PowerShell / PowerShell 7 -->
-    <template v-else-if="k === 'powershell' || k === 'pwsh'">
-      <path
-        d="M6 4h16l-4 16H2Z"
-        :fill="k === 'pwsh' ? '#34507a' : '#2671be'"
-        :stroke="k === 'pwsh' ? '#34507a' : '#2671be'"
-        stroke-width="2"
-        stroke-linejoin="round"
-      />
-      <path
-        d="M7 8l5 4-6.5 4.5"
-        stroke="#fff"
-        stroke-width="1.9"
-        stroke-linecap="round"
-        stroke-linejoin="round"
-      />
-      <path d="M12 16.5h4.5" stroke="#fff" stroke-width="1.9" stroke-linecap="round" />
-    </template>
-
-    <!-- Command Prompt -->
-    <template v-else-if="k === 'cmd'">
-      <rect
-        x="2"
-        y="3.5"
-        width="20"
-        height="17"
-        rx="2.5"
-        fill="#0c0c0c"
-        stroke="#5a5a5a"
-        stroke-width="1.2"
-      />
-      <path
-        d="M6 9.5l3.2 2.5L6 14.5"
-        stroke="#e6e6e6"
-        stroke-width="1.7"
-        stroke-linecap="round"
-        stroke-linejoin="round"
-      />
-      <path d="M11 15h6" stroke="#e6e6e6" stroke-width="1.7" stroke-linecap="round" />
-    </template>
-
-    <!-- Git / Git Bash -->
-    <template v-else-if="k === 'gitbash' || k === 'bash' || k === 'git'">
-      <rect
-        x="4.2"
-        y="4.2"
-        width="15.6"
-        height="15.6"
-        rx="2.6"
-        transform="rotate(45 12 12)"
-        fill="#f05032"
-      />
-      <path d="M9.3 7.6l5 5M12 10.3v6" stroke="#fff" stroke-width="1.5" stroke-linecap="round" />
-      <circle cx="12" cy="10.3" r="1.5" fill="#fff" />
-      <circle cx="14.6" cy="12.9" r="1.5" fill="#fff" />
-      <circle cx="12" cy="16.3" r="1.5" fill="#fff" />
-    </template>
-
-    <!-- WSL -->
-    <template v-else-if="k === 'wsl'">
-      <rect x="2" y="3.5" width="20" height="17" rx="3" fill="#e95420" />
-      <path
-        d="M6.5 9.5l3.2 2.5-3.2 2.5"
-        stroke="#fff"
-        stroke-width="1.8"
-        stroke-linecap="round"
-        stroke-linejoin="round"
-      />
-      <path d="M11.5 15h6" stroke="#fff" stroke-width="1.8" stroke-linecap="round" />
-    </template>
-
-    <!-- Letter badge for agents/tools without a drawn logo -->
+    <!-- Letter badge for agents/tools without a drawn logo, sized like the logo tiles -->
     <template v-else-if="!KNOWN.has(k) && (accent || label)">
-      <rect x="2" y="2" width="20" height="20" rx="5.5" :fill="accent || '#8a93a6'" />
+      <rect
+        :x="12 - TILE / 2"
+        :y="12 - TILE / 2"
+        :width="TILE"
+        :height="TILE"
+        :rx="TILE_RADIUS"
+        :fill="accent || '#8a93a6'"
+      />
       <text
         x="12"
         y="16.4"
