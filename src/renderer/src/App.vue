@@ -3403,6 +3403,9 @@ provide('panelCtx', {
   toggleYoloFolder,
   permissionsOf,
   paneFolder: (leaf) => paneFolders(leaf)[0] || null,
+  // A pane by its id, in any workspace (or null): the Conversations tab, task
+  // cards and the activity log resolve a message's paths against its pane.
+  findLeaf: (id) => (typeof id === 'string' && id ? findLeaf(id) : null),
   wakeLeaf: (id) => wakeLeaf(id),
   // A restored remote pane waiting for Connect.
   connectLeaf: (id) => connectLeaf(id),

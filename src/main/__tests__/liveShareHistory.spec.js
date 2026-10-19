@@ -119,7 +119,9 @@ describe('Live Share history: what the terminal agents said', () => {
         'pane-1': {
           key: 'sess-secret-1|stamp|0',
           items: [
-            { role: 'user', t: 1, text: `token ${SECRET}` },
+            { role: 'user', t: 1, text: `token ${SECRET}`, images: [{ key: 'ab'.repeat(12), name: 'shot.png', mime: 'image/png', bytes: 9, source: 'user' }, { path: 'C:\\Users\\ada\\private\\x.png', missing: true }], imagesMore: 2, files: [{ name: 'a.pdf', path: 'C:\\Users\\ada\\private\\a.pdf' }] },
+            // A prompt that was only an image: nothing to give a guest.
+            { role: 'user', t: 1.5, text: '', images: [{ key: 'cd'.repeat(12), name: 'image.png', mime: 'image/png', bytes: 9, source: 'user' }] },
             { role: 'agent', t: 2, text: `see C:\\Users\\ada\\private\\notes.md`, model: 'Opus 5.5', effort: 'high' },
             { role: 'system', t: 3, text: 'x' }
           ]
@@ -138,6 +140,10 @@ describe('Live Share history: what the terminal agents said', () => {
     const entry = res.data.panes['pane-1']
     expect(entry.key).toMatch(/^[A-Za-z0-9_-]{22}$/)
     expect(entry.items.map((i) => i.role)).toEqual(['user', 'agent'])
+    // No image, image key or file of the host's ever reaches a guest.
+    expect(said).not.toContain('images')
+    expect(said).not.toContain('ab'.repeat(12))
+    expect(said).not.toContain('a.pdf')
     expect(entry.items[1]).toMatchObject({ model: 'Opus 5.5', effort: 'high' })
     // Asked again with that key: turned back into the reader's, "same" goes back.
     readTerminal.mockResolvedValueOnce({ ok: true, panes: { 'pane-1': { key: 'sess-secret-1|stamp|0', same: true } } })

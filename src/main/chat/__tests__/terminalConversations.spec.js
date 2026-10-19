@@ -6,7 +6,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import fs from 'fs'
 import os from 'os'
 import { join } from 'path'
+import { readRows as readRowsReal } from '../../fileRead'
+import { opencodeDetails } from '../../sessionDetails'
 import {
+  attachImages,
+  opencodeItems,
   cleanPrompt,
   conversationItems,
   createTerminalConversations,
@@ -409,7 +413,8 @@ describe('what is yours (review fixes)', () => {
       'agent:Added the empty-file tests; all pass.'
     ])
     expect(items.map((i) => i.t)).toEqual([at(1), at(4), at(8), at(11)])
-    expect(items[2].text).toContain('[image]')
+    // Its image is noted (attachImages gives it), not "[image]" text.
+    expect(items[2].text).toBe('And look at this')
     expect(items[2].model).toBe('claude-opus-5-5')
   })
 
@@ -749,7 +754,7 @@ describe('createTerminalConversations', () => {
     expect((await conv.read({ from: 0, panes: [claudePane] })).panes.p1.items).toHaveLength(6)
   })
 
-  it('an agent on an SSH host: its size and time first, the window only when they changed, at most once a minute', async () => {
+  it('an agent on an SSH host: its last window, then only what was added, at most once a minute', async () => {
     let data = Buffer.from(jsonl(CLAUDE))
     let mtime = 1000
     const readAgentFile = vi.fn(async (hostId, { agent, id, offset, cap }) => {
@@ -767,30 +772,34 @@ describe('createTerminalConversations', () => {
     const pane = { paneId: 'r1', agent: 'claude', sessionId: CLAUDE_ID, hostId: 'ssh-box' }
     const first = await conv.read({ from: 0, panes: [pane] })
     expect(first.panes.r1.items).toHaveLength(6)
-    expect(readAgentFile.mock.calls.map((c) => c[1].cap)).toEqual([1, TERMINAL_LIMITS.remoteBytes])
+    expect(readAgentFile.mock.calls.map((c) => [c[1].offset, c[1].cap])).toEqual([[null, TERMINAL_LIMITS.remoteBytes]])
     // Within the minute: not asked.
     await conv.read({ from: 0, panes: [pane], known: { r1: first.panes.r1.key } })
-    expect(readAgentFile).toHaveBeenCalledTimes(2)
-    // A minute later, unchanged: its size only.
+    expect(readAgentFile).toHaveBeenCalledTimes(1)
+    // A minute later, unchanged: asked from its end, nothing comes.
     clock += TERMINAL_LIMITS.remoteEveryMs + 1
     const same = await conv.read({ from: 0, panes: [pane], known: { r1: first.panes.r1.key } })
     expect(same.panes.r1.same).toBe(true)
-    expect(readAgentFile).toHaveBeenCalledTimes(3)
+    expect(readAgentFile).toHaveBeenCalledTimes(2)
+    expect(readAgentFile.mock.calls[1][1].offset).toBe(data.length)
     data = Buffer.concat([
       data,
       Buffer.from(jsonl([answer(17, 'm6', [{ type: 'text', text: 'From the host.' }])]))
     ])
     mtime = 2000
     clock += TERMINAL_LIMITS.remoteEveryMs + 1
+    const before = data.length - Buffer.byteLength(jsonl([answer(17, 'm6', [{ type: 'text', text: 'From the host.' }])]))
     const next = await conv.read({ from: 0, panes: [pane], known: { r1: first.panes.r1.key } })
-    expect(readAgentFile).toHaveBeenCalledTimes(5)
+    expect(readAgentFile).toHaveBeenCalledTimes(3)
+    // Only what was added crossed the connection.
+    expect(readAgentFile.mock.calls[2][1].offset).toBe(before)
     expect(next.panes.r1.items[next.panes.r1.items.length - 1].text).toBe('From the host.')
     // Not an agent whose file a host keeps: not asked.
     await conv.read({
       from: 0,
       panes: [{ paneId: 'r2', agent: 'antigravity', sessionId: AGY_ID, hostId: 'ssh-box' }]
     })
-    expect(readAgentFile).toHaveBeenCalledTimes(5)
+    expect(readAgentFile).toHaveBeenCalledTimes(3)
   })
 
   it('a host that hangs never holds the local files; a slow one is left alone a while', async () => {
@@ -828,23 +837,23 @@ describe('createTerminalConversations', () => {
     const pane = { paneId: 'r2', agent: 'claude', sessionId: CLAUDE_ID, hostId: 'ssh-slow' }
     await conv.read({ from: 0, panes: [pane] })
     await new Promise((resolve) => setTimeout(resolve, 150))
-    expect(slow).toHaveBeenCalledTimes(2)
+    expect(slow).toHaveBeenCalledTimes(1)
     const later = await conv.read({ from: 0, panes: [pane] })
     // What it read meanwhile is there.
     expect(later.panes.r2.items).toHaveLength(6)
     clock += TERMINAL_LIMITS.remoteEveryMs + 1
     await conv.read({ from: 0, panes: [pane] })
-    expect(slow).toHaveBeenCalledTimes(2)
+    expect(slow).toHaveBeenCalledTimes(1)
     clock += limits.hostDownMs + 1
     await conv.read({ from: 0, panes: [pane] })
-    expect(slow).toHaveBeenCalledTimes(3)
+    expect(slow).toHaveBeenCalledTimes(2)
   })
 
   it('registers one channel, answering what read answers', async () => {
     claudeFile(CLAUDE)
     const handlers = {}
     make().register({ handle: (name, fn) => (handlers[name] = fn) })
-    expect(Object.keys(handlers)).toEqual(['conversations:terminal'])
+    expect(Object.keys(handlers)).toEqual(['conversations:terminal', 'conversations:image'])
     const res = await handlers['conversations:terminal']({}, { from: 0, panes: [claudePane] })
     expect(res.panes.p1.items).toHaveLength(6)
     expect(await handlers['conversations:terminal']({}, null)).toEqual({ ok: true, panes: {} })
@@ -874,5 +883,214 @@ describe('localWindowReader', () => {
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true })
     }
+  })
+})
+
+// A real 1x1 PNG (historyAttachments.js reads an image by its bytes).
+const PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=='
+const imageBlock = { type: 'image', source: { type: 'base64', media_type: 'image/png', data: PNG } }
+const pictured = (s, id) => ({
+  type: 'user',
+  uuid: `r${s}`,
+  timestamp: ts(s),
+  message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content: [{ type: 'text', text: 'shot' }, imageBlock] }] }
+})
+
+describe('images (WP3 contract): a prompt’s own, its turn’s tools’ on the answer', () => {
+  const records = () => [
+    prompt(0, [{ type: 'text', text: 'What is wrong here?' }, imageBlock]),
+    answer(1, 'm1', [{ type: 'tool_use', id: 'shot1', name: 'browser_screenshot', input: {} }]),
+    pictured(2, 'shot1'),
+    answer(3, 'm2', [{ type: 'text', text: 'The button overlaps the title.' }]),
+    // Only an image: a line with no text.
+    prompt(4, [imageBlock]),
+    answer(5, 'm3', [{ type: 'text', text: 'Same screen.' }])
+  ]
+
+  it('notes them while reading, decodes them for the lines kept, by key, never their bytes on the line', async () => {
+    const items = conversationItems('claude', lines(records()), CLAUDE_ID)
+    expect(items.map((i) => `${i.role}:${i.text}`)).toEqual(['user:What is wrong here?', 'agent:The button overlaps the title.', 'user:', 'agent:Same screen.'])
+    const cache = new Map()
+    await attachImages(items, TERMINAL_LIMITS.images, { cache, isRemote: async () => false })
+    expect(items[0].images).toHaveLength(1)
+    expect(items[0].images[0]).toMatchObject({ mime: 'image/png', source: 'user', name: 'image.png' })
+    expect(items[0].images[0].key).toMatch(/^[0-9a-f]{24}$/)
+    expect(items[0].images[0].dataUrl).toBeUndefined()
+    // The screenshot of its turn, on the answer.
+    expect(items[1].images.map((i) => i.source)).toEqual(['tool'])
+    expect(items[2].images).toHaveLength(1)
+    expect(items[2].text).toBe('')
+    expect(items[3].images).toBeUndefined()
+    // The bytes stay in the conversation's cache, once per image.
+    expect([...cache.values()].filter(Boolean).every((e) => e.dataUrl.startsWith('data:image/png;base64,'))).toBe(true)
+    expect(JSON.stringify(items)).not.toContain(PNG.slice(0, 40))
+  })
+
+  it('without image caps: "[image]" text and nothing decoded', () => {
+    const items = conversationItems('claude', lines(records()), CLAUDE_ID, { ...TERMINAL_LIMITS, images: null })
+    expect(items.map((i) => i.text)).toEqual(['What is wrong here?\n[image]', 'The button overlaps the title.', '[image]', 'Same screen.'])
+    expect(items.some((i) => i.images)).toBe(false)
+  })
+
+  it('within the caps: per line, then for all the lines (the newest first); the rest counted', async () => {
+    const many = [prompt(0, [{ type: 'text', text: 'Five' }, imageBlock, imageBlock, imageBlock, imageBlock, imageBlock]), answer(1, 'm1', [{ type: 'text', text: 'Seen.' }])]
+    const items = conversationItems('claude', lines(many), CLAUDE_ID)
+    await attachImages(items, { ...TERMINAL_LIMITS.images, images: 2 }, { isRemote: async () => false })
+    expect(items[0].images).toHaveLength(2)
+    expect(items[0].imagesMore).toBe(3)
+  })
+
+  it('the window asks for an image’s bytes by key, only of the conversations read', async () => {
+    const tmp = fs.mkdtempSync(join(os.tmpdir(), 'tessel-tconv-img-'))
+    try {
+      const claudeHome = join(tmp, 'claude')
+      fs.mkdirSync(join(claudeHome, 'projects', 'C--proj'), { recursive: true })
+      fs.writeFileSync(join(claudeHome, 'projects', 'C--proj', `${CLAUDE_ID}.jsonl`), jsonl(records()))
+      const conv = createTerminalConversations({ homes: async () => claudeHome, sessionsDir: () => null, roots: () => transcriptViewRoots(tmp, {}), isRemote: async () => false })
+      const res = await conv.read({ from: 0, panes: [{ paneId: 'p1', agent: 'claude', sessionId: CLAUDE_ID }] })
+      const got = res.panes.p1.items
+      const key = got[0].images[0].key
+      expect(JSON.stringify(res)).not.toContain('base64')
+      expect(conv.image(key)).toEqual({ ok: true, dataUrl: `data:image/png;base64,${PNG}` })
+      expect(conv.image('f'.repeat(24))).toEqual({ ok: false })
+      expect(conv.image('../etc/passwd')).toEqual({ ok: false })
+      conv.dispose()
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true })
+    }
+  })
+})
+
+
+describe('a long turn fills the window: further back until it has lines', () => {
+  // A prompt and an answer, then a long turn of tool calls with big outputs.
+  const big = 'x'.repeat(40 * 1024)
+  const records = () => {
+    const out = [prompt(0, 'Port the build to the new bundler'), answer(1, 'm0', [{ type: 'text', text: 'On it.' }]), prompt(2, 'And keep the old config')]
+    for (let i = 0; i < 40; i++) {
+      out.push(answer(3 + i * 2, `m${i + 1}`, [{ type: 'tool_use', id: `t${i}`, name: 'Bash', input: { command: 'ls' } }]))
+      out.push({ type: 'user', uuid: `r${i}`, timestamp: ts(4 + i * 2), message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: `t${i}`, content: big }] } })
+    }
+    return out
+  }
+  const limits = { ...TERMINAL_LIMITS, remoteBytes: 256 * 1024, remoteMaxBytes: 2 * 1024 * 1024, localBytes: 256 * 1024, localMaxBytes: 4 * 1024 * 1024 }
+
+  it('a host file: earlier windows (only those bytes) while it holds too few lines', async () => {
+    const data = Buffer.from(jsonl(records()))
+    const readAgentFile = vi.fn(async (hostId, { offset, cap }) => {
+      const start = offset === null ? Math.max(0, data.length - cap) : offset
+      return { ok: true, size: data.length, mtimeMs: 1, data: data.subarray(start, Math.min(data.length, start + cap)) }
+    })
+    const conv = createTerminalConversations({ readAgentFile, limits, isRemote: async () => false })
+    const res = await conv.read({ from: 0, panes: [{ paneId: 'r1', agent: 'claude', sessionId: CLAUDE_ID, hostId: 'ssh-box' }] })
+    expect(res.panes.r1.items.map((i) => i.text)).toEqual(['Port the build to the new bundler', 'On it.', 'And keep the old config'])
+    const read = readAgentFile.mock.calls.reduce((n, c) => n + Math.min(c[1].cap, data.length), 0)
+    expect(readAgentFile.mock.calls.length).toBeGreaterThan(1)
+    expect(read).toBeLessThanOrEqual(limits.remoteBytes + limits.remoteMaxBytes + 1024)
+  })
+
+  it('a local file: a wider window, remembered', async () => {
+    const tmp = fs.mkdtempSync(join(os.tmpdir(), 'tessel-tconv-wide-'))
+    try {
+      const claudeHome = join(tmp, 'claude')
+      fs.mkdirSync(join(claudeHome, 'projects', 'C--proj'), { recursive: true })
+      fs.writeFileSync(join(claudeHome, 'projects', 'C--proj', `${CLAUDE_ID}.jsonl`), jsonl(records()))
+      const conv = createTerminalConversations({ homes: async () => claudeHome, roots: () => transcriptViewRoots(tmp, {}), limits, isRemote: async () => false })
+      const res = await conv.read({ from: 0, panes: [{ paneId: 'p1', agent: 'claude', sessionId: CLAUDE_ID }] })
+      expect(res.panes.p1.items.map((i) => i.role)).toEqual(['user', 'agent', 'user'])
+      conv.dispose()
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true })
+    }
+  })
+})
+
+describe('OpenCode: its database', () => {
+  const { DatabaseSync } = process.getBuiltinModule('node:sqlite')
+  const SES = 'ses_ec07abcdefghijklmnop'
+  let tmp
+  let db
+  beforeEach(() => {
+    tmp = fs.mkdtempSync(join(os.tmpdir(), 'tessel-tconv-oc-'))
+    db = join(tmp, 'opencode.db')
+    const d = new DatabaseSync(db)
+    d.exec('CREATE TABLE session (id TEXT PRIMARY KEY, directory TEXT, title TEXT, parent_id TEXT, time_created INTEGER, time_updated INTEGER, model TEXT)')
+    d.exec('CREATE TABLE message (id TEXT PRIMARY KEY, session_id TEXT, time_created INTEGER, data TEXT)')
+    d.exec('CREATE TABLE part (id TEXT PRIMARY KEY, message_id TEXT, session_id TEXT, time_created INTEGER, data TEXT)')
+    d.prepare('INSERT INTO session VALUES (?, ?, ?, NULL, ?, ?, NULL)').run(SES, 'C:\\proj', 'Port', at(0), at(9))
+    const msg = (id, s, data) => d.prepare('INSERT INTO message VALUES (?, ?, ?, ?)').run(id, SES, at(s), JSON.stringify({ time: { created: at(s) }, ...data }))
+    const part = (id, mid, s, data) => d.prepare('INSERT INTO part VALUES (?, ?, ?, ?, ?)').run(id, mid, SES, at(s), JSON.stringify(data))
+    msg('msg_1', 0, { role: 'user', model: { providerID: 'anthropic', modelID: 'claude-sonnet-5' } })
+    part('prt_01', 'msg_1', 0, { type: 'text', text: 'Port the build, see https://vitejs.dev' })
+    part('prt_02', 'msg_1', 0, { type: 'text', text: 'internal note', synthetic: true })
+    msg('msg_2', 1, { role: 'assistant', providerID: 'anthropic', modelID: 'claude-sonnet-5', time: { created: at(1), completed: at(4) } })
+    part('prt_03', 'msg_2', 1, { type: 'text', text: 'Looking.' })
+    part('prt_04', 'msg_2', 2, { type: 'tool', callID: 'c1', tool: 'bash', state: { status: 'completed', input: { command: 'ls' }, output: 'SECRET-OUTPUT '.repeat(100), time: { start: at(2), end: at(3) } } })
+    part('prt_05', 'msg_2', 3, { type: 'text', text: 'Done: `vite.config.js` is in place.' })
+    msg('msg_3', 5, { role: 'user', model: { providerID: 'openai', modelID: 'gpt-5.5' } })
+    part('prt_06', 'msg_3', 5, { type: 'text', text: 'Thanks' })
+    msg('msg_4', 6, { role: 'assistant', providerID: 'openai', modelID: 'gpt-5.5', variant: 'high', time: { created: at(6), completed: at(7) } })
+    part('prt_07', 'msg_4', 6, { type: 'text', text: 'You are welcome.' })
+    d.close()
+  })
+  afterEach(() => fs.rmSync(tmp, { recursive: true, force: true }))
+
+  it('your prompts and its answers (after its last tool call), with times and each model; a tool output never read', () => {
+    const items = opencodeItems(db, SES)
+    expect(items.map((i) => `${i.role}:${i.text}`)).toEqual(['user:Port the build, see https://vitejs.dev', 'agent:Done: `vite.config.js` is in place.', 'user:Thanks', 'agent:You are welcome.'])
+    expect(items.map((i) => i.t)).toEqual([at(0), at(3), at(5), at(6)])
+    expect(items[1]).toMatchObject({ model: 'anthropic/claude-sonnet-5' })
+    expect(items[3]).toMatchObject({ model: 'openai/gpt-5.5', effort: 'high' })
+    expect(JSON.stringify(items)).not.toContain('SECRET-OUTPUT')
+    expect(opencodeItems(db, 'ses_nope0000000000')).toEqual([])
+    expect(opencodeItems(db, '../x')).toEqual([])
+  })
+
+  it('a pane OpenCode conversation in Conversations, read again only when it changed', async () => {
+    const rows = vi.fn((...a) => readRowsReal(...a))
+    const conv = createTerminalConversations({ opencodeDb: () => db, rows, isRemote: async () => false })
+    const pane = { paneId: 'p9', agent: 'opencode', sessionId: SES }
+    const first = await conv.read({ from: 0, panes: [pane] })
+    expect(first.panes.p9.items).toHaveLength(4)
+    const n = rows.mock.calls.length
+    const again = await conv.read({ from: 0, panes: [pane], known: { p9: first.panes.p9.key } })
+    expect(again.panes.p9.same).toBe(true)
+    // Only its stamp was asked.
+    expect(rows.mock.calls.length).toBe(n + 1)
+    const d = new DatabaseSync(db)
+    d.prepare('INSERT INTO message VALUES (?, ?, ?, ?)').run('msg_5', SES, at(8), JSON.stringify({ role: 'user', time: { created: at(8) } }))
+    d.prepare('INSERT INTO part VALUES (?, ?, ?, ?, ?)').run('prt_08', 'msg_5', SES, at(8), JSON.stringify({ type: 'text', text: 'One more thing' }))
+    d.close()
+    const next = await conv.read({ from: 0, panes: [pane], known: { p9: first.panes.p9.key } })
+    expect(next.panes.p9.items.map((i) => i.text).pop()).toBe('One more thing')
+    // A session that is not there: nothing.
+    const none = await conv.read({ from: 0, panes: [{ paneId: 'p8', agent: 'opencode', sessionId: 'ses_missing00000000' }] })
+    expect(none.panes.p8).toBeUndefined()
+    conv.dispose()
+  })
+
+  it('Past conversations: its first prompt, latest turns, message count and model', () => {
+    const d = opencodeDetails(SES, db)
+    expect(d).toMatchObject({ ok: true, firstPrompt: 'Port the build, see https://vitejs.dev', messageCount: 4, model: 'openai/gpt-5.5', effort: 'high' })
+    expect(d.turns.map((x) => `${x.role}:${x.text}`)).toEqual(['assistant:Looking.\nDone: `vite.config.js` is in place.', 'user:Thanks', 'assistant:You are welcome.'])
+    expect(opencodeDetails('ses_missing00000000', db)).toEqual({ ok: false })
+  })
+})
+
+describe('a host not connected', () => {
+  it('is said (waiting: offline), asked again a minute later only', async () => {
+    let clock = 1000
+    const readAgentFile = vi.fn(async () => ({ ok: false, notConnected: true, error: 'not connected' }))
+    const conv = createTerminalConversations({ readAgentFile, now: () => clock, isRemote: async () => false })
+    const pane = { paneId: 'r1', agent: 'claude', sessionId: CLAUDE_ID, hostId: 'ssh-box' }
+    const res = await conv.read({ from: 0, panes: [pane] })
+    expect(res.panes.r1).toBeUndefined()
+    expect(res.waiting).toEqual({ r1: 'offline' })
+    await conv.read({ from: 0, panes: [pane] })
+    expect(readAgentFile).toHaveBeenCalledTimes(1)
+    clock += TERMINAL_LIMITS.remoteEveryMs + 1
+    await conv.read({ from: 0, panes: [pane] })
+    expect(readAgentFile).toHaveBeenCalledTimes(2)
+    conv.dispose()
   })
 })
