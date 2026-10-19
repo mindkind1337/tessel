@@ -5,7 +5,10 @@
 // dropped: a file from Tessel's explorer or from the system becomes its path
 // in the draft (the agent reads it; nothing is uploaded), with the
 // reference's overlay while a drag is over the pane.
-// Props: insertText(text) (the composer's typed insertion), disabled (no
+// Props: insertText(text) (the composer's typed insertion),
+//   attachResolvedPaths(paths, connectionId, ownership) (Tessel: the
+//   composer's own drop: an image becomes an attached image, other files
+//   their paths; used before insertText when given), disabled (no
 //   composer to take it: stopped, a prompt card…), paneKey (the drop's owner:
 //   a drop that lands after the pane changed is dropped), setNotice(message)
 //   (why a drop was refused).
@@ -16,6 +19,7 @@ import { t } from '../../../i18n'
 
 const props = defineProps({
   insertText: { type: Function, default: null },
+  attachResolvedPaths: { type: Function, default: null },
   disabled: { type: Boolean, default: false },
   paneKey: { type: String, default: '' },
   setNotice: { type: Function, default: null }
@@ -24,17 +28,22 @@ const props = defineProps({
 const PATH_MIME = 'text/x-tessel-path'
 const isDragActive = ref(false)
 
+// Tessel: the whole pane takes the drop in its capture phase, before the
+// composer would; so it hands it to the composer's own attach (an image
+// dropped anywhere on the pane is attached as an image, as on the composer).
+const canTake = () => !!props.insertText || !!props.attachResolvedPaths
 const drop = useNativeChatWorkspaceFileDrop(() => ({
   paneKey: props.paneKey,
-  disabled: props.disabled || !props.insertText,
+  disabled: props.disabled || !canTake(),
   insertText: props.insertText,
+  attachResolvedPaths: props.attachResolvedPaths,
   setNotice: props.setNotice
 }))
 
 // A drag this surface can take: a Tessel path or files from the system.
 function takes(event) {
   const types = Array.from((event.dataTransfer && event.dataTransfer.types) || [])
-  return !props.disabled && !!props.insertText && types.some((type) => type === PATH_MIME || type === 'Files')
+  return !props.disabled && canTake() && types.some((type) => type === PATH_MIME || type === 'Files')
 }
 function onDragEnter(event) {
   if (takes(event)) isDragActive.value = true

@@ -21,6 +21,10 @@ const paneKey = computed(() => (attrs.node && attrs.node.id) || '')
 function insertText(text) {
   return sessionRef.value ? sessionRef.value.insertTypedText(text) : false
 }
+// The composer's own drop (an image is attached as one, other files are paths).
+function attachResolvedPaths(paths, connectionId, ownership) {
+  return sessionRef.value && sessionRef.value.attachResolvedPaths ? sessionRef.value.attachResolvedPaths(paths, connectionId, ownership) : false
+}
 function setNotice(message) {
   if (sessionRef.value) sessionRef.value.setNotice(message)
 }
@@ -37,7 +41,7 @@ defineExpose({
 
 <template>
   <div class="nc-root nc-view" data-native-chat-view="true">
-    <NativeChatPaneFileDropSurface :insert-text="insertText" :set-notice="setNotice" :disabled="dropDisabled" :pane-key="paneKey">
+    <NativeChatPaneFileDropSurface :insert-text="insertText" :attach-resolved-paths="attachResolvedPaths" :set-notice="setNotice" :disabled="dropDisabled" :pane-key="paneKey">
       <NativeChatStructuredSession ref="sessionRef" v-bind="attrs" />
     </NativeChatPaneFileDropSurface>
   </div>
