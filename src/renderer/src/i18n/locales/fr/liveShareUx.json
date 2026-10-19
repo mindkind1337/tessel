@@ -2,7 +2,7 @@
   "liveShare": {
     "openAsk": {
       "always": "Toujours laisser {{name}} ouvrir",
-      "alwaysHint": "L’ouvre, et donne à {{name}} le droit « Ouvrir des terminaux et des agents » à partir de maintenant (vous pouvez le retirer dans Personnes)."
+      "alwaysHint": "L’ouvre, et donne à {{name}} le droit « Ouvrir des terminaux et des agents » à partir de maintenant, et aussi lors de vos prochains partages si cette personne est de confiance (vous pouvez le retirer dans Personnes)."
     },
     "ask": {
       "codeLabel": "Code de vérification",

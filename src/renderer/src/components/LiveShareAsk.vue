@@ -113,7 +113,7 @@ const openText = computed(() => {
   return t('liveShare.openAsk.text', 'It runs on your computer, in {{project}}, with your settings. Everyone in the session sees it, and those you let type can type in it.', { project: a.projectName || '?' })
 })
 const alwaysText = computed(() => t('liveShare.openAsk.always', 'Always let {{name}} open', { name: who.value }))
-const alwaysHint = computed(() => t('liveShare.openAsk.alwaysHint', 'Opens it, and gives {{name}} “Open terminals and agents” from now on (you can take it back in People).', { name: who.value }))
+const alwaysHint = computed(() => t('liveShare.openAsk.alwaysHint', 'Opens it, and gives {{name}} “Open terminals and agents” from now on, in your next shares too if you trust them (you can take it back in People).', { name: who.value }))
 
 const moreText = computed(() =>
   props.more === 1 ? t('liveShare.ask.more', '{{count}} more waiting after this one', { count: 1 }) : t('liveShare.ask.more', '{{count}} more waiting after this one', { count: props.more })

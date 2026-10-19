@@ -2669,8 +2669,10 @@ const livePill = computed(() => {
     const presence = host.presence || []
     const at = (gid, key) => presence.filter((p) => (p.guests || []).some((g) => g.id === gid && g[key])).map((p) => paneTitle(p.id)).filter(Boolean)
     // The invitation Copy invite code copies: the first one (made with the
-    // share) while it still lets people in, else the first live one.
-    const live = (host.invites || []).filter((inv) => inv && inv.state === 'live' && inv.code)
+    // share) while it still lets people in, else the first live one (an
+    // expired one stays "live" until main's next tidy-up: never that one).
+    const now = Date.now()
+    const live = (host.invites || []).filter((inv) => inv && inv.state === 'live' && inv.code && !(Number.isFinite(inv.expiresAt) && inv.expiresAt <= now))
     const inv = live.find((x) => x.root) || live[0] || null
     const waitingList = waitingGuests(host).map((g) => ({ id: g.id, name: personName(g), code: g.code || null }))
     return {
