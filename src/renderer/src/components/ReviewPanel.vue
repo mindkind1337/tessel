@@ -17,7 +17,8 @@ const props = defineProps({
   agentLabel: { type: String, default: '' },
   // Functions from App.vue: requestChanges(text), resolveConflicts(info),
   // merge(info, { cleanup }) -> Promise<bool>, discard(info) -> Promise<bool>,
-  // markDone(), focusAgent().
+  // markDone(), focusAgent(), openInEditor({ file, line }) (a changed file
+  // of the agent's copy, in Tessel's editor).
   actions: { type: Object, required: true },
   // A Live Share host's task: { host, info() -> Promise<info>, diff(file) ->
   // Promise<{ ok, text, truncated } | { ok: false, error }> }, or null.
@@ -143,6 +144,38 @@ async function loadDiff(file) {
 }
 
 watch(selected, (f) => loadDiff(f))
+const selectedFile = computed(() => (info.value && info.value.ok ? info.value.files.find((f) => f.path === selected.value) || null : null))
+
+// "Open in editor": a changed file of the agent's copy (never a host's: a
+// Live Share guest reads the branch only; never a deleted file), at its
+// first change when its diff is the one shown.
+const canOpenFiles = computed(() => !readOnly.value && !!wt.value && typeof props.actions.openInEditor === 'function')
+function fileInCopy(rel) {
+  const root = String(wt.value.path || '')
+  const win = /^[A-Za-z]:[\\/]/.test(root)
+  const tail = String(rel).replace(/^[\\/]+/, '')
+  return `${root.replace(/[\\/]+$/, '')}${win ? '\\' : '/'}${win ? tail.replace(/\//g, '\\') : tail}`
+}
+function firstChangeOf(file) {
+  const d = diff.value
+  if (!d || d.file !== file || !d.parsed || !d.parsed.hunks) return null
+  for (const h of d.parsed.hunks) {
+    let last = null
+    for (const l of h.lines) {
+      if (l.kind === 'add' && l.new) return l.new
+      if (l.kind === 'del') return last !== null ? last + 1 : l.old || null
+      if (l.new) last = l.new
+    }
+  }
+  return null
+}
+function openInEditor(f) {
+  if (!canOpenFiles.value || f.status === 'D') return
+  props.actions.openInEditor({ file: fileInCopy(f.path), line: firstChangeOf(f.path) })
+}
+function openInEditorHint(f) {
+  return t('review.openInEditorHint', 'Open {{path}} in the editor', { path: f.path })
+}
 
 const totals = computed(() => {
   const files = (info.value && info.value.files) || []
@@ -475,6 +508,18 @@ function commentsStore(taskId) {
                       ><span class="rv-plus">+{{ f.added }}</span> <span class="rv-minus">−{{ f.removed }}</span></span
                     >
                   </button>
+                  <button
+                    v-if="canOpenFiles && f.status !== 'D'"
+                    class="tb-icon rv-open-file"
+                    :title="openInEditorHint(f)"
+                    :aria-label="openInEditorHint(f)"
+                    data-test="rv-open-file"
+                    @click="openInEditor(f)"
+                  >
+                    <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                      <path d="M9 2h5v5M14 2L7.5 8.5M12 9.5V13a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1h3.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" />
+                    </svg>
+                  </button>
                   <label class="rv-viewed" :title="viewed[f.path] ? t('review.viewed', 'Viewed') : t('review.markViewed', 'Mark as viewed')">
                     <input
                       type="checkbox"
@@ -506,6 +551,15 @@ function commentsStore(taskId) {
               <div class="rv-diff-head">
                 <span class="rv-path">{{ selected }}</span>
                 <span v-if="diffLoading" class="act-dim">{{ t('review.loading', 'Loading…') }}</span>
+                <button
+                  v-if="selectedFile && canOpenFiles && selectedFile.status !== 'D'"
+                  class="confirm-btn rv-open-editor"
+                  :title="openInEditorHint(selectedFile)"
+                  data-test="rv-open-editor"
+                  @click="openInEditor(selectedFile)"
+                >
+                  {{ t('review.openInEditor', 'Open in editor') }}
+                </button>
               </div>
               <p v-if="diff && diff.error" class="act-none">{{ diff.error }}</p>
               <p v-else-if="diff && diff.parsed.binary" class="act-none">{{ t('review.binary', 'Binary file: no text diff.') }}</p>

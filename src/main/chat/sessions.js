@@ -946,7 +946,8 @@ export function createChatSessions(deps) {
       s.tools.delete(e.toolUseId)
       const owner = s.toolAgents.get(e.toolUseId) || provenance(e)
       s.toolAgents.delete(e.toolUseId)
-      emit(s.paneId, { type: 'toolResult', id: e.toolUseId, isError: e.isError === true, text: String(e.text ?? ''), ...liveToolImages(s, e), ...owner })
+      const editLine = Number.isSafeInteger(e.editLine) && e.editLine > 0 ? { editLine: e.editLine } : {}
+      emit(s.paneId, { type: 'toolResult', id: e.toolUseId, isError: e.isError === true, text: String(e.text ?? ''), ...liveToolImages(s, e), ...editLine, ...owner })
     })
     on('question', (e) => {
       if (!validId(e.requestId) || s.questions.has(e.requestId)) return

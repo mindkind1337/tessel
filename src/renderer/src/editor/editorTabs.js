@@ -20,7 +20,10 @@ export const samePath = (a, b) => pathKey(a) === pathKey(b)
 export const DIFF_SEP = '\u0000'
 // A version kept by Local History against the file (area 'local', its id in
 // commit's place: the explorer's Timeline).
+// An agent's edit shown from the chat (area 'agent', the edit's own key in
+// commit's place: its sides travel with the tab, never read from git).
 export function diffTabPath(full, area, commit = null, base = null) {
+  if (area === 'agent') return `${full}${DIFF_SEP}diff:agent:${String(commit || '')}` // i18n-ignore
   if (area === 'local') return `${full}${DIFF_SEP}diff:local:${String(commit || '')}` // i18n-ignore
   if (area === 'branch') return `${full}${DIFF_SEP}diff:branch:${String(base || '')}..${String(commit || '')}` // i18n-ignore
   if (area === 'commit') return `${full}${DIFF_SEP}diff:commit:${String(commit || '')}` // i18n-ignore

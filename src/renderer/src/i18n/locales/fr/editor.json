@@ -365,7 +365,8 @@
       "stagedDiff": "{{name}} (diff indexé)",
       "commitDiff": "{{name}} ({{commit}})",
       "branchDiff": "{{name}} ({{base}}..{{commit}})",
-      "localDiff": "{{name}} ({{source}} • {{date}}) ↔ {{name}}"
+      "localDiff": "{{name}} ({{source}} • {{date}}) ↔ {{name}}",
+      "agentDiff": "{{name}} (modification de l'agent)"
     },
     "tabs": {
       "aria": "Fichiers ouverts",
@@ -393,7 +394,9 @@
       "prev": "Modification précédente",
       "nextHint": "Modification suivante (F7)",
       "next": "Modification suivante",
-      "localUnreadable": "Cette version du fichier n'a pas pu être lue."
+      "localUnreadable": "Cette version du fichier n'a pas pu être lue.",
+      "agentSnippet": "Modification de l'agent : la modification seule (le fichier a changé depuis)",
+      "agentReadOnly": "Modification de l'agent : lecture seule"
     },
     "close": {
       "title": "Modifications non enregistrées",

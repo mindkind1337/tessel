@@ -73,6 +73,8 @@ export const SLOW_MS = 12_000
 // cost several processes per file on the host and hold the session's one
 // shell meanwhile; only this many files are counted (the rest show no count).
 export const REMOTE_UNTRACKED_COUNTS = 200
+// Paths of one terminal link batch looked up on a host (statLinks).
+export const MAX_LINK_STATS = 50
 
 const arg = (path) => rawArg(remotePathArg(path))
 const joinPath = (base, rel) => (rel ? (base.endsWith('/') ? `${base}${rel}` : `${base}/${rel}`) : base)
@@ -1156,6 +1158,44 @@ ${q.root}`, () => sparseInfoNow(q))
     return st ? { ok: true, exists: true, ...st } : { ok: true, exists: false, sig: null }
   }
 
+  // Paths printed in an SSH pane's terminal (ssh://<host>/…): which are files
+  // or folders, for its links. In a saved remote project only (the files
+  // Tessel can open), one round trip per project, at most MAX_LINK_STATS
+  // paths, and only on a host already signed in: hovering a terminal never
+  // starts a sign-in. -> { [path]: 'file' | 'dir' | null }
+  async function statLinks(paths) {
+    const out = {}
+    const groups = new Map() // "<hostId>\n<root path>" -> { loc, items: [[virtual, loc]] }
+    for (const v of Array.isArray(paths) ? paths.slice(0, MAX_LINK_STATS) : []) {
+      if (typeof v !== 'string') continue
+      out[v] = null
+      const loc = isRemotePath(v) ? locate(v) : null
+      if (!loc || !connectedQuietly(loc.hostId)) continue
+      const key = `${loc.hostId}\n${loc.root.path}`
+      if (!groups.has(key)) groups.set(key, { loc, items: [] })
+      groups.get(key).items.push([v, loc])
+    }
+    await Promise.all(
+      [...groups.values()].map(async ({ loc, items }) => {
+        const entry = sessions.get(loc.hostId)
+        const open = !!(entry && !entry.closed && entry.session && entry.session.state === 'ready')
+        const res = await call(loc.hostId, '__t_kinds', [arg(loc.root.path), ...items.map(([, l]) => arg(l.path))], {
+          cap: 64 * 1024,
+          timeoutMs: 10_000,
+          op: 'read',
+          background: true,
+          ...(open ? { ifOpen: true } : {})
+        })
+        if (!res || res.error || res.skipped || res.rc !== 0) return
+        const lines = String(Buffer.isBuffer(res.out) ? res.out.toString('latin1') : res.out || '').split('\n')
+        items.forEach(([v], i) => {
+          out[v] = lines[i] === 'f' ? 'file' : lines[i] === 'd' ? 'dir' : null
+        })
+      })
+    )
+    return out
+  }
+
   // { file, text, bom, expectSig, expectHash } -> like editorFiles.writeForEdit.
   // privateNew: a file created by this write is readable by its owner only
   // (0600; an automation's prompt).
@@ -1892,6 +1932,7 @@ ${root}`, () => gitWorktreesNow(root))
     trash,
     readForEdit,
     statForEdit,
+    statLinks,
     writeForEdit,
     headContent,
     readImage,

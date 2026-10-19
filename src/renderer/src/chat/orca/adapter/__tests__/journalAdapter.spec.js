@@ -121,6 +121,21 @@ describe('journal adapter', () => {
     expect(input('t3').changes.map((c) => c.path)).toEqual(['a.md', 'D:\\z'])
   })
 
+  it("a tool's block carries the folders its paths are read against and its edit's first line", () => {
+    const { state } = run([
+      { type: 'user', id: 'u1', status: 'accepted', text: 'go' },
+      { type: 'tool', id: 't1', name: 'apply_patch', input: '*** Begin Patch', cwd: 'C:\\proj.worktrees\\t1', status: 'running' },
+      { type: 'tool', id: 't2', name: 'Edit', input: { file_path: 'C:\\a.js' }, cwd: 'bad\u0000path', status: 'running' },
+      { type: 'toolResult', id: 't2', text: 'ok', editLine: 14 },
+      // A status-only update keeps what it had.
+      { type: 'tool', id: 't2', status: 'done' }
+    ])
+    const calls = messages(state).flatMap((m) => m.blocks).filter((b) => b.type === 'tool-call')
+    expect(calls[0]).toMatchObject({ name: 'apply_patch', cwd: 'C:\\proj.worktrees\\t1' })
+    expect(calls[1]).toMatchObject({ name: 'Edit', editLine: 14 })
+    expect(calls[1].cwd).toBeUndefined()
+  })
+
   it("a team message shows without its id header (that header is for the agent's reply_to)", () => {
     const { state } = run([
       { type: 'user', id: 't9', origin: 'team', from: '#2 Claude Code', status: 'accepted', text: '(message db16-pane-12-383991, reply to 0225-pane-6-336010) Merci, fusionné.' },
