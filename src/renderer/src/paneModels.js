@@ -3,3 +3,9 @@
 import { reactive } from 'vue'
 
 export const paneModels = reactive({})
+
+// The id of the model each agent pane runs (its catalog's id, as its header
+// reads it; the shown text when no listed model matches it), keyed by pane
+// id: TerminalPane writes it, a Live Share host checks guests' agents rules
+// with it.
+export const paneModelIds = reactive({})

@@ -91,7 +91,10 @@ export function presetRights(id) {
   for (const r of RIGHT_IDS) out[r] = on.includes(r)
   return cleanRights(out)
 }
+// (The agents rule is not part of a preset.)
 export function rightsPreset(rights) {
-  for (const id of Object.keys(RIGHTS_PRESETS)) if (sameRights(presetRights(id), rights)) return id
+  const plain = { ...cleanRights(rights) }
+  delete plain.agents
+  for (const id of Object.keys(RIGHTS_PRESETS)) if (sameRights(presetRights(id), plain)) return id
   return 'custom'
 }

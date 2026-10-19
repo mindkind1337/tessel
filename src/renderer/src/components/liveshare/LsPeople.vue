@@ -13,6 +13,7 @@ import { ref, computed, nextTick, inject } from 'vue'
 import { ShieldCheck, UserX, Eye, UserCheck } from 'lucide-vue-next'
 import ProjectChecks from './ProjectChecks.vue'
 import RightsChecks from './RightsChecks.vue'
+import LsAgents from './LsAgents.vue'
 import LsAvatars from './LsAvatars.vue'
 import { joinedGuests, waitingGuests, offlinePeople, personName, viaName } from '../../liveShareAccess'
 import { cleanRights } from '../../../../shared/liveShareRights'
@@ -53,6 +54,10 @@ function setProject(p, project, on) {
 }
 function setRight(p, right, on) {
   ctx.run(`${p.id}:right:${right}`, () => ctx.api.access({ subject: p.id, right, on })) // i18n-ignore
+}
+// The agents they may use (null: the share's setting).
+function setAgents(p, agents) {
+  ctx.run(`${p.id}:agents`, () => ctx.api.access({ subject: p.id, agents })) // i18n-ignore
 }
 async function trust(p) {
   const r = await ctx.run(`${p.id}:trust`, () => ctx.api.trust({ guestId: p.id }), t('liveShare.people.trustFailed', '{{name}} could not be trusted (they may have left, or their Tessel is too old).', { name: personName(p) })) // i18n-ignore
@@ -133,6 +138,7 @@ const waitingText = (g) => (g.code ? t('liveShare.share.guestWaitingCode', 'Wait
             <span class="lsd-sub">{{ t('liveShare.people.can', 'Can') }}</span>
             <RightsChecks compact :rights="p.rights || {}" :test-key="p.id" :busy="busyRight(p)" :label="t('liveShare.share.rightsLabel', 'What {{name}} can do', { name: personName(p) })" @toggle="(id, on) => setRight(p, id, on)" />
           </div>
+          <LsAgents :rule="(p.rights && p.rights.agents) || null" :can-type="!!(p.rights && p.rights.type)" :busy="ctx.busy(p.id + ':agents')" :test-key="p.id" @change="(rule) => setAgents(p, rule)" />
         </div>
         <p v-if="p.trusted" class="lsd-hint">{{ t('liveShare.people.trustedHint', 'Trusted: what you change here is kept for next time.') }}</p>
 

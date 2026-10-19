@@ -12,6 +12,14 @@
 // Rights from an older or newer Tessel are read through cleanRights: an id
 // this list does not know is dropped (never granted), and a known one is on
 // only when it is exactly true.
+//
+// Besides these on/off rights, rights may carry `agents`: which of the
+// host's agents and models the person may use (src/shared/liveShareAgents.js).
+// It is there only when one was set; without it, the share's setting counts
+// (every agent and model unless the host limits them), which is how every
+// record saved before it reads.
+import { cleanAgentRule, sameAgentRule } from './liveShareAgents'
+
 export const SHARE_RIGHTS = Object.freeze([
   // Type in the shared terminals and agents (run any command as the host).
   Object.freeze({ id: 'type', default: false }),
@@ -56,7 +64,16 @@ export function cleanRights(rights) {
   // A right that needs another is off without it (a record can only lose
   // rights this way, never gain one).
   for (const r of SHARE_RIGHTS) if (r.needs && !out[r.needs]) out[r.id] = false
+  const agents = cleanAgentRule(given && given.agents)
+  if (agents) out.agents = agents
   return out
+}
+
+// Rights with their agents rule set (null: none, the share's setting counts).
+export function withAgents(rights, rule) {
+  const out = cleanRights(rights)
+  delete out.agents
+  return cleanRights({ ...out, agents: rule })
 }
 
 // The right another one needs (pagesUse: pagesView), or null.
@@ -74,5 +91,5 @@ export function setRight(rights, id, on) {
 
 export const NO_RIGHTS = Object.freeze(cleanRights(null))
 
-// The same rights (every known id equal).
-export const sameRights = (a, b) => RIGHT_IDS.every((id) => !!(a && a[id]) === !!(b && b[id]))
+// The same rights (every known id equal, and the same agents rule).
+export const sameRights = (a, b) => RIGHT_IDS.every((id) => !!(a && a[id]) === !!(b && b[id])) && sameAgentRule(a && a.agents, b && b.agents)

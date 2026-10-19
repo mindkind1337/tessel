@@ -258,7 +258,8 @@ export function createShareGuest({ url, secret, name, signingKey, identityKey = 
         callbacks.onRights?.(rightsOf(msg.rights))
         return
       case 'notice':
-        callbacks.onNotice?.(String(msg.code || ''))
+        // (An agent refused: its name, and the model, come with it.)
+        callbacks.onNotice?.(String(msg.code || ''), { agent: String(msg.agent || ''), model: String(msg.model || '') })
         return
       case 'agents':
         if (hostSpeaks.has('agents') && Array.isArray(msg.agents)) callbacks.onAgents?.(msg.agents)

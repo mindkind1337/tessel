@@ -29,6 +29,7 @@ import LsInvitations from './liveshare/LsInvitations.vue'
 import LsPeople from './liveshare/LsPeople.vue'
 import LsAccess from './liveshare/LsAccess.vue'
 import LsTrusted from './liveshare/LsTrusted.vue'
+import LsAgents from './liveshare/LsAgents.vue'
 import { plainBridge } from '../liveShareBridge'
 
 const props = defineProps({
@@ -291,6 +292,12 @@ const peopleSummary = computed(() => {
 // The share's setting for guests (main's): hide what git ignores and what
 // looks like a secret. A change counts for every request from now on.
 const hideIgnored = computed(() => !(host.value.settings && host.value.settings.hideIgnored === false))
+// The agents guests may use, for whoever has no setting of its own (null:
+// all of them).
+const agentRule = computed(() => (host.value.settings && host.value.settings.agents) || null)
+function setAgentRule(rule) {
+  run('setting:agents', () => api.setSettings({ agents: rule }))
+}
 function setHideIgnored(event) {
   const box = event && event.target
   const want = box ? !!box.checked : !hideIgnored.value
@@ -486,6 +493,10 @@ function tabKeys(event, list, current, set) {
                 <span class="ls-hint">{{ t('liveShare.setting.rendezvousHint', 'When your address changes, Tessel leaves it, encrypted, on the free ntfy.sh relay so your guests find you (and looks there for a host’s when you are a guest). Off: nothing is sent there, and codes stop working when your address changes.') }}</span>
               </span>
             </label>
+            <div class="ls-setting ls-setting-agents" data-test="ls-agents-setting">
+              <LsAgents :rule="agentRule" :inheritable="false" :busy="pending.has('setting:agents')" test-key="share" @change="setAgentRule" />
+              <span class="ls-hint">{{ t('liveShare.setting.agentsHint', 'For every guest, unless you change it for an invitation or a person.') }}</span>
+            </div>
           </div>
 
           <template v-if="!sharing && !preparing">
@@ -988,6 +999,11 @@ function tabKeys(event, list, current, set) {
   font-size: 12.5px;
   color: var(--text);
   cursor: pointer;
+}
+.ls-setting-agents {
+  flex-direction: column;
+  gap: 2px;
+  cursor: default;
 }
 .ls-setting input {
   flex: none;

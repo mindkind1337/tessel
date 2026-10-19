@@ -9,6 +9,7 @@ import { ref, computed, nextTick, inject } from 'vue'
 import { ShieldOff, Pencil } from 'lucide-vue-next'
 import ProjectChecks from './ProjectChecks.vue'
 import RightsChecks from './RightsChecks.vue'
+import LsAgents from './LsAgents.vue'
 import LsAvatars from './LsAvatars.vue'
 import { trustedPeople, personName } from '../../liveShareAccess'
 import { formatWhen } from '../../timeFormat'
@@ -45,6 +46,10 @@ function setProject(p, project, on) {
 }
 function setRight(p, right, on) {
   ctx.run(`${p.id}:right:${right}`, () => ctx.api.access({ subject: p.id, right, on })) // i18n-ignore
+}
+// The agents they may use (null: the share's setting).
+function setAgents(p, agents) {
+  ctx.run(`${p.id}:agents`, () => ctx.api.access({ subject: p.id, agents })) // i18n-ignore
 }
 
 function startRename(p) {
@@ -121,6 +126,7 @@ async function untrust(p) {
             <span class="lsd-sub">{{ t('liveShare.people.can', 'Can') }}</span>
             <RightsChecks compact :rights="p.rights || {}" :test-key="p.id" :busy="busyRight(p)" :label="t('liveShare.share.rightsLabel', 'What {{name}} can do', { name: personName(p) })" @toggle="(id, on) => setRight(p, id, on)" />
           </div>
+          <LsAgents :rule="(p.rights && p.rights.agents) || null" :can-type="!!(p.rights && p.rights.type)" :busy="ctx.busy(p.id + ':agents')" :test-key="p.id" @change="(rule) => setAgents(p, rule)" />
         </div>
         <div v-if="untrusting === p.id" class="lsd-confirm" role="group" :aria-label="t('liveShare.trusted.untrustTitle', 'Stop trusting {{name}}?', { name: personName(p) })" @keydown.escape.stop.prevent="cancelUntrust(p)">
           <p class="lsd-confirm-text" v-text="t('liveShare.trusted.untrustText2', 'Stop trusting {{name}}? If they are connected, they are disconnected; to come back they need an invitation and your yes.', { name: personName(p) })"></p>

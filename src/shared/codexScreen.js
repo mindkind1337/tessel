@@ -4,9 +4,12 @@
 // runs right now, a /model or a "switch model?" answer included, before its
 // next turn writes it to the rollout.
 //
-// Only a line below the input box ("›") counts, so a line of the
-// conversation is never taken for the footer; no input box on screen (a
-// picker or an approval drawn over it): null, what the pane showed stays.
+// Only the footer counts: the last block of lines under the input box ("›"),
+// after the blank line that closes the box. A line of the conversation, and
+// a line of the draft typed in the box (a Live Share guest's included, which
+// could otherwise pass for the model), is never taken for it; no input box
+// on screen (a picker or an approval drawn over it): null, what the pane
+// showed stays.
 
 const EFFORTS = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']
 const SEGMENT = /^([A-Za-z][\w.:/-]*(?: [A-Za-z0-9][\w.:/-]*){0,2}?)(?:\s+(none|minimal|low|medium|high|xhigh|max))?(?:\s+fast)?$/i
@@ -26,8 +29,20 @@ export function codexModelOnScreen(lines, models = []) {
     }
   }
   if (prompt === -1) return null
+  // The footer: after the last blank line under the box (blank lines at the
+  // bottom of the screen aside), its first two lines.
+  let end = rows.length
+  while (end > prompt + 1 && !rows[end - 1].trim()) end--
+  let blank = -1
+  for (let i = end - 1; i > prompt; i--) {
+    if (!rows[i].trim()) {
+      blank = i
+      break
+    }
+  }
+  if (blank === -1) return null
   const list = Array.isArray(models) ? models.filter((m) => m && typeof m.id === 'string') : []
-  for (let i = prompt + 1; i < rows.length; i++) {
+  for (let i = blank + 1; i < Math.min(end, blank + 3); i++) {
     const first = rows[i].trim().split(/\s+·\s+/)[0]
     const m = SEGMENT.exec(first)
     if (!m) continue

@@ -110,7 +110,35 @@ export const hidesPrivate = (settings) => !(settings && settings.hideIgnored ===
 // Files that run something, or tell an agent or a tool what to run, by
 // themselves: written by a guest only with the type right too. extra: more
 // protected paths of that project (the folder its core.hooksPath names).
-const PROTECTED_FOLDERS = new Set(['.claude', '.codex', '.gemini', '.cursor', '.vscode', '.husky', '.githooks', '.tessel'])
+// Agents' own folders (their settings, commands, MCP servers, hooks).
+const PROTECTED_FOLDERS = new Set([
+  '.claude',
+  '.codex',
+  '.gemini',
+  '.cursor',
+  '.vscode',
+  '.husky',
+  '.githooks',
+  '.tessel',
+  '.opencode',
+  '.continue',
+  '.windsurf',
+  '.kiro',
+  '.grok',
+  '.crush',
+  '.roo',
+  '.cline',
+  '.amazonq',
+  '.aider',
+  '.goose',
+  '.qwen',
+  '.kimi',
+  '.amp',
+  '.junie',
+  '.augment',
+  '.copilot',
+  '.zed'
+])
 const PROTECTED_FILES = new Set([
   '.mcp.json',
   '.envrc',
@@ -129,7 +157,25 @@ const PROTECTED_FILES = new Set([
   '.cursorrules',
   '.windsurfrules',
   '.clinerules',
-  'copilot-instructions.md'
+  'copilot-instructions.md',
+  '.goosehints',
+  '.roomodes',
+  'qwen.md',
+  'grok.md',
+  // Agents' settings files (what they run, their MCP servers and models).
+  'opencode.json',
+  'opencode.jsonc',
+  'crush.json',
+  '.crush.json',
+  '.aider.conf.yml',
+  '.aider.conf.yaml',
+  '.aider.model.settings.yml',
+  '.aider.model.metadata.json',
+  '.aiderignore',
+  '.cursorignore',
+  '.geminiignore',
+  '.continuerc.json',
+  'continue.config.json'
 ])
 const PROTECTED_PATTERNS = [/^\.?lefthook(-local)?\.ya?ml$/, /^\.lintstagedrc(\..+)?$/, /^lint-staged\.config\.[cm]?[jt]s$/, /^\.?commitlint(rc|\.config)(\..+)?$/]
 export function isProtectedRel(rel, extra = null) {

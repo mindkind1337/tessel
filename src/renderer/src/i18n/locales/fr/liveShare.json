@@ -90,7 +90,9 @@
       "editPart": "modifier ses fichiers",
       "gitPart": "indexer et faire des commits",
       "tasksPart": "gérer ses tâches",
-      "pagesViewPart": "voir ses pages de navigateur"
+      "pagesViewPart": "voir ses pages de navigateur",
+      "agentsLimited": "Certains agents ou modèles de l’hôte ne sont pas pour les invités : vous pouvez regarder leurs volets, pas les ouvrir ni y taper.",
+      "agentsTypeCaveat": "Toute personne qui peut taper — dans un terminal ou dans un agent que l’hôte autorise — peut toujours lancer n’importe quel programme, y compris les agents et modèles exclus. Ces limites ne tiennent pleinement que pour les invités qui ne peuvent pas taper."
     },
     "ask": {
       "title": "{{name}} veut rejoindre votre Live Share",
@@ -177,7 +179,14 @@
       "trustFullJoined": "Liste des personnes de confiance pleine ({{max}}) : {{name}} est entré·e sans être une personne de confiance. Retirez quelqu'un des personnes de confiance pour lui faire confiance.",
       "notTrustable": "{{name}} est entré·e sans être une personne de confiance : son Tessel est trop ancien pour ça (il doit être mis à jour).",
       "actionFlagged": "{{action}} (instructions d'un agent)",
-      "taskFailed": "{{host}} n'a pas fait ce changement : {{reason}}"
+      "taskFailed": "{{host}} n'a pas fait ce changement : {{reason}}",
+      "thatAgent": "cet agent",
+      "typeDenied": "{{host}} ne laisse pas les invités utiliser {{agent}} : vous pouvez regarder son volet, pas y taper.",
+      "modelDenied": "{{host}} ne laisse pas les invités utiliser {{model}} avec {{agent}}.",
+      "modelSwitchDenied": "{{host}} ne laisse pas les invités passer {{agent}} à ce modèle.",
+      "agentDenied": "{{host}} ne laisse pas les invités utiliser {{agent}}.",
+      "ruleBreach": "{{name}} a tapé dans un volet qui exécute maintenant {{what}}, que vous ne laissez pas utiliser aux invités. Tessel y a appuyé sur Échap : vérifiez ce volet.",
+      "checking": "Le Tessel de {{host}} vérifie ce qui s’exécute dans ce volet : retapez dans un instant."
     },
     "toolbar": {
       "label": "Live Share",
@@ -235,7 +244,8 @@
       "section": "Sur l'ordinateur de {{host}}",
       "terminal": "Terminal (le shell de {{host}})",
       "noAgents": "{{host}} ne propose aucun agent.",
-      "asks": "{{host}} reçoit d'abord la demande : ça s'ouvre après son accord."
+      "asks": "{{host}} reçoit d'abord la demande : ça s'ouvre après son accord.",
+      "agentModel": "{{agent}} · {{model}}"
     },
     "error": {
       "missing": "Cette invitation n'existe plus (elle a expiré ou a été révoquée).",
@@ -531,7 +541,8 @@
       "hideIgnored": "Masquer aux invités les fichiers ignorés et secrets",
       "hideIgnoredHint": "Les fichiers ignorés par git et ceux qui ressemblent à des secrets (.env, clés, identifiants) restent hors des Fichiers, de la recherche et des Changements des invités. .git et .tessel sont toujours masqués.",
       "rendezvous": "Me retrouver après un redémarrage (utilise ntfy.sh)",
-      "rendezvousHint": "Quand votre adresse change, Tessel la dépose, chiffrée, sur le relais gratuit ntfy.sh pour que vos invités vous retrouvent (et y cherche celle d'un hôte quand vous êtes invité). Désactivé : rien n'y est envoyé, et les codes cessent de fonctionner quand votre adresse change."
+      "rendezvousHint": "Quand votre adresse change, Tessel la dépose, chiffrée, sur le relais gratuit ntfy.sh pour que vos invités vous retrouvent (et y cherche celle d'un hôte quand vous êtes invité). Désactivé : rien n'y est envoyé, et les codes cessent de fonctionner quand votre adresse change.",
+      "agentsHint": "Pour chaque invité, sauf si vous le changez pour une invitation ou une personne."
     },
     "recent": {
       "title": "Actions récentes des invités",
@@ -549,6 +560,28 @@
       "notFound": "Ce panneau n'est plus partagé avec vous.",
       "failed": "L'image n'a pas pu être collée du côté de {{host}}.",
       "dropImagesOnly": "Seules des images peuvent être déposées sur un panneau de l'hôte."
+    },
+    "agents": {
+      "title": "Agents qu’ils peuvent utiliser",
+      "noneInstalled": "Aucun agent installé",
+      "all": "Tous les agents",
+      "some": "{{count}} agents sur {{total}}",
+      "none": "Aucun agent",
+      "someModels": "{{agents}}, certains modèles seulement",
+      "notLater": "{{agents}}, pas ceux que vous ajoutez plus tard",
+      "following": "Comme le réglage du partage : {{summary}}",
+      "allModels": "Tous les modèles",
+      "someModelsOf": "{{count}} modèles sur {{total}}",
+      "follow": "Comme le réglage du partage",
+      "noneHint": "Aucun agent n’est installé et activé dans Paramètres > Agents.",
+      "modelsOf": "Modèles de {{agent}}",
+      "allModelsLater": "Tous les modèles (y compris les nouveaux)",
+      "later": "Autoriser les agents que j’ajoute plus tard",
+      "laterHint": "Les agents que vous installez ou auxquels vous vous abonnez après ceci.",
+      "changed": "les agents qu’ils peuvent utiliser (la nouvelle liste)",
+      "hint2": "Ils voient toujours les volets des agents que vous excluez, mais ne peuvent ni les ouvrir ni y taper ; Tessel refuse aussi de passer un agent à un modèle que vous excluez (au mieux).",
+      "typeCaveat": "Toute personne qui peut taper — dans un terminal ou dans un agent que vous autorisez — peut toujours lancer n’importe quel programme, y compris les agents et modèles que vous excluez. Ces limites ne tiennent pleinement que pour les invités qui ne peuvent pas taper.",
+      "typeWarn": "Ils peuvent taper : toute personne qui peut taper — dans un terminal ou dans un agent que vous autorisez — peut toujours lancer n’importe quel programme, y compris les agents et modèles que vous excluez."
     }
   }
 }

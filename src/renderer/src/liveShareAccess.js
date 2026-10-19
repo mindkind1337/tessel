@@ -14,6 +14,7 @@
 // keep the trusted entry only.
 import { t } from './i18n'
 import { formatDuration, formatWhen } from './timeFormat'
+import { sameAgentRule } from '../../shared/liveShareAgents'
 
 const list = (x) => (Array.isArray(x) ? x : [])
 
@@ -145,11 +146,14 @@ export function grantDiff(before, after) {
   const br = (before && before.rights) || {}
   const ar = (after && after.rights) || {}
   const ids = new Set([...Object.keys(br), ...Object.keys(ar)])
+  // A changed agents rule ('agents') goes with what is taken away: it may
+  // take agents or models away (main applies it with the removals).
+  const agents = !sameAgentRule(br.agents, ar.agents)
   return {
     removedProjects: [...bp].filter((id) => !ap.has(id)),
     addedProjects: [...ap].filter((id) => !bp.has(id)),
-    removedRights: [...ids].filter((id) => br[id] === true && ar[id] !== true),
-    addedRights: [...ids].filter((id) => ar[id] === true && br[id] !== true)
+    removedRights: [...[...ids].filter((id) => id !== 'agents' && br[id] === true && ar[id] !== true), ...(agents ? ['agents'] : [])],
+    addedRights: [...ids].filter((id) => id !== 'agents' && ar[id] === true && br[id] !== true)
   }
 }
 

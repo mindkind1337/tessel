@@ -14,7 +14,8 @@
 import { ref, reactive, computed, watch, nextTick, onMounted, useId } from 'vue'
 import RightsChecks from './RightsChecks.vue'
 import ProjectChecks from './ProjectChecks.vue'
-import { cleanRights, setRight } from '../../../../shared/liveShareRights'
+import LsAgents from './LsAgents.vue'
+import { cleanRights, setRight, sameRights, withAgents } from '../../../../shared/liveShareRights'
 import { grantDiff, inviteExpiry, inviteName } from '../../liveShareAccess'
 import { rightWords, rightsShort, presetRights, rightsPreset } from '../../liveShareRights'
 import { t } from '../../i18n'
@@ -90,6 +91,10 @@ function toggleProject(id, on) {
 function toggleRight(id, on) {
   form.rights = setRight(form.rights, id, on)
 }
+// The agents its people may use (null: the share's setting).
+function setAgents(rule) {
+  form.rights = withAgents(form.rights, rule)
+}
 
 // The rights as a preset (one click), each box behind Customize: open by
 // itself for rights that match no preset.
@@ -107,8 +112,9 @@ const presetHint = computed(() => {
   if (preset.value === 'full') return t('liveShare.invite.presetFullHint', 'Every right, typing included: they can run any command on this PC as you. Only for people you trust.')
   return t('liveShare.invite.presetCustomHint', 'Custom: {{rights}}', { rights: rightsShort(form.rights) })
 })
+// (A preset keeps the agents chosen.)
 function choosePreset(id) {
-  form.rights = presetRights(id)
+  form.rights = withAgents(presetRights(id), form.rights.agents || null)
 }
 
 // The whole invitation as asked for.
@@ -135,7 +141,7 @@ const patch = computed(() => {
   const before = new Set(inv.projects || [])
   if (s.projects.length !== before.size || s.projects.some((id) => !before.has(id))) out.projects = s.projects
   if (s.later !== !!inv.later) out.later = s.later
-  if (Object.keys(s.rights).some((id) => !!s.rights[id] !== !!(inv.rights && inv.rights[id]))) out.rights = s.rights
+  if (!sameRights(s.rights, cleanRights(inv.rights))) out.rights = s.rights
   return out
 })
 const changed = computed(() => !editing.value || Object.keys(patch.value).length > 0)
@@ -145,7 +151,7 @@ const hasRemovals = computed(() => !!diff.value && (diff.value.removedProjects.l
 const hasAdditions = computed(() => !!diff.value && (diff.value.addedProjects.length > 0 || diff.value.addedRights.length > 0))
 const joined = computed(() => (props.invite && Number.isInteger(props.invite.joined) ? props.invite.joined : 0))
 const nameOf = (id) => (props.projects.find((p) => p.id === id) || {}).name || id
-const rightName = (id) => (rightWords(id) || { short: id }).short
+const rightName = (id) => (id === 'agents' ? t('liveShare.agents.changed', 'the agents they may use (the new list)') : (rightWords(id) || { short: id }).short)
 const removalsText = computed(() => (diff.value ? [...diff.value.removedProjects.map(nameOf), ...diff.value.removedRights.map(rightName)].join(', ') : ''))
 const additionsText = computed(() => (diff.value ? [...diff.value.addedProjects.map(nameOf), ...diff.value.addedRights.map(rightName)].join(', ') : ''))
 
@@ -220,6 +226,7 @@ onMounted(() => {
         </div>
         <p class="lsi-preset-hint" :class="{ warn: preset === 'full' }" data-test="ls-invite-preset-hint">{{ presetHint }}</p>
         <RightsChecks v-if="showRightBoxes" class="lsi-rights" :rights="form.rights" test-key="invite" :label="t('liveShare.invite.rights', 'What they can do (you can change it when you let them in)')" @toggle="toggleRight" />
+        <LsAgents class="lsi-agents" :rule="form.rights.agents || null" :can-type="form.rights.type === true" test-key="invite" @change="setAgents" />
       </fieldset>
 
       <fieldset class="lsi-fieldset">

@@ -296,6 +296,35 @@ export function listProcesses() {
   })
 }
 
+// Every agent running under each shell, at any depth Tessel looks (a
+// Live Share host checks what really runs in a pane a guest types in: the
+// agent it was started with, its shell again, or another agent started from
+// it). procs: listProcesses(); shells: { paneId: shellPid }. -> { paneId:
+// [agent ids] }
+export function agentsInTrees(procs, shells) {
+  const children = new Map()
+  for (const p of procs || []) {
+    if (!children.has(p.ppid)) children.set(p.ppid, [])
+    children.get(p.ppid).push(p)
+  }
+  const out = {}
+  for (const [paneId, pid] of Object.entries(shells || {})) {
+    const found = []
+    let level = Number.isInteger(pid) ? children.get(pid) || [] : []
+    const seen = new Set()
+    for (let depth = 0; depth < 8 && level.length; depth++) {
+      for (const p of level) {
+        seen.add(p.pid)
+        const a = agentOf(p)
+        if (a && a !== 'ollama' && !found.includes(a)) found.push(a)
+      }
+      level = level.flatMap((p) => children.get(p.pid) || []).filter((p) => !seen.has(p.pid))
+    }
+    out[paneId] = found
+  }
+  return out
+}
+
 // The first agent (other than Ollama) under a process.
 function agentBelow(pid, children) {
   let level = children.get(pid) || []

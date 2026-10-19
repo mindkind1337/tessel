@@ -140,7 +140,8 @@ import crypto from 'crypto'
 import { WebSocketServer } from 'ws'
 import { newNonce, newKeyPair, sharedSecret, sessionKeys, createChannel, commitmentMatches, bindingSigned, signBinding, newSigningKey, identitySigned, identityFingerprint, NONCE_BYTES, COMMIT_BYTES, KX_BYTES } from './shareCrypto.js'
 import { SHARE_FEATURES, cleanFeatures, CHAT_LIMITS, CHAT_CODES } from './shareChat.js'
-import { NO_RIGHTS, cleanRights, sameRights, isRightId } from '../../shared/liveShareRights'
+import { NO_RIGHTS, cleanRights, sameRights, isRightId, withAgents } from '../../shared/liveShareRights'
+import { effectiveAgentRule, agentAllowed, modelAllowed, allowedModels, paneTypeAllowed, agentsForGuest, followTypedLine, refusedModelSwitch, refusedKeys, ruleRestricts, isModelId } from '../../shared/liveShareAgents'
 import { cleanReq, cleanId, cleanSub, subKey, parseSubKey, TOPICS, CHANNEL_LIMITS } from './shareChannel.js'
 import { MAX_PROJECTS, isProjectId, cleanProjectIds, cleanName, cleanGrant } from './shareGrant.js'
 import { createAccess, pathOfUrl, keyHash, personId, isInviteId, INVITE_TTL_MS } from './shareAccess.js'
@@ -253,22 +254,36 @@ export const CLOSE_OUTDATED = 4003
 
 // An agent id the host lists (its Tessel's ids: claude, codex, opencode...).
 export const isAgentId = (id) => typeof id === 'string' && /^[A-Za-z0-9][\w.-]{0,39}$/.test(id)
-// The agents the host lists for guests: [{ id, name }], each once, bounded.
+// An agent's models as listed (the host's rights editor; a guest's menu when
+// the host limits them): [{ id, label }], each once, bounded.
+const MAX_AGENT_MODELS = 64
+function cleanModels(list) {
+  const out = []
+  for (const m of Array.isArray(list) ? list : []) {
+    if (out.length >= MAX_AGENT_MODELS) break
+    if (!m || !isModelId(m.id) || out.some((x) => x.id === m.id)) continue
+    out.push({ id: m.id, label: String(cleanName(typeof m.label === 'string' ? m.label : '') || m.id).slice(0, 80) })
+  }
+  return out
+}
+// The agents the host lists for guests: [{ id, name, models? }], each once,
+// bounded.
 export function cleanAgents(list) {
   const out = []
   for (const a of Array.isArray(list) ? list : []) {
     if (out.length >= MAX_AGENTS) break
     if (!a || !isAgentId(a.id) || out.some((x) => x.id === a.id)) continue
-    out.push({ id: a.id, name: cleanName(a.name) || a.id })
+    const models = cleanModels(a.models)
+    out.push({ id: a.id, name: cleanName(a.name) || a.id, ...(models.length ? { models } : {}) })
   }
   return out
 }
-// What a guest asks to open: a terminal, or an agent by its id, in a
-// project. Nothing else it sends is kept.
+// What a guest asks to open: a terminal, or an agent by its id (with the
+// model it picked, if any), in a project. Nothing else it sends is kept.
 export function openSpec(spec) {
   if (!spec || typeof spec !== 'object' || !isProjectId(spec.project)) return null
   if (spec.kind === 'terminal') return { kind: 'terminal', project: spec.project }
-  if (spec.kind === 'agent' && isAgentId(spec.agent)) return { kind: 'agent', agent: spec.agent, project: spec.project }
+  if (spec.kind === 'agent' && isAgentId(spec.agent)) return { kind: 'agent', agent: spec.agent, project: spec.project, ...(isModelId(spec.model) ? { model: spec.model } : {}) }
   return null
 }
 
@@ -312,12 +327,28 @@ export function stripTerminalReplies(data) {
 //                             data may be a Promise of the text
 //   write(id, data)
 //   openPane(spec, guest)  -> spec: { kind: 'terminal' } | { kind: 'agent',
-//                             agent } and project (one of the guest's)
+//                             agent, model?, models? } and project (one of
+//                             the guest's); model: the one it picked, models:
+//                             the only ones it may run (null: any)
 //   askOpen(spec, guest)   -> optional: a guest without the right asks the
 //                             host to open that (the host's answer is the
 //                             window's)
 //   agents()               -> optional: the agents guests may ask for, [{ id,
-//                             name }]; without it, no agent is opened
+//                             name, models? }]; without it, no agent is opened
+//   agentDefault()         -> optional: the share's agents rule
+//                             (liveShareAgents.js), for whoever has none of
+//                             its own; none: every agent and model
+//   paneAgent(id)          -> optional: what runs in a pane, { agent (null:
+//                             a shell), models (the ids its model is known
+//                             by), others (other agents running in it),
+//                             unsure (being checked) }, or null (not known
+//                             yet); typing in it follows the guest's agents
+//                             rule, a pane not known or being checked takes
+//                             nothing from a guest whose rule limits agents
+//   paneTyped(id, data)    -> optional: a guest typed that in a pane
+//   onRuleBreach(info)     -> optional: a pane a guest typed in switched to
+//                             what its rule refuses ({ guest, pane, agent,
+//                             model }); Esc was pressed in it
 //   closePane(id, guest)
 //   askApproval(guest)     -> Promise<boolean | { yes, projects, rights,
 //                             trust }>; guest: publicGuest's, with offer
@@ -454,6 +485,20 @@ export function createShareHost({ secret = null, hostName, callbacks, log = () =
     if (g.person) return access.viaOf(g.person)
     const inv = g.entry ? access.liveInvite(g.entry) : null
     return inv ? { id: inv.id, label: inv.label } : null
+  }
+  // The agents rule that counts for a guest (its own, else the share's), the
+  // rights it is told (with that rule), and the agents its menu lists.
+  const agentRuleOf = (g) => effectiveAgentRule(g.rights && g.rights.agents, typeof callbacks.agentDefault === 'function' ? callbacks.agentDefault() : null)
+  function guestRights(g) {
+    const rest = { ...g.rights }
+    delete rest.agents
+    const rule = agentRuleOf(g)
+    return rule ? { ...rest, agents: rule } : rest
+  }
+  const guestAgents = (g) => (callbacks.agents ? agentsForGuest(agentRuleOf(g), cleanAgents(callbacks.agents())) : [])
+  function sendRights(g) {
+    send(g, { t: 'rights', rights: guestRights(g) })
+    if (speaksAgents(g) && callbacks.agents) send(g, { t: 'agents', agents: guestAgents(g) })
   }
   const publicGuest = (g) => ({
     id: g.id,
@@ -1258,7 +1303,7 @@ export function createShareHost({ secret = null, hostName, callbacks, log = () =
       const { projectsChanged, rightsChanged } = syncGrant(g)
       if (projectsChanged || rightsChanged) revalidate(g)
       if (projectsChanged) sendProjects(g, projects)
-      if (rightsChanged) send(g, { t: 'rights', rights: { ...g.rights } })
+      if (rightsChanged) sendRights(g)
       if (projectsChanged || rightsChanged) any = true
     }
     if (any) {
@@ -1304,10 +1349,10 @@ export function createShareHost({ secret = null, hostName, callbacks, log = () =
     // This host's key, and its signature of this connection (a returning
     // guest checks it with the key it got the first time).
     const proof = { hostKey: hostKey.publicRaw.toString('base64'), hostSig: signBinding(hostKey, g.binding).toString('base64') }
-    const agents = speaksAgents(g) && callbacks.agents ? { agents: cleanAgents(callbacks.agents()) } : {}
+    const agents = speaksAgents(g) && callbacks.agents ? { agents: guestAgents(g) } : {}
     // The share's rendezvous secret (inside the sealed channel).
     const rdv = Buffer.isBuffer(rendezvousSecret) && rendezvousSecret.length === 32 ? { rdv: rendezvousSecret.toString('base64') } : {}
-    send(g, { t: 'welcome', host: hostName, protocol: SHARE_PROTOCOL, features: [...hostFeatures], projects: mine, rights: { ...g.rights }, ...agents, ...proof, ...rdv })
+    send(g, { t: 'welcome', host: hostName, protocol: SHARE_PROTOCOL, features: [...hostFeatures], projects: mine, rights: guestRights(g), ...agents, ...proof, ...rdv })
     for (const id of where.keys()) subscribe(g, id)
   }
 
@@ -1449,7 +1494,12 @@ export function createShareHost({ secret = null, hostName, callbacks, log = () =
     // ones its answer lists (none when it lists none); a plain yes (true):
     // all of them. Its rights: the answer's (none when not said).
     const given = answer === true ? [...sharedIds()] : cleanProjectIds(answer.projects)
-    const grant = cleanGrant({ projects: given.filter((id) => sharedIds().has(id)), rights: answer === true ? null : answer.rights })
+    // The invitation's agents rule goes with it unless the answer gives one
+    // (a plain yes, or an answer from a prompt that does not show it, never
+    // drops it: that would let the guest use every agent).
+    const answered = answer === true ? null : answer.rights
+    const ownRule = answered && typeof answered === 'object' && answered.agents ? answered.agents : inv.grant.rights.agents || null
+    const grant = cleanGrant({ projects: given.filter((id) => sharedIds().has(id)), rights: withAgents(answered, ownRule) })
     // Trusted from now on, when the host said so (only with an identity key;
     // the host's window checks there is room in the list first).
     if (answer !== true && answer.trust === true && identity && trust) {
@@ -1510,6 +1560,95 @@ export function createShareHost({ secret = null, hostName, callbacks, log = () =
   }
   // The agents the host lists now (their ids).
   const agentIds = () => new Set(callbacks.agents ? cleanAgents(callbacks.agents()).map((a) => a.id) : [])
+  // What the host's agent is called, for a guest's notice.
+  const agentName = (id) => (callbacks.agents ? cleanAgents(callbacks.agents()).find((a) => a.id === id) || {} : {}).name || id
+  // A refusal said to a guest: once in a while per pane, not at every key
+  // it types.
+  const DENIED_AGAIN_MS = 10000
+  function sayDenied(g, key, notice) {
+    const at = (g.deniedAt ||= new Map())
+    const now = Date.now()
+    if (now - (at.get(key) || 0) < DENIED_AGAIN_MS) return
+    if (at.size > 64) at.clear()
+    at.set(key, now)
+    send(g, { t: 'notice', ...notice })
+  }
+  // What each person typed lately, per pane (its line as the agent reads
+  // it, and when): kept per person, so a new connection does not start a
+  // line over.
+  const personTyping = new WeakMap()
+  function typingOf(g) {
+    const key = countsOf(g)
+    let t = personTyping.get(key)
+    if (!t) personTyping.set(key, (t = { lines: new Map(), at: new Map() }))
+    return t
+  }
+  const paneNow = (id) => (typeof callbacks.paneAgent === 'function' ? callbacks.paneAgent(id) : undefined)
+  // Whether a guest may type this in a pane (its agents rule): never in a
+  // pane running an agent or a model it may not use (it still sees it), nor
+  // in a pane not known yet or whose program is being checked (after an
+  // Enter there, until the host has looked again at what runs in it); and
+  // where its agent's models are limited, never a /model or /config switch
+  // to a model it may not use, nor a key that brings back text Tessel can't
+  // follow. Best effort: see liveShareAgents.js.
+  function mayTypeIn(g, id, data) {
+    const rule = agentRuleOf(g)
+    if (!ruleRestricts(rule)) return true
+    const pane = paneNow(id)
+    // A host that says nothing of its panes (older callers): as before.
+    if (pane === undefined) return true
+    if (!pane || pane.unsure) {
+      sayDenied(g, `checking:${id}`, { code: 'checking' })
+      return false
+    }
+    if (!paneTypeAllowed(rule, pane)) {
+      // The agent it refuses: another one running there, else the pane's.
+      const other = (Array.isArray(pane.others) ? pane.others : []).find((x) => !agentAllowed(rule, x) || allowedModels(rule, x))
+      const model = (Array.isArray(pane.models) ? pane.models : []).find(Boolean) || ''
+      const notice = !other && pane.agent && agentAllowed(rule, pane.agent) ? { code: 'model-denied', agent: agentName(pane.agent), model: String(model).slice(0, 80) } : { code: 'type-denied', agent: agentName(other || pane.agent || '') }
+      sayDenied(g, `${notice.code}:${id}`, notice)
+      return false
+    }
+    if (!pane.agent || !allowedModels(rule, pane.agent)) return true
+    const typing = typingOf(g)
+    const switchRefused = () => {
+      typing.lines.delete(id)
+      sayDenied(g, `switch:${id}`, { code: 'model-denied', agent: agentName(pane.agent), model: '' })
+      return false
+    }
+    if (refusedKeys(data)) return switchRefused()
+    const { state, submitted } = followTypedLine(typing.lines.get(id), data)
+    if (submitted.some((x) => refusedModelSwitch(rule, pane.agent, x))) return switchRefused()
+    if (typing.lines.size > 64 && !typing.lines.has(id)) typing.lines.clear()
+    typing.lines.set(id, state)
+    return true
+  }
+  // A pane switched to an agent or a model a guest who typed there in the
+  // last half minute may not use (a switch the line above did not see): Esc
+  // is pressed in it (it closes a model picker; a turn started is
+  // interrupted), and the host is told. Once per pane every half minute.
+  const SWITCH_WATCH_MS = 30000
+  const breachAt = new Map()
+  function paneChanged(id) {
+    const pane = paneNow(id)
+    if (!pane) return
+    const t = now()
+    if (t - (breachAt.get(id) || 0) < SWITCH_WATCH_MS) return
+    for (const g of guests.values()) {
+      if (g.state !== 'joined' || !g.person) continue
+      const at = typingOf(g).at.get(id) || 0
+      if (!at || t - at > SWITCH_WATCH_MS) continue
+      const rule = agentRuleOf(g)
+      if (!ruleRestricts(rule) || paneTypeAllowed(rule, pane)) continue
+      breachAt.set(id, t)
+      if (breachAt.size > 256) breachAt.delete(breachAt.keys().next().value)
+      const model = (Array.isArray(pane.models) ? pane.models : []).find(Boolean) || ''
+      log(`guest ${g.name || '?'} typed in pane ${id}, which now runs ${pane.agent || '?'} ${model} (not allowed for them): Esc pressed`)
+      callbacks.write(id, '\x1b')
+      callbacks.onRuleBreach?.({ guest: publicGuest(g), pane: id, agent: pane.agent ? agentName(pane.agent) : '', model: String(model).slice(0, 80) })
+      return
+    }
+  }
 
   function onMessage(g, msg) {
     if (!msg || typeof msg.t !== 'string') return drop(g, 'protocol')
@@ -1533,8 +1672,14 @@ export function createShareHost({ secret = null, hostName, callbacks, log = () =
       case 'write': {
         if (!g.rights.type || typeof msg.data !== 'string' || msg.data.length > MAX_WRITE || !canSee(g, msg.id)) return
         const data = stripTerminalReplies(msg.data)
-        if (!data) return
+        if (!data || !mayTypeIn(g, msg.id, data)) return
         callbacks.write(msg.id, data)
+        // (When, per person: the host's safety net; an Enter: the host looks
+        // again at what runs there.)
+        const typing = typingOf(g)
+        typing.at.set(msg.id, now())
+        if (typing.at.size > 64) typing.at.delete(typing.at.keys().next().value)
+        callbacks.paneTyped?.(msg.id, data)
         typed(g, msg.id)
         return
       }
@@ -1543,6 +1688,25 @@ export function createShareHost({ secret = null, hostName, callbacks, log = () =
         const spec = openSpec(msg.spec)
         if (!spec || !g.projects.has(spec.project) || !sharedIds().has(spec.project)) return
         if (spec.kind === 'agent' && !agentIds().has(spec.agent)) return send(g, { t: 'notice', code: 'agent' })
+        // An agent or a model its agents rule leaves out: refused, whatever
+        // its rights (the host is not even asked); the models it may run go
+        // with it (the host's window starts one of them).
+        if (spec.kind === 'agent') {
+          const rule = agentRuleOf(g)
+          if (!agentAllowed(rule, spec.agent)) {
+            log(`guest ${g.name || '?'} may not use the agent ${spec.agent}`)
+            return send(g, { t: 'notice', code: 'agent-denied', agent: agentName(spec.agent) })
+          }
+          if (spec.model && !modelAllowed(rule, spec.agent, spec.model)) return send(g, { t: 'notice', code: 'model-denied', agent: agentName(spec.agent), model: spec.model })
+          // A model it picked: one the host lists for that agent (with no
+          // limit too), else the host's default.
+          if (spec.model && !allowedModels(rule, spec.agent)) {
+            const listed = (cleanAgents(callbacks.agents()).find((a) => a.id === spec.agent) || {}).models || []
+            if (!listed.some((m) => m.id === spec.model)) delete spec.model
+          }
+          const only = allowedModels(rule, spec.agent)
+          if (only) spec.models = only
+        }
         if (g.rights.open) {
           if (!allowed(g, 'opens', OPENS_PER_MINUTE, OPENS_IN_ALL)) return
           countsOf(g).opened++
@@ -1958,7 +2122,7 @@ export function createShareHost({ secret = null, hostName, callbacks, log = () =
         if (g.state !== 'joined' || !g.person) continue
         const { projectsChanged, rightsChanged } = syncGrant(g)
         revalidate(g)
-        if (rightsChanged) send(g, { t: 'rights', rights: { ...g.rights } })
+        if (rightsChanged) sendRights(g)
         if (projectsChanged || rightsChanged) any = true
         sendProjects(g, projects)
       }
@@ -1968,8 +2132,19 @@ export function createShareHost({ secret = null, hostName, callbacks, log = () =
     // The agents guests may ask for changed: guests that list them are told.
     agentsChanged() {
       if (!callbacks.agents) return
-      const agents = cleanAgents(callbacks.agents())
-      for (const g of guests.values()) if (g.state === 'joined' && speaksAgents(g)) send(g, { t: 'agents', agents })
+      for (const g of guests.values()) if (g.state === 'joined' && speaksAgents(g)) send(g, { t: 'agents', agents: guestAgents(g) })
+    },
+    // What runs in a pane changed (its agent, its model): the safety net.
+    paneChanged,
+    // A guest's agents rule, as it counts now (its own, else the share's).
+    agentRuleOf: (guestId) => {
+      const g = guests.get(guestId)
+      return g ? agentRuleOf(g) : null
+    },
+    // The share's agents rule changed: whoever follows it is told what it
+    // may now use (its rights and its "open" menu).
+    agentRuleChanged() {
+      for (const g of guests.values()) if (g.state === 'joined' && g.person && !g.rights.agents) sendRights(g)
     },
     // The host's answer to a guest waiting: false, or { projects, rights,
     // trust } (projects: the ones it gets, none when not said).
@@ -1997,9 +2172,11 @@ export function createShareHost({ secret = null, hostName, callbacks, log = () =
     // now: two changes in a row never undo each other. A guest in gets it at
     // once (a project taken away: its panes and conversations stop), one
     // offline comes back with it.
-    change(subjectId, { project, right, on } = {}) {
+    // { agents }: its agents rule (null: the share's setting counts).
+    change(subjectId, { project, right, on, ...rest } = {}) {
       const subject = subjectOf(subjectId)
       if (!subject) return false
+      if (Object.hasOwn(rest, 'agents')) return access.change(subject, { agents: rest.agents })
       if (project !== undefined && on && !sharedIds().has(project)) return false
       return access.change(subject, project !== undefined ? { project, on: !!on } : { right, on: !!on })
     },
