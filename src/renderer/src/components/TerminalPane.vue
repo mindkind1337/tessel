@@ -1148,11 +1148,21 @@ function toggleChatView() {
 // the host, its pane stays as it is). 'shared': the host sends it;
 // 'old-host': the host's Tessel does not share conversations (said there).
 const guestChat = computed(() => (props.node.backend === 'liveshare' && props.node.liveShare ? props.node.liveShare.chat || null : null))
-const guestChatShown = computed(() => !!guestChat.value && props.node.liveShare.view === 'chat')
+// 'unavailable': the host's pane has no conversation to send (the button shows
+// off, and says why).
+const guestChatOff = computed(() => guestChat.value === 'unavailable')
+const guestChatShown = computed(() => !!guestChat.value && !guestChatOff.value && props.node.liveShare.view === 'chat')
 const guestChatSource = computed(() => (guestChat.value === 'shared' && ctx.liveShareChatSource ? ctx.liveShareChatSource(props.node.id) : null))
 const guestHost = computed(() => (props.node.liveShare && props.node.liveShare.host) || '?')
+const guestChatWhyText = computed(() => {
+  const why = props.node.liveShare && props.node.liveShare.chatWhy
+  if (why === 'none') return t('liveShare.guestView.whyNone', 'No conversation to show yet: it starts with the first message')
+  return t('liveShare.guestView.whyAgent', 'This agent’s conversation can’t be read here')
+})
 const guestChatTitle = computed(() =>
-  guestChatShown.value
+  guestChatOff.value
+    ? guestChatWhyText.value
+    : guestChatShown.value
     ? t('liveShare.guestView.showTerminal', 'Your view: chat. Show the terminal (only on your screen: {{host}}’s pane does not change)', { host: guestHost.value })
     : t('liveShare.guestView.showChat', 'Your view: terminal. Show the conversation as a chat (only on your screen: {{host}}’s pane does not change)', { host: guestHost.value })
 )
@@ -3781,6 +3791,7 @@ const paneMenuBindings = computed(() => ({
           class="pane-nav-btn"
           :class="{ on: guestChatShown }"
           data-test="pane-chat-toggle"
+          :disabled="guestChatOff"
           :title="guestChatTitle"
           :aria-label="guestChatShown ? t('liveShare.guestView.showTerminalLabel', 'Your view: show the terminal') : t('liveShare.guestView.showChatLabel', 'Your view: show the chat')"
           :aria-pressed="guestChatShown"
