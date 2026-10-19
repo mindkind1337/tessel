@@ -95,11 +95,11 @@ describe('App.vue records the sender', () => {
   })
   it('keeps it with the activity event and the chat message', () => {
     const log = APP.slice(APP.indexOf('function logTeamMessages'), APP.indexOf('function syncTeamBoard'))
-    expect(log).toMatch(/m\.sender && typeof m\.sender === 'object' \? \{ sender: m\.sender \}/)
+    expect(log).toMatch(/cleanSender\(m\.sender\) \? \{ sender: cleanSender\(m\.sender\) \}/)
     const lm = APP.slice(APP.indexOf('function logMessage('), APP.indexOf('function flushPending'))
     expect(lm).toMatch(/meta\.sender \? \{ sender: meta\.sender \}/)
     const chats = APP.slice(APP.indexOf('async function pushToChats'), APP.indexOf('function acceptChatTeam'))
-    expect(chats).toMatch(/\{ sender: d\.sender \}/)
+    expect(chats).toMatch(/\{ sender: cleanSender\(d\.sender\) \}/)
   })
 })
 

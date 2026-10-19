@@ -9,7 +9,7 @@ import { join } from 'path'
 import { createRequire } from 'module'
 import { ensureTeamChannel, pollTeamChannel } from '../teamChannel'
 import { writeCurrentTeams } from '../teamNotices'
-import { cleanSender, senderLine, senderTag, scrubSecrets } from '../../shared/senderIdentity'
+import { cleanSender, senderLine, senderTag, scrubSecrets, senderRemote } from '../../shared/senderIdentity'
 
 delete process.env.TESSEL_TEAM_SECRET
 delete process.env.TESSEL_PANE_ID
@@ -105,6 +105,52 @@ describe('team message sender snapshot', () => {
     expect(m.sender.model).toBe('Opus 5.5 · high')
     expect(m.sender.tesselVersion).toBe('1.13.2')
     expect(JSON.stringify(m.sender)).not.toMatch(/Fake 9|0\.0\.0/)
+  })
+
+  // An agent on an SSH host: the host its pane runs on (the window's view of
+  // the pane, never the agent's "[from an agent on …]" text) stays with the
+  // message, so its file links open on that host (useMessageLinks.js).
+  it('an agent on an SSH host: its host id and folder are kept, from the pane only', () => {
+    put(outboxes[A.id], 'r1', { to: 'Bob', text: '[from an agent on 192.99.0.20] Files: client/main.lua', sender: { host: 'ssh', hostId: 'ssh-evil' } })
+    pollTeamChannel({ dir, teamId, senders: { [A.id]: { ...adaPane, host: 'ssh', hostId: 'ssh-box1', hostLabel: '192.99.0.20', remotePath: '/srv/game' } } })
+    const s = state().messages.find((x) => x.text.endsWith('client/main.lua')).sender
+    expect(s).toMatchObject({ host: 'ssh', hostId: 'ssh-box1', hostLabel: '192.99.0.20', remotePath: '/srv/game' })
+    expect(JSON.stringify(s)).not.toContain('ssh-evil')
+  })
+
+  // state.json is a file in the project: a sender written there by another
+  // program is cleaned again before the window gets it.
+  it('a sender read back from state.json is cleaned before the window gets it', () => {
+    put(outboxes[A.id], 'f1', { to: 'Bob', text: 'Hello' })
+    pollTeamChannel({ dir, teamId, senders: { [A.id]: adaPane } })
+    const file = join(dir, '.tessel', 'team-channel', teamId, 'state.json')
+    const st = state()
+    const m = st.messages.find((x) => x.text === 'Hello')
+    m.sender = { ...m.sender, host: 'ssh', hostId: '../../etc', remotePath: '/', hostLabel: 'x'.repeat(500), evil: { a: 1 } }
+    fs.writeFileSync(file, JSON.stringify(st))
+    const res = pollTeamChannel({ dir, teamId, senders: { [A.id]: adaPane } })
+    const back = [...res.history, ...res.deliveries].filter((x) => x.text === 'Hello')
+    expect(back.length).toBeGreaterThan(0)
+    for (const x of back) {
+      expect(x.sender.hostId).toBeUndefined()
+      expect(x.sender.evil).toBeUndefined()
+      expect(x.sender.hostLabel.length).toBeLessThanOrEqual(80)
+    }
+    // A sender that names nobody is dropped.
+    const st2 = state()
+    st2.messages.find((x) => x.text === 'Hello').sender = 'nope'
+    fs.writeFileSync(file, JSON.stringify(st2))
+    expect(pollTeamChannel({ dir, teamId }).history.find((x) => x.text === 'Hello').sender).toBeUndefined()
+  })
+
+  it('a host id is kept only for an SSH pane, and only in the saved-host shape', () => {
+    expect(cleanSender({ paneId: 'p', host: 'local', hostId: 'ssh-box1' }).hostId).toBeUndefined()
+    expect(cleanSender({ paneId: 'p', host: 'ssh', hostId: '../../etc' }).hostId).toBeUndefined()
+    expect(cleanSender({ paneId: 'p', host: 'ssh', hostId: 'ssh-box1' }).hostId).toBe('ssh-box1')
+    expect(senderRemote(cleanSender({ paneId: 'p', host: 'ssh', hostId: 'ssh-box1', remotePath: '/srv/game', hostLabel: 'Box' }))).toEqual({ hostId: 'ssh-box1', path: '/srv/game', label: 'Box' })
+    // An older record (no id): still a host's, its folder unknown to Tessel.
+    expect(senderRemote(cleanSender({ paneId: 'p', host: 'ssh', hostLabel: 'Box' }))).toEqual({ hostId: null, path: '~', label: 'Box' })
+    expect(senderRemote(cleanSender({ paneId: 'p', host: 'local' }))).toBeNull()
   })
 
   it('without the window view, still names the pane from the channel membership', () => {

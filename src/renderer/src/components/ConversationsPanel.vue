@@ -26,7 +26,7 @@
 // what its terminal agents said, from the host (masked there), followed
 // while the tab is shown; "You" is the host there. No image comes from the
 // host, no path is a link there, a web link goes through the host's filter.
-import { senderDetails } from '../senderIdentity'
+import { senderDetails, senderRemote } from '../senderIdentity'
 import { computed, nextTick, onBeforeUnmount, reactive, ref, shallowRef, watch } from 'vue'
 import { Check, ChevronRight, Code2, Copy, FileText, Film, Folder, ImageIcon, LayoutGrid, Link2, LocateFixed, MessagesSquare, Search, SquareTerminal, Users, X } from 'lucide-vue-next'
 import BrandIcon from './BrandIcon.vue'
@@ -174,7 +174,7 @@ function terminalAsks() {
     for (const sid of sessionIds(row).reverse()) add({ ask: `${row.paneId}~${sid}`, paneId: row.paneId, agent: row.agentId, sessionId: sid, accountId: row.accountId, hostId: row.hostId, wsId: row.wsId, title: row.title, hostLabel: '' }) // i18n-ignore
   return all.filter((a) => scope.value !== 'workspace' || a.wsId === props.workspaceId).slice(0, MAX_ASKS)
 }
-const sameMeta = (a, b) => ['paneId', 'wsId', 'title', 'agentId', 'sessionId', 'host', 'hostLabel'].every((k) => a[k] === b[k])
+const sameMeta = (a, b) => ['paneId', 'wsId', 'title', 'agentId', 'sessionId', 'host', 'hostId', 'hostLabel'].every((k) => a[k] === b[k])
 let asking = false
 let askAgain = false
 async function askTerminal() {
@@ -219,7 +219,7 @@ async function askTerminal() {
       for (const a of asks) {
         const r = res.panes[a.ask]
         if (!r || typeof r.key !== 'string') continue
-        const meta = { paneId: a.paneId, wsId: a.wsId, title: a.title || '', agentId: a.agent, sessionId: a.sessionId, host: a.hostId ? 'ssh' : 'local', hostLabel: a.hostLabel || '' }
+        const meta = { paneId: a.paneId, wsId: a.wsId, title: a.title || '', agentId: a.agent, sessionId: a.sessionId, host: a.hostId ? 'ssh' : 'local', hostId: a.hostId || '', hostLabel: a.hostLabel || '' }
         if (r.same && had[a.ask]) next[a.ask] = sameMeta(had[a.ask], meta) ? had[a.ask] : { ...had[a.ask], ...meta }
         else if (Array.isArray(r.items)) next[a.ask] = { key: r.key, items: r.items, ...meta }
         // Its file was read: the pane really ran it (kept once it is left).
@@ -259,7 +259,7 @@ const terminalEntries = computed(() =>
     // Its pane open now: its name and program as shown; closed: as noted.
     const pane = panes.value[e.paneId] || {}
     const agentId = pane.agentId || e.agentId
-    return { paneId: e.paneId, group: ask, wsId: e.wsId, title: pane.title || e.title, agentId, agentName: agentId ? agentLabel(agentId) : '', sessionId: e.sessionId, host: e.host, hostLabel: e.hostLabel, items: e.items }
+    return { paneId: e.paneId, group: ask, wsId: e.wsId, title: pane.title || e.title, agentId, agentName: agentId ? agentLabel(agentId) : '', sessionId: e.sessionId, host: e.host, hostId: e.hostId, hostLabel: e.hostLabel, items: e.items }
   })
 )
 const threads = computed(() => {
@@ -313,15 +313,42 @@ const countText = computed(() =>
 )
 
 // A line's paths are read against the folder of the pane that wrote it (an
-// agent's own; yours, the agent's you wrote to): its pane open now, else its
-// project's folder; none on a host's project (Live Share) or an SSH one.
+// agent's own; yours, the agent's you wrote to): its pane open now, else the
+// SSH host its agent ran on (as Tessel recorded the pane: never what the
+// agent wrote), else its project's folder (an SSH project's on its host);
+// none on a host's project (Live Share). A line from an SSH host is never
+// read against a folder of this computer.
 const guest = computed(() => !!props.source)
 const links = useMessageLinks()
+// paneId -> { hostId, path, label }: the host each agent's own lines name
+// (its sender records), for the lines that do not say (yours to it).
+const hostByPane = computed(() => {
+  const out = new Map()
+  for (const thread of threads.value)
+    for (const line of thread.lines || []) {
+      const r = line.from && line.from.kind === 'agent' && line.from.paneId ? senderRemote(line.sender) : null
+      if (r && (r.hostId || !out.has(line.from.paneId))) out.set(line.from.paneId, r)
+    }
+  return out
+})
+// Which host a line names (its folder is the one the window saw its pane in:
+// useMessageLinks.js checks the host against it).
+function lineHost(line, paneId) {
+  const own = line.from && line.from.kind === 'agent' ? senderRemote(line.sender) : null
+  const known = paneId ? hostByPane.value.get(paneId) : null
+  // A terminal line names its host (the window asked for its file there).
+  const terminal = line.remoteHost ? { hostId: line.remoteHost.hostId, path: '~', label: line.remoteHost.label || '' } : null
+  return (own && own.hostId && own) || (terminal && terminal.hostId && terminal) || (known && known.hostId && known) || own || terminal || known || null
+}
 function lineContext(line) {
   if (guest.value || !line) return null
   const paneId = line.from && line.from.kind === 'agent' ? line.from.paneId : line.to && line.to.paneId
   const project = (props.projects || []).find((p) => p.id === line.wsId) || null
-  return links.contextFor(paneId, { folder: project ? project.cwd : null, remote: !!(project && project.remote) })
+  // A local agent's line (its record says so) in an SSH project: not the
+  // host's files, and this computer's folder for it is not known: no links.
+  const local = !!(line.from && line.from.kind === 'agent' && line.sender && line.sender.host === 'local')
+  const remote = project && project.remote ? (local ? true : project.remote) : false
+  return links.contextFor(paneId, { folder: project ? project.cwd : null, remote, host: local ? null : lineHost(line, paneId) })
 }
 // A terminal line's image, asked for once its thumbnail is in view; an image
 // file a message names, read as the image viewer reads it (Media view).

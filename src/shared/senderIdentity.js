@@ -27,6 +27,8 @@ const TEXT = {
   tesselVersion: 40
 }
 
+const HOST_ID = /^ssh-[\w-]{1,60}$/
+
 const SECRETS = [
   /\b(?:sk|pk|rk)-[A-Za-z0-9_-]{12,}/g,
   /\bgh[pousr]_[A-Za-z0-9]{20,}/g,
@@ -59,9 +61,25 @@ export function cleanSender(raw) {
   }
   if (Number.isInteger(raw.num) && raw.num > 0 && raw.num < 1000) out.num = raw.num
   if (raw.host === 'local' || raw.host === 'ssh') out.host = raw.host
+  // The saved SSH host it runs on (its id, never a name the agent wrote):
+  // its paths are that host's files (useMessageLinks.js), never this PC's.
+  if (out.host === 'ssh' && typeof raw.hostId === 'string' && HOST_ID.test(raw.hostId)) out.hostId = raw.hostId
   if (typeof raw.lead === 'boolean') out.lead = raw.lead
   if (Number.isFinite(raw.at) && raw.at > 0) out.at = Math.round(raw.at)
   return out.paneId || out.name ? out : null
+}
+
+// Where a sender's paths are: { hostId, path, label } for an agent on an SSH
+// host (hostId null on a record older than the host's id: its paths open
+// nowhere), null for one on this computer (or an older record that does not
+// say).
+export function senderRemote(s) {
+  if (!s || typeof s !== 'object' || s.host !== 'ssh') return null
+  return {
+    hostId: typeof s.hostId === 'string' && HOST_ID.test(s.hostId) ? s.hostId : null,
+    path: typeof s.remotePath === 'string' && s.remotePath ? s.remotePath : '~',
+    label: s.hostLabel || s.hostAddress || ''
+  }
 }
 
 // "Opus 5.5 · high" -> "Opus 5.5 high" (one dot fewer in a line of dots).

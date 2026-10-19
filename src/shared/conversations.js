@@ -186,7 +186,7 @@ export const recipients = (line) => (line.toAll && line.toAll.length ? line.toAl
 
 // --- What was said in an agent's terminal ---------------------------------------------
 // entries: [{ paneId, group?, wsId, title, agentId, agentName?, sessionId?,
-//   host?: 'local' | 'ssh', hostLabel?, items: [{ role: 'user' | 'agent', t,
+//   host?: 'local' | 'ssh', hostId?, hostLabel?, items: [{ role: 'user' | 'agent', t,
 //   text, model?, effort?, images?, imagesMore?, files? }] }] (group: one
 //   conversation of the pane, its pane's id by default: a pane's earlier
 //   conversation has its own; images, files: terminalConversations.js
@@ -230,6 +230,7 @@ export function terminalLines(entries, opts = {}) {
               effort: run.effort || '',
               sessionId: entry.sessionId || '',
               ...(entry.host === 'ssh' || entry.host === 'local' ? { host: entry.host } : {}),
+              hostId: entry.hostId || '',
               hostLabel: entry.hostLabel || ''
             })
           : null
@@ -248,7 +249,9 @@ export function terminalLines(entries, opts = {}) {
         scope: null,
         via: 'terminal',
         group,
-        ...(entry.host === 'ssh' ? { remote: true } : {}),
+        // On an SSH host: its paths are that host's (remoteHost: which one,
+        // as the window asked for its file; hostId null when not known).
+        ...(entry.host === 'ssh' ? { remote: true, remoteHost: { hostId: typeof entry.hostId === 'string' && /^ssh-[\w-]{1,60}$/.test(entry.hostId) ? entry.hostId : null, label: entry.hostLabel || '' } } : {}),
         ...(run ? { run } : {}),
         ...(sender ? { sender } : {}),
         ...(images ? { images } : {}),

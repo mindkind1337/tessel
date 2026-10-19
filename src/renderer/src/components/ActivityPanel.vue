@@ -11,7 +11,7 @@ import { useMessageLinks } from '../links/useMessageLinks'
 import { summarize, cardsFor, parseJournal } from '../../../shared/activity'
 import { formatDuration } from '../timeFormat'
 import { t, intlLocale } from '../i18n'
-import { senderSummary, senderDetails } from '../senderIdentity'
+import { senderSummary, senderDetails, senderRemote } from '../senderIdentity'
 
 const props = defineProps({
   events: { type: Array, required: true },
@@ -73,11 +73,14 @@ function stateText(state) {
 
 // A row's whole text reads as the chat shows it; its paths are read against
 // the folder of the pane that wrote it (an answer's speaker, a teammate's
-// sender, the agent you wrote to), while that pane is open.
+// sender, the agent you wrote to), while that pane is open; an agent's on an
+// SSH host (its sender record says which), that host's files even once its
+// pane is closed, never this computer's.
 const links = useMessageLinks()
 function rowContext(x) {
   const paneId = x.type === 'reply' ? x.paneId : (x.sender && x.sender.paneId) || x.fromPaneId || x.paneId
-  return paneId ? links.contextFor(paneId) : null
+  const host = x.type === 'reply' || (x.sender && x.sender.paneId) ? senderRemote(x.sender) : null
+  return paneId || host ? links.contextFor(paneId, { host }) : null
 }
 
 const period = ref('7d')
