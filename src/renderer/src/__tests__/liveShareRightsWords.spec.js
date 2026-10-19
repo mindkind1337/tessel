@@ -6,7 +6,7 @@ import { describe, expect, it } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { RIGHT_IDS } from '../../../shared/liveShareRights'
 import { hasRightWords, rightWords, shownRights, rightsShort, presetLabel, presetRights, rightsSummary } from '../liveShareRights'
-import { initials, inviteName, inviteUses, inviteExpiry, grantDiff, accessPeople, accessError, joinedGuests, offlinePeople } from '../liveShareAccess'
+import { initials, inviteName, inviteUses, inviteExpiry, inviteExpiryShort, inviteUsesShort, inviteJoinedShort, viaName, shortCode, grantDiff, accessPeople, accessError, joinedGuests, offlinePeople } from '../liveShareAccess'
 import RightsChecks from '../components/liveshare/RightsChecks.vue'
 
 describe('rights: words for the catalog', () => {
@@ -76,12 +76,29 @@ describe('access views: helpers', () => {
 
   it('an invitation’s name, uses and expiry', () => {
     expect(inviteName({ label: ' Team ' })).toBe('Team')
-    expect(inviteName({ label: '', root: true })).toBe('First invite code')
+    // The one made when the share started: named as the setup card names it.
+    expect(inviteName({ label: '', root: true })).toBe('First invitation')
     expect(inviteName({ label: '' })).toBe('Invitation')
     expect(inviteUses({ uses: 3, maxUses: 10 })).toBe('3 of 10 uses')
     expect(inviteUses({ uses: 0, maxUses: 0 })).toBe('0 uses, no limit')
     expect(inviteExpiry({ expiresAt: null }).text).toBe('No expiry')
     expect(inviteExpiry({ expiresAt: 1000 }, 2000)).toMatchObject({ text: 'Expired', expired: true })
+  })
+
+  it('an invitation’s row in a few words; the invitation a person came with, named as the list names it', () => {
+    const now = new Date(2026, 9, 16, 12, 0).getTime()
+    expect(inviteExpiryShort({ expiresAt: null }, now)).toMatchObject({ text: 'No expiry', never: true })
+    expect(inviteExpiryShort({ expiresAt: now - 1 }, now)).toMatchObject({ text: 'Expired', expired: true })
+    expect(inviteExpiryShort({ expiresAt: new Date(2026, 9, 16, 14, 37).getTime() }, now).text).toMatch(/^Expires (0?2:37\sPM|14:37)$/)
+    expect(inviteUsesShort({ uses: 1, maxUses: 3 })).toBe('1/3 used')
+    expect(inviteUsesShort({ uses: 2, maxUses: 0 })).toBe('2 used')
+    expect(inviteJoinedShort({ joined: 2 })).toBe('2 in')
+    expect(shortCode('TS2.' + 'a'.repeat(80) + '.tail1234')).toBe('TS2.aaaaaaaaaa…tail1234')
+    expect(shortCode('TS1.short')).toBe('TS1.short')
+    const invites = [{ id: 'iv-1', label: '', root: true }]
+    expect(viaName({ id: 'iv-1', label: '' }, invites)).toBe('First invitation')
+    expect(viaName({ id: 'iv-1', label: '' })).toBe('Invitation')
+    expect(viaName({ id: null, label: 'Old' }, invites)).toBe('Old (no longer exists)')
   })
 
   it('what a change takes away and adds', () => {

@@ -173,12 +173,13 @@ describe('LiveShareDialog: before sharing', () => {
     expect(wrapper.find('[data-test="ls-section-off"]').text()).toContain('Invitations come with a share')
     await wrapper.find('[data-test="ls-section-people"]').trigger('click')
     expect(wrapper.find('[data-test="ls-section-off"]').exists()).toBe(true)
-    // People's other views: the access grid and the trusted people.
+    // People's grid needs a share; its list shows the trusted people.
     await wrapper.find('[data-test="ls-people-view-grid"]').trigger('click')
     expect(wrapper.find('[data-test="ls-access-off"]').exists()).toBe(true)
-    await wrapper.find('[data-test="ls-people-view-trusted"]').trigger('click')
-    expect(wrapper.find('[data-test="ls-people-view-trusted"]').attributes('aria-pressed')).toBe('true')
-    expect(wrapper.find('[data-test="ls-trusted"]').exists()).toBe(true)
+    await wrapper.find('[data-test="ls-people-view-list"]').trigger('click')
+    await wrapper.find('[data-test="ls-people-filter-trusted"]').trigger('click')
+    expect(wrapper.find('[data-test="ls-people-filter-trusted"]').attributes('aria-pressed')).toBe('true')
+    expect(wrapper.find('[data-test="ls-trusted-empty"]').exists()).toBe(true)
     await wrapper.find('[data-test="ls-section-settings"]').trigger('click')
     expect(wrapper.find('[data-test="ls-hide-ignored"]').classes()).toContain('set-switch')
     wrapper.unmount()
@@ -272,6 +273,8 @@ describe('LiveShareDialog: while sharing', () => {
       await host(sharing({ invites: [invite({ joined: 2 })], actions: [{ id: 'a1', at, kind: 'save', name: 'Chen', path: 'a.txt', project: 'ws-1' }] }))
       expect(wrapper.find('[data-test="ls-recent-a1"] .ls-recent-time').text()).toBe('06 h 13')
       await wrapper.find('[data-test="ls-section-invites"]').trigger('click')
+      expect(wrapper.find('[data-test="ls-invite-summary"]').text()).toContain('2 personnes entrées')
+      await wrapper.find('[data-test="ls-invite-toggle-iv-aaaaaaaaaa"]').trigger('click')
       expect(wrapper.text()).toContain('2 personnes entrées avec elle')
       wrapper.unmount()
     } finally {
@@ -301,10 +304,11 @@ describe('LiveShareDialog: while sharing', () => {
   it('opens on the section asked for (a project’s Who has access…)', async () => {
     api.state.mockResolvedValue({ host: sharing({ guests: [guest()] }), guest: OFF_GUEST, defaultName: 'ada' })
     const wrapper = await open({ ...PROJECTS, projectIds: ['ws-1', 'ws-2'], initialSection: 'access', focusProject: 'ws-2' })
-    // Access is People's grid now.
+    // Access is People's grid now, the project's column lit.
     expect(wrapper.find('[data-test="ls-section-people"]').attributes('aria-selected')).toBe('true')
     expect(wrapper.find('[data-test="ls-people-view-grid"]').attributes('aria-pressed')).toBe('true')
-    expect(wrapper.find('[data-test="ls-access-project"]').text()).toContain('Who has access to site')
+    expect(wrapper.find('[data-test="ls-access-col-ws-2"]').classes()).toContain('focus')
+    expect(wrapper.find('[data-test="ls-access-focus"]').text()).toContain('Who has access to site')
     wrapper.unmount()
   })
 

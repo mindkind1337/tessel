@@ -323,7 +323,7 @@
       "applyHint": "Les personnes de confiance gardent leurs propres réglages. Vous pouvez toujours modifier chaque personne dans Personnes.",
       "back": "Retour",
       "saveChanges": "Enregistrer les modifications",
-      "rootLabel": "Premier code d'invitation",
+      "firstLabel": "Première invitation",
       "untitled": "Invitation",
       "goneNamed": "{{label}} (n'existe plus)",
       "gone": "Une invitation qui n'existe plus",
@@ -343,30 +343,29 @@
       "presetViewHint": "Cette personne regarde les panneaux et les fichiers partagés, rien d'autre.",
       "presetCollaborateHint": "Cette personne ouvre des terminaux et des agents, modifie des fichiers, fait des commits et gère les tâches. Elle ne tape jamais dans vos terminaux.",
       "presetFullHint": "Tous les droits, y compris taper : cette personne peut lancer n'importe quelle commande sur ce PC en votre nom. Seulement pour des personnes de confiance.",
-      "presetCustomHint": "Personnalisé : {{rights}}"
+      "presetCustomHint": "Personnalisé : {{rights}}",
+      "expiresAt": "Expire : {{when}}",
+      "usedOf": "{{uses}}/{{max}} utilisations",
+      "used_one": "{{count}} utilisation",
+      "used_other": "{{count}} utilisations",
+      "joinedShort_one": "{{count}} personne entrée",
+      "joinedShort_other": "{{count}} personnes entrées",
+      "badgeLive": "Active",
+      "copy": "Copier"
     },
     "access": {
-      "askAdd_one": "{{count}} personne est entrée avec « {{label}} ». Lui donner aussi {{what}} ?",
-      "askAdd_other": "{{count}} personnes sont entrées avec « {{label}} ». Leur donner aussi {{what}} ?",
-      "askRemove_one": "{{count}} personne est entrée avec « {{label}} ». Lui retirer aussi {{what}} ?",
-      "askRemove_other": "{{count}} personnes sont entrées avec « {{label}} ». Leur retirer aussi {{what}} ?",
       "trustedOffline": "De confiance, hors ligne",
       "cell": "{{name}} : {{what}}",
-      "projectTitle": "Qui a accès à {{project}}",
-      "off": "Commencez à partager pour voir qui a accès à chaque projet. Les personnes de confiance sont dans Confiance.",
       "noProjects": "Tessel cherche encore les projets que vous partagez.",
-      "show": "Afficher",
-      "all": "Tous les projets partagés",
-      "themToo": "Elles aussi",
-      "onlyInvite": "Seulement l'invitation",
-      "empty": "Personne n'a encore accès : créez une invitation, ou faites confiance à quelqu'un.",
       "caption": "Qui voit chaque projet partagé, et ce que chacun peut faire",
-      "who": "Personne ou invitation",
-      "backToAll": "Tous les projets",
-      "projectEmpty": "Personne n'a encore accès à {{project}}.",
-      "haveIt": "Ont accès",
-      "canGive": "Peuvent recevoir l'accès",
-      "invitation": "Invitation"
+      "person": "Personne",
+      "rights": "Droits",
+      "presetsTitle": "Un préréglage par personne",
+      "eachRightTitle": "Une colonne par droit",
+      "openPerson": "Ouvrir {{name}} dans la liste",
+      "focusNote": "Qui a accès à {{project}} : sa colonne est mise en évidence.",
+      "off2": "Commencez à partager pour voir qui a accès à chaque projet partagé. Les personnes de confiance sont dans la liste.",
+      "empty2": "Personne n'a encore accès : envoyez une invitation, ou faites confiance à quelqu'un."
     },
     "people": {
       "offlineBadge": "Hors ligne",
@@ -392,7 +391,15 @@
       "letIn": "Laisser entrer…",
       "refuse": "Refuser",
       "refused": "La demande de {{name}} a été refusée.",
-      "typing": "Tape dans {{panes}}"
+      "typing": "Tape dans {{panes}}",
+      "filterAll": "Tout le monde",
+      "filterWaiting": "En attente",
+      "filterLabel": "Afficher",
+      "viewLabel": "Affichage",
+      "waitingTag": "En attente de votre réponse",
+      "typingTag": "En train de taper",
+      "noProject": "Aucun projet",
+      "noneHere": "Personne ici."
     },
     "section": {
       "access": "Accès",
@@ -624,8 +631,8 @@
       "restarting": "Vos invitations et les personnes du partage reviennent ici dès que le partage aura redémarré."
     },
     "peopleView": {
-      "list": "Personnes",
-      "grid": "Grille des accès"
+      "list2": "Liste",
+      "grid2": "Grille"
     }
   }
 }

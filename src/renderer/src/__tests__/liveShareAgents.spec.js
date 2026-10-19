@@ -41,6 +41,11 @@ const tick = async (w, sel) => {
   await flushPromises()
 }
 const lastArg = (fn) => fn.mock.calls.at(-1)[0]
+// A person's row in People, opened.
+const expand = async (w, id) => {
+  await w.find(`[data-test="ls-person-toggle-${id}"]`).trigger('click')
+  await flushPromises()
+}
 
 describe('Agents guests may use: the share’s setting', () => {
   it('lists your agents, all allowed by default, and saves a rule when one is left out', async () => {
@@ -101,7 +106,10 @@ describe('Agents guests may use: an invitation, a person, a trusted person', () 
   it('next to a person who can type, says the limits hold only partly', async () => {
     const own = { deny: ['claude'], later: true, known: ['claude', 'codex'], models: {} }
     const w = await openAt('people', sharing({ guests: [guest({ rights: { ...NO_RIGHTS, type: true, agents: own } }), guest({ id: 'g2', name: 'Eve', rights: { ...NO_RIGHTS, agents: own } })] }))
+    await expand(w, 'g1')
     expect(w.find('[data-test="ls-agents-g1-type-warn"]').text()).toContain('can still start any program, including agents and models you leave out')
+    await expand(w, 'g2')
+    expect(w.find('[data-test="ls-agents-g2-root"]').exists()).toBe(true)
     expect(w.find('[data-test="ls-agents-g2-type-warn"]').exists()).toBe(false)
     w.unmount()
   })
@@ -110,6 +118,7 @@ describe('Agents guests may use: an invitation, a person, a trusted person', () 
     const own = { deny: ['claude'], later: true, known: ['claude', 'codex'], models: {} }
     const w = await openAt('people', sharing({ guests: [guest({ rights: { ...NO_RIGHTS, open: true, agents: own } })] }))
     const g = guest().id
+    await expand(w, g)
     expect(w.find(`[data-test="ls-agents-${g}-summary"]`).text()).toBe('1 of 2 agents')
     await w.find(`[data-test="ls-agents-${g}-toggle"]`).trigger('click')
     await tick(w, `[data-test="ls-agents-${g}-agent-claude"] input`)
@@ -122,6 +131,7 @@ describe('Agents guests may use: an invitation, a person, a trusted person', () 
   it('a trusted person’s list too', async () => {
     const tr = trustedOne({ rights: { ...NO_RIGHTS, agents: { deny: [], later: true, known: ['claude', 'codex'], models: {} } } })
     const w = await openAt('trusted', sharing({ trusted: [tr] }))
+    await expand(w, tr.id)
     await w.find(`[data-test="ls-agents-${tr.id}-toggle"]`).trigger('click')
     await tick(w, `[data-test="ls-agents-${tr.id}-agent-codex"] input`)
     expect(lastArg(api.access)).toEqual({ subject: tr.id, agents: { deny: ['codex'], later: true, known: ['claude', 'codex'], models: {} } })
