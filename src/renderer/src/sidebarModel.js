@@ -313,7 +313,7 @@ export function paneRow(pane, now = Date.now()) {
     // Sub-agents (CHILD_AGENTS: Claude Code, Codex, OpenCode, ...) are listed under its row.
     children:
       agent && listsChildren(pane.agentId) && pane.sessionId && !pane.sleeping
-        ? { agent: pane.agentId, sessionId: pane.sessionId, ...(pane.accountId !== undefined ? { accountId: pane.accountId } : {}) }
+        ? { agent: pane.agentId, sessionId: pane.sessionId, ...(pane.accountId !== undefined ? { accountId: pane.accountId } : {}), ...(pane.remoteHostId ? { remoteHostId: pane.remoteHostId } : {}) }
         : null
   }
 }

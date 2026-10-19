@@ -186,6 +186,25 @@ export function parseSubagentListing(out, max = MAX_SUBAGENT_FILES) {
   return files
 }
 
+// The host's answer to __t_smeta: "@@M <name> <base64 of its meta file's
+// first bytes>" lines -> { name: object } (only the names asked for, each
+// one's JSON object; one cut or not JSON is left out).
+export function parseSubagentMetas(out, names = []) {
+  const want = new Set(names)
+  const metas = {}
+  for (const line of String(out || '').split('\n')) {
+    const m = /^@@M (\S+) ([A-Za-z0-9+/=]*)\r?$/.exec(line)
+    if (!m || !want.has(m[1]) || Object.prototype.hasOwnProperty.call(metas, m[1])) continue
+    try {
+      const o = JSON.parse(Buffer.from(m[2], 'base64').toString('utf8'))
+      if (o && typeof o === 'object' && !Array.isArray(o)) metas[m[1]] = o
+    } catch {
+      // cut or not JSON
+    }
+  }
+  return metas
+}
+
 // The host's answer to __t_browse: its real path, then "k name" records
 // (d folder, f file, L link to a folder, l other link, o other).
 // -> { path, entries, truncated }
@@ -1675,6 +1694,46 @@ ${root}`, () => gitWorktreesNow(root))
     return { ok: true, files: parseSubagentListing(Buffer.isBuffer(res.out) ? res.out.toString('utf8') : String(res.out || ''), n) }
   }
 
+  // The meta files of some of a Claude Code session's sub-agents on this host
+  // (__t_smeta: <id>/subagents/<name>.meta.json, its first 4 KB each), by
+  // their names from listSubagentFiles. Never a sign-in.
+  // -> { ok: true, metas: { name: object } } (a name without one is left out)
+  //    | { ok: false, missing?, notConnected?, error }
+  async function readSubagentMetas(hostId, { id, names } = {}) {
+    if (!hostIdOk(hostId)) return { ok: false, error: t('main.remote.notFound', 'This remote host is no longer saved in Tessel.') }
+    if (typeof id !== 'string' || !/^[0-9A-Za-z-]{8,100}$/.test(id)) return { ok: false, error: 'invalid' }
+    const list = Array.isArray(names) ? [...new Set(names.filter((n) => typeof n === 'string' && SUBAGENT_NAME.test(n)))].slice(0, MAX_SUBAGENT_FILES) : []
+    if (!list.length) return { ok: true, metas: {} }
+    if (!connectedQuietly(hostId)) return { ok: false, notConnected: true, error: t('main.remoteFs.notConnected', '{{host}} is not connected. Use Connect to sign in.', { host: hostLabel(hostId) }) }
+    const entry = sessions.get(hostId)
+    const open = !!(entry && !entry.closed && entry.session && entry.session.state === 'ready')
+    const res = await call(hostId, '__t_smeta', [id, ...list], { cap: 512 * 1024, timeoutMs: 20_000, op: 'read', background: true, ...(open ? { ifOpen: true } : {}) })
+    if (!res || res.skipped) return { ok: false, notConnected: true, error: t('main.remoteFs.notConnected', '{{host}} is not connected. Use Connect to sign in.', { host: hostLabel(hostId) }) }
+    if (res.error) return { ok: false, error: res.error }
+    if (res.rc === RC.MISSING) return { ok: false, missing: true, error: 'missing' }
+    if (res.rc !== 0) return { ok: false, error: rcText(res, `rc ${res.rc}`) }
+    return { ok: true, metas: parseSubagentMetas(Buffer.isBuffer(res.out) ? res.out.toString('utf8') : String(res.out || ''), list) }
+  }
+
+  // A Codex session's sub-agents on this host (__t_cxkids: the rollouts
+  // written in the last two days whose first line names it), at most
+  // `limit`: names (rollout-<time>-<id>, without .jsonl), sizes and change
+  // times. Each one is then read by its id (readAgentFile). Never a sign-in.
+  // -> { ok: true, files: [{ name, size, mtimeMs }] } | { ok: false, notConnected?, error }
+  async function listCodexChildren(hostId, { id, limit = MAX_SUBAGENT_FILES } = {}) {
+    if (!hostIdOk(hostId)) return { ok: false, error: t('main.remote.notFound', 'This remote host is no longer saved in Tessel.') }
+    if (typeof id !== 'string' || !/^[0-9A-Za-z-]{8,100}$/.test(id)) return { ok: false, error: 'invalid' }
+    const n = Number.isSafeInteger(limit) && limit > 0 ? Math.min(limit, MAX_SUBAGENT_FILES) : MAX_SUBAGENT_FILES
+    if (!connectedQuietly(hostId)) return { ok: false, notConnected: true, error: t('main.remoteFs.notConnected', '{{host}} is not connected. Use Connect to sign in.', { host: hostLabel(hostId) }) }
+    const entry = sessions.get(hostId)
+    const open = !!(entry && !entry.closed && entry.session && entry.session.state === 'ready')
+    const res = await call(hostId, '__t_cxkids', [id, String(n)], { cap: 64 * 1024, timeoutMs: 30_000, op: 'read', background: true, ...(open ? { ifOpen: true } : {}) })
+    if (!res || res.skipped) return { ok: false, notConnected: true, error: t('main.remoteFs.notConnected', '{{host}} is not connected. Use Connect to sign in.', { host: hostLabel(hostId) }) }
+    if (res.error) return { ok: false, error: res.error }
+    if (res.rc !== 0 && res.rc !== RC.PIPE && !res.truncated) return { ok: false, error: rcText(res, `rc ${res.rc}`) }
+    return { ok: true, files: parseSubagentListing(Buffer.isBuffer(res.out) ? res.out.toString('utf8') : String(res.out || ''), n) }
+  }
+
   // The signed-in user's home folder on this host ($HOME), kept once known
   // (it does not change while Tessel runs). Never a sign-in.
   // -> { ok: true, home } | { ok: false, notConnected?, error }
@@ -1846,6 +1905,8 @@ ${q && q.root}`, () => scm.scmStatus(q)), scmDiscard: (q) => scm.scmDiscard(q) }
     listAgentSessions,
     readAgentFile,
     listSubagentFiles,
+    readSubagentMetas,
+    listCodexChildren,
     hostHome,
     listAgentSkills,
     accountCall,

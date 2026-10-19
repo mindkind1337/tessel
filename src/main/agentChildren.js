@@ -381,7 +381,7 @@ export function summarizeCodexTail(lines) {
     if (effort === null) effort = codexEffortOf(o)
     if (decided && last && tokens !== null && model !== null && effort !== null) break
   }
-  return { done, last, tokens, model, effort }
+  return { done, last, tokens, model, effort, decided }
 }
 
 function dayDir(sessions, ms) {

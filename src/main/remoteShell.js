@@ -182,6 +182,14 @@ export const FUNCTIONS = new Set([
   // N), and a bounded window of one; read-only, no link followed (jobCost.js).
   '__t_subs',
   '__t_sread',
+  // Their meta files (agent-<id>.meta.json: its kind, title, whether it runs
+  // in the background), the first bytes of each named one, for the pane's
+  // sub-agent list (remoteAgentChildren.js).
+  '__t_smeta',
+  // A Codex session's sub-agents (spawn_agent threads: rollouts of their own
+  // whose first line names it), written in the last two days: their names,
+  // sizes and change times, never their contents (remoteAgentChildren.js).
+  '__t_cxkids',
   // Which account each agent there is signed in with (identity fields only,
   // never a token), and the folders Tessel makes there for one account each
   // (remoteAgent/remoteAccounts.js).
@@ -663,7 +671,7 @@ __t_tfile() {
   __F=
   case $1 in
     claude)
-      for __c in "\${CLAUDE_CONFIG_DIR:-$HOME/.claude}"/projects/*/"$2".jsonl; do [ -f "$__c" ] && [ ! -L "$__c" ] && { __F=$__c; break; }; done ;;
+      for __c in "\${CLAUDE_CONFIG_DIR:-$HOME/.claude}"/projects/*/"$2".jsonl "$HOME"/.tessel-server/accounts/claude/*/projects/*/"$2".jsonl; do [ -f "$__c" ] && [ ! -L "$__c" ] && { __F=$__c; break; }; done ;;
     codex)
       __cd="\${CODEX_HOME:-$HOME/.codex}"
       for __r in "$__cd/sessions" "$__cd/archived_sessions" "$HOME"/.tessel-server/accounts/codex/*/sessions; do
@@ -705,17 +713,47 @@ __t_subs() {
   [ "$__r" = 92 ] && return 0
   [ "$__r" = 0 ] || return $__r
   __n=0
-  for __c in "$__SD"/*.jsonl; do
+  command ls -t "$__SD" 2>/dev/null | while IFS= read -r __b; do
     [ "$__n" -lt "$2" ] || break
+    case $__b in .*|*[!0-9A-Za-z_.-]*) continue ;; *.jsonl) ;; *) continue ;; esac
+    __c=$__SD/$__b
     [ -f "$__c" ] && [ ! -L "$__c" ] || continue
-    __b=\${__c##*/}
-    case $__b in .*|*[!0-9A-Za-z_.-]*) continue ;; esac
     __s=$(__t_sig "$__c") || continue
     __z=\${__s%% *}
     __m=\${__s#* }; __m=\${__m%% *}
     printf '%s %s %s\\n' "$__z" "$__m" "$__b"
     __n=$((__n+1))
   done
+}
+__t_smeta() {
+  __t_subdir "$1"; __r=$?
+  [ "$__r" = 92 ] && return 0
+  [ "$__r" = 0 ] || return $__r
+  shift
+  for __b in "$@"; do
+    case $__b in .*|*[!0-9A-Za-z_.-]*|'') continue ;; esac
+    __c=$__SD/$__b.meta.json
+    [ -f "$__c" ] && [ ! -L "$__c" ] || continue
+    printf '@@M %s ' "$__b"; head -c 4096 "$__c" | __t_b64e | tr -d '\\n'; printf '\\n'
+  done
+}
+__t_cxkids() {
+  case $1 in ''|*[!0-9A-Za-z-]*) return 90 ;; esac
+  case $2 in ''|*[!0-9]*) return 90 ;; esac
+  __cd="\${CODEX_HOME:-$HOME/.codex}"
+  for __r in "$__cd/sessions" "$HOME"/.tessel-server/accounts/codex/*/sessions; do
+    [ -d "$__r" ] && [ ! -L "$__r" ] || continue
+    find "$__r" -type f -name 'rollout-*.jsonl' -mtime -2 2>/dev/null | head -n 3000 | while IFS= read -r __c; do
+      __b=\${__c##*/}
+      case $__b in *"$1".jsonl|*[!0-9A-Za-z_.-]*) continue ;; esac
+      [ -f "$__c" ] && [ ! -L "$__c" ] || continue
+      head -c 262144 "$__c" | head -n 1 | grep -q -F -e "$1" || continue
+      __s=$(__t_sig "$__c") || continue
+      __z=\${__s%% *}
+      __m=\${__s#* }; __m=\${__m%% *}
+      printf '%s %s %s\\n' "$__z" "$__m" "$__b"
+    done
+  done | head -n "$2"
 }
 __t_sread() {
   case $2 in .*|*[!0-9A-Za-z_.-]*|'') return 90 ;; *.jsonl) ;; *) return 90 ;; esac
