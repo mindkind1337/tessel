@@ -6999,6 +6999,28 @@ button.act-stat:hover,
   direction: ltr;
 }
 
+/* "Open in editor": beside a changed file, and at the end of its diff's head. */
+.rv-diff-head {
+  align-items: center;
+}
+
+.rv-open-editor {
+  margin-left: auto;
+  padding: 2px 10px;
+  font-size: 12px;
+}
+
+.rv-open-file {
+  flex: 0 0 auto;
+  align-self: center;
+  opacity: 0.6;
+}
+
+.rv-file:hover .rv-open-file,
+.rv-open-file:focus-visible {
+  opacity: 1;
+}
+
 .rv-table {
   width: 100%;
   border-collapse: collapse;

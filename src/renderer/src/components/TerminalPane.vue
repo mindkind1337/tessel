@@ -48,8 +48,12 @@ import { planInfo, paneWarnText } from '../claudePlan'
 import { grokPlanInfo, grokSignIn, refreshGrokSignIn } from '../grokPlan'
 import { HOST_ACCOUNT_AGENTS, hostAccountChoices, hostEntry, hostPaneAccount, isDefaultHostAccount, recheckAfterTurn, refreshHostAccounts, unwatchHostAccounts, watchHostAccounts } from '../hostAccounts'
 import { modelFromScreen, modelFromSwitchLine } from '../../../shared/screenModel'
-import { findFileRefs } from '../../../shared/fileLinks'
+import { findFileRefs, pickFileLinks } from '../../../shared/fileLinks'
 import { guestFileTarget } from '../liveShareGuestLinks'
+import { logicalLine, rangeOf, onRow } from '../links/terminalLinkLines'
+import { createCwdTracker, linkTarget, paneLinkMode } from '../links/terminalLinkPaths'
+import { hostHome } from '../chat/remoteChatLinks'
+import { isRemotePath } from '../../../shared/remotePath'
 import { osc52Text } from '../../../shared/osc52'
 import { stripTerminalSelectionGutter } from '../../../shared/terminalSelectionGutter'
 import { buildInputModeReset } from '../../../shared/terminalModeReset'
@@ -2378,7 +2382,7 @@ function rememberPastedImage(file, before) {
 async function openImage(n) {
   const res = window.shellApi.getPastedImage
     ? await window.shellApi
-        .getPastedImage({ file: pastedImages[n] || null, sessionId: props.node.sessionId || null, n })
+        .getPastedImage({ file: pastedImages[n] || null, sessionId: props.node.sessionId || null, n, agent: props.node.agentId || null, accountId: typeof props.node.accountId === 'string' ? props.node.accountId : null })
         .catch(() => null)
     : null
   if (res && res.ok && ctx.showImage) {
@@ -2391,17 +2395,26 @@ async function openImage(n) {
 }
 
 // File references clicked in the terminal (see the link provider below).
-const fileLinkCache = new Map() // "<cwd>\n<path>" -> { file, at }
+// "<mode>\n<cwd>\n<query>" -> { file, kind, at }: a path found is kept 30 s,
+// one not found only a few seconds (it may be about to be written).
+const fileLinkCache = new Map()
+const FOUND_MS = 30000
+const MISSING_MS = 4000
+// The shell's current folder (OSC 633 / OSC 7), for relative paths.
+const linkCwd = createCwdTracker()
 // Markdown, diagrams, tables, JSON, images and PDFs show in Tessel's viewer;
-// code opens in Tessel's editor at its line; Shift+click opens it in VS
-// Code (or the file's own program).
-async function openFileRef(file, ref, event) {
-  const outside = !!(event && event.shiftKey)
+// code opens in Tessel's editor at its line; a folder in the Files panel;
+// Shift+click opens a file of this PC in VS Code (or the file's own program).
+// kind: 'file' | 'dir'; an SSH host's file (ssh://…) opens through the
+// router only (never outside Tessel).
+async function openFileRef(file, ref, event, kind = 'file') {
+  const outside = !!(event && event.shiftKey) && kind !== 'dir' && !isRemotePath(file)
   // The one link router (links/openTarget.js): the same as from a chat or Files.
   if (ctx.openTarget && !outside) {
-    ctx.openTarget({ path: file, line: ref.line || null, col: ref.col || null }, { label: ref.path, event })
+    ctx.openTarget({ path: file, line: ref.line || null, col: ref.col || null, ...(kind === 'dir' ? { kind: 'dir' } : {}) }, { label: ref.path, event })
     return
   }
+  if (kind === 'dir' || isRemotePath(file)) return
   if (ctx.viewFile && isViewed(file) && !outside) {
     ctx.viewFile({ file, label: ref.path, line: ref.line || null })
     return
@@ -3193,17 +3206,29 @@ onMounted(() => {
   // starts and ends, for the agents' terminal_run (agentTerminal/screenRead.js).
   term.parser.registerOscHandler(133, (data) => shellIntegration.feed(data))
   term.parser.registerOscHandler(633, (data) => shellIntegration.feed(data))
-  // [Image #N] in Claude Code: click to open the image.
+  // The shell's current folder for file links: OSC 633's Cwd (read here
+  // first, then still handed to shell integration: false) and OSC 7.
+  term.parser.registerOscHandler(633, (data) => {
+    linkCwd.feed633(data)
+    return false
+  })
+  term.parser.registerOscHandler(7, (data) => {
+    linkCwd.feed7(data)
+    return true
+  })
+  // [Image #N] in Claude Code and Codex: click to open the image.
   term.registerLinkProvider({
     provideLinks(y, callback) {
-      if (props.node.agentId !== 'claude' || !term) return callback(undefined)
-      const line = term.buffer.active.getLine(y - 1)
-      const text = line ? line.translateToString(true) : ''
+      const agent = props.node.agentId
+      if ((agent !== 'claude' && agent !== 'codex') || !term) return callback(undefined)
+      const ll = logicalLine(term.buffer.active, y - 1)
       const links = []
-      for (const m of text.matchAll(IMAGE_TAG)) {
+      for (const m of ll.text.matchAll(IMAGE_TAG)) {
         const n = Number(m[1])
+        const range = onRow(ll, m.index, m[0].length, y - 1) ? rangeOf(ll, m.index, m[0].length) : null
+        if (!range) continue
         links.push({
-          range: { start: { x: m.index + 1, y }, end: { x: m.index + m[0].length, y } },
+          range,
           text: m[0],
           decorations: { underline: true, pointerCursor: true },
           activate: () => openImage(n)
@@ -3219,13 +3244,16 @@ onMounted(() => {
   // Shift+click opens nothing outside Tessel here.
   function guestFileLinks(y, callback) {
     const project = props.node.liveShare ? props.node.liveShare.project : null
-    const line = term ? term.buffer.active.getLine(y - 1) : null
+    if (!term) return callback(undefined)
+    const ll = logicalLine(term.buffer.active, y - 1)
     const links = []
-    for (const r of findFileRefs(line ? line.translateToString(true) : '')) {
+    const refs = findFileRefs(ll.text).filter((r) => onRow(ll, r.index, r.text.length, y - 1))
+    for (const r of pickFileLinks(refs, (ref) => guestFileTarget(project, ref.path))) {
       const file = guestFileTarget(project, r.path)
-      if (!file) continue
+      const range = file ? rangeOf(ll, r.index, r.text.length) : null
+      if (!range) continue
       links.push({
-        range: { start: { x: r.index + 1, y }, end: { x: r.index + r.text.length, y } },
+        range,
         text: r.text,
         decorations: { underline: true, pointerCursor: true },
         activate: () => openGuestFile(file, r)
@@ -3237,40 +3265,97 @@ onMounted(() => {
     if (ctx.viewFile && isViewed(file)) return ctx.viewFile({ file, label: ref.path, line: ref.line || null })
     if (ctx.openInEditor) ctx.openInEditor({ file, line: ref.line || null, col: ref.col || null })
   }
-  // A file path (src/app.js:12:5, C:\x\y.ts:3...) that exists: a click opens
-  // it at that line (VS Code when installed). Checked on disk, relative to
-  // the pane's folder; answers are kept 30 s so hovering stays instant.
+  // The WSL distro of a WSL pane (the default one), asked once; not known
+  // (no WSL, the registry unreadable): asked again a while later.
+  let wslDistroJob = null
+  function wslDistro() {
+    if (!wslDistroJob) {
+      wslDistroJob = Promise.resolve()
+        .then(() => (window.shellApi.wslDistro ? window.shellApi.wslDistro() : null))
+        .catch(() => null)
+        .then((d) => {
+          if (!d) setTimeout(() => (wslDistroJob = null), 30000)
+          return typeof d === 'string' ? d : null
+        })
+    }
+    return wslDistroJob
+  }
+  // Where this pane's paths are (terminalLinkPaths.js): this PC, a WSL
+  // distro or an SSH host, and the folder relative paths count from.
+  async function linkContext() {
+    const n = props.node
+    const mode = paneLinkMode(n)
+    const lc = { mode, cwd: linkCwd.get(), startDir: mode === 'ssh' ? null : n.startDir || null, remotePath: n.remotePath || null, hostId: n.remoteHostId || null, gitbash: n.shellId === 'gitbash' }
+    if (mode === 'ssh') lc.home = await hostHome(n.remoteHostId)
+    if (mode === 'wsl') lc.distro = await wslDistro()
+    return lc
+  }
+  // A file or folder path (src/app.js:12:5, C:\x\y.ts:3, "a b/c.md", ~/x,
+  // src/components/...) that exists: a click opens it at that line, a folder
+  // in the Files panel. Checked on disk (an SSH pane: on the host, over its
+  // connection), relative to the shell's current folder; answers are kept
+  // (fileLinkCache) so hovering stays instant. A path the terminal wrapped
+  // onto the next row is one link; wide characters keep it in place.
   term.registerLinkProvider({
     provideLinks(y, callback) {
+      // Live Share first: a host's paths are never looked up on this computer.
       if (props.node.backend === 'liveshare') return guestFileLinks(y, callback)
       if (!term || !window.shellApi.resolveFiles) return callback(undefined)
-      const line = term.buffer.active.getLine(y - 1)
-      const refs = findFileRefs(line ? line.translateToString(true) : '')
+      const ll = logicalLine(term.buffer.active, y - 1)
+      const refs = findFileRefs(ll.text).filter((r) => onRow(ll, r.index, r.text.length, y - 1))
       if (!refs.length) return callback(undefined)
-      const cwd = props.node.startDir || null
-      const key = (p) => `${cwd}\n${p}`
-      const now = Date.now()
-      const unknown = [...new Set(refs.map((r) => r.path))].filter((p) => {
-        const c = fileLinkCache.get(key(p))
-        return !c || now - c.at > 30000
-      })
-      const build = () =>
-        callback(
-          refs
-            .filter((r) => (fileLinkCache.get(key(r.path)) || {}).file)
-            .map((r) => ({
-              range: { start: { x: r.index + 1, y }, end: { x: r.index + r.text.length, y } },
-              text: r.text,
-              decorations: { underline: true, pointerCursor: true },
-              activate: (event) => openFileRef(fileLinkCache.get(key(r.path)).file, r, event)
-            }))
-        )
-      if (!unknown.length) return build()
-      window.shellApi
-        .resolveFiles({ cwd, paths: unknown })
-        .then((res) => {
-          for (const p of unknown) fileLinkCache.set(key(p), { file: (res && res[p]) || null, at: Date.now() })
-          build()
+      linkContext()
+        .then((lc) => {
+          const targets = new Map() // ref -> { key, query, cwd }
+          for (const r of refs) {
+            const tg = linkTarget(r.path, lc)
+            if (tg) targets.set(r, { ...tg, key: `${lc.mode}\n${tg.cwd || ''}\n${tg.query}` })
+          }
+          const now = Date.now()
+          const fresh = (c) => c && now - c.at < (c.file ? FOUND_MS : MISSING_MS)
+          const unknown = new Map() // key -> target
+          for (const tg of targets.values()) if (!fresh(fileLinkCache.get(tg.key))) unknown.set(tg.key, tg)
+          const hit = (r) => {
+            const tg = targets.get(r)
+            const c = tg && fileLinkCache.get(tg.key)
+            return c && c.file ? c : null
+          }
+          const build = () => {
+            const links = []
+            for (const r of pickFileLinks(refs, hit)) {
+              const c = hit(r)
+              const range = rangeOf(ll, r.index, r.text.length)
+              if (!c || !range) continue
+              links.push({
+                range,
+                text: r.text,
+                decorations: { underline: true, pointerCursor: true },
+                activate: (event) => openFileRef(c.file, r, event, c.kind)
+              })
+            }
+            callback(links.length ? links : undefined)
+          }
+          if (!unknown.size) return build()
+          // One look-up per folder the paths count from (usually one).
+          const byCwd = new Map()
+          for (const tg of unknown.values()) {
+            if (!byCwd.has(tg.cwd)) byCwd.set(tg.cwd, [])
+            byCwd.get(tg.cwd).push(tg)
+          }
+          return Promise.all(
+            [...byCwd].map(([cwd, list]) =>
+              window.shellApi.resolveFiles({ cwd, paths: [...new Set(list.map((tg) => tg.query))], detail: true }).then((res) => {
+                const at = Date.now()
+                for (const tg of list) {
+                  const found = res && res[tg.query]
+                  fileLinkCache.set(tg.key, found && found.path ? { file: found.path, kind: found.kind === 'dir' ? 'dir' : 'file', at } : { file: null, at })
+                }
+              })
+            )
+          ).then(() => {
+            if (fileLinkCache.size > 2000) for (const k of [...fileLinkCache.keys()].slice(0, 500)) fileLinkCache.delete(k)
+            build()
+          })
         })
         .catch(() => callback(undefined))
     }

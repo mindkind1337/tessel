@@ -27,6 +27,7 @@ export function tabLabel(f, files) {
   if (f.diff.area === 'commit')
     return t('editor.tab.commitDiff', '{{name}} ({{commit}})', { name: baseLabel(f, files), commit: String(f.diff.commit || '').slice(0, 7) })
   if (f.diff.area === 'local') return localDiffLabel(baseLabel(f, files), f.diff.localTime)
+  if (f.diff.area === 'agent') return t('editor.tab.agentDiff', '{{name}} (agent edit)', { name: baseLabel(f, files) })
   return f.diff.area === 'staged'
     ? t('editor.tab.stagedDiff', '{{name}} (staged diff)', { name: baseLabel(f, files) })
     : t('editor.tab.diff', '{{name}} (diff)', { name: baseLabel(f, files) })

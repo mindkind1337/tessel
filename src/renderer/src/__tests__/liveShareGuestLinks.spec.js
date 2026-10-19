@@ -45,9 +45,10 @@ describe('guest panes never use the local file or browser paths', () => {
     const pane = src('components/TerminalPane.vue')
     const provider = pane.indexOf("if (props.node.backend === 'liveshare') return guestFileLinks(y, callback)")
     expect(provider).toBeGreaterThan(0)
-    expect(provider).toBeLessThan(pane.indexOf('.resolveFiles({ cwd, paths: unknown })'))
+    expect(provider).toBeLessThan(pane.indexOf('.resolveFiles({ cwd, paths:'))
     // The guest's file links never open outside Tessel (no Shift+click to files:open).
-    const guest = pane.slice(pane.indexOf('function guestFileLinks('), pane.indexOf('// A file path (src/app.js:12:5'))
+    expect(pane.indexOf('// The WSL distro of a WSL pane')).toBeGreaterThan(pane.indexOf('function guestFileLinks('))
+    const guest = pane.slice(pane.indexOf('function guestFileLinks('), pane.indexOf('// The WSL distro of a WSL pane'))
     expect(guest).not.toMatch(/openFile\(|shiftKey|resolveFiles/)
     const openLink = pane.slice(pane.indexOf('function openLink(uri'), pane.indexOf('function openLink(uri') + 700)
     expect(openLink.indexOf("backend === 'liveshare'")).toBeGreaterThan(0)

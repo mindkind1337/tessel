@@ -18,6 +18,13 @@ describe('classifyTarget', () => {
     expect(classifyTarget({ src: 'data:image/svg+xml;base64,PHN2Zz4=' })).toBeNull()
   })
 
+  it("WSL's own share is this PC's (terminal links of a WSL pane)", () => {
+    expect(classifyTarget('\\\\wsl.localhost\\Ubuntu\\home\\me\\a.js')).toMatchObject({ kind: 'file', path: '\\\\wsl.localhost\\Ubuntu\\home\\me\\a.js' })
+    expect(classifyTarget({ path: '\\\\wsl$\\Ubuntu\\home\\me', kind: 'dir' })).toMatchObject({ kind: 'dir' })
+    expect(classifyTarget('\\\\wsl.evil.com\\share\\a.js')).toBeNull()
+    expect(classifyTarget('\\\\wslx\\share\\a.js')).toBeNull()
+  })
+
   it('files, images, PDFs and folders by their path', () => {
     expect(classifyTarget('C:\\p\\src\\a.js')).toMatchObject({ kind: 'file', path: 'C:\\p\\src\\a.js', remote: null, lshare: false })
     expect(classifyTarget({ path: 'C:/p/shot.PNG' })).toMatchObject({ kind: 'image', path: 'C:/p/shot.PNG' })
