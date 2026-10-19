@@ -1032,24 +1032,71 @@ ipcMain.handle('activity:load', async (_evt, opts) => {
 // events: the list, or the window's JSON text of it (already checked and
 // trimmed there, see activityStore.js): written as is.
 // Written without blocking (several MB: written synchronously it held the
-// main process for 1.6 s), one save at a time so two never share the temp file.
-// The window's last save (closing it saves at once) is still written if the
-// app quits before it is done: synchronously then, at will-quit.
-let activitySaving = Promise.resolve()
-let activityUnsaved = null // the newest text not written yet
+// main process for 1.6 s): one write at a time (two never share the temp
+// file), and only the newest text waits behind it (the saves in between are
+// answered by that write: nothing piles up).
+// Quitting: the newest text is written synchronously at will-quit; a rename
+// of an older one that lands after it is followed by that newest text again,
+// and a save arriving after will-quit is written synchronously.
+let activityNext = null // the newest text waiting to be written
+let activityWriting = null // the text being written now
+let activityWaiters = [] // the saves the next write answers
+let activityPumping = false
 let activityQuitting = false
+let activityQuitBody = null // the text will-quit wrote
+function writeActivityNow(body) {
+  const tmp = activityFile() + '.quit.tmp'
+  fs.writeFileSync(tmp, body, 'utf8')
+  fs.renameSync(tmp, activityFile())
+}
 app.on('will-quit', () => {
   activityQuitting = true
-  if (activityUnsaved === null) return
+  const newest = activityNext !== null ? activityNext : activityWriting
+  if (newest === null) return
   try {
-    const tmp = activityFile() + '.quit.tmp'
-    fs.writeFileSync(tmp, activityUnsaved, 'utf8')
-    fs.renameSync(tmp, activityFile())
-    activityUnsaved = null
+    writeActivityNow(newest)
+    activityQuitBody = newest
   } catch (err) {
     log.warn('activity', `save failed: ${err.message}`)
   }
 })
+async function pumpActivity() {
+  activityPumping = true
+  while (activityNext !== null && !activityQuitting) {
+    const body = activityNext
+    const waiters = activityWaiters
+    activityNext = null
+    activityWaiters = []
+    activityWriting = body
+    let res
+    try {
+      const tmp = activityFile() + '.tmp'
+      await fs.promises.writeFile(tmp, body, 'utf8')
+      if (!activityQuitting) await fs.promises.rename(tmp, activityFile())
+      res = { ok: true }
+    } catch (err) {
+      log.warn('activity', `save failed: ${err.message}`)
+      res = { ok: false, error: err.message }
+    }
+    activityWriting = null
+    // will-quit ran meanwhile: its newest text stays the file's, even if this
+    // older rename landed after it.
+    if (activityQuitting && activityQuitBody !== null) {
+      try {
+        writeActivityNow(activityQuitBody)
+      } catch {
+        /* will-quit's own write stands */
+      }
+    }
+    for (const done of waiters) done(res)
+  }
+  activityPumping = false
+  // Saves left when quitting: written by will-quit (or not, then said so).
+  const left = activityWaiters
+  activityWaiters = []
+  const res = activityQuitBody !== null ? { ok: true } : { ok: false, error: 'quitting' } // i18n-ignore internal
+  for (const done of left) done(res)
+}
 ipcMain.handle('activity:save', (_evt, events) => {
   const text = typeof events === 'string' ? events : null
   if (text !== null && !isActivityText(text)) return { ok: false, error: 'not a list' } // i18n-ignore internal: the renderer's own data, never shown
@@ -1061,24 +1108,21 @@ ipcMain.handle('activity:save', (_evt, events) => {
     log.warn('activity', `save failed: ${err.message}`)
     return { ok: false, error: err.message }
   }
-  activityUnsaved = body
-  const save = activitySaving.then(async () => {
+  if (activityQuitting) {
     try {
-      const tmp = activityFile() + '.tmp'
-      await fs.promises.writeFile(tmp, body, 'utf8')
-      // Quitting: the newest text was written at will-quit, never replaced
-      // by this older one.
-      if (activityQuitting) return { ok: true }
-      await fs.promises.rename(tmp, activityFile())
-      if (activityUnsaved === body) activityUnsaved = null
+      writeActivityNow(body)
+      activityQuitBody = body
       return { ok: true }
     } catch (err) {
       log.warn('activity', `save failed: ${err.message}`)
       return { ok: false, error: err.message }
     }
+  }
+  activityNext = body
+  return new Promise((resolve) => {
+    activityWaiters.push(resolve)
+    if (!activityPumping) void pumpActivity()
   })
-  activitySaving = save
-  return save
 })
 
 // The notes view in Tessel: load (created from the template if missing) and
@@ -3775,11 +3819,20 @@ ipcMain.handle('clipboard:sendImageFileToHost', async (event, hostId, file) => {
     // checked and made again): sent as it is, its size read from its header.
     // Decoding and encoding it again here held the main process ~600 ms at
     // each paste.
+    // One handle for the checks and the read (never a link followed where
+    // the system can refuse it): what was checked is what is sent.
     let png
+    let fh = null
     try {
-      png = await fs.promises.readFile(file)
+      fh = await fs.promises.open(file, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0))
+      const hs = await fh.stat()
+      if (!hs.isFile()) return notImage
+      if (hs.size > HOST_IMAGE_BYTES) return { ok: false, error: t('main.remoteFs.imageTooBig', 'The image is too large to send (over 20 MB).') }
+      png = await fh.readFile()
     } catch {
       return notImage
+    } finally {
+      if (fh) await fh.close().catch(() => {})
     }
     const size = pngSize(png)
     if (!size) return notImage

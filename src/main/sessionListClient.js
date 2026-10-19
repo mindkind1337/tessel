@@ -7,7 +7,10 @@
 // call(method, ...args): the other agent file readings done there too (a
 // pane's model, its sub-agents, the conversation to resume: see
 // sessionListWorker.js METHODS), each with its own fallback here
-// (fallbacks[method]) answered the same way.
+// (fallbacks[method]) when the process cannot start, dies or cannot send its
+// answer. One that does not answer in time is not read here again (that is
+// the freeze it avoids): the call fails, and its handler answers as for an
+// unreadable file (nothing found).
 const IDLE_MS = 2 * 60 * 1000
 const REPLY_MS = 30 * 1000
 
@@ -66,7 +69,9 @@ export function createSessionLister({ fork, fallback, fallbacks = {}, timers = g
         if (!msg || !waiting.has(msg.id)) return
         const w = waiting.get(msg.id)
         if (w.method) {
-          if (typeof msg.error === 'string') settle(msg.id, null, false, msg.error)
+          // Its answer could not be sent (not cloneable): read here instead.
+          if (msg.failed === true) settle(msg.id, null, true)
+          else if (typeof msg.error === 'string') settle(msg.id, null, false, msg.error)
           else settle(msg.id, msg.value, msg.ok !== true)
         }
         else settle(msg.id, Array.isArray(msg.rows) ? msg.rows : [], !Array.isArray(msg.rows))
@@ -102,7 +107,8 @@ export function createSessionLister({ fork, fallback, fallbacks = {}, timers = g
     idleTimer = null
     return new Promise((resolve) => {
       const id = ++nextId
-      const timer = timers.setTimeout(() => settle(id, null, true), replyMs)
+      // A list late: read here as before. A method late: failed (above).
+      const timer = timers.setTimeout(() => (method ? settle(id, null, false, 'no answer in time') : settle(id, null, true)), replyMs)
       waiting.set(id, { resolve, local, timer, method })
       try {
         c.postMessage({ id, ...message })

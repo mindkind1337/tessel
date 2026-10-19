@@ -65,14 +65,23 @@ describe('sessions:reported', () => {
 })
 
 describe('activity:save', () => {
-  const source = block('let activitySaving = Promise.resolve()', "\n  return save\n})\n")
+  const source = block('// Written without blocking (several MB: written synchronously it held the', "\n    if (!activityPumping) void pumpActivity()\n  })\n})\n")
 
+  // Each async write or rename waits until the test lets it through
+  // (h.step()), and only then changes the files.
   function harness() {
     const handlers = {}
     const quit = []
-    const written = {}
+    const files = {}
     const ops = []
-    let release = null
+    const gates = []
+    const gated = (fn) => new Promise((resolve, reject) => gates.push(() => {
+      try {
+        resolve(fn())
+      } catch (err) {
+        reject(err)
+      }
+    }))
     const ctx = {
       ipcMain: { handle: (k, v) => (handlers[k] = v) },
       app: { on: (ev, fn) => ev === 'will-quit' && quit.push(fn) },
@@ -83,48 +92,81 @@ describe('activity:save', () => {
       log: { warn: vi.fn() },
       JSON,
       fs: {
-        writeFileSync: (p, t) => (ops.push(['writeSync', p]), (written[p] = t)),
-        renameSync: (a, b) => (ops.push(['renameSync', a, b]), (written[b] = written[a])),
+        writeFileSync: (p, t) => (ops.push(['writeSync', t]), (files[p] = t)),
+        renameSync: (a, b) => (files[b] = files[a]),
         promises: {
-          writeFile: async (p, t) => {
-            ops.push(['write', p])
-            if (release === null) await new Promise((r) => (release = r))
-            written[p] = t
-          },
-          rename: async (a, b) => {
-            ops.push(['rename', a, b])
-            written[b] = written[a]
-          }
+          writeFile: (p, t) => (ops.push(['write', t]), gated(() => (files[p] = t))),
+          rename: (a, b) => (ops.push(['rename', files[a]]), gated(() => (files[b] = files[a])))
         }
       }
     }
     vm.runInNewContext(source, ctx)
-    return { save: (e) => handlers['activity:save']({}, e), quit: () => quit.forEach((f) => f()), written, ops, release: () => release && release() }
+    const tick = () => new Promise((r) => setTimeout(r, 0))
+    return {
+      save: (e) => handlers['activity:save']({}, e),
+      quit: () => quit.forEach((f) => f()),
+      // Lets the oldest waiting operation through.
+      step: async () => {
+        await tick()
+        const g = gates.shift()
+        if (g) g()
+        await tick()
+      },
+      files,
+      ops
+    }
   }
 
-  it('writes the file without a synchronous write, one save after the other, as before ({ ok: true })', async () => {
+  it('writes without a synchronous write, as before ({ ok: true }); only the newest waiting save is written next', async () => {
     const h = harness()
     const a = h.save('[1]')
     const b = h.save('[1,2]')
-    await new Promise((r) => setTimeout(r, 0))
-    expect(h.ops).toEqual([['write', 'A.json.tmp']]) // the second waits for the first
-    h.release()
+    const c = h.save('[1,2,3]')
+    await h.step() // [1] written to the temp file
+    await h.step() // and renamed
+    await h.step() // then [1,2,3]: [1,2] was replaced while waiting
+    await h.step()
     expect(await a).toEqual({ ok: true })
     expect(await b).toEqual({ ok: true })
-    expect(h.written['A.json']).toBe('[1,2]')
-    expect(h.ops.some(([op]) => op.endsWith('Sync'))).toBe(false)
+    expect(await c).toEqual({ ok: true })
+    expect(h.files['A.json']).toBe('[1,2,3]')
+    expect(h.ops).toEqual([['write', '[1]'], ['rename', '[1]'], ['write', '[1,2,3]'], ['rename', '[1,2,3]']])
     expect(await h.save('not a list')).toEqual({ ok: false, error: 'not a list' })
   })
 
-  it('quitting before the last save is written: written at will-quit, never replaced by an older one', async () => {
+  it('quitting with a save waiting: the newest written at will-quit, the older one in flight never renamed over it', async () => {
     const h = harness()
     const a = h.save('[1]')
-    await new Promise((r) => setTimeout(r, 0))
+    const b = h.save('[1,2]')
+    await new Promise((r) => setTimeout(r, 0)) // [1] being written to its temp file
     h.quit()
-    expect(h.written['A.json']).toBe('[1]')
-    h.release()
-    await a
+    expect(h.files['A.json']).toBe('[1,2]')
+    await h.step() // its write ends after will-quit: no rename
+    expect(await a).toEqual({ ok: true })
+    expect(await b).toEqual({ ok: true })
+    expect(h.files['A.json']).toBe('[1,2]')
     expect(h.ops.filter(([op]) => op === 'rename')).toEqual([])
+  })
+
+  it("an older rename landing after will-quit's write: the newest text written again", async () => {
+    const h = harness()
+    const a = h.save('[1]')
+    await h.step() // [1] in its temp file, its rename waiting
+    const b = h.save('[1,2]')
+    h.quit() // writes [1,2]
+    expect(h.files['A.json']).toBe('[1,2]')
+    await h.step() // the [1] rename lands now
+    await a
+    expect(await b).toEqual({ ok: true })
+    expect(h.files['A.json']).toBe('[1,2]')
+  })
+
+  it('a save arriving after will-quit is written synchronously', async () => {
+    const h = harness()
+    h.quit()
+    expect(await h.save('[9]')).toEqual({ ok: true })
+    expect(h.files['A.json']).toBe('[9]')
+    expect(h.ops).toEqual([['writeSync', '[9]']])
   })
 })
 
@@ -163,7 +205,12 @@ describe('clipboard:sendImageFileToHost', () => {
         lstatSync: () => {
           throw new Error('sync')
         },
-        promises: { lstat: async () => ({ isFile: () => true, size: 100 }), readFile: async () => Buffer.from(png) }
+        constants: { O_RDONLY: 0 },
+        promises: {
+          lstat: async () => ({ isFile: () => true, size: 100 }),
+          // One handle: checked and read through it, then closed.
+          open: async () => ({ stat: async () => ({ isFile: () => true, size: 100 }), readFile: async () => Buffer.from(png), close: async () => {} })
+        }
       }
     })
     return { call: () => handlers['clipboard:sendImageFileToHost']({ sender: mainWindow.webContents }, 'h1', 'C:\\p\\image-1.png'), sent, nativeImage }

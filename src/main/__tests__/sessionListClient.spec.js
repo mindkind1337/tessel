@@ -84,13 +84,37 @@ describe("the agents' other file readings in that process (call)", () => {
     lister.close()
   })
 
-  it('reads here when the process cannot start or does not answer', async () => {
+  it('reads here when the process cannot start, or cannot send its answer', async () => {
     const fallbacks = { agentModel: vi.fn((q) => ({ model: q.agentId })) }
     const none = createSessionLister({ fork: () => { throw new Error('no') }, fallback: () => [], fallbacks })
     expect(await none.call('agentModel', { agentId: 'a' })).toEqual({ model: 'a' })
+    // An answer that cannot be cloned: the worker says so, read here.
+    const methods = { agentModel: () => ({ fn: () => {} }) }
+    const forks = []
+    const fork = () => {
+      const child = new EventEmitter()
+      const port = new EventEmitter()
+      port.postMessage = (msg) => {
+        structuredClone(msg) // what a real port does: throws on a function
+        setTimeout(() => child.emit('message', msg), 0)
+      }
+      serve(port, () => [], methods)
+      child.postMessage = (msg) => setTimeout(() => port.emit('message', { data: msg }), 0)
+      child.kill = vi.fn()
+      forks.push(child)
+      return child
+    }
+    const lister = createSessionLister({ fork, fallback: () => [], fallbacks })
+    expect(await lister.call('agentModel', { agentId: 'c' })).toEqual({ model: 'c' })
+    lister.close()
+  })
+
+  it('a method with no answer in time fails, never read again on the main thread', async () => {
+    const fallbacks = { agentModel: vi.fn(() => ({ model: 'here' })) }
     const silent = fakeFork(() => [], { answer: false })
     const lister = createSessionLister({ fork: silent.fork, fallback: () => [], fallbacks, replyMs: 20 })
-    expect(await lister.call('agentModel', { agentId: 'b' })).toEqual({ model: 'b' })
+    await expect(lister.call('agentModel', { agentId: 'b' })).rejects.toThrow('no answer in time')
+    expect(fallbacks.agentModel).not.toHaveBeenCalled()
     lister.close()
   })
 

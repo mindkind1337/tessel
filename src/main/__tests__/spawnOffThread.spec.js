@@ -156,3 +156,61 @@ describe('the worker and the process lifetime', () => {
     expect(w.unref.mock.calls.length).toBe(unrefsBefore + 1)
   })
 })
+
+describe('a worker that dies mid-run, and the call forms', () => {
+  async function fakeWorker() {
+    const { EventEmitter } = await import('node:events')
+    const w = new EventEmitter()
+    w.ref = vi.fn()
+    w.unref = vi.fn()
+    w.terminate = vi.fn()
+    w.sent = []
+    w.postMessage = (m) => w.sent.push(m)
+    return w
+  }
+
+  it("kills the programs it had started (an exec's too) and fails their runs", async () => {
+    const w = await fakeWorker()
+    const killPid = vi.fn()
+    spawner = createSpawner({ createWorker: () => w, killPid })
+    const ran = exec(spawner, 'x', [], {})
+    const child = spawner.spawnOff('y', [], {})
+    const execId = w.sent[0].id
+    const spawnId = w.sent[1].id
+    w.emit('message', { id: execId, t: 'pid', pid: 101 })
+    w.emit('message', { id: spawnId, t: 'spawn', pid: 202 })
+    const closed = new Promise((resolve) => child.on('close', resolve))
+    // No 'error' listener on the child: never thrown in the main process.
+    w.emit('exit', 1)
+    expect((await ran).err.code).toBe('ESPAWNWORKER')
+    await closed
+    expect(killPid.mock.calls.map((c) => c[0]).sort()).toEqual([101, 202])
+  })
+
+  it('a finished run is never killed later', async () => {
+    const w = await fakeWorker()
+    const killPid = vi.fn()
+    spawner = createSpawner({ createWorker: () => w, killPid })
+    const ran = exec(spawner, 'x', [], {})
+    const id = w.sent[0].id
+    w.emit('message', { id, t: 'pid', pid: 7 })
+    w.emit('message', { id, t: 'done', err: null, stdout: 'ok', stderr: '' })
+    await ran
+    w.emit('exit', 1)
+    expect(killPid).not.toHaveBeenCalled()
+  })
+
+  it("takes Node's forms: execFile(file, options, callback) and execFile(file, callback)", async () => {
+    const w = await fakeWorker()
+    const s2 = createSpawner({ createWorker: () => w })
+    try {
+      s2.execFileOff('prog', { cwd: '/tmp/x' }, () => {})
+      s2.execFileOff('prog', () => {})
+      expect(w.sent[0]).toMatchObject({ file: 'prog', args: [], opts: { cwd: '/tmp/x' } })
+      expect(w.sent[1]).toMatchObject({ file: 'prog', args: [], opts: {} })
+    } finally {
+      s2.close()
+    }
+  })
+})
+

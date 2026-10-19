@@ -41,7 +41,8 @@ export function serve(port, list = listSessions, methods = METHODS) {
           (value) => port.postMessage({ id: msg.id, ok: true, value }),
           (err) => port.postMessage({ id: msg.id, error: String((err && err.message) || err) })
         )
-        .catch(() => port.postMessage({ id: msg.id, error: 'the answer could not be sent' })) // i18n-ignore internal
+        // Not cloneable: the main process reads it itself (its fallback).
+        .catch(() => port.postMessage({ id: msg.id, failed: true }))
       return
     }
     try {

@@ -144,5 +144,8 @@ export function isPastedImage(file, dir = PASTE_DIR) {
 export function isSavedPaste(file, dir = PASTE_DIR) {
   if (typeof file !== 'string' || !file || file.includes('\0')) return false
   const full = resolve(file)
-  return dirname(full).toLowerCase() === resolve(dir).toLowerCase() && /^(guest-image|image)-[\w-]+\.png$/i.test(basename(full))
+  // Case ignored on Windows only; elsewhere a folder named with other case
+  // is another folder, never Tessel's.
+  const sameDir = process.platform === 'win32' ? dirname(full).toLowerCase() === resolve(dir).toLowerCase() : dirname(full) === resolve(dir)
+  return sameDir && /^(guest-image|image)-[\w-]+\.png$/i.test(basename(full))
 }

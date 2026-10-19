@@ -12,14 +12,20 @@
 //
 // Here the start happens in a worker thread (its own event loop waits, the
 // main process goes on); the output comes back by message. Two forms:
-//   execFileOff(file, args, opts, callback)  child_process.execFile's
+//   execFileOff(file, [args], [opts], callback)  child_process.execFile's
 //     callback (err, stdout, stderr) with its output as text
-//   spawnOff(file, args, opts)  a stand-in for child_process.spawn's child:
-//     stdout / stderr ('data', setEncoding), stdin (write, end), kill(), and
-//     its 'spawn', 'error', 'exit' and 'close' events
-// When the worker cannot start (or dies), the program is started here as
-// before: never a lost run. The worker is started on the first use and keeps
-// the process running only while a program it started runs.
+//   spawnOff(file, [args], [opts])  a stand-in for child_process.spawn's
+//     child, only this much of it: pid, exitCode, killed, kill(signal),
+//     ref() / unref() (no-ops), stdout / stderr ('data' events, setEncoding),
+//     stdin (write, end, its 'error'), and the child's 'spawn', 'error',
+//     'exit' and 'close' events. No pipe(), send() or other stdio streams:
+//     a caller needing more uses child_process.spawn.
+// When the worker cannot start, or the options cannot cross to it (a signal,
+// a Buffer encoding...), the program is started here as before. A worker that
+// dies mid-run fails the runs in flight (an exec's callback gets the code
+// ESPAWNWORKER, a child 'error' then 'close') and the programs it started are
+// killed, never left running unseen. The worker is started on the first use
+// and keeps the process running only while a program it started runs.
 import { execFile as nodeExecFile, spawn as nodeSpawn } from 'child_process'
 import { EventEmitter } from 'events'
 import { StringDecoder } from 'string_decoder'
@@ -37,7 +43,9 @@ parentPort.on('message', (m) => {
   if (!m || typeof m !== 'object') return
   if (m.op === 'exec') {
     try {
-      execFile(m.file, m.args, m.opts, (err, stdout, stderr) => parentPort.postMessage({ id: m.id, t: 'done', err: errorOf(err), stdout, stderr }))
+      const c = execFile(m.file, m.args, m.opts, (err, stdout, stderr) => parentPort.postMessage({ id: m.id, t: 'done', err: errorOf(err), stdout, stderr }))
+      // Its pid: killed by the main process if this worker dies first.
+      if (c && c.pid) parentPort.postMessage({ id: m.id, t: 'pid', pid: c.pid })
     } catch (err) {
       parentPort.postMessage({ id: m.id, t: 'done', err: errorOf(err), thrown: true, stdout: '', stderr: '' })
     }
@@ -101,13 +109,34 @@ function plainOptions(opts) {
   return opts
 }
 
+// A program's whole tree stopped (its worker died: nobody else will).
+function defaultKillPid(pid, execFile) {
+  try {
+    if (process.platform === 'win32') execFile('taskkill.exe', ['/PID', String(pid), '/T', '/F'], { windowsHide: true }, () => {})
+    else process.kill(pid, 'SIGKILL')
+  } catch {
+    /* already gone */
+  }
+}
+
+// execFile(file, [args], [options], [callback]) like Node: -> { args, opts, callback }.
+function normalize(args, opts, callback) {
+  if (!Array.isArray(args)) {
+    if (typeof args === 'function') return { args: [], opts: {}, callback: args }
+    if (args == null || typeof args === 'object') return normalize([], args, opts)
+  }
+  if (typeof opts === 'function') return { args: args || [], opts: {}, callback: opts }
+  return { args: args || [], opts: opts == null ? {} : opts, callback }
+}
+
 // deps (tests): createWorker() -> a worker_threads Worker; execFile / spawn
-// (the fallbacks).
-export function createSpawner({ createWorker = defaultWorker, execFile = nodeExecFile, spawn = nodeSpawn } = {}) {
+// (the fallbacks); killPid(pid) (a program left by a dead worker).
+export function createSpawner({ createWorker = defaultWorker, execFile = nodeExecFile, spawn = nodeSpawn, killPid = (pid) => defaultKillPid(pid, execFile) } = {}) {
   let worker = null
   let failed = false
   let nextId = 0
   const pending = new Map() // id -> handler(msg)
+  const pids = new Map() // id -> the pid of the program that run started
   // The worker keeps the process running only while a run is in flight, as
   // a child started here would (an idle worker never holds a quit back).
   function hold(id, handler) {
@@ -115,6 +144,7 @@ export function createSpawner({ createWorker = defaultWorker, execFile = nodeExe
     if (pending.size === 1 && worker && typeof worker.ref === 'function') worker.ref()
   }
   function release(id) {
+    pids.delete(id)
     if (!pending.delete(id)) return
     if (!pending.size && worker && typeof worker.unref === 'function') worker.unref()
   }
@@ -130,11 +160,7 @@ export function createSpawner({ createWorker = defaultWorker, execFile = nodeExe
       const lost = () => {
         if (worker !== w) return
         worker = null
-        // The runs in flight are told: an exec fails, a spawned child errors.
-        for (const [id, h] of [...pending]) {
-          pending.delete(id)
-          h({ id, t: 'lost' })
-        }
+        abandon()
       }
       w.on('error', lost)
       w.on('exit', lost)
@@ -147,16 +173,30 @@ export function createSpawner({ createWorker = defaultWorker, execFile = nodeExe
     return worker
   }
 
-  function execFileOff(file, args, opts, callback) {
-    if (typeof opts === 'function') {
-      callback = opts
-      opts = {}
+  // The runs in flight when the worker ends: their programs killed, each
+  // told (an exec fails, a spawned child errors and closes).
+  function abandon() {
+    for (const [id, h] of [...pending]) {
+      const pid = pids.get(id)
+      pids.delete(id)
+      pending.delete(id)
+      if (pid) killPid(pid)
+      h({ id, t: 'lost' })
     }
+  }
+
+  function execFileOff(file, argsIn, optsIn, callbackIn) {
+    const { args, opts, callback: cb } = normalize(argsIn, optsIn, callbackIn)
+    const callback = typeof cb === 'function' ? cb : () => {}
     const plain = plainOptions(opts)
     const w = plain && ensure()
     if (!w) return execFile(file, args, opts, callback)
     const id = ++nextId
     hold(id, (msg) => {
+      if (msg.t === 'pid') {
+        pids.set(id, msg.pid)
+        return
+      }
       release(id)
       if (msg.t === 'lost') {
         callback(Object.assign(new Error('the process starter stopped'), { code: 'ESPAWNWORKER' }), '', '') // i18n-ignore internal
@@ -173,7 +213,8 @@ export function createSpawner({ createWorker = defaultWorker, execFile = nodeExe
     return undefined
   }
 
-  function spawnOff(file, args, opts) {
+  function spawnOff(file, argsIn, optsIn) {
+    const { args, opts } = normalize(argsIn, optsIn)
     const plain = plainOptions(opts)
     const w = plain && ensure()
     if (!w) return spawn(file, args, opts)
@@ -213,6 +254,15 @@ export function createSpawner({ createWorker = defaultWorker, execFile = nodeExe
     child.pid = undefined
     child.exitCode = null
     child.killed = false
+    // The worker holds the process while the child runs (see hold): nothing
+    // to change per child.
+    child.ref = () => child
+    child.unref = () => child
+    // An 'error' nobody listens to would throw in the main process: only
+    // emitted to listeners where it is Tessel's own trouble.
+    const failQuietly = (err) => {
+      if (child.listenerCount('error')) child.emit('error', err)
+    }
     child.kill = (signal) => {
       if (child.exitCode !== null) return false
       child.killed = true
@@ -228,6 +278,7 @@ export function createSpawner({ createWorker = defaultWorker, execFile = nodeExe
       switch (msg.t) {
         case 'spawn':
           child.pid = msg.pid
+          pids.set(id, msg.pid)
           child.emit('spawn')
           break
         case 'out':
@@ -252,13 +303,17 @@ export function createSpawner({ createWorker = defaultWorker, execFile = nodeExe
           child.emit('close', msg.code, msg.signal)
           break
         case 'thrown':
-          // spawn() threw there (bad arguments): an 'error' here, a tick later.
+          // spawn() threw there (bad arguments): an 'error' here, a tick
+          // later, then 'close' (nothing else will come).
           release(id)
-          child.emit('error', rebuildError(msg.err))
+          closed = true
+          failQuietly(rebuildError(msg.err))
+          child.emit('close', null, null)
           break
         case 'lost':
           if (!closed) {
-            child.emit('error', Object.assign(new Error('the process starter stopped'), { code: 'ESPAWNWORKER' })) // i18n-ignore internal
+            closed = true
+            failQuietly(Object.assign(new Error('the process starter stopped'), { code: 'ESPAWNWORKER' })) // i18n-ignore internal
             child.emit('close', null, null)
           }
           break
@@ -273,15 +328,13 @@ export function createSpawner({ createWorker = defaultWorker, execFile = nodeExe
     return child
   }
 
-  // The worker ended (the app quits): what runs there is told, as when it dies.
+  // The worker ended on purpose: what runs there is stopped and told, as
+  // when it dies.
   function close() {
     const w = worker
     worker = null
     failed = true
-    for (const [id, h] of [...pending]) {
-      pending.delete(id)
-      h({ id, t: 'lost' })
-    }
+    abandon()
     if (w) {
       try {
         w.terminate()
