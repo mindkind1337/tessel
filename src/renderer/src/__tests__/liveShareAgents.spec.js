@@ -44,7 +44,7 @@ const lastArg = (fn) => fn.mock.calls.at(-1)[0]
 
 describe('Agents guests may use: the share’s setting', () => {
   it('lists your agents, all allowed by default, and saves a rule when one is left out', async () => {
-    const w = await openAt('overview', sharing({ settings: { hideIgnored: true } }))
+    const w = await openAt('settings', sharing({ settings: { hideIgnored: true } }))
     const root = w.find('[data-test="ls-agents-setting"]')
     expect(root.find('[data-test="ls-agents-share-summary"]').text()).toBe('All agents')
     await root.find('[data-test="ls-agents-share-toggle"]').trigger('click')
@@ -59,7 +59,7 @@ describe('Agents guests may use: the share’s setting', () => {
   })
 
   it('limits an agent’s models: all at first, then only the ones ticked, never none', async () => {
-    const w = await openAt('overview', sharing({ settings: { hideIgnored: true, agents: { deny: [], later: true, known: ['claude', 'codex'], models: { claude: ['sonnet'] } } } }))
+    const w = await openAt('settings', sharing({ settings: { hideIgnored: true, agents: { deny: [], later: true, known: ['claude', 'codex'], models: { claude: ['sonnet'] } } } }))
     expect(w.find('[data-test="ls-agents-share-summary"]').text()).toBe('All agents, some models only')
     await w.find('[data-test="ls-agents-share-toggle"]').trigger('click')
     expect(w.find('[data-test="ls-agents-share-models-claude"]').text()).toContain('1 of 2 models')
@@ -75,7 +75,7 @@ describe('Agents guests may use: the share’s setting', () => {
   })
 
   it('says when agents you add later are left out', async () => {
-    const w = await openAt('overview', sharing({ settings: { agents: { deny: [], later: false, known: ['claude', 'codex'], models: {} } } }))
+    const w = await openAt('settings', sharing({ settings: { agents: { deny: [], later: false, known: ['claude', 'codex'], models: {} } } }))
     expect(w.find('[data-test="ls-agents-share-summary"]').text()).toBe('All agents, not the ones you add later')
     w.unmount()
   })
