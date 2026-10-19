@@ -72,7 +72,7 @@ import LiveShareAsk from './components/LiveShareAsk.vue'
 import HelpDialog from './components/HelpDialog.vue'
 import { createLiveShareWindow, rightsText } from './liveShareWindow'
 import LiveSharePill from './components/LiveSharePill.vue'
-import { guestsIn, personName, viaName, joinedGuests, waitingGuests } from './liveShareAccess'
+import { guestsIn, personName, viaName, inviteName, joinedGuests, waitingGuests } from './liveShareAccess'
 import { toastText as cookieImportToast } from './browser/cookieImportText'
 import { askQuitRunning } from './quitConfirm'
 import ImageViewer from './components/ImageViewer.vue'
@@ -2668,11 +2668,24 @@ const livePill = computed(() => {
     const cur = currentWs.value
     const presence = host.presence || []
     const at = (gid, key) => presence.filter((p) => (p.guests || []).some((g) => g.id === gid && g[key])).map((p) => paneTitle(p.id)).filter(Boolean)
+    // The invitation Copy invite code copies: the first one (made with the
+    // share) while it still lets people in, else the first live one.
+    const live = (host.invites || []).filter((inv) => inv && inv.state === 'live' && inv.code)
+    const inv = live.find((x) => x.root) || live[0] || null
+    const waitingList = waitingGuests(host).map((g) => ({ id: g.id, name: personName(g), code: g.code || null }))
     return {
       mode: 'host',
       starting: host.state !== 'sharing',
-      guests: joinedGuests(host).map((g) => ({ id: g.id, name: personName(g), via: viaName(g.invite), watching: at(g.id, 'watching'), typing: at(g.id, 'typing') })),
-      waiting: liveShare.state.asks.filter((a) => a.kind === 'join').length,
+      // A share starting again by itself, and when it tries next (it could
+      // not yet).
+      restarting: !!host.restarting,
+      retryAt: host.retry && Number.isFinite(host.retry.at) ? host.retry.at : null,
+      since: Number.isFinite(host.since) ? host.since : null,
+      relay: !(host.settings && host.settings.rendezvous === false),
+      guests: joinedGuests(host).map((g) => ({ id: g.id, name: personName(g), via: viaName(g.invite), rights: g.rights || null, watching: at(g.id, 'watching'), typing: at(g.id, 'typing') })),
+      waiting: Math.max(liveShare.state.asks.filter((a) => a.kind === 'join').length, waitingList.length),
+      waitingList,
+      invite: inv ? { id: inv.id, label: inviteName(inv), code: inv.code } : null,
       projects: sharedProjectList.value.map((p) => ({ ...p, here: !!cur && p.id === cur.id, people: guestsIn(host, p.id).map((g) => ({ id: g.id, name: personName(g) })) })),
       current: cur && !liveShare.isGuestWs(cur) ? { id: cur.id, name: cur.name, shared: liveShare.isShared(cur.id) } : null
     }
@@ -2682,8 +2695,11 @@ const livePill = computed(() => {
     return {
       mode: 'guest',
       reconnecting: guest.state !== 'joined',
+      // Reconnecting: how many tries, and whether the relay is asked.
+      retry: guest.state === 'reconnecting' && guest.retry ? { tries: guest.retry.tries || 0, lookup: !!guest.retry.lookup } : null,
       host: guest.host || '?',
       rights: guest.state === 'joined' ? rightsText(guest.rights) : '',
+      grant: guest.state === 'joined' ? guest.rights || null : null,
       code: guest.code || null,
       projects: workspaces.value.filter((w) => liveShare.isGuestWs(w)).map((w) => ({ id: w.id, name: w.name, here: w.id === currentWsId.value })),
       // The host's project on screen: whether your screen follows the
@@ -2697,6 +2713,34 @@ const livePill = computed(() => {
 // the share, a section of the dialog, Stop (asked when someone is in), Leave.
 function livePillGoto(id) {
   if (typeof id === 'string' && workspaces.value.some((w) => w.id === id)) selectWorkspace(id)
+}
+// The host's projects open here, for the Live Share dialog's Join tab: their
+// names, the one on screen, and whether your screen follows the host's.
+const liveGuestProjects = computed(() =>
+  liveGuestOn.value
+    ? workspaces.value.filter((w) => liveShare.isGuestWs(w)).map((w) => ({ id: w.id, name: w.liveShare.projectName || w.name, here: w.id === currentWsId.value, follow: liveShare.followInfo(w) }))
+    : []
+)
+// A host's project from the Join tab: shown (the dialog closes); Follow host
+// there makes your screen follow the host's again.
+function liveGuestGoto(id) {
+  if (typeof id !== 'string' || !workspaces.value.some((w) => w.id === id)) return
+  liveShareOpen.value = false
+  selectWorkspace(id)
+}
+function liveGuestFollow(id) {
+  const ws = workspaces.value.find((w) => w.id === id)
+  if (ws) liveShare.followHost(ws)
+}
+// The pill's Copy invite code: the whole code on the clipboard.
+async function livePillCopyInvite(inv) {
+  if (!inv || typeof inv.code !== 'string' || !inv.code) return
+  try {
+    if (window.shellApi && window.shellApi.writeClipboard) await window.shellApi.writeClipboard(inv.code)
+    else await navigator.clipboard.writeText(inv.code)
+  } catch {
+    showToast(t('liveShare.share.copyFailed', 'Could not copy to the clipboard.'), { kind: 'error' })
+  }
 }
 // Asked first while anyone is in or waiting for an answer, like the dialog's
 // Stop: guests waiting would be turned away without the host knowing.
@@ -4541,6 +4585,7 @@ const settingsToolActions = {
   },
   conversations: () => showSideTab('conversations'),
   liveShare: () => openLiveShare(),
+  liveShareSettings: () => openLiveShare('settings'),
   files: () => showSideTab('files'),
   cleanupWorktrees: () => {
     const ws = currentWs.value
@@ -13340,6 +13385,9 @@ onBeforeUnmount(() => {
           @stop="liveShareStop"
           @leave="liveShareLeave"
           @follow="liveShare.followHost()"
+          @unfollow="liveShare.stopFollowing()"
+          @review="liveShare.showAsk"
+          @copy-invite="livePillCopyInvite"
         />
         <button
           v-else
@@ -13910,11 +13958,21 @@ onBeforeUnmount(() => {
       :pane-title="paneTitle"
       :projects="shareableProjects"
       :project-ids="liveShare.chosenIds()"
+      :guest-projects="liveGuestProjects"
       @toggle-project="liveShare.setShared"
       @review-guest="liveShare.showAsk"
+      @goto="liveGuestGoto"
+      @follow="liveGuestFollow"
       @close="liveShareOpen = false"
     />
-    <LiveShareAsk :ask="liveShare.state.asks[0] || null" :more="Math.max(0, liveShare.state.asks.length - 1)" :projects="sharedProjectList" @answer="liveShare.answerAsk" />
+    <LiveShareAsk
+      :ask="liveShare.state.asks[0] || null"
+      :more="Math.max(0, liveShare.state.asks.length - 1)"
+      :projects="sharedProjectList"
+      :agents="liveShare.state.host.agents || []"
+      :share-rule="(liveShare.state.host.settings && liveShare.state.host.settings.agents) || null"
+      @answer="liveShare.answerAsk"
+    />
 
     <CookieImportDialog
       v-if="cookieImportOpen"

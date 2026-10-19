@@ -618,6 +618,11 @@ export function registerLiveShare({
       // When a share came back by itself after a restart (the window says it
       // once): for a couple of minutes.
       resumed: s && s.state === 'sharing' && s.resumedAt && Date.now() - s.resumedAt < 120000 ? s.resumedAt : null,
+      // When this share first started (kept across restarts; null for a
+      // share saved before it was recorded), and when its address was last
+      // said on the ntfy.sh relay (null: not yet, or the relay is off).
+      since: s && Number.isFinite(s.startedAt) && s.startedAt > 0 ? s.startedAt : null,
+      relayAt: live && publisher && relayOn() && s.publishedAt ? s.publishedAt : null,
       // The share's settings (also while not sharing), and what guests
       // changed lately (newest first; only while sharing).
       settings: { ...shareSettings },
@@ -1664,6 +1669,7 @@ export function registerLiveShare({
       // was said (not said again after a restart at the same address).
       shareSecret: s.shareSecret.toString('base64'),
       relaySeq: s.relaySeq || 0,
+      startedAt: s.startedAt || 0,
       relay: live && publisher ? { url: s.tunnel.url, at: s.publishedAt || 0, topics: publisher.said(s.tunnel.url) } : null
     }))
   }
@@ -2038,6 +2044,7 @@ export function registerLiveShare({
       if (s.cancelled) return { ok: false }
       if (!(await openTunnel(s, () => s.cancelled))) return { ok: false }
       s.state = 'sharing'
+      s.startedAt = Date.now()
       // From now on it is kept until Stop sharing (a restart starts it again).
       s.kept = true
       rememberProjects(s.projects)
@@ -2170,6 +2177,8 @@ export function registerLiveShare({
       // (A share saved before it had one gets one now.)
       shareSecret: shareSecretOf(saved),
       relaySeq: Number.isSafeInteger(saved.relaySeq) && saved.relaySeq > 0 ? saved.relaySeq : 0,
+      // When it first started (not when it came back), if it was saved.
+      startedAt: Number.isSafeInteger(saved.startedAt) && saved.startedAt > 0 && saved.startedAt <= Date.now() ? saved.startedAt : 0,
       lastUrl: url
     }
     const server = makeServer(s, restored.extra)
@@ -2514,6 +2523,10 @@ export function registerLiveShare({
           panes: guestPanesList(joined),
           projects: joined.projects.map((p) => ({ id: p.id, layout: localLayout(joined, p) })),
           reason: joined.reason || null,
+          // Reconnecting: how many tries so far, since when, and whether the
+          // ntfy.sh relay is asked for the host's new address (after the
+          // second try, when the relay is on).
+          retry: joined.state === 'reconnecting' && joined.retry ? { tries: joined.retry.tries, since: joined.retry.since, lookup: relayOn() && joined.retry.tries >= 2 } : null,
           // What the host lets this guest do, and the code to tell the host.
           rights: joined.rights,
           code: joined.code,
@@ -2734,6 +2747,8 @@ export function registerLiveShare({
     if (Date.now() - (g.reachedAt || r.since) > OFFLINE_KEEP_MS) return endGuest(g, 'lost')
     const delay = r.tries < RECONNECT_DELAYS.length ? RECONNECT_DELAYS[r.tries] : Date.now() - r.since > RECONNECT_SLOW_AFTER_MS ? RECONNECT_SLOW_MS : RECONNECT_DELAYS[RECONNECT_DELAYS.length - 1]
     r.tries++
+    // The window shows the tries (the Join tab, the pill).
+    pushGuest()
     clearTimeout(r.timer)
     r.timer = setTimeout(async () => {
       if (joined !== g || g.state !== 'reconnecting' || g.retry !== r) return

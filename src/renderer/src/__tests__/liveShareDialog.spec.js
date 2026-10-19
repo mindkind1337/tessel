@@ -340,6 +340,19 @@ describe('LiveShareDialog: status and waiting guests', () => {
     // On every section.
     await wrapper.find('[data-test="ls-section-settings"]').trigger('click')
     expect(wrapper.find('[data-test="ls-status"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="ls-relay-status"]').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('since when (main’s first start) and when the relay last had the address', async () => {
+    const wrapper = await open({ ...PROJECTS, projectIds: ['ws-1', 'ws-2'], initialSection: 'settings' })
+    const since = new Date(2026, 9, 19, 14, 2).getTime()
+    await host(sharing({ settings: { hideIgnored: true, rendezvous: true }, since, relayAt: Date.now() - 2 * 60000 }))
+    expect(wrapper.find('[data-test="ls-status-title"]').text()).toMatch(/^Sharing 2 projects since (14:02|02:02)/)
+    expect(wrapper.find('[data-test="ls-status-relay"]').attributes('title')).toBe('Your address was last published 2 minutes ago.')
+    expect(wrapper.find('[data-test="ls-relay-status"]').text()).toBe('Your address was last published 2 minutes ago.')
+    await host(sharing({ settings: { hideIgnored: true, rendezvous: true }, since, relayAt: null }))
+    expect(wrapper.find('[data-test="ls-relay-status"]').text()).toBe('Your address is not published yet.')
     wrapper.unmount()
   })
 
@@ -404,28 +417,77 @@ describe('LiveShareDialog: Join', () => {
     await wrapper.find('[data-test="ls-join"]').trigger('click')
     expect(api.join).toHaveBeenCalledWith({ invite: 'tessel-ls:xyz', name: 'Bob' })
     await guestSays({ state: 'waiting', code: '123 456' })
-    expect(wrapper.find('[data-test="ls-code"]').text()).toBe('Your code is 123 456. Tell your host, so they know it is you.')
+    expect(wrapper.find('[data-test="ls-guest-state"]').text()).toBe('Waiting for an answer')
+    expect(wrapper.find('[data-test="ls-code"]').text()).toContain('123 456')
+    expect(wrapper.find('[data-test="ls-code"]').text()).toContain('Tell your host this code')
     await guestSays({ state: 'joined', host: 'Ada', rights: { ...NO_RIGHTS, type: false, open: false, close: false } })
+    expect(wrapper.find('[data-test="ls-guest-host"]').text()).toBe('Ada')
+    expect(wrapper.find('[data-test="ls-guest-state"]').text()).toBe('Connected')
     expect(wrapper.find('[data-test="ls-no-projects"]').text()).toBe('Ada has not given you a project to see yet.')
     expect(wrapper.find('[data-test="ls-rights"]').text()).toBe('You can watch. The host has not let you type yet.')
     await guestSays({ state: 'joined', host: 'Ada', projects: [{ id: 'ws-a', layout: null }], rights: { ...NO_RIGHTS, type: true, open: true, close: false } })
     expect(wrapper.find('[data-test="ls-rights"]').text()).toBe('You can watch and type in its terminals and agents, open terminals and agents.')
+    // The rights grid, read only.
+    expect(wrapper.find('[data-test="ls-right-type-guest"] input').element.checked).toBe(true)
+    expect(wrapper.find('[data-test="ls-right-type-guest"] input').element.disabled).toBe(true)
+    // Reconnecting: the tries, then the relay.
+    await guestSays({ state: 'reconnecting', host: 'Ada', retry: { tries: 1, since: 1, lookup: false } })
+    expect(wrapper.find('[data-test="ls-reconnect-tries"]').text()).toBe('1 try so far')
+    expect(wrapper.find('[data-test="ls-reconnect-lookup"]').exists()).toBe(false)
+    await guestSays({ state: 'reconnecting', host: 'Ada', retry: { tries: 3, since: 1, lookup: true } })
+    expect(wrapper.find('[data-test="ls-reconnect-tries"]').text()).toBe('3 tries so far')
+    expect(wrapper.find('[data-test="ls-reconnect-lookup"]').text()).toContain('ntfy.sh')
     await wrapper.find('[data-test="ls-leave"]').trigger('click')
     expect(api.leave).toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
+  it('the host’s projects here: a click goes there; Follow host where you picked your own view', async () => {
+    const guestProjects = [
+      { id: 'w-1', name: 'payments', here: true, follow: { on: true, copy: null } },
+      { id: 'w-2', name: 'dashboard', here: false, follow: { on: false, copy: null } }
+    ]
+    const wrapper = await open({ initialTab: 'join', guestProjects })
+    await guestSays({ state: 'joined', host: 'Ada', projects: [{ id: 'p1', layout: null }], rights: { ...NO_RIGHTS } })
+    expect(wrapper.find('[data-test="ls-guest-project-w-1"] [data-test="ls-guest-following"]').text()).toBe('Follows Ada')
+    expect(wrapper.find('[data-test="ls-guest-project-w-2"] [data-test="ls-guest-own-view"]').exists()).toBe(true)
+    await wrapper.find('[data-test="ls-guest-follow-w-2"]').trigger('click')
+    expect(wrapper.emitted('follow')).toEqual([['w-2']])
+    await wrapper.find('[data-test="ls-guest-project-w-2"] button').trigger('click')
+    expect(wrapper.emitted('goto')).toEqual([['w-2']])
     wrapper.unmount()
   })
 
   it('says why the session ended (a reason the host made up shows as ended)', async () => {
     const wrapper = await open({ initialTab: 'join' })
     await guestSays({ state: 'ended', host: 'Ada', reason: 'denied' })
-    expect(wrapper.find('[data-test="ls-ended"]').text()).toBe('The host said no.')
+    expect(wrapper.find('[data-test="ls-ended-why"]').text()).toBe('The host said no.')
+    expect(wrapper.find('[data-test="ls-ended"]').text()).toContain('Your session with Ada ended')
     // Too many waiting, or a pause after several noes: said plainly.
     await guestSays({ state: 'ended', host: 'Ada', reason: 'busy' })
-    expect(wrapper.find('[data-test="ls-ended"]').text()).toContain('The host is not taking new guests right now')
+    expect(wrapper.find('[data-test="ls-ended-why"]').text()).toContain('The host is not taking new guests right now')
     for (const reason of ['__proto__', 'constructor', 'made-up']) {
       await guestSays({ state: 'ended', host: 'Ada', reason })
-      expect(wrapper.find('[data-test="ls-ended"]').text()).toBe('The session ended.')
+      expect(wrapper.find('[data-test="ls-ended-why"]').text()).toBe('The session ended.')
     }
+    wrapper.unmount()
+  })
+
+  it('Paste a new code: the clipboard’s code in the field (anything else: an empty field)', async () => {
+    const wrapper = await open({ initialTab: 'join' })
+    await wrapper.find('[data-test="ls-join-invite"]').setValue('TS2.old.code')
+    await guestSays({ state: 'ended', host: 'Ada', reason: 'old-code' })
+    window.shellApi.readClipboard = vi.fn().mockResolvedValue('  TS2.bmV3.c2VjcmV0  ')
+    await wrapper.find('[data-test="ls-paste-new"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('[data-test="ls-ended"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="ls-join-invite"]').element.value).toBe('TS2.bmV3.c2VjcmV0')
+    await guestSays({ state: 'ended', host: 'Ada', reason: 'old-code' })
+    window.shellApi.readClipboard = vi.fn().mockResolvedValue('hello there')
+    await wrapper.find('[data-test="ls-paste-new"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('[data-test="ls-join-invite"]').element.value).toBe('')
+    delete window.shellApi.readClipboard
     wrapper.unmount()
   })
 

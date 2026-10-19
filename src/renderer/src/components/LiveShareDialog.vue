@@ -24,9 +24,9 @@
 // on its way per key (a click on a box whose change is on its way does
 // nothing), the error and notice lines, the clipboard and the project names.
 import { ref, computed, watch, nextTick, onMounted, onUnmounted, provide } from 'vue'
-import { ScreenShare, Copy, Check, Loader2, AlertTriangle, LogIn, LogOut, X, MessageSquareText, UserCheck, Keyboard, Eye } from 'lucide-vue-next'
+import { ScreenShare, Copy, Check, AlertTriangle, LogIn, LogOut, X, MessageSquareText, UserCheck, Keyboard, Eye } from 'lucide-vue-next'
 import { t, intlLocale } from '../i18n'
-import { endReason, rightsText, actionText } from '../liveShareWindow'
+import { actionText } from '../liveShareWindow'
 import { accessError, invitesOf, inviteName, inviteExpiry, joinedGuests, waitingGuests, offlinePeople, personName, viaName, shortCode } from '../liveShareAccess'
 import { cleanRights } from '../../../shared/liveShareRights'
 import { shownRights, presetRights } from '../liveShareRights'
@@ -36,6 +36,7 @@ import LsPeople from './liveshare/LsPeople.vue'
 import LsStatus from './liveshare/LsStatus.vue'
 import LsSettings from './liveshare/LsSettings.vue'
 import LsAvatars from './liveshare/LsAvatars.vue'
+import LsGuest from './liveshare/LsGuest.vue'
 import RightsChip from './liveshare/RightsChip.vue'
 import { plainBridge } from '../liveShareBridge'
 
@@ -53,12 +54,16 @@ const props = defineProps({
   projects: { type: Array, default: () => [] },
   projectIds: { type: Array, default: () => [] },
   // The name of one of your panes (what a guest is watching).
-  paneTitle: { type: Function, default: null }
+  paneTitle: { type: Function, default: null },
+  // In someone's session: the host's projects open here ([{ id, name, here,
+  // follow }], LsGuest).
+  guestProjects: { type: Array, default: () => [] }
 })
 // toggle-project(id, on): a project ticked or not (liveShareWindow.js setShared);
 // review-guest(id): "Let in…" for a guest waiting for your answer
 // (liveShareWindow.js showAsk puts their prompt first).
-const emit = defineEmits(['close', 'toggle-project', 'review-guest'])
+// goto(id), follow(id): a host's project here (Join tab).
+const emit = defineEmits(['close', 'toggle-project', 'review-guest', 'goto', 'follow'])
 
 // Plain arguments only (liveShareBridge.js): the first invitation lives in a
 // ref, and a reactive object makes the call throw before it is sent.
@@ -387,15 +392,21 @@ const sections = computed(() => [
 const guestState = computed(() => guest.value.state)
 const inSession = computed(() => ['connecting', 'waiting', 'joined', 'reconnecting'].includes(guestState.value))
 const joinedText = computed(() => t('liveShare.join.joined2', 'You joined {{host}}’s Live Share. Each project they share with you opens as a Live Share project in the sidebar.', { host: guest.value.host || '?' }))
-const noProjectsText = computed(() =>
-  guest.value.state === 'joined' && !(guest.value.projects || []).length ? t('liveShare.join.noProjects', '{{host}} has not given you a project to see yet.', { host: guest.value.host || '?' }) : ''
-)
-const rightsLine = computed(() => rightsText(guest.value.rights))
-// Its {{host}} would end a template interpolation: built here.
-const reconnectingText = computed(() => t('liveShare.join.reconnecting', 'Connection lost: reconnecting to {{host}}…', { host: guest.value.host || '?' }))
-const codeLine = computed(() => (guest.value.code ? t('liveShare.join.code', 'Your code is {{code}}. Tell your host, so they know it is you.', { code: guest.value.code }) : ''))
-
-const endedText = computed(() => (ended.value ? endReason(ended.value.reason) : ''))
+const inviteField = ref(null)
+// "Paste a new code" (a session ended, an old code): the clipboard's text
+// when it looks like an invite code, else an empty field to paste into.
+async function pasteNew() {
+  ended.value = null
+  joinError.value = ''
+  invite.value = ''
+  try {
+    const text = String((window.shellApi && window.shellApi.readClipboard ? await window.shellApi.readClipboard() : '') || '').trim()
+    if (/^(TS[12]\.|tessel-ls:)\S+$/.test(text) && text.length < 4096) invite.value = text
+  } catch {
+    // The field stays empty: pasted by hand.
+  }
+  nextTick(() => inviteField.value?.focus())
+}
 
 async function join() {
   const code = invite.value.trim()
@@ -475,7 +486,7 @@ function tabKeys(event, list, current, set) {
 
       <!-- Share -->
       <section v-else-if="tab === 'share'" role="tabpanel" data-test="ls-share-panel">
-        <LsStatus v-if="sharing || preparing" :host="host" :projects="sharedList.length" :progress="progressText" :confirming="confirmStop" @stop="askStop" @cancel="stopSharing" />
+        <LsStatus v-if="sharing || preparing" :host="host" :projects="sharedList.length" :progress="progressText" :confirming="confirmStop" :now="now" @stop="askStop" @cancel="stopSharing" />
 
         <div v-if="confirmStop" class="lsd-confirm ls-stop-confirm" role="group" :aria-label="t('liveShare.stop.title', 'Stop Live Share?')" data-test="ls-stop-confirm" @keydown.escape.stop.prevent="confirmStop = false">
           <p class="lsd-confirm-text">
@@ -728,36 +739,21 @@ function tabKeys(event, list, current, set) {
       <section v-else role="tabpanel" data-test="ls-join-panel">
         <template v-if="!inSession">
           <p class="ls-intro">{{ t('liveShare.join.intro', 'Paste the invite code your host sent you. Their panes open here, in a Live Share project.') }}</p>
+          <LsGuest v-if="ended" :guest="guest" :ended="ended" @paste="pasteNew" />
           <label class="ls-field">
             <span class="ls-label">{{ t('liveShare.join.invite', 'Invite code') }}</span>
-            <input v-model="invite" class="ls-input ls-code" type="text" spellcheck="false" autocomplete="off" data-test="ls-join-invite" @keydown.enter="join" />
+            <input ref="inviteField" v-model="invite" class="ls-input ls-code" type="text" spellcheck="false" autocomplete="off" data-test="ls-join-invite" @keydown.enter="join" />
           </label>
           <label class="ls-field">
             <span class="ls-label">{{ t('liveShare.join.name', 'Your name (the host sees it)') }}</span>
             <input v-model="name" class="ls-input" type="text" spellcheck="false" maxlength="40" data-test="ls-join-name" @keydown.enter="join" />
           </label>
-          <div v-if="ended" class="ls-ended" role="status" data-test="ls-ended">{{ endedText }}</div>
         </template>
 
-        <div v-else-if="guestState === 'connecting'" class="ls-status" data-test="ls-connecting">
-          <Loader2 :size="15" class="bp-spin" aria-hidden="true" />
-          <span>{{ t('liveShare.join.connecting', 'Connecting…') }}</span>
-        </div>
-        <div v-else-if="guestState === 'reconnecting'" class="ls-status" data-test="ls-reconnecting">
-          <Loader2 :size="15" class="bp-spin" aria-hidden="true" />
-          <span>{{ reconnectingText }}</span>
-        </div>
-        <template v-else-if="guestState === 'waiting'">
-          <div class="ls-status" data-test="ls-waiting">
-            <Loader2 :size="15" class="bp-spin" aria-hidden="true" />
-            <span>{{ t('liveShare.join.waiting', 'Waiting for the host to accept…') }}</span>
-          </div>
-          <div v-if="codeLine" class="ls-joined" data-test="ls-code">{{ codeLine }}</div>
-        </template>
+        <!-- In a session (or asking to join): the session card. -->
         <template v-else>
-          <div class="ls-joined" data-test="ls-joined">{{ joinedText }}</div>
-          <p v-if="noProjectsText" class="ls-intro ls-rights-line" data-test="ls-no-projects">{{ noProjectsText }}</p>
-          <p class="ls-intro ls-rights-line" data-test="ls-rights">{{ rightsLine }}</p>
+          <p v-if="guestState === 'joined'" class="ls-intro" data-test="ls-joined">{{ joinedText }}</p>
+          <LsGuest :guest="guest" :projects="guestProjects" @goto="(id) => emit('goto', id)" @follow="(id) => emit('follow', id)" />
         </template>
 
         <div v-if="joinError" class="ls-error" role="alert" data-test="ls-join-error">{{ joinError }}</div>
@@ -1085,17 +1081,6 @@ function tabKeys(event, list, current, set) {
 .ls-field > .ls-link {
   margin: 6px 0 0;
 }
-.ls-rights-line {
-  margin: 10px 0 0;
-}
-.ls-status {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-top: 14px;
-  color: var(--text);
-  font-size: 12.5px;
-}
 .ls-empty {
   margin: 0;
   color: var(--text-dim);
@@ -1112,22 +1097,6 @@ function tabKeys(event, list, current, set) {
 }
 .ls-stop-confirm {
   margin: 0 0 12px;
-}
-.ls-joined,
-.ls-ended {
-  margin-top: 14px;
-  padding: 9px 11px;
-  border-radius: 8px;
-  color: var(--text-strong);
-  font-size: 12.5px;
-  line-height: 1.45;
-}
-.ls-joined {
-  background: color-mix(in srgb, var(--accent) 12%, transparent);
-}
-.ls-ended {
-  background: var(--surface-2);
-  color: var(--text);
 }
 .ls-error {
   margin-top: 12px;

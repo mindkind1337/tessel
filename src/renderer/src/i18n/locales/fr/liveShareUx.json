@@ -1,0 +1,75 @@
+{
+  "liveShare": {
+    "openAsk": {
+      "always": "Toujours laisser {{name}} ouvrir",
+      "alwaysHint": "L’ouvre, et donne à {{name}} le droit « Ouvrir des terminaux et des agents » à partir de maintenant (vous pouvez le retirer dans Personnes)."
+    },
+    "ask": {
+      "codeLabel": "Code de vérification",
+      "codeHint": "Son Tessel l’affiche aussi. Vérifiez avec cette personne que c’est le même avant d’autoriser.",
+      "codeChecked2": "Je l’ai vérifié avec cette personne : c’est le même",
+      "typeWarning": "Cette personne peut taper : elle peut lancer n’importe quelle commande sur ce PC en votre nom. À réserver à quelqu’un de confiance.",
+      "trust2": "Faire confiance la prochaine fois : cette personne entre sans demander, avec ces projets et ces droits",
+      "trustNeedsCode": "Vérifiez d’abord le code de vérification."
+    },
+    "pill": {
+      "retryIn": "Nouvel essai dans {{count}} s",
+      "restarting": "Redémarrage…",
+      "waitingBadge": "{{count}} en attente de votre réponse",
+      "restartingHead": "Votre partage redémarre…",
+      "since": "Depuis {{time}}",
+      "retryText": "Le partage n’a pas encore pu démarrer : prochain essai dans {{count}} s.",
+      "codeShort": "Code {{code}}",
+      "followSwitch": "Suivre l’écran de {{host}}",
+      "tries": "Essai {{count}}",
+      "permanent": "Permanent",
+      "letIn": "Laisser entrer…",
+      "copied": "Copié",
+      "copyInvite": "Copier le code d’invitation",
+      "nobodyHint2": "Personne pour l’instant. Copiez un code d’invitation et envoyez-le."
+    },
+    "reconnect": {
+      "lookup": "Recherche de la nouvelle adresse de l’hôte via ntfy.sh"
+    },
+    "guestCard": {
+      "theHost": "L’hôte",
+      "yourHost": "votre hôte",
+      "connected": "En session",
+      "waiting": "En attente d’une réponse",
+      "reconnecting": "Reconnexion",
+      "connecting": "Connexion",
+      "waitingText": "Votre demande est entre les mains de {{host}}, qui décide de ce que vous pouvez faire.",
+      "hostText": "Héberge cette session : ses panneaux tournent sur l’ordinateur de {{host}}.",
+      "tries_one": "{{count}} essai jusqu’ici",
+      "tries_other": "{{count}} essais jusqu’ici",
+      "reconnectText": "La connexion avec {{host}} a été perdue. Tessel réessaie tout seul ; vos projets restent en attendant, en lecture seule.",
+      "code": "Votre code de vérification",
+      "codeWaiting": "Donnez ce code à {{host}} : il s’affiche aussi de son côté, et sera vérifié avant de vous laisser entrer.",
+      "codeIn": "C’est le même code que celui affiché chez {{host}}.",
+      "projects": "Partagés avec vous",
+      "following": "Suit {{host}}",
+      "ownView": "Votre propre vue",
+      "rights": "Ce que vous pouvez faire",
+      "agents": "Agents que vous pouvez utiliser",
+      "endedWith": "Votre session avec {{host}} est terminée",
+      "ended": "Votre session est terminée",
+      "pasteNew": "Coller un nouveau code"
+    },
+    "status": {
+      "relayOffHint": "Les invités ne retrouvent pas votre partage si son adresse change."
+    },
+    "setting": {
+      "relayPublished": "Votre adresse a été publiée pour la dernière fois {{ago}}.",
+      "relayNotYet": "Votre adresse n’est pas encore publiée."
+    },
+    "time": {
+      "justNow": "à l’instant"
+    }
+  },
+  "settings": {
+    "tools": {
+      "liveShareSettings": "Réglages de Live Share",
+      "liveShareSettingsHint": "Ce que voient les invités, vous retrouver après un redémarrage (ntfy.sh) et les agents que les invités peuvent utiliser."
+    }
+  }
+}

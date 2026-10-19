@@ -577,7 +577,7 @@
     },
     "agents": {
       "label": "Agents utilisables",
-      "title": "Agents qu’ils peuvent utiliser",
+      "title": "Agents autorisés",
       "noneInstalled": "Aucun agent installé",
       "all": "Tous les agents",
       "some": "{{count}} agents sur {{total}}",
