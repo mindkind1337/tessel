@@ -96,25 +96,32 @@ describe('createLinkRouter', () => {
     expect(d.openInEditor).not.toHaveBeenCalled()
   })
 
-  it('an image: the lightbox; the editor when asked, or when it cannot be read', async () => {
+  it('an image: an editor tab (as in VS Code); the lightbox when asked, or when no tab opens', async () => {
     const d = fakes()
     const r = createLinkRouter(d)
     await r.open('C:\\p\\shot.png')
+    expect(d.openInEditor).toHaveBeenCalledWith(expect.objectContaining({ file: 'C:\\p\\shot.png' }))
+    expect(d.showImage).not.toHaveBeenCalled()
+    await r.open('C:\\p\\shot.png', { image: 'lightbox' })
     expect(d.readImage).toHaveBeenCalledWith('C:\\p\\shot.png')
     expect(d.showImage).toHaveBeenCalledWith({ src: PNG, title: 'shot.png', file: null })
-    await r.open('C:\\p\\shot.png', { image: 'editor' })
-    expect(d.openInEditor).toHaveBeenCalledWith(expect.objectContaining({ file: 'C:\\p\\shot.png' }))
-    const bad = fakes({ readImage: vi.fn(async () => ({ ok: false })) })
-    await createLinkRouter(bad).open('C:\\p\\gone.png')
-    expect(bad.showImage).not.toHaveBeenCalled()
-    expect(bad.openInEditor).toHaveBeenCalled()
+    const noTab = fakes({ openInEditor: vi.fn(async () => false) })
+    await createLinkRouter(noTab).open('C:\\p\\shot.png')
+    expect(noTab.showImage).toHaveBeenCalledWith({ src: PNG, title: 'shot.png', file: null })
   })
 
-  it('an image by its data goes straight to the lightbox', async () => {
-    const d = fakes()
-    await createLinkRouter(d).open(PNG, { label: 'Image #1' })
-    expect(d.readImage).not.toHaveBeenCalled()
-    expect(d.showImage).toHaveBeenCalledWith({ src: PNG, title: 'Image #1', file: null })
+  it('an image by its data: a copy Tessel writes, in an editor tab; else the lightbox', async () => {
+    const d = fakes({ imageCopy: vi.fn(async () => ({ ok: true, path: 'C:\\tmp\\img_1.png' })) })
+    await createLinkRouter(d).open({ src: PNG, path: 'C:\\gone\\pasted.png' }, { label: 'Image #1' })
+    expect(d.imageCopy).toHaveBeenCalledWith(PNG)
+    expect(d.openInEditor).toHaveBeenCalledWith(expect.objectContaining({ file: 'C:\\tmp\\img_1.png' }))
+    expect(d.showImage).not.toHaveBeenCalled()
+    const plain = fakes()
+    await createLinkRouter(plain).open(PNG, { label: 'Image #1' })
+    expect(plain.readImage).not.toHaveBeenCalled()
+    expect(plain.showImage).toHaveBeenCalledWith({ src: PNG, title: 'Image #1', file: null })
+    await createLinkRouter(d).open(PNG, { image: 'lightbox', label: 'Image #2' })
+    expect(d.showImage).toHaveBeenCalledWith({ src: PNG, title: 'Image #2', file: null })
   })
 
   it('a folder: the Files tab; outside it, the file manager (local folders only)', async () => {

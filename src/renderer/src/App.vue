@@ -509,6 +509,7 @@ const linkRouter = createLinkRouter({
   openPdf: ({ file, label }) => viewFile({ file, label }),
   readImage: (path) => (window.shellApi.viewImage ? window.shellApi.viewImage(path) : null),
   showImage: (img) => (imageView.value = img),
+  imageCopy: (dataUrl) => (window.shellApi.chat && window.shellApi.chat.imageViewCopy ? window.shellApi.chat.imageViewCopy({ dataUrl }) : null),
   revealInFiles,
   openFolder: (path) => (window.shellApi.chatFiles && window.shellApi.chatFiles.open ? window.shellApi.chatFiles.open(path) : false),
   urlMode: () => settings.linksOpenUrlsIn,
@@ -528,6 +529,13 @@ const linkRouter = createLinkRouter({
   }
 })
 setLinkRouter(linkRouter)
+async function openImageTab(img) {
+  if (!img) return
+  const src = typeof img.src === 'string' && img.src.startsWith('data:image/') ? img.src : null
+  const path = typeof img.file === 'string' && img.file ? img.file : null
+  const opened = await linkRouter.open(src ? { src, path } : path || img.src, { label: img.title || '' }).catch(() => false)
+  if (!opened && img.src) imageView.value = img
+}
 onBeforeUnmount(() => setLinkRouter(null))
 // A link the window itself would open in a new window (a target="_blank"
 // link in rendered text): the main process hands it here, to the router.
@@ -3485,7 +3493,9 @@ provide('panelCtx', {
   automationTurnDone,
   copied: (what) => showToast(t('app.toast.copied', '{{what}} copied.', { what }), { timeout: 2000 }),
   toast: (text, opts) => showToast(text, opts),
-  showImage: (img) => (imageView.value = img),
+  // An image a pane shows (a pasted [Image #N], a chat's link): an editor
+  // tab through the link router, the lightbox when no tab can show it.
+  showImage: (img) => openImageTab(img),
   viewFile: (f) => viewFile(f),
   // A link in a Live Share host's pane (a guest's window): filtered, in the Live Share browser.
   openGuestUrl: (url, opts) => openGuestUrl(url, opts),

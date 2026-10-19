@@ -4,8 +4,10 @@
 //   file   -> Tessel's editor, at its line and column;
 //   dir    -> the Files tab of the side panel, unfolded at that folder (the
 //             system's file manager for a local folder outside the project);
-//   image  -> the image viewer (the lightbox); an editor tab when the
-//             surface asks for one (opts.image === 'editor');
+//   image  -> an editor tab, as in VS Code (an image known only by its data
+//             gets a copy Tessel writes for it); the image viewer (the
+//             lightbox) when the surface asks for it (opts.image ===
+//             'lightbox') or no tab can show it;
 //   pdf    -> its own PDF window (Chromium's viewer);
 //   url    -> Settings > Browser, "Open web links in": Tessel's built-in
 //             browser (a new tab of the current project, the default) or the
@@ -118,6 +120,8 @@ const fileName = (p) => String(p || '').split(/[\\/]/).filter(Boolean).pop() || 
 //   openPdf({ file, label }) -> its PDF window (App's viewFile reports errors)
 //   readImage(path) -> { ok, dataUrl } (files:viewImage: local, SSH or Live Share)
 //   showImage({ src, title, file }) -> the lightbox
+//   imageCopy(dataUrl) -> { ok, path }: a file for an image known only by its
+//     data, so an editor tab can show it
 //   revealInFiles(path) -> true when the Files tab shows it (false: not in
 //     the project shown there)
 //   openFolder(path) -> the system's file manager (a local folder only)
@@ -142,21 +146,31 @@ export function createLinkRouter(deps = {}) {
   }
 
   async function openImage(t, opts) {
-    if (t.src) {
-      if (!has('showImage')) return fail(t, 'unsupported')
-      await call('showImage', { src: t.src, title: opts.label || (t.path ? fileName(t.path) : ''), file: null })
+    const lightbox = async (src) => {
+      if (!has('showImage')) return false
+      await call('showImage', { src, title: opts.label || (t.path ? fileName(t.path) : ''), file: null })
       return true
     }
-    if (opts.image !== 'editor' && has('readImage') && has('showImage')) {
+    const tab = opts.image !== 'lightbox'
+    if (t.src) {
+      // Its data (its file, a pasted one in the temp folder, is often gone):
+      // a copy on disk for the editor tab, else the lightbox.
+      if (tab && has('imageCopy') && has('openInEditor')) {
+        const res = await Promise.resolve()
+          .then(() => deps.imageCopy(t.src))
+          .catch(() => null)
+        if (res && res.ok && typeof res.path === 'string' && (await call('openInEditor', { file: res.path, line: null, col: null, preview: opts.preview !== false }))) return true
+      }
+      return (await lightbox(t.src)) || fail(t, 'unsupported')
+    }
+    if (tab && has('openInEditor') && (await call('openInEditor', { file: t.path, line: null, col: null, preview: opts.preview !== false }))) return true
+    if (has('readImage') && has('showImage')) {
       const res = await Promise.resolve()
         .then(() => deps.readImage(t.path))
         .catch(() => null)
-      if (res && res.ok && typeof res.dataUrl === 'string' && res.dataUrl.startsWith('data:image/')) {
-        await call('showImage', { src: res.dataUrl, title: opts.label || fileName(t.path), file: null })
-        return true
-      }
+      if (res && res.ok && typeof res.dataUrl === 'string' && res.dataUrl.startsWith('data:image/')) return lightbox(res.dataUrl)
     }
-    // No lightbox (or it could not read it): the editor's image tab.
+    // No lightbox (or it could not read it): the file viewer.
     return openFile(t, opts)
   }
 
