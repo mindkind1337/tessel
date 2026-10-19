@@ -150,8 +150,8 @@ describe('Grok Build session files: chat view, Conversations, Past conversations
   it('Conversations: your prompts and its final answers, timed, with the model each ran with', () => {
     const items = conversationItems('grok', UPDATES, SID)
     expect(items.map((i) => [i.role, i.text])).toEqual([
-      // Its image, as Conversations names one ("[image]", nothing decoded).
-      ['user', 'Fix the login bug please\n[image]'],
+      // Its image goes with the line (Conversations' image caps), not as text.
+      ['user', 'Fix the login bug please'],
       ['agent', 'Fixed: the token check was inverted.'],
       ['user', 'thanks'],
       ['agent', 'You are welcome.']
