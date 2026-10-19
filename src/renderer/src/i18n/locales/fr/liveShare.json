@@ -43,11 +43,8 @@
       "guestWaitingCode": "Attend votre réponse (code {{code}})",
       "rightsLabel": "Ce que {{name}} peut faire",
       "remove": "Retirer",
-      "firstSummary": "{{lifetime}}, {{rights}}",
-      "stopText_one": "Arrêter le partage ? {{count}} personne est déconnectée et chaque invitation cesse de fonctionner.",
-      "stopText_other": "Arrêter le partage ? {{count}} personnes sont déconnectées et chaque invitation cesse de fonctionner.",
-      "connected_one": "{{count}} connectée",
-      "connected_other": "{{count}} connectées",
+      "connected_one": "{{count}} personne connectée",
+      "connected_other": "{{count}} personnes connectées",
       "waitingCount_one": "{{count}} en attente de votre réponse",
       "waitingCount_other": "{{count}} en attente de votre réponse",
       "offlineCount": "{{count}} hors ligne",
@@ -62,7 +59,10 @@
       "projectsSharedHint": "Cochez-les ou décochez-les à tout moment.",
       "codesTitle": "Codes d'invitation",
       "codesHint": "Envoyez-en un : chaque personne attend votre accord. Les codes cessent de fonctionner quand vous arrêtez de partager ; les personnes de confiance entrent avec n'importe quel nouveau code.",
-      "noFiles": "Ses fichiers sont sur un serveur SSH : les invités voient ses terminaux et ses agents, pas ses fichiers."
+      "noFiles": "Ses fichiers sont sur un serveur SSH : les invités voient ses terminaux et ses agents, pas ses fichiers.",
+      "stoppedWhy": "Le partage s'est arrêté : {{error}}",
+      "terminalsOnly": "Terminaux seulement",
+      "firstDone": "Terminé"
     },
     "join": {
       "intro": "Collez le code d'invitation que votre hôte vous a envoyé. Ses panneaux s'ouvrent ici, dans un projet Live Share.",
@@ -90,7 +90,9 @@
       "editPart": "modifier ses fichiers",
       "gitPart": "indexer et faire des commits",
       "tasksPart": "gérer ses tâches",
-      "pagesViewPart": "voir ses pages de navigateur"
+      "pagesViewPart": "voir ses pages de navigateur",
+      "agentsLimited": "Certains agents ou modèles de l’hôte ne sont pas pour les invités : vous pouvez regarder leurs volets, pas les ouvrir ni y taper.",
+      "agentsTypeCaveat": "Toute personne qui peut taper — dans un terminal ou dans un agent que l’hôte autorise — peut toujours lancer n’importe quel programme, y compris les agents et modèles exclus. Ces limites ne tiennent pleinement que pour les invités qui ne peuvent pas taper."
     },
     "ask": {
       "title": "{{name}} veut rejoindre votre Live Share",
@@ -101,7 +103,7 @@
       "allow": "Autoriser",
       "deny": "Refuser",
       "via": "Avec l'invitation « {{invite}} »",
-      "rightsLabel": "Ce qu'elle peut faire (elle peut toujours regarder)",
+      "rightsLabel": "Ce que cette personne peut faire (en plus de regarder)",
       "codeChecked": "J'ai vérifié le code avec cette personne : c'est le même",
       "trust": "Faire confiance à cette personne : la prochaine fois, elle entre sans demander, avec ces projets et ces droits",
       "more_one": "{{count}} autre demande attend après celle-ci",
@@ -177,7 +179,14 @@
       "trustFullJoined": "Liste des personnes de confiance pleine ({{max}}) : {{name}} est entré·e sans être une personne de confiance. Retirez quelqu'un des personnes de confiance pour lui faire confiance.",
       "notTrustable": "{{name}} est entré·e sans être une personne de confiance : son Tessel est trop ancien pour ça (il doit être mis à jour).",
       "actionFlagged": "{{action}} (instructions d'un agent)",
-      "taskFailed": "{{host}} n'a pas fait ce changement : {{reason}}"
+      "taskFailed": "{{host}} n'a pas fait ce changement : {{reason}}",
+      "thatAgent": "cet agent",
+      "typeDenied": "{{host}} ne laisse pas les invités utiliser {{agent}} : vous pouvez regarder son volet, pas y taper.",
+      "modelDenied": "{{host}} ne laisse pas les invités utiliser {{model}} avec {{agent}}.",
+      "modelSwitchDenied": "{{host}} ne laisse pas les invités passer {{agent}} à ce modèle.",
+      "agentDenied": "{{host}} ne laisse pas les invités utiliser {{agent}}.",
+      "ruleBreach": "{{name}} a tapé dans un volet qui exécute maintenant {{what}}, que vous ne laissez pas utiliser aux invités. Tessel y a appuyé sur Échap : vérifiez ce volet.",
+      "checking": "Le Tessel de {{host}} vérifie ce qui s’exécute dans ce volet : retapez dans un instant."
     },
     "toolbar": {
       "label": "Live Share",
@@ -235,7 +244,8 @@
       "section": "Sur l'ordinateur de {{host}}",
       "terminal": "Terminal (le shell de {{host}})",
       "noAgents": "{{host}} ne propose aucun agent.",
-      "asks": "{{host}} reçoit d'abord la demande : ça s'ouvre après son accord."
+      "asks": "{{host}} reçoit d'abord la demande : ça s'ouvre après son accord.",
+      "agentModel": "{{agent}} · {{model}}"
     },
     "error": {
       "missing": "Cette invitation n'existe plus (elle a expiré ou a été révoquée).",
@@ -279,7 +289,7 @@
       "copyMessage": "Copier le message",
       "revokeTitle": "Révoquer « {{label}} » ?",
       "revokeText": "Révoquer « {{label}} » ? Son code ne fera plus entrer personne.",
-      "revokeKeep": "Elles restent, et peuvent revenir d'elles-mêmes.",
+      "revokeKeep": "Ces personnes restent, et peuvent revenir d'elles-mêmes.",
       "revoke": "Révoquer",
       "edit": "Modifier",
       "duplicate": "Dupliquer",
@@ -330,7 +340,6 @@
       "presetView": "Regarder seulement",
       "presetCollaborate": "Collaborer",
       "presetFull": "Contrôle total",
-      "customize": "Personnaliser",
       "presetViewHint": "Cette personne regarde les panneaux et les fichiers partagés, rien d'autre.",
       "presetCollaborateHint": "Cette personne ouvre des terminaux et des agents, modifie des fichiers, fait des commits et gère les tâches. Elle ne tape jamais dans vos terminaux.",
       "presetFullHint": "Tous les droits, y compris taper : cette personne peut lancer n'importe quelle commande sur ce PC en votre nom. Seulement pour des personnes de confiance.",
@@ -341,7 +350,7 @@
       "askAdd_other": "{{count}} personnes sont entrées avec « {{label}} ». Leur donner aussi {{what}} ?",
       "askRemove_one": "{{count}} personne est entrée avec « {{label}} ». Lui retirer aussi {{what}} ?",
       "askRemove_other": "{{count}} personnes sont entrées avec « {{label}} ». Leur retirer aussi {{what}} ?",
-      "trustedOffline": "De confiance, non connectée",
+      "trustedOffline": "De confiance, hors ligne",
       "cell": "{{name}} : {{what}}",
       "projectTitle": "Qui a accès à {{project}}",
       "off": "Commencez à partager pour voir qui a accès à chaque projet. Les personnes de confiance sont dans Confiance.",
@@ -364,10 +373,10 @@
       "trustedBadge": "De confiance",
       "via": "Entrée avec {{invite}}",
       "watching": "Regarde {{panes}}",
-      "offline": "Hors ligne : revient d'elle-même",
+      "offline": "Hors ligne : la reconnexion se fait toute seule",
       "trusted": "{{name}} est de confiance : la prochaine fois, cette personne entre sans demander, avec ces projets et ces droits.",
-      "removedUntrusted": "{{name}} a été retirée et n'est plus de confiance.",
-      "removed": "{{name}} a été retirée.",
+      "removedUntrusted": "{{name}} ne fait plus partie de la session et n'est plus de confiance.",
+      "removed": "{{name}} ne fait plus partie de la session.",
       "empty": "Personne n'est encore entré. Envoyez un code d'invitation : chaque personne attend votre accord.",
       "waitingLabel": "En attente de votre réponse",
       "sees": "Voit",
@@ -379,10 +388,11 @@
       "trust": "Faire confiance",
       "trustFailed": "{{name}} n'a pas pu devenir une personne de confiance (elle est peut-être partie, ou son Tessel est trop ancien).",
       "untrustToo2": "Ne plus lui faire confiance non plus (sinon elle peut revenir sans demander, avec n'importe quel nouveau code)",
-      "keepTrust": "Elle reste de confiance : elle peut revenir sans demander.",
+      "keepTrust": "Cette personne reste de confiance : elle peut revenir sans demander.",
       "letIn": "Laisser entrer…",
       "refuse": "Refuser",
-      "refused": "La demande de {{name}} a été refusée."
+      "refused": "La demande de {{name}} a été refusée.",
+      "typing": "Tape dans {{panes}}"
     },
     "section": {
       "access": "Accès",
@@ -391,13 +401,15 @@
       "trusted": "Confiance",
       "overview": "Aperçu",
       "label": "Sections de Live Share",
-      "off": "Commencez d'abord à partager : les invitations et les personnes viennent avec un partage."
+      "settings": "Réglages",
+      "offPeople": "Personne n'est là avant que vous partagiez. Les personnes de confiance restent d'un partage à l'autre.",
+      "offInvites": "Les invitations viennent avec un partage : démarrez-le, et la première est prête à copier."
     },
     "cancel": "Annuler",
     "trusted": {
       "elsewhere_one": "Et {{count}} projet absent de cette fenêtre (gardé).",
       "elsewhere_other": "Et {{count}} projets absents de cette fenêtre (gardés).",
-      "online": "Connectée maintenant",
+      "online": "En ligne maintenant",
       "lastSeen": "Vue pour la dernière fois {{when}}",
       "since": "De confiance depuis {{when}}",
       "untrusted": "{{name}} n'est plus de confiance : la prochaine fois, il lui faudra une invitation et votre accord.",
@@ -414,15 +426,13 @@
       "untrustText2": "Ne plus faire confiance à {{name}} ? Si cette personne est connectée, elle est déconnectée ; pour revenir, il lui faudra une invitation et votre accord."
     },
     "project": {
-      "groupLabel": "Projets qu'elle voit",
+      "groupLabel": "Projets que cette personne voit",
       "none": "Aucun projet partagé pour l'instant."
     },
     "right": {
-      "groupLabel": "Ce qu'elle peut faire",
       "type": "Taper dans les terminaux et les agents (cette personne peut lancer n'importe quelle commande en votre nom)",
       "typeShort": "Taper",
       "typeHint": "Seulement pour des personnes de confiance : taper dans un terminal lance des commandes sur ce PC.",
-      "open": "Peut ouvrir des terminaux et des agents sur votre ordinateur (cette personne peut lancer des commandes)",
       "openShort": "Ouvrir",
       "openHint": "Sans ce droit, chaque terminal ou agent demandé attend votre accord.",
       "close": "Demander à fermer des panneaux",
@@ -443,7 +453,10 @@
       "gitHint2": "Dans les projets que cette personne voit, avec votre nom git. Ses commits se font sans vos hooks git ; push, pull et fetch restent à vous.",
       "tasks2": "Gérer les tâches (ajouter, déplacer, modifier, répondre aux questions, supprimer définitivement)",
       "tasksHint2": "Le tableau des tâches des projets que cette personne voit. Une carte supprimée l'est définitivement ; sans Taper, elle ne répond à un agent qu'avec l'un des choix qu'il propose.",
-      "pagesViewHint3": "Les invités voient l'adresse de vos pages et les ouvrent de leur côté, dans une session de navigateur à part (jamais avec vos sessions). Les pages des projets qu'ils voient ; une page de votre panneau latéral seulement si vous la partagez. Les pages masquées ne sont jamais envoyées."
+      "pagesViewHint3": "Les invités voient l'adresse de vos pages et les ouvrent de leur côté, dans une session de navigateur à part (jamais avec vos sessions). Les pages des projets qu'ils voient ; une page de votre panneau latéral seulement si vous la partagez. Les pages masquées ne sont jamais envoyées.",
+      "open2": "Ouvrir des terminaux et des agents sur votre ordinateur (cette personne peut lancer des commandes)",
+      "dangerTag": "Commandes en votre nom",
+      "groupLabel2": "Ce que cette personne peut faire"
     },
     "openAsk": {
       "titleAgent": "{{name}} demande d'ouvrir {{agent}}",
@@ -531,13 +544,18 @@
       "hideIgnored": "Masquer aux invités les fichiers ignorés et secrets",
       "hideIgnoredHint": "Les fichiers ignorés par git et ceux qui ressemblent à des secrets (.env, clés, identifiants) restent hors des Fichiers, de la recherche et des Changements des invités. .git et .tessel sont toujours masqués.",
       "rendezvous": "Me retrouver après un redémarrage (utilise ntfy.sh)",
-      "rendezvousHint": "Quand votre adresse change, Tessel la dépose, chiffrée, sur le relais gratuit ntfy.sh pour que vos invités vous retrouvent (et y cherche celle d'un hôte quand vous êtes invité). Désactivé : rien n'y est envoyé, et les codes cessent de fonctionner quand votre adresse change."
+      "rendezvousHint": "Quand votre adresse change, Tessel la dépose, chiffrée, sur le relais gratuit ntfy.sh pour que vos invités vous retrouvent (et y cherche celle d'un hôte quand vous êtes invité). Désactivé : rien n'y est envoyé, et les codes cessent de fonctionner quand votre adresse change.",
+      "agentsHint": "Pour chaque invité, sauf si vous le changez pour une invitation ou une personne.",
+      "hideIgnoredShort": "Les fichiers ignorés par git et ceux qui ressemblent à des secrets (.env, clés, identifiants).",
+      "rendezvousShort": "Votre nouvelle adresse part, chiffrée, sur le relais gratuit ntfy.sh pour que vos invités vous retrouvent."
     },
     "recent": {
       "title": "Actions récentes des invités",
       "none": "Aucun invité n'a encore rien modifié.",
       "flaggedHint": "Ce fichier dit aux agents quoi faire : vérifiez la modification.",
-      "flagged": "Instructions d'agent"
+      "flagged": "Instructions d'agent",
+      "fewer": "Afficher moins",
+      "all": "Tout voir ({{count}})"
     },
     "paste": {
       "forbidden": "{{host}} ne vous a pas donné le droit de taper dans ce panneau : l'image n'a pas été collée.",
@@ -549,6 +567,65 @@
       "notFound": "Ce panneau n'est plus partagé avec vous.",
       "failed": "L'image n'a pas pu être collée du côté de {{host}}.",
       "dropImagesOnly": "Seules des images peuvent être déposées sur un panneau de l'hôte."
+    },
+    "agents": {
+      "label": "Agents utilisables",
+      "title": "Agents qu’ils peuvent utiliser",
+      "noneInstalled": "Aucun agent installé",
+      "all": "Tous les agents",
+      "some": "{{count}} agents sur {{total}}",
+      "none": "Aucun agent",
+      "someModels": "{{agents}}, certains modèles seulement",
+      "notLater": "{{agents}}, pas ceux que vous ajoutez plus tard",
+      "following": "Comme le réglage du partage : {{summary}}",
+      "allModels": "Tous les modèles",
+      "someModelsOf": "{{count}} modèles sur {{total}}",
+      "follow": "Comme le réglage du partage",
+      "noneHint": "Aucun agent n’est installé et activé dans Paramètres > Agents.",
+      "modelsOf": "Modèles de {{agent}}",
+      "allModelsLater": "Tous les modèles (y compris les nouveaux)",
+      "later": "Autoriser les agents que j’ajoute plus tard",
+      "laterHint": "Les agents que vous installez ou auxquels vous vous abonnez après ceci.",
+      "changed": "les agents qu’ils peuvent utiliser (la nouvelle liste)",
+      "hint2": "Ils voient toujours les volets des agents que vous excluez, mais ne peuvent ni les ouvrir ni y taper ; Tessel refuse aussi de passer un agent à un modèle que vous excluez (au mieux).",
+      "typeCaveat": "Toute personne qui peut taper — dans un terminal ou dans un agent que vous autorisez — peut toujours lancer n’importe quel programme, y compris les agents et modèles que vous excluez. Ces limites ne tiennent pleinement que pour les invités qui ne peuvent pas taper.",
+      "typeWarn": "Ils peuvent taper : toute personne qui peut taper — dans un terminal ou dans un agent que vous autorisez — peut toujours lancer n’importe quel programme, y compris les agents et modèles que vous excluez."
+    },
+    "preset": {
+      "custom": "Personnalisé",
+      "customCount": "Personnalisé · {{n}}",
+      "label": "Préréglage"
+    },
+    "status": {
+      "sharing_one": "Partage de {{count}} projet en cours",
+      "sharing_other": "Partage de {{count}} projets en cours",
+      "sharingSince_one": "Partage de {{count}} projet depuis {{time}}",
+      "sharingSince_other": "Partage de {{count}} projets depuis {{time}}",
+      "permanent": "Revient après un redémarrage",
+      "permanentHint": "Tant que vous ne l'arrêtez pas, le partage reprend tout seul au redémarrage de Tessel, avec ses invitations et ses personnes.",
+      "relayOn": "Relais activé",
+      "relayOff": "Relais désactivé",
+      "hidden": "Fichiers secrets masqués",
+      "resumed": "Repris après un redémarrage"
+    },
+    "settings": {
+      "guestsTitle": "Ce que voient les invités",
+      "restartTitle": "Après un redémarrage",
+      "permanent": "Un partage reprend tout seul",
+      "permanentHint": "Tant que vous ne l'arrêtez pas, le partage reprend au redémarrage de Tessel, avec ses invitations et ses personnes.",
+      "always": "Toujours"
+    },
+    "overview": {
+      "relayOn": "Me retrouver via ntfy.sh : activé",
+      "relayOff": "Me retrouver via ntfy.sh : désactivé",
+      "code": "Code {{code}}",
+      "inNow": "Présents maintenant",
+      "preparing": "Votre première invitation sera prête à copier ici dès que le partage aura démarré.",
+      "restarting": "Vos invitations et les personnes du partage reviennent ici dès que le partage aura redémarré."
+    },
+    "peopleView": {
+      "list": "Personnes",
+      "grid": "Grille des accès"
     }
   }
 }

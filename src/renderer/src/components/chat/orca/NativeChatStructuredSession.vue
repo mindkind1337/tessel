@@ -300,6 +300,8 @@ defineExpose({
   focusPendingApproval,
   hasPendingApproval: () => !!approvalItem.value,
   insertTypedText: (text) => (composerRef.value ? composerRef.value.insertTypedText(text) : false),
+  // A file dropped on the pane: the composer's own attach (images as images).
+  attachResolvedPaths: (...args) => (composerRef.value && composerRef.value.attachResolvedPaths ? composerRef.value.attachResolvedPaths(...args) : false),
   setNotice: (message) => {
     composerError.value = message
   },

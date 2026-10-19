@@ -21,8 +21,8 @@
  * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
  * SOFTWARE.
  */
-import { finalizeEditFile } from "./native-chat-edit-model.js";
-import { editLinesFromUnifiedPatch, editLinesFromWholeFile } from "./native-chat-unified-patch.js";
+import { finalizeEditFile, summarizeEditFile } from "./native-chat-edit-model.js";
+import { editLinesFromUnifiedPatch, editLinesFromWholeFile, summarizeUnifiedPatch } from "./native-chat-unified-patch.js";
 const BEGIN = '*** Begin Patch';
 const END = '*** End Patch';
 const FILE_HEADER = /^\*\*\* (Add|Update|Delete) File: (.+)$/;
@@ -88,7 +88,9 @@ function envelopeArgument(record, requireApplyCommand) {
     }
     return null;
 }
-export function editFilesFromBeginPatch(envelope) {
+// Tessel: summaryOnly -> the files' counts and first changed line alone
+// (summarizeEditFile's shape), without the rows: a list of changed files.
+export function editFilesFromBeginPatch(envelope, summaryOnly = false) {
     const sections = [];
     const moves = new Map();
     for (const raw of envelope.split(/\r?\n/)){
@@ -118,15 +120,32 @@ export function editFilesFromBeginPatch(envelope) {
             const sign = section.kind === 'Add' ? '+' : '-';
             const stripped = section.body.map((line)=>line.startsWith(sign) ? line.slice(1) : line).join('\n');
             const whole = editLinesFromWholeFile(stripped, section.kind === 'Add' ? 'add' : 'del');
+            const file = finalizeEditFile({
+                path: section.path,
+                oldPath: null,
+                changeKind: section.kind === 'Add' ? 'added' : 'deleted',
+                lines: whole.lines,
+                lineNumbersKnown: true,
+                truncated: whole.truncated
+            });
             return [
-                finalizeEditFile({
-                    path: section.path,
-                    oldPath: null,
-                    changeKind: section.kind === 'Add' ? 'added' : 'deleted',
-                    lines: whole.lines,
-                    lineNumbersKnown: true,
-                    truncated: whole.truncated
-                })
+                summaryOnly ? summarizeEditFile(file) : file
+            ];
+        }
+        if (summaryOnly) {
+            const summary = summarizeUnifiedPatch(body, {
+                implicitFirstHunk: true
+            });
+            return [
+                {
+                    path: moved ?? section.path,
+                    oldPath: moved ? section.path : null,
+                    changeKind: moved ? 'renamed' : 'edited',
+                    truncated: summary?.truncated ?? false,
+                    added: summary?.added ?? 0,
+                    removed: summary?.removed ?? 0,
+                    firstLine: summary?.firstLine ?? null
+                }
             ];
         }
         const parsed = editLinesFromUnifiedPatch(body, {

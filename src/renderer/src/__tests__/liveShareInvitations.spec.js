@@ -95,12 +95,10 @@ describe('Live Share invitations: making one', () => {
     expect(document.activeElement).toBe(w.find('[data-test="ls-invite-label"]').element)
     expect(w.find('[data-test="ls-proj-ws-1-invite"] input').element.checked).toBe(true)
     expect(w.find('[data-test="ls-proj-ws-2-invite"] input').element.checked).toBe(true)
-    // Rights as presets, View only at first; each right behind Customize,
-    // from the catalog, all off; the open right says what it means.
+    // Rights as presets, View only at first, over a tile per right of the
+    // catalog, all off; the open right says what it means.
     expect(w.find('[data-test="ls-invite-preset-view"]').classes()).toContain('on')
-    expect(w.find('[data-test="ls-right-open-invite"]').exists()).toBe(false)
-    await w.find('[data-test="ls-invite-customize"]').trigger('click')
-    expect(w.find('[data-test="ls-right-open-invite"]').text()).toContain('Can open terminals and agents on your computer (they can run commands)')
+    expect(w.find('[data-test="ls-right-open-invite"]').text()).toContain('Open terminals and agents on your computer (they can run commands)')
     expect(['type', 'open', 'close'].map((id) => w.find(`[data-test="ls-right-${id}-invite"] input`).element.checked)).toEqual([false, false, false])
     // 1 hour by default; nothing lets anyone in without asking.
     expect(w.find('[data-test="ls-invite-lifetime-hour"] input').element.checked).toBe(true)

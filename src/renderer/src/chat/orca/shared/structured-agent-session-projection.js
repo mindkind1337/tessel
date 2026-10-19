@@ -70,15 +70,24 @@ function itemBlocks(item) {
                 ]
             };
         }
+        // Tessel: a result's images (and how many more) ride on its block,
+        // which a result with images and no text still gets.
+        const pictures = body.images?.length || body.imagesMore ? {
+            images: body.images ?? [],
+            ...body.imagesMore ? {
+                imagesMore: body.imagesMore
+            } : {}
+        } : null;
         return {
             role: 'assistant',
             blocks: [
                 call,
-                ...body.output ? [
+                ...body.output || pictures ? [
                     {
                         type: 'tool-result',
-                        output: boundedText(body.output),
-                        isError: body.state === 'failed'
+                        output: body.output ? boundedText(body.output) : '',
+                        isError: body.state === 'failed',
+                        ...pictures
                     }
                 ] : []
             ]

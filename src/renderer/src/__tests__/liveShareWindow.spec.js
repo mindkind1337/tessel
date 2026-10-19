@@ -629,6 +629,36 @@ describe('Live Share in the window, as the host', () => {
     expect(t.deps.launch).toHaveBeenCalledTimes(2)
   })
 
+  it('starts a guest’s agent with the model it picked, or one its agents rule allows (never a default it leaves out)', async () => {
+    twoProjects()
+    sharingNow(['ws-1'], { guests: [{ id: 'g1', name: 'Alex', state: 'joined', rights: { open: true }, projects: ['ws-1'] }] })
+    t.deps.agentModels = () => [{ id: 'opus', isDefault: true }, { id: 'sonnet' }, { id: 'haiku' }]
+    const asks = (spec) => t.listeners.onHostRequest({ action: 'open', spec: { kind: 'agent', agent: 'claude', project: 'ws-1', ...spec }, guest: { id: 'g1', name: 'Alex' } })
+    asks({ model: 'sonnet', models: ['sonnet', 'haiku'] })
+    asks({ models: ['haiku', 'sonnet'] })
+    asks({ models: ['opus', 'haiku'] })
+    asks({ model: 'opus', models: ['haiku'] }) // main checks it; never past the list here either
+    asks({})
+    expect(t.deps.launch.mock.calls.map((c) => c[0])).toEqual([
+      { kind: 'agent', id: 'claude', sessionOptions: { model: 'sonnet' } },
+      { kind: 'agent', id: 'claude', sessionOptions: { model: 'haiku' } },
+      { kind: 'agent', id: 'claude', sessionOptions: { model: 'opus' } },
+      { kind: 'agent', id: 'claude', sessionOptions: { model: 'haiku' } },
+      { kind: 'agent', id: 'claude' }
+    ])
+  })
+
+  it('says when a pane a guest typed in switched to what that guest may not use (main pressed Esc there)', async () => {
+    t.listeners.onHostRequest({ action: 'ruleBreach', guest: { id: 'g1', name: 'Alex' }, pane: 'pane-1', agent: 'Claude Code', model: 'opus' })
+    expect(t.toasts.at(-1)).toBe('Alex typed in a pane that now runs Claude Code · opus, which you don’t let guests use. Tessel pressed Esc there: check that pane.')
+  })
+
+  it('tells main each agent’s models (the "Agents guests may use" lists)', async () => {
+    t.agentList.value = [{ id: 'claude', name: 'Claude Code', models: [{ id: 'opus', label: 'Opus' }, { id: 'bad' }, 'no'] }]
+    await flush()
+    expect(t.api.setAgents).toHaveBeenLastCalledWith([{ id: 'claude', name: 'Claude Code', models: [{ id: 'opus', label: 'Opus' }, { id: 'bad', label: 'bad' }] }])
+  })
+
   function sharedWithPanes(ids) {
     const ws = reactive({ id: 'ws-1', name: 'tessel', activeId: ids[0], tree: { type: 'split', id: 's', dir: 'row', sizes: ids.map(() => 100 / ids.length), children: ids.map((id) => ({ type: 'leaf', id, kind: 'shell', title: id })) } })
     t.workspaces.value.push(ws)
@@ -1150,6 +1180,29 @@ describe('Live Share, as a guest: asking the host to open, and what is on screen
     t.api.open.mockResolvedValue({ ok: true, asked: false })
     await t.ls.openOnHost({ kind: 'terminal' }, ws)
     expect(t.toasts.at(-1)).toBe('Opening it on Ada’s computer…')
+  })
+
+  it('the host’s agents rule: its menu lists only what it allows, with the models it allows, and its refusals are said plainly', async () => {
+    const agents = { deny: ['codex'], later: true, known: ['claude', 'codex'], models: { claude: ['sonnet'] } }
+    joined({ rights: { ...NO_RIGHTS, open: true, agents }, agents: [{ id: 'claude', name: 'Claude Code', models: [{ id: 'sonnet', label: 'Sonnet' }] }] })
+    await flush()
+    const ws = t.workspaces.value[0]
+    expect(t.ls.hostMenu(ws)).toEqual({ host: 'Ada', agents: [{ id: 'claude', name: 'Claude Code', models: [{ id: 'sonnet', label: 'Sonnet' }] }], canOpen: true })
+    await t.ls.openOnHost({ kind: 'agent', agent: 'claude', model: 'sonnet' }, ws)
+    expect(t.api.open).toHaveBeenLastCalledWith({ kind: 'agent', agent: 'claude', model: 'sonnet', project: 'ws-a' })
+    t.api.open.mockResolvedValue({ ok: false, reason: 'agent-denied' })
+    await t.ls.openOnHost({ kind: 'agent', agent: 'claude' }, ws)
+    expect(t.toasts.at(-1)).toBe('Ada doesn’t let guests use Claude Code.')
+    t.listeners.onNotice({ code: 'agent-denied', agent: 'Codex' })
+    expect(t.toasts.at(-1)).toBe('Ada doesn’t let guests use Codex.')
+    t.listeners.onNotice({ code: 'type-denied', agent: 'Codex' })
+    expect(t.toasts.at(-1)).toBe('Ada doesn’t let guests use Codex: you can watch its pane, not type in it.')
+    t.listeners.onNotice({ code: 'model-denied', agent: 'Claude Code', model: 'opus' })
+    expect(t.toasts.at(-1)).toBe('Ada doesn’t let guests use opus with Claude Code.')
+    t.listeners.onNotice({ code: 'model-denied', agent: 'Claude Code', model: '' })
+    expect(t.toasts.at(-1)).toBe('Ada doesn’t let guests switch Claude Code to that model.')
+    t.listeners.onNotice({ code: 'checking' })
+    expect(t.toasts.at(-1)).toBe('Ada’s Tessel is checking what runs in this pane: type again in a moment.')
   })
 
   it('a host from before that list: no host menu, and nothing asked without the right', async () => {

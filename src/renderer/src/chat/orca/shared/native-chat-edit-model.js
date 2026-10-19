@@ -58,6 +58,50 @@ export function pushEditGap(lines) {
 export function unifiedLineNumber(line) {
     return line.kind === 'del' ? line.oldLineNumber : line.newLineNumber ?? line.oldLineNumber;
 }
+// Tessel: the new-side line a file's first change sits at, fed row by row
+// (kind, oldLineNumber, newLineNumber) so a patch summary finds it without
+// building the rows. Same rule as chat/agentEdits.js firstChangedLine: an
+// added row's own line, a removed row's line after the last context row of its
+// hunk (else its old line).
+export function createFirstChangeFinder() {
+    let lastNew = null;
+    let line;
+    const positive = (n)=>Number.isSafeInteger(n) && n > 0 ? n : null;
+    return {
+        visit (kind, oldLineNumber, newLineNumber) {
+            if (line !== undefined) {
+                return;
+            }
+            if (kind === 'add') {
+                line = positive(newLineNumber);
+            } else if (kind === 'del') {
+                line = lastNew !== null ? lastNew + 1 : positive(oldLineNumber);
+            } else if (kind === 'context' && positive(newLineNumber)) {
+                lastNew = newLineNumber;
+            } else if (kind === 'gap') {
+                lastNew = null;
+            }
+        },
+        get line () {
+            return line ?? null;
+        }
+    };
+}
+// Tessel: a finished edit file reduced to what a list of changed files shows
+// (the patch summaries' shape: no rows, plus the first changed line).
+export function summarizeEditFile(file) {
+    const { lines, lineNumbersKnown, ...rest } = file;
+    const finder = createFirstChangeFinder();
+    if (lineNumbersKnown) {
+        for (const row of lines){
+            finder.visit(row.kind, row.oldLineNumber, row.newLineNumber);
+        }
+    }
+    return {
+        ...rest,
+        firstLine: finder.line
+    };
+}
 export function finalizeEditFile(input) {
     const overLineCap = input.lines.length > MAX_EDIT_LINES;
     const truncated = overLineCap || input.truncated === true;

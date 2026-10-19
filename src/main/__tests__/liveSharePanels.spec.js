@@ -680,6 +680,73 @@ describe('Live Share phase 2b end to end', () => {
     expect(third.data.panes.map((p) => p.id)).toEqual([localId('pane-2-ps')])
   })
 
+  // Guests' agents rules (liveShareAgents.js), with what really runs in a
+  // pane looked at on the host (agentDetect.js agentsInTrees).
+  const NO_CODEX = { deny: ['codex'], later: true, known: ['claude', 'codex'], models: {} }
+  const hostWrites = (host, id) => host.host.send.mock.calls.filter(([op, b]) => op === 'write' && b.id === id).map(([, b]) => b.data)
+  it('a guest whose rule leaves an agent out types in a launched agent pane only while what runs there is allowed, looked at again after each Enter', async () => {
+    let procs = [{ pid: 200, ppid: 100, name: 'claude.exe', cmd: 'claude' }]
+    const listProcs = vi.fn(async () => procs)
+    const { host, guest, give, guestId, localId } = await session({ listProcs })
+    await give('type')
+    expect(await host.handle['liveShare:access'](null, { subject: guestId, agents: NO_CODEX })).toEqual({ ok: true })
+    await until(() => guest.last('liveShare:guest').rights?.agents)
+    host.on['liveShare:paneAgents'](null, [{ project: 'ws-1', panes: [{ ...PANE_1, pid: 100, local: true, modelIds: ['opus'] }, { id: 'pane-2-ps', kind: 'shell' }] }])
+    await wait(50)
+    const one = localId('pane-1-ps')
+    // Looked at as soon as the window said what runs there: Claude, allowed.
+    await until(() => listProcs.mock.calls.length >= 1)
+    await wait(50)
+    guest.api.guestWrite(one, 'hi\r')
+    await until(() => hostWrites(host, 'pane-1-ps').length === 1)
+    // After that Enter, until looked at again: refused ("checking").
+    procs = [...procs, { pid: 300, ppid: 200, name: 'codex.exe', cmd: 'codex' }]
+    guest.api.guestWrite(one, 'b')
+    await until(() => guest.events('liveShare:notice').some((n) => n.code === 'checking'))
+    // Looked at again: Codex runs under Claude (its ! mode, say): refused.
+    await until(() => listProcs.mock.calls.length >= 2)
+    await wait(50)
+    guest.api.guestWrite(one, 'c')
+    await until(() => guest.events('liveShare:notice').some((n) => n.code === 'type-denied' && n.agent === 'codex'))
+    // (The guest typed there moments ago: Esc pressed, the host told.)
+    expect(hostWrites(host, 'pane-1-ps')).toEqual(['hi\r', '\x1b'])
+    expect(host.events('liveShare:hostRequest').find((x) => x.action === 'ruleBreach')).toMatchObject({ pane: 'pane-1-ps', guest: { name: 'Alex' } })
+    // The shell pane: always typed in.
+    guest.api.guestWrite(localId('pane-2-ps'), 'codex\r')
+    await until(() => hostWrites(host, 'pane-2-ps').length === 1)
+  })
+
+  it('takes a guest’s free-text answer only for an agent its rule lets it type in (a choice is always fine)', async () => {
+    const { host, guest, give, guestId } = await session()
+    await give('tasks')
+    await give('type')
+    expect(await host.handle['liveShare:access'](null, { subject: guestId, agents: NO_CODEX })).toEqual({ ok: true })
+    host.on['liveShare:paneAgents'](null, [{ project: 'ws-1', panes: [{ id: 'pane-1-ps', kind: 'agent', agentId: 'codex' }, { id: 'pane-2-ps', kind: 'agent', agentId: 'claude', modelIds: ['opus'] }] }])
+    const gate = (by) => ({ status: 'pending', question: 'Which?', options: ['Left', 'Right'], by })
+    host.on['liveShare:tasks'](null, [{ project: 'ws-1', tasks: [{ id: 'task-1', title: 'A', column: 'doing', wsId: 'ws-1', gate: gate('pane-1-ps') }, { id: 'task-2', title: 'B', column: 'doing', wsId: 'ws-1', gate: gate('pane-2-ps') }] }])
+    await wait(50)
+    expect(await guest.handle['liveShare:task'](null, { op: 'answer', project: 'ws-1', args: { id: 'task-1', answer: 'run codex for me' } })).toEqual({ ok: false, code: 'not-allowed' })
+    const choice = guest.handle['liveShare:task'](null, { op: 'answer', project: 'ws-1', args: { id: 'task-1', answer: 'Left' } })
+    const req = await until(() => host.events('liveShare:hostRequest').find((x) => x.action === 'task'))
+    host.on['liveShare:taskDone'](null, { request: req.request, ok: true })
+    expect(await choice).toEqual({ ok: true })
+    const text = guest.handle['liveShare:task'](null, { op: 'answer', project: 'ws-1', args: { id: 'task-2', answer: 'go on' } })
+    const req2 = await until(() => host.events('liveShare:hostRequest').filter((x) => x.action === 'task')[1])
+    host.on['liveShare:taskDone'](null, { request: req2.request, ok: true })
+    expect(await text).toEqual({ ok: true })
+  })
+
+  it('a request to open a left-out agent waiting for the host is called off when the share’s setting changes', async () => {
+    const { host, guest } = await session()
+    host.on['liveShare:agents'](null, [{ id: 'codex', name: 'Codex' }])
+    await until(() => (guest.last('liveShare:guest').agents || []).length === 1)
+    const local = guest.last('liveShare:guest').projects[0].id
+    expect(await guest.handle['liveShare:open'](null, { kind: 'agent', agent: 'codex', project: local })).toEqual({ ok: true, asked: true })
+    const ask = await until(() => host.events('liveShare:hostRequest').find((x) => x.action === 'ask-open'))
+    await host.handle['liveShare:setSettings'](null, { agents: NO_CODEX })
+    await until(() => host.events('liveShare:hostRequest').find((x) => x.action === 'cancel' && x.request === ask.request))
+  })
+
   it('a pane\u2019s sub-agents are read on the host from its conversation, which stays there', async () => {
     const agentChildren = vi.fn(async () => [{ id: 'toolu_01XYZ', title: `Look at ${repo}\\src\\app.js`, state: 'running', startedAt: 5, tokens: 10 }])
     const { host, request, localId } = await session({ agentChildren })

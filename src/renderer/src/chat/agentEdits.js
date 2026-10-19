@@ -274,6 +274,8 @@ function findLines(hay, needle, from = 0) {
 // The file's first changed line, from the card's own line numbers (a patch
 // that carried them). -> a line number or null.
 export function firstChangedLine(file) {
+  // A changed-files summary (no rows) carries it: its patch's hunk headers.
+  if (file && !Array.isArray(file.lines) && 'firstLine' in file) return posInt(file.firstLine)
   if (!file || !file.lineNumbersKnown || !Array.isArray(file.lines)) return null
   let lastNew = null
   for (const l of file.lines) {
@@ -367,21 +369,29 @@ export function snippetSides(steps) {
 // ---- A turn's changed files --------------------------------------------------
 
 // messages: the chat's messages; turnKeys[i]: the turn of messages[i] (its
-// user message's id); editCardsOf(blocks): native-chat-edit-cards.js's
-// buildEditCards (passed in: this module stays free of the chat's parsers).
+// user message's id); editSummariesOf(blocks): native-chat-edit-cards.js's
+// buildEditSummaries (passed in: this module stays free of the chat's parsers).
+// Built from the edits' summaries (counts, first changed line), so listing the
+// files never parses a patch into rows: each edit's detail() does, when the
+// user opens its diff.
 // -> Map turnKey -> { files: [{ path, oldPath, added, removed, changeKind,
-//    edits: [{ block, file }] }], added, removed }
-export function turnChangedFiles(messages, turnKeys, editCardsOf) {
+//    edits: [{ block, file, detail }] }], added, removed }
+export function turnChangedFiles(messages, turnKeys, editSummariesOf) {
   const turns = new Map()
   for (const [index, message] of (messages || []).entries()) {
     const turnKey = turnKeys[index]
     if (!turnKey || !message || message.role === 'user' || !Array.isArray(message.blocks)) continue
     // Fast path: most messages hold no tool call at all.
     if (!message.blocks.some((b) => b && b.type === 'tool-call')) continue
-    for (const [block, edit] of editCardsOf(message.blocks).editCards) {
+    for (const [block, edit] of editSummariesOf(message.blocks)) {
       let files = turns.get(turnKey)
       if (!files) turns.set(turnKey, (files = new Map()))
-      for (const file of edit.files) {
+      for (const [at, file] of edit.files.entries()) {
+        // The summaries come in the full files' order.
+        const detail = () => {
+          const full = edit.detailed() || []
+          return full[at] && full[at].path === file.path ? full[at] : full.find((f) => f.path === file.path) || null
+        }
         const key = file.path
         const renamed = file.oldPath && file.oldPath !== file.path ? files.get(file.oldPath) : undefined
         if (renamed) files.delete(file.oldPath)
@@ -392,7 +402,7 @@ export function turnChangedFiles(messages, turnKeys, editCardsOf) {
           added: file.added + (prior ? prior.added : 0),
           removed: file.removed + (prior ? prior.removed : 0),
           changeKind: prior && prior.changeKind === 'added' && file.changeKind !== 'deleted' ? 'added' : file.changeKind,
-          edits: [...(prior ? prior.edits : []), { block, file }]
+          edits: [...(prior ? prior.edits : []), { block, file, detail }]
         })
       }
     }

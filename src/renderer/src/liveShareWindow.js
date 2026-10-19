@@ -90,6 +90,7 @@ import { lsharePath } from '../../shared/liveSharePath'
 import { docs } from './editor/documents'
 import { pathKey, samePath } from './editor/editorTabs'
 import { cleanRights } from '../../shared/liveShareRights'
+import { cleanAgentRule } from '../../shared/liveShareAgents'
 import { shownRights } from './liveShareRights'
 import { initials, inviteName, personName, joinedGuests } from './liveShareAccess'
 import { LS_TEXT_SIZES } from './liveShareFit'
@@ -137,8 +138,13 @@ export function rightsText(rights) {
   const parts = shownRights()
     .filter((r) => rights[r.id] === true)
     .map((r) => r.part)
-  if (!parts.length) return t('liveShare.rights.watch', 'You can watch. The host has not let you type yet.')
-  return t('liveShare.rights.can', 'You can watch and {{list}}.', { list: parts.join(', ') })
+  const text = parts.length ? t('liveShare.rights.can', 'You can watch and {{list}}.', { list: parts.join(', ') }) : t('liveShare.rights.watch', 'You can watch. The host has not let you type yet.')
+  // The host limits its agents or models: said, with what it means for its
+  // panes.
+  const rule = cleanAgentRule(rights.agents)
+  if (!rule || (!rule.deny.length && rule.later && !Object.keys(rule.models).length)) return text
+  const limited = `${text} ${t('liveShare.rights.agentsLimited', 'Some of the host’s agents or models are not for guests: you can watch their panes, not open or type in them.')}`
+  return rights.type === true ? `${limited} ${t('liveShare.rights.agentsTypeCaveat', 'Anyone who can type — in a terminal or in an agent the host allows — can still start any program, including agents and models left out. These limits fully hold only for guests who can’t type.')}` : limited
 }
 
 // A Live Share project's name in a guest's sidebar: the host's project, then
@@ -628,7 +634,21 @@ export function createLiveShareWindow(deps) {
       agent ? t('liveShare.toast.openedAgent', '{{name}} opened {{agent}} in your Tessel.', { name: who, agent: agentLabel(agent) }) : t('liveShare.toast.openedTerminal', '{{name}} opened a terminal in your Tessel.', { name: who }),
       { timeout: 5000 }
     )
-    deps.launch(agent ? { kind: 'agent', id: agent } : { kind: 'shell', id: deps.selectedShell() }, target, 'right')
+    deps.launch(agent ? { kind: 'agent', id: agent, ...(spec.model ? { sessionOptions: { model: spec.model } } : {}) } : { kind: 'shell', id: deps.selectedShell() }, target, 'right')
+  }
+  // The model a guest's agent starts with: the one it picked (main checked it
+  // against its agents rule); when the rule allows only some models, one of
+  // them (this agent's default if it is one, else the first): never the
+  // agent's own default when that one is left out. null: the usual default.
+  function guestModel(s) {
+    if (!s || s.kind !== 'agent') return null
+    const only = Array.isArray(s.models) ? s.models.filter((m) => typeof m === 'string' && m) : null
+    const picked = typeof s.model === 'string' && s.model ? s.model : null
+    if (picked && (!only || only.includes(picked))) return picked
+    if (!only || !only.length) return null
+    const listed = deps.agentModels ? deps.agentModels(s.agent) || [] : []
+    const byDefault = listed.find((m) => m && m.isDefault && only.includes(m.id))
+    return byDefault ? byDefault.id : only[0]
   }
   const agentLabel = (id) => (deps.agentName && deps.agentName(id)) || id
 
@@ -644,6 +664,14 @@ export function createLiveShareWindow(deps) {
     }
     const request = typeof req.request === 'string' ? req.request : null
     if (req.action === 'task') return applyTask(req)
+    // A pane a guest typed in switched to an agent or a model that guest may
+    // not use (main pressed Esc in it): said, so you can look.
+    if (req.action === 'ruleBreach') {
+      const name = (req.guest && req.guest.name) || t('liveShare.guest', 'A guest')
+      const what = [req.agent, req.model].filter((x) => typeof x === 'string' && x).join(' · ') || t('liveShare.toast.thatAgent', 'that agent')
+      deps.showToast(t('liveShare.toast.ruleBreach', '{{name}} typed in a pane that now runs {{what}}, which you don’t let guests use. Tessel pressed Esc there: check that pane.', { name, what }), { kind: 'error', timeout: 15000 })
+      return
+    }
     // An image a guest pasted (main saved it): pasted into your pane while the
     // guest still may type there (liveSharePaste.js).
     if (req.action === 'pasteImage') {
@@ -659,7 +687,7 @@ export function createLiveShareWindow(deps) {
     const guestId = (req.guest && req.guest.id) || null
     if (req.action === 'open' || req.action === 'ask-open') {
       const s = req.spec || {}
-      const spec = { kind: s.kind === 'agent' ? 'agent' : 'terminal', agent: s.kind === 'agent' && typeof s.agent === 'string' ? s.agent : null, project: typeof s.project === 'string' ? s.project : null, guestId }
+      const spec = { kind: s.kind === 'agent' ? 'agent' : 'terminal', agent: s.kind === 'agent' && typeof s.agent === 'string' ? s.agent : null, project: typeof s.project === 'string' ? s.project : null, guestId, model: guestModel(s) }
       if (req.action === 'open') {
         // Main checked the right; it is checked here again. Done with it
         // either way.
@@ -1591,7 +1619,7 @@ export function createLiveShareWindow(deps) {
     if (!isGuestWs(ws) || state.guest.state !== 'joined' || ws.liveShare.session !== state.guest.session) return null
     const agents = hostAgents()
     if (!agents) return null
-    return { host: state.guest.host || '?', agents: agents.map((a) => ({ id: a.id, name: a.name || a.id })), canOpen: may('open') }
+    return { host: state.guest.host || '?', agents: agents.map((a) => ({ id: a.id, name: a.name || a.id, ...(Array.isArray(a.models) && a.models.length ? { models: a.models.map((m) => ({ id: m.id, label: m.label || m.id })) } : {}) })), canOpen: may('open') }
   }
 
   // A new terminal or agent in a Live Share project opens on the host, in
@@ -1608,9 +1636,12 @@ export function createLiveShareWindow(deps) {
     if (r && r.ok) deps.showToast(r.asked ? t('liveShare.toast.openAsked', 'Asked {{host}} to open it: it opens once they say yes.', { host }) : t('liveShare.toast.opening', 'Opening it on {{host}}’s computer…', { host }), { timeout: r.asked ? 5000 : 3000 })
     else if (r && r.reason === 'rights') noOpen()
     else if (r && r.reason === 'agent') noAgent()
+    else if (r && (r.reason === 'agent-denied' || r.reason === 'model-denied')) agentDenied(r.reason, spec.agent ? agentLabelOf(spec.agent) : '', spec.model || '')
     else if (r && r.reason === 'project') deps.showToast(t('liveShare.toast.noProject', '{{host}} no longer shares this project with you.', { host }), { timeout: 5000 })
     else deps.showToast(t('liveShare.toast.openFailed', 'It could not be asked of {{host}}: the connection may be down.', { host }), { kind: 'error', timeout: 5000 })
   }
+  // A host's agent's name (its list), else its id.
+  const agentLabelOf = (id) => ((hostAgents() || []).find((a) => a.id === id) || {}).name || (deps.agentName && deps.agentName(id)) || id
   function noAgent() {
     deps.showToast(t('liveShare.toast.noAgent', '{{host}} does not have that agent.', { host: state.guest.host || '?' }), { timeout: 5000 })
   }
@@ -1639,6 +1670,19 @@ export function createLiveShareWindow(deps) {
   function onNotice(n) {
     if (n && n.code === 'limit') deps.showToast(t('liveShare.toast.limit', '{{host}}’s Tessel limits how often guests open or close panes. Wait a minute.', { host: state.guest.host || '?' }), { timeout: 6000 })
     else if (n && n.code === 'agent') noAgent()
+    else if (n && (n.code === 'agent-denied' || n.code === 'type-denied' || n.code === 'model-denied')) agentDenied(n.code, n.agent, n.model)
+    else if (n && n.code === 'checking') deps.showToast(t('liveShare.toast.checking', '{{host}}’s Tessel is checking what runs in this pane: type again in a moment.', { host: state.guest.host || '?' }), { timeout: 4000 })
+  }
+  // The host's agents rule refused something (shareHost.js): opening an
+  // agent, typing in its pane (watching it stays), or a model.
+  function agentDenied(code, agent, model) {
+    const host = state.guest.host || '?'
+    const name = agent || t('liveShare.toast.thatAgent', 'that agent')
+    let text
+    if (code === 'type-denied') text = t('liveShare.toast.typeDenied', '{{host}} doesn’t let guests use {{agent}}: you can watch its pane, not type in it.', { host, agent: name })
+    else if (code === 'model-denied') text = model ? t('liveShare.toast.modelDenied', '{{host}} doesn’t let guests use {{model}} with {{agent}}.', { host, agent: name, model }) : t('liveShare.toast.modelSwitchDenied', '{{host}} doesn’t let guests switch {{agent}} to that model.', { host, agent: name })
+    else text = t('liveShare.toast.agentDenied', '{{host}} doesn’t let guests use {{agent}}.', { host, agent: name })
+    deps.showToast(text, { timeout: 6000 })
   }
 
   function leave() {
@@ -1909,7 +1953,9 @@ export function createLiveShareWindow(deps) {
   // The agents offered to guests ([{ id, name }]; main keeps the first 32).
   function agentsNow() {
     const list = deps.agentList ? deps.agentList() : []
-    return (Array.isArray(list) ? list : []).filter((x) => x && typeof x.id === 'string').map((x) => ({ id: x.id, name: typeof x.name === 'string' ? x.name : x.id }))
+    return (Array.isArray(list) ? list : [])
+      .filter((x) => x && typeof x.id === 'string')
+      .map((x) => ({ id: x.id, name: typeof x.name === 'string' ? x.name : x.id, ...(Array.isArray(x.models) && x.models.length ? { models: x.models.filter((m) => m && typeof m.id === 'string').map((m) => ({ id: m.id, label: typeof m.label === 'string' ? m.label : m.id })) } : {}) }))
   }
   // The host's pane with the keyboard, in a project of the host's on screen.
   function focusNow() {
@@ -1934,8 +1980,11 @@ export function createLiveShareWindow(deps) {
     feeds.dispose()
   }
 
+  // Whether one of your panes is in a project you share now.
+  const sharesPane = (id) => hostSharing() && !!projectOfPane(id)
   return {
     state,
+    sharesPane,
     init,
     dispose,
     isGuestWs,

@@ -107,17 +107,69 @@ export const imagePixelSize = (w, h) => (w > 0 && h > 0 ? `${w}×${h}` : '')
 const HISTORY_IMAGE_URL = /^data:image\/(?:png|jpeg|gif|webp);base64,[A-Za-z0-9+/]+={0,2}$/
 export const historyImageUrl = (url) => (typeof url === 'string' && url.length <= 4 * 1024 * 1024 && HISTORY_IMAGE_URL.test(url) ? url : null)
 
-// A 'user' event's images as the message's image-ref blocks: the shown
-// thumbnail while this window has it (a sent image), the image itself for a
-// history message (its dataUrl), else a chip with the name.
-export function imageRefBlocks(images) {
+// An event's images (src/main/chat/historyAttachments.js: a user message's,
+// a tool result's) as image-ref blocks: the shown thumbnail while this window
+// has it (a sent image), the image itself (its dataUrl), else what is known:
+// a local file no longer there (missing: a calm chip), a file on the SSH host
+// (remote: read over the connection when shown), or a chip with the name
+// (bytes not here yet). source: 'user' | 'pasted' | 'tool'. The data URL is
+// kept by reference (never copied).
+const IMAGE_SOURCES = new Set(['user', 'pasted', 'tool'])
+const imagePathOf = (p) => (typeof p === 'string' && p && p.length <= 4096 && !p.includes('\0') ? p : null)
+export function imageRefBlocks(images, { limit = CHAT_IMAGE_LIMITS.perMessage } = {}) {
   if (!Array.isArray(images)) return []
-  return images.slice(0, CHAT_IMAGE_LIMITS.perMessage).map((image) => {
-    const entry = image && typeof image.id === 'string' ? chatImageEntry(image.id) : null
-    const name = typeof image?.name === 'string' && image.name ? image.name : 'image' // i18n-ignore
-    const url = entry?.thumbUrl || entry?.fullUrl || historyImageUrl(image?.dataUrl)
-    return { type: 'image-ref', alt: name, ...(url ? { url } : {}) }
+  return images.slice(0, limit).flatMap((image) => {
+    if (!image || typeof image !== 'object') return []
+    const entry = typeof image.id === 'string' ? chatImageEntry(image.id) : null
+    const name = typeof image.name === 'string' && image.name ? image.name.slice(0, 200) : 'image' // i18n-ignore
+    const url = entry?.thumbUrl || entry?.fullUrl || historyImageUrl(image.dataUrl)
+    const path = imagePathOf(image.path)
+    const source = IMAGE_SOURCES.has(image.source) ? image.source : null
+    return [
+      {
+        type: 'image-ref',
+        alt: name,
+        ...(url ? { url } : {}),
+        ...(!url && path ? { path } : {}),
+        ...(!url && path && image.missing === true ? { missing: true } : {}),
+        ...(!url && path && image.remote === true ? { remote: true } : {}),
+        ...(source ? { source } : {})
+      }
+    ]
   })
+}
+
+// How many more images an event held than it lists (imagesMore), as a block
+// the message's images end with ("+N more images"), or none.
+export function moreImagesBlocks(more) {
+  return Number.isSafeInteger(more) && more > 0 ? [{ type: 'image-ref', more: Math.min(more, 9999) }] : []
+}
+
+// A tool result's images, as its card shows them: image-ref blocks and the
+// count of those left out. null when it has none.
+export const TOOL_IMAGE_LIMITS = { perResult: 12 }
+export function toolResultImages(ev) {
+  const blocks = imageRefBlocks(ev && ev.images, { limit: TOOL_IMAGE_LIMITS.perResult })
+  const listed = Array.isArray(ev && ev.images) ? ev.images.length : 0
+  const more = (Number.isSafeInteger(ev && ev.imagesMore) && ev.imagesMore > 0 ? ev.imagesMore : 0) + Math.max(0, listed - TOOL_IMAGE_LIMITS.perResult)
+  return blocks.length || more ? { images: blocks, imagesMore: more } : null
+}
+
+// "[image]": what a transcript says for an image (each one it could not show,
+// a tool's image block). Where the images themselves show, the words go (a
+// line left empty goes too).
+export function withoutImagePlaceholders(text) {
+  const s = String(text ?? '')
+  if (!s.includes('[image]')) return s
+  return s
+    .split('\n')
+    .flatMap((line) => {
+      if (!line.includes('[image]')) return [line]
+      const kept = line.replace(/\[image\]/g, '').replace(/[^\S\n]{2,}/g, ' ').trim()
+      return kept ? [kept] : []
+    })
+    .join('\n')
+    .trim()
 }
 
 // A history 'user' event's other files as file-ref blocks: a chip with the

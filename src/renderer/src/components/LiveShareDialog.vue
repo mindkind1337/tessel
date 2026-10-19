@@ -4,37 +4,48 @@
 // host gave. Why a session ended shows here while the dialog is open (a
 // toast says it too).
 //
-// Share has five sections, all views of main's one access model (the latest
-// HostStatus; every change goes to main, which answers with a fresh one):
-// - Overview: before sharing, the projects to share, your name and the first
-//   invitation's settings (Start sharing makes it: start, copy, send); while
-//   sharing, the invitations' codes to copy, the projects shared (tick or
-//   untick at any time), who is there, and what guests changed lately
-//   (Recent guest actions); always, the share's setting "Hide ignored and
-//   secret files from guests" (main's, kept across shares);
-// - Invitations (liveshare/LsInvitations.vue), People (LsPeople.vue), Access
-//   (LsAccess.vue: the people x projects grid, or one project's people) and
-//   Trusted (LsTrusted.vue, also while not sharing).
+// Share has four sections, all views of main's one access model (the latest
+// HostStatus; every change goes to main, which answers with a fresh one),
+// under a status header while the share runs or gets ready
+// (liveshare/LsStatus.vue: since when, its facts, Stop sharing):
+// - Overview: before sharing, one card with the projects to share, your
+//   name and the first invitation (its preset, how long it lasts, Edit), the
+//   warning about typing, then Start sharing (start, copy, send); while
+//   sharing, who waits for your answer (Let in / Refuse), the projects shared
+//   (tick or untick at any time), the invitations' codes to copy, who is in
+//   now (what they watch or type, their rights in one chip) and what guests
+//   changed lately (Recent guest actions);
+// - People: the people of the share (liveshare/LsPeople.vue), the access
+//   grid (LsAccess.vue: people x projects, or one project's people) and the
+//   trusted people (LsTrusted.vue, also while not sharing), one view at a
+//   time;
+// - Invitations (LsInvitations.vue);
+// - Settings (LsSettings.vue: main's share settings, kept across shares).
 // The sections share one context (provide 'lsDialog'): the calls, a change
 // on its way per key (a click on a box whose change is on its way does
 // nothing), the error and notice lines, the clipboard and the project names.
 import { ref, computed, watch, nextTick, onMounted, onUnmounted, provide } from 'vue'
-import { ScreenShare, Copy, Check, Loader2, AlertTriangle, LogIn, LogOut, ChevronDown, X } from 'lucide-vue-next'
+import { ScreenShare, Copy, Check, Loader2, AlertTriangle, LogIn, LogOut, X, MessageSquareText, UserCheck, Keyboard, Eye } from 'lucide-vue-next'
 import { t, intlLocale } from '../i18n'
 import { endReason, rightsText, actionText } from '../liveShareWindow'
-import { accessError, invitesOf, inviteName, inviteExpiry, joinedGuests, waitingGuests, offlinePeople, trustedPeople } from '../liveShareAccess'
-import { rightsShort } from '../liveShareRights'
+import { accessError, invitesOf, inviteName, inviteExpiry, joinedGuests, waitingGuests, offlinePeople, trustedPeople, personName, viaName } from '../liveShareAccess'
+import { cleanRights } from '../../../shared/liveShareRights'
 import LsInviteEditor from './liveshare/LsInviteEditor.vue'
 import LsInvitations from './liveshare/LsInvitations.vue'
 import LsPeople from './liveshare/LsPeople.vue'
 import LsAccess from './liveshare/LsAccess.vue'
 import LsTrusted from './liveshare/LsTrusted.vue'
+import LsStatus from './liveshare/LsStatus.vue'
+import LsSettings from './liveshare/LsSettings.vue'
+import LsAvatars from './liveshare/LsAvatars.vue'
+import RightsChip from './liveshare/RightsChip.vue'
 import { plainBridge } from '../liveShareBridge'
 
 const props = defineProps({
   open: { type: Boolean, default: false },
   initialTab: { type: String, default: 'share' },
-  // The Share section shown first: overview, invites, people, access, trusted.
+  // The Share section shown first: overview, people, invites, settings; or
+  // one of People's views: access (the grid), trusted.
   initialSection: { type: String, default: 'overview' },
   // Access: a project shown on its own first (a project's "Who has access…").
   focusProject: { type: String, default: null },
@@ -46,7 +57,7 @@ const props = defineProps({
   paneTitle: { type: Function, default: null }
 })
 // toggle-project(id, on): a project ticked or not (liveShareWindow.js setShared);
-// review-guest(id): People's "Let in…" for a guest waiting for your answer
+// review-guest(id): "Let in…" for a guest waiting for your answer
 // (liveShareWindow.js showAsk puts their prompt first).
 const emit = defineEmits(['close', 'toggle-project', 'review-guest'])
 
@@ -55,10 +66,14 @@ const emit = defineEmits(['close', 'toggle-project', 'review-guest'])
 const api = plainBridge(window.shellApi && window.shellApi.liveShare)
 const OFF_HOST = { state: 'off', projectIds: [], invites: [], guests: [], offline: [], trusted: [], presence: [], progress: null, error: null, settings: { hideIgnored: true }, actions: [] }
 const OFF_GUEST = { state: 'off', host: null, panes: [], projects: [], reason: null, rights: null, code: null, agents: null }
-const SECTIONS = ['overview', 'invites', 'people', 'access', 'trusted']
+const SECTIONS = ['overview', 'people', 'invites', 'settings']
+// People's views, and the old sections that are one of them now.
+const PEOPLE_VIEWS = ['list', 'grid', 'trusted']
+const VIEW_OF = { access: 'grid', trusted: 'trusted', people: 'list' }
 
 const tab = ref(props.initialTab === 'join' ? 'join' : 'share')
-const section = ref(SECTIONS.includes(props.initialSection) ? props.initialSection : 'overview')
+const section = ref('overview')
+const peopleView = ref('list')
 const host = ref(OFF_HOST)
 const guest = ref(OFF_GUEST)
 const name = ref('')
@@ -80,14 +95,25 @@ let clock = 0
 const firstInvite = ref({})
 const firstOpen = ref(false)
 const confirmStop = ref(false)
+const allRecent = ref(false)
 
 const card = ref(null)
 let previousFocus = null
 const unsubscribe = []
 
+// A section by its id, or an old one (access, trusted: People's views).
+function goTo(id) {
+  if (VIEW_OF[id]) {
+    section.value = 'people'
+    peopleView.value = VIEW_OF[id]
+  } else section.value = SECTIONS.includes(id) ? id : 'overview'
+}
+goTo(props.initialSection)
+
 function onHost(status) {
   host.value = { ...OFF_HOST, ...(status || {}) }
-  if (host.value.state === 'error' && host.value.error) hostError.value = host.value.error
+  // Main's own words, after a sentence in the interface's language.
+  if (host.value.state === 'error' && host.value.error) hostError.value = t('liveShare.share.stoppedWhy', 'Sharing stopped: {{error}}', { error: host.value.error })
 }
 function onGuest(status) {
   guest.value = status || OFF_GUEST
@@ -122,7 +148,7 @@ onUnmounted(() => {
 
 function opened() {
   tab.value = props.initialTab === 'join' ? 'join' : 'share'
-  section.value = SECTIONS.includes(props.initialSection) ? props.initialSection : 'overview'
+  goTo(props.initialSection)
   previousFocus = document.activeElement
   refresh()
   nextTick(() => card.value?.focus())
@@ -138,9 +164,9 @@ watch(
 watch(
   () => [props.initialSection, props.focusProject],
   ([s]) => {
-    if (props.open && SECTIONS.includes(s)) {
+    if (props.open && (SECTIONS.includes(s) || VIEW_OF[s])) {
       tab.value = 'share'
-      section.value = s
+      goTo(s)
     }
   }
 )
@@ -233,11 +259,13 @@ provide('lsDialog', {
   review: (guestId) => emit('review-guest', guestId)
 })
 
-const firstSummary = computed(() => {
+// The first invitation, in a few words: how long it lasts (its rights are
+// a chip next to it).
+const firstLifetime = computed(() => {
   const s = firstInvite.value || {}
-  const life = { hour: t('liveShare.invite.lifetimeHour', '1 hour'), day: t('liveShare.invite.lifetimeDay', '1 day'), week: t('liveShare.invite.lifetimeWeek', '7 days'), never: t('liveShare.invite.lifetimeNever', 'No expiry') }[s.lifetime || 'hour']
-  return t('liveShare.share.firstSummary', '{{lifetime}}, {{rights}}', { lifetime: life, rights: rightsShort(s.rights).toLocaleLowerCase() })
+  return { hour: t('liveShare.invite.lifetimeHour', '1 hour'), day: t('liveShare.invite.lifetimeDay', '1 day'), week: t('liveShare.invite.lifetimeWeek', '7 days'), never: t('liveShare.invite.lifetimeNever', 'No expiry') }[s.lifetime || 'hour']
 })
+const firstTypes = computed(() => !!(firstInvite.value && firstInvite.value.rights && firstInvite.value.rights.type === true))
 
 async function startSharing() {
   if (!api || busy.value || !props.projectIds.length) return
@@ -245,7 +273,7 @@ async function startSharing() {
   hostError.value = ''
   try {
     const r = await api.start({ name: name.value.trim(), projects: [...props.projectIds], invite: { ...firstInvite.value } })
-    if (r && !r.ok && r.error) hostError.value = r.error
+    if (r && !r.ok && r.error) hostError.value = t('liveShare.share.failedWhy', 'Sharing could not start: {{error}}', { error: r.error })
     else if (r && r.ok) {
       onHost(r)
       // Start, copy, send: the first invitation's Copy has the keyboard.
@@ -259,6 +287,8 @@ async function startSharing() {
   }
   busy.value = false
 }
+// Asked first while anyone is in or waiting for an answer, with the same
+// words as the toolbar's Stop (App.vue liveShareStop).
 function askStop() {
   if (joined.value.length || waiting.value.length) {
     confirmStop.value = true
@@ -269,17 +299,26 @@ function stopSharing() {
   confirmStop.value = false
   if (api) api.stop()
 }
-async function copyInvite(inv) {
-  if (!inv.code || !(await copyText(inv.code))) return
-  copied.value = inv.id
+const stopText = computed(() => {
+  const n = joined.value.length
+  if (!n) return t('liveShare.stop.textWaiting', '{{count}} waiting for your answer will be turned away, and every invitation code stops working. Trusted people stay trusted.', { count: waiting.value.length })
+  return n === 1
+    ? t('liveShare.stop.text', '{{count}} person is disconnected, and every invitation code stops working. Trusted people stay trusted.', { count: 1 })
+    : t('liveShare.stop.text', '{{count}} people are disconnected, and every invitation code stops working. Trusted people stay trusted.', { count: n })
+})
+
+// The invitations' codes: shortened on screen (the whole code in its
+// tooltip and on the clipboard), or a message saying how to join.
+const shortCode = (code) => (typeof code === 'string' && code.length > 26 ? code.slice(0, 14) + '…' + code.slice(-8) : code || '')
+async function copyInvite(inv, message) {
+  if (!inv.code) return
+  const text = message ? t('liveShare.invite.message', 'Join my Tessel Live Share: in Tessel, open Live Share, then Join, and paste this code: {{code}}', { code: inv.code }) : inv.code
+  if (!(await copyText(text))) return
+  copied.value = (message ? 'message:' : 'code:') + inv.id
   clearTimeout(copiedTimer)
   copiedTimer = setTimeout(() => (copied.value = ''), 1500)
 }
-const stopText = computed(() =>
-  joined.value.length === 1
-    ? t('liveShare.share.stopText', 'Stop sharing? {{count}} person is disconnected and every invitation stops working.', { count: 1 })
-    : t('liveShare.share.stopText', 'Stop sharing? {{count}} people are disconnected and every invitation stops working.', { count: joined.value.length })
-)
+
 const peopleSummary = computed(() => {
   const parts = []
   parts.push(t('liveShare.share.connected', '{{count}} connected', { count: joined.value.length }))
@@ -287,43 +326,54 @@ const peopleSummary = computed(() => {
   if (offline.value.length) parts.push(t('liveShare.share.offlineCount', '{{count}} offline', { count: offline.value.length }))
   return parts.join(' · ')
 })
+// What a guest in now has on screen and types in (pane names).
+function panesOf(id, what) {
+  const names = []
+  for (const p of host.value.presence || []) if ((p.guests || []).some((g) => g.id === id && g[what])) names.push(props.paneTitle ? props.paneTitle(p.id) : '')
+  return names.filter(Boolean)
+}
+function inNowMeta(g) {
+  const typing = panesOf(g.id, 'typing')
+  if (typing.length) return { typing: true, text: t('liveShare.people.typing', 'Typing in {{panes}}', { panes: typing.join(', ') }) }
+  const watching = panesOf(g.id, 'watching')
+  if (watching.length) return { typing: false, text: t('liveShare.people.watching', 'Watching {{panes}}', { panes: watching.join(', ') }) }
+  const via = viaName(g.invite)
+  return { typing: false, text: via ? t('liveShare.people.via', 'Came with {{invite}}', { invite: via }) : '' }
+}
+const waitingMeta = (g) => {
+  const parts = []
+  if (g.code) parts.push(t('liveShare.overview.code', 'Code {{code}}', { code: g.code }))
+  const via = viaName(g.invite)
+  if (via) parts.push(t('liveShare.people.via', 'Came with {{invite}}', { invite: via }))
+  return parts.join(' · ')
+}
+// A no: main turns them away (their prompt goes with it).
+async function refuse(g) {
+  const r = await run(g.id + ':answer', () => api.approve({ guestId: g.id, yes: false, projects: [], rights: cleanRights(null), trust: false }))
+  if (r && r.ok) notice(t('liveShare.people.refused', '{{name}} was turned away.', { name: personName(g) }))
+}
 
-// The share's setting for guests (main's): hide what git ignores and what
-// looks like a secret. A change counts for every request from now on.
-const hideIgnored = computed(() => !(host.value.settings && host.value.settings.hideIgnored === false))
-function setHideIgnored(event) {
-  const box = event && event.target
-  const want = box ? !!box.checked : !hideIgnored.value
-  if (box) box.checked = hideIgnored.value
-  run('setting:hideIgnored', async () => {
-    const r = await api.setSettings({ hideIgnored: want })
-    if (r && r.ok && r.settings) host.value = { ...host.value, settings: { ...r.settings } }
-    return r
-  })
-}
-// The relay (main's): "Find me again after a restart", on unless turned off.
-const rendezvous = computed(() => !(host.value.settings && host.value.settings.rendezvous === false))
-function setRendezvous(event) {
-  const box = event && event.target
-  const want = box ? !!box.checked : !rendezvous.value
-  if (box) box.checked = rendezvous.value
-  run('setting:rendezvous', async () => {
-    const r = await api.setSettings({ rendezvous: want })
-    if (r && r.ok && r.settings) host.value = { ...host.value, settings: { ...r.settings } }
-    return r
-  })
-}
-// What guests changed lately (main's, newest first): the last few here.
-const RECENT_SHOWN = 8
-const recentActions = computed(() => (Array.isArray(host.value.actions) ? host.value.actions : []).slice(0, RECENT_SHOWN))
+const relayOn = computed(() => !(host.value.settings && host.value.settings.rendezvous === false))
+
+// What guests changed lately (main's, newest first): the last five, or all
+// main sent.
+const RECENT_SHOWN = 5
+const actions = computed(() => (Array.isArray(host.value.actions) ? host.value.actions : []))
+const recentActions = computed(() => (allRecent.value ? actions.value : actions.value.slice(0, RECENT_SHOWN)))
+// Its {{count}} would end a template interpolation: built here.
+const recentToggleText = computed(() => (allRecent.value ? t('liveShare.recent.fewer', 'Show fewer') : t('liveShare.recent.all', 'See all ({{count}})', { count: actions.value.length })))
 // In the interface's language (French: 06 h 13, not 06:13 AM).
 const actionTime = (a) => (Number.isFinite(a.at) ? new Intl.DateTimeFormat(intlLocale(), { hour: '2-digit', minute: '2-digit' }).format(a.at) : '')
 
 const sections = computed(() => [
   { id: 'overview', label: t('liveShare.section.overview', 'Overview') },
+  { id: 'people', label: t('liveShare.section.people', 'People'), count: sharing.value ? joined.value.length + waiting.value.length + offline.value.length : null, warn: waiting.value.length > 0 },
   { id: 'invites', label: t('liveShare.section.invites', 'Invitations'), count: sharing.value ? invites.value.length : null },
-  { id: 'people', label: t('liveShare.section.people', 'People'), count: sharing.value ? joined.value.length + waiting.value.length + offline.value.length : null },
-  { id: 'access', label: t('liveShare.section.access', 'Access') },
+  { id: 'settings', label: t('liveShare.section.settings', 'Settings') }
+])
+const peopleViews = computed(() => [
+  { id: 'list', label: t('liveShare.peopleView.list', 'People'), count: sharing.value ? joined.value.length + waiting.value.length + offline.value.length : null },
+  { id: 'grid', label: t('liveShare.peopleView.grid', 'Access grid') },
   { id: 'trusted', label: t('liveShare.section.trusted', 'Trusted'), count: trusted.value.length }
 ])
 
@@ -362,7 +412,7 @@ function leave() {
 // --- Keyboard ------------------------------------------------------------
 function trapTab(event) {
   // (Not the ones folded away: the first invitation's settings, closed.)
-  const items = [...(card.value?.querySelectorAll('button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled)') || [])].filter((el) => !el.closest('[style*="display: none"]'))
+  const items = [...(card.value?.querySelectorAll('button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), summary') || [])].filter((el) => !el.closest('[style*="display: none"]'))
   if (!items.length) return
   const i = items.indexOf(document.activeElement)
   if (event.shiftKey && i <= 0) {
@@ -419,6 +469,19 @@ function tabKeys(event, list, current, set) {
 
       <!-- Share -->
       <section v-else-if="tab === 'share'" role="tabpanel" data-test="ls-share-panel">
+        <LsStatus v-if="sharing || preparing" :host="host" :projects="sharedList.length" :progress="progressText" :confirming="confirmStop" @stop="askStop" @cancel="stopSharing" />
+
+        <div v-if="confirmStop" class="lsd-confirm ls-stop-confirm" role="group" :aria-label="t('liveShare.stop.title', 'Stop Live Share?')" data-test="ls-stop-confirm" @keydown.escape.stop.prevent="confirmStop = false">
+          <p class="lsd-confirm-text">
+            <strong>{{ t('liveShare.stop.title', 'Stop Live Share?') }}</strong>
+            {{ stopText }}
+          </p>
+          <div class="lsd-actions">
+            <button type="button" class="confirm-btn ls-small" data-test="ls-stop-cancel" @click="confirmStop = false">{{ t('liveShare.share.keepSharing', 'Keep sharing') }}</button>
+            <button type="button" class="confirm-btn ls-small primary danger" data-test="ls-stop-yes" @click="stopSharing">{{ t('liveShare.stop.confirm', 'Stop sharing') }}</button>
+          </div>
+        </div>
+
         <div class="ls-sections" role="tablist" :aria-label="t('liveShare.section.label', 'Live Share sections')" @keydown="tabKeys($event, SECTIONS, section, (v) => (section = v))">
           <button
             v-for="s in sections"
@@ -433,84 +496,112 @@ function tabKeys(event, list, current, set) {
             @click="section = s.id"
           >
             <span>{{ s.label }}</span>
-            <span v-if="s.count" class="ls-count">{{ s.count }}</span>
+            <span v-if="s.count" class="ls-count" :class="{ warn: s.warn }">{{ s.count }}</span>
           </button>
         </div>
 
         <!-- Overview -->
         <div v-if="section === 'overview'" role="tabpanel" data-test="ls-overview">
+          <!-- Before sharing: one card, then Start sharing. -->
           <template v-if="!sharing && !preparing">
-            <p class="ls-intro">
-              {{ t('liveShare.share.intro4', 'Others join from their own Tessel and see the projects you share, live (their terminals and agents, not their history). Each one waits for your yes, with what their invitation offers.') }}
-            </p>
-            <div class="ls-warn" role="note">
-              <AlertTriangle :size="15" aria-hidden="true" />
-              <span>{{ t('liveShare.share.warning2', 'A guest you let type can run any command on this PC as you. Only let people you trust type.') }}</span>
-            </div>
-          </template>
+            <div class="set-card set-card-pad ls-hero">
+              <p class="ls-intro">
+                {{ t('liveShare.share.intro4', 'Others join from their own Tessel and see the projects you share, live (their terminals and agents, not their history). Each one waits for your yes, with what their invitation offers.') }}
+              </p>
+              <fieldset class="ls-field ls-projects" data-test="ls-projects">
+                <legend class="ls-label">{{ t('liveShare.share.projects', 'Projects to share') }}</legend>
+                <p v-if="!projects.length" class="ls-empty">{{ t('liveShare.share.noProject', 'No project to share') }}</p>
+                <ul v-else class="ls-chips">
+                  <li v-for="p in projects" :key="p.id">
+                    <label class="ls-pchip" :class="{ on: ticked.has(p.id) }" :data-test="'ls-project-' + p.id">
+                      <input type="checkbox" :checked="ticked.has(p.id)" @change="toggleProject(p, $event)" />
+                      <Check v-if="ticked.has(p.id)" :size="12" aria-hidden="true" />
+                      <span class="ls-pchip-name">{{ p.name }}</span>
+                      <span v-if="p.noFiles" class="tag tag-warn" :title="t('liveShare.share.noFiles', 'Its files are on an SSH server: guests see its terminals and agents, not its files.')" :data-test="'ls-nofiles-' + p.id">{{ t('liveShare.share.terminalsOnly', 'Terminals only') }}</span>
+                    </label>
+                  </li>
+                </ul>
+                <p v-if="projects.length && !projectIds.length" class="ls-hint" data-test="ls-need-project">{{ t('liveShare.share.needProject', 'Tick at least one project.') }}</p>
+              </fieldset>
 
-          <fieldset class="ls-field ls-projects" data-test="ls-projects">
-            <legend class="ls-label">{{ sharing ? t('liveShare.share.projectsSharedTitle', 'Projects you share') : t('liveShare.share.projects', 'Projects to share') }}</legend>
-            <p v-if="sharing" class="ls-hint ls-hint-top">{{ t('liveShare.share.projectsSharedHint', 'Tick or untick them at any time.') }}</p>
-            <p v-if="!projects.length" class="ls-empty">{{ t('liveShare.share.noProject', 'No project to share') }}</p>
-            <ul v-else class="ls-project-list">
-              <li v-for="p in projects" :key="p.id">
-                <label
-                  class="ls-project"
-                  :class="{ locked: lastShared(p) }"
-                  :title="lastShared(p) ? t('liveShare.share.lastProject', 'To stop sharing your last project, use Stop sharing.') : ''"
-                  :data-test="'ls-project-' + p.id"
-                >
-                  <input type="checkbox" :checked="ticked.has(p.id)" :disabled="preparing || lastShared(p)" @change="toggleProject(p, $event)" />
-                  <span class="ls-project-name">{{ p.name }}</span>
-                </label>
-                <p v-if="p.noFiles" class="ls-hint ls-project-note" :data-test="'ls-nofiles-' + p.id">{{ t('liveShare.share.noFiles', 'Its files are on an SSH server: guests see its terminals and agents, not its files.') }}</p>
-              </li>
-            </ul>
-            <p v-if="!sharing && !preparing && projects.length && !projectIds.length" class="ls-hint" data-test="ls-need-project">{{ t('liveShare.share.needProject', 'Tick at least one project.') }}</p>
-            <p v-if="sharing && ticked.size === 1" class="ls-hint" data-test="ls-last-project">{{ t('liveShare.share.lastProject', 'To stop sharing your last project, use Stop sharing.') }}</p>
-          </fieldset>
+              <label class="ls-field">
+                <span class="ls-label">{{ t('liveShare.share.name', 'Your name (guests see it)') }}</span>
+                <input v-model="name" class="ls-input" type="text" spellcheck="false" maxlength="40" data-test="ls-share-name" @keydown.enter="startSharing" />
+              </label>
 
-          <div class="ls-field" data-test="ls-settings">
-            <label class="ls-setting">
-              <input type="checkbox" :checked="hideIgnored" :disabled="pending.has('setting:hideIgnored')" data-test="ls-hide-ignored" @change="setHideIgnored" />
-              <span class="ls-setting-text">
-                <span>{{ t('liveShare.setting.hideIgnored', 'Hide ignored and secret files from guests') }}</span>
-                <span class="ls-hint">{{ t('liveShare.setting.hideIgnoredHint', 'Files git ignores and files that look like secrets (.env, keys, credentials) stay out of guests’ Files, search and Changes. .git and .tessel are always hidden.') }}</span>
-              </span>
-            </label>
-            <label class="ls-setting">
-              <input type="checkbox" :checked="rendezvous" :disabled="pending.has('setting:rendezvous')" data-test="ls-rendezvous" @change="setRendezvous" />
-              <span class="ls-setting-text">
-                <span>{{ t('liveShare.setting.rendezvous', 'Find me again after a restart (uses ntfy.sh)') }}</span>
-                <span class="ls-hint">{{ t('liveShare.setting.rendezvousHint', 'When your address changes, Tessel leaves it, encrypted, on the free ntfy.sh relay so your guests find you (and looks there for a host’s when you are a guest). Off: nothing is sent there, and codes stop working when your address changes.') }}</span>
-              </span>
-            </label>
-          </div>
+              <div class="ls-field">
+                <div class="ls-first-row" data-test="ls-first-summary">
+                  <span class="ls-label ls-first-label">{{ t('liveShare.share.firstInvite', 'First invitation') }}</span>
+                  <RightsChip :rights="firstInvite.rights || {}" />
+                  <span class="tag tag-scope">{{ firstLifetime }}</span>
+                  <button type="button" class="confirm-btn ls-small ls-first-edit" :aria-expanded="firstOpen" data-test="ls-first-toggle" @click="firstOpen = !firstOpen">
+                    {{ firstOpen ? t('liveShare.share.firstDone', 'Done') : t('liveShare.invite.edit', 'Edit') }}
+                  </button>
+                </div>
+                <div v-show="firstOpen" class="ls-first">
+                  <LsInviteEditor embedded :projects="sharedList" @update="(s) => (firstInvite = s)" />
+                </div>
+              </div>
 
-          <template v-if="!sharing && !preparing">
-            <label class="ls-field">
-              <span class="ls-label">{{ t('liveShare.share.name', 'Your name (guests see it)') }}</span>
-              <input v-model="name" class="ls-input" type="text" spellcheck="false" maxlength="40" data-test="ls-share-name" @keydown.enter="startSharing" />
-            </label>
-            <div class="ls-field">
-              <button type="button" class="ls-disclosure" :aria-expanded="firstOpen" data-test="ls-first-toggle" @click="firstOpen = !firstOpen">
-                <ChevronDown :size="14" :class="{ closed: !firstOpen }" aria-hidden="true" />
-                <span>{{ t('liveShare.share.firstInvite', 'First invitation') }}</span>
-                <span class="ls-disclosure-meta">{{ firstSummary }}</span>
-              </button>
-              <div v-show="firstOpen" class="ls-first">
-                <LsInviteEditor embedded :projects="sharedList" @update="(s) => (firstInvite = s)" />
+              <div class="set-callout ls-callout" :class="firstTypes ? 'danger' : 'warn'" role="note" data-test="ls-type-warning">
+                <AlertTriangle :size="14" aria-hidden="true" />
+                <span class="set-callout-text">{{ t('liveShare.share.warning2', 'A guest you let type can run any command on this PC as you. Only let people you trust type.') }}</span>
               </div>
             </div>
+            <p class="ls-facts" data-test="ls-facts">
+              <span>{{ t('liveShare.status.permanent', 'Comes back after restarts') }}</span>
+              <span aria-hidden="true">·</span>
+              <span>{{ relayOn ? t('liveShare.overview.relayOn', 'Found again via ntfy.sh: on') : t('liveShare.overview.relayOff', 'Found again via ntfy.sh: off') }}</span>
+              <button type="button" class="ls-link" data-test="ls-goto-settings" @click="section = 'settings'">{{ t('liveShare.section.settings', 'Settings') }}</button>
+            </p>
           </template>
 
-          <div v-if="preparing" class="ls-status" data-test="ls-progress">
-            <Loader2 :size="15" class="bp-spin" aria-hidden="true" />
-            <span>{{ progressText }}</span>
-          </div>
+          <p v-if="preparing" class="ls-empty" data-test="ls-preparing-note">
+            {{ host.restarting ? t('liveShare.overview.restarting', 'Your invitations and people come back here once the share has started again.') : t('liveShare.overview.preparing', 'Your first invitation is ready to copy here once the share has started.') }}
+          </p>
 
+          <!-- While sharing -->
           <template v-if="sharing">
+            <div v-if="waiting.length" class="ls-field ls-waiting" data-test="ls-ov-waiting">
+              <div class="ls-label">{{ t('liveShare.people.waitingLabel', 'Waiting for your answer') }}</div>
+              <ul class="ls-rows">
+                <li v-for="g in waiting" :key="g.id" class="ls-row ls-row-waiting" :data-test="'ls-ov-waiting-' + g.id">
+                  <LsAvatars :people="[{ id: g.id, name: personName(g) }]" :size="22" />
+                  <span class="ls-row-main">
+                    <span class="ls-row-name">{{ personName(g) }}</span>
+                    <span class="ls-row-meta">{{ waitingMeta(g) }}</span>
+                  </span>
+                  <span class="ls-row-actions">
+                    <button type="button" class="confirm-btn ls-small primary" :disabled="pending.has(g.id + ':answer')" :data-test="'ls-ov-letin-' + g.id" @click="emit('review-guest', g.id)">
+                      <UserCheck :size="12" aria-hidden="true" /> {{ t('liveShare.people.letIn', 'Let in…') }}
+                    </button>
+                    <button type="button" class="confirm-btn ls-small danger" :disabled="pending.has(g.id + ':answer')" :data-test="'ls-ov-refuse-' + g.id" @click="refuse(g)">{{ t('liveShare.people.refuse', 'Refuse') }}</button>
+                  </span>
+                </li>
+              </ul>
+            </div>
+
+            <fieldset class="ls-field ls-projects" data-test="ls-projects">
+              <legend class="ls-label">{{ t('liveShare.share.projectsSharedTitle', 'Projects you share') }}</legend>
+              <ul class="ls-chips">
+                <li v-for="p in projects" :key="p.id">
+                  <label
+                    class="ls-pchip"
+                    :class="{ on: ticked.has(p.id), locked: lastShared(p) }"
+                    :title="lastShared(p) ? t('liveShare.share.lastProject', 'To stop sharing your last project, use Stop sharing.') : ''"
+                    :data-test="'ls-project-' + p.id"
+                  >
+                    <input type="checkbox" :checked="ticked.has(p.id)" :disabled="lastShared(p)" @change="toggleProject(p, $event)" />
+                    <Check v-if="ticked.has(p.id)" :size="12" aria-hidden="true" />
+                    <span class="ls-pchip-name">{{ p.name }}</span>
+                    <span v-if="p.noFiles" class="tag tag-warn" :title="t('liveShare.share.noFiles', 'Its files are on an SSH server: guests see its terminals and agents, not its files.')" :data-test="'ls-nofiles-' + p.id">{{ t('liveShare.share.terminalsOnly', 'Terminals only') }}</span>
+                  </label>
+                </li>
+              </ul>
+              <p v-if="ticked.size === 1" class="ls-hint" data-test="ls-last-project">{{ t('liveShare.share.lastProject', 'To stop sharing your last project, use Stop sharing.') }}</p>
+              <p v-else class="ls-hint">{{ t('liveShare.share.projectsSharedHint', 'Tick or untick them at any time.') }}</p>
+            </fieldset>
+
             <div class="ls-field">
               <div class="ls-label">{{ t('liveShare.share.codesTitle', 'Invitation codes') }}</div>
               <p class="ls-hint ls-hint-top">{{ t('liveShare.share.codesHint', 'Send one: each person waits for your yes. Codes stop working when you stop sharing; trusted people get in with any new code.') }}</p>
@@ -518,18 +609,40 @@ function tabKeys(event, list, current, set) {
                 {{ t('liveShare.share.noInvites', 'No invitation left: make one to let people ask to join.') }}
                 <button type="button" class="ls-link" @click="section = 'invites'">{{ t('liveShare.invite.new', 'New invitation') }}</button>
               </p>
-              <ul v-else class="ls-first-list">
-                <li v-for="inv in invites.slice(0, 3)" :key="inv.id" class="ls-first-item" :data-test="'ls-first-' + inv.id">
-                  <span class="ls-first-head">
-                    <span class="ls-first-name">{{ inviteName(inv) }}</span>
-                    <span class="ls-first-meta">{{ inviteExpiry(inv, now).text }}</span>
+              <ul v-else class="ls-rows">
+                <li v-for="inv in invites.slice(0, 3)" :key="inv.id" class="ls-row ls-inv" :data-test="'ls-first-' + inv.id">
+                  <span class="ls-row-main">
+                    <span class="ls-row-top">
+                      <span class="ls-row-name">{{ inviteName(inv) }}</span>
+                      <RightsChip :rights="inv.rights || {}" />
+                      <span v-if="inv.state === 'blocked'" class="tag tag-danger">{{ t('liveShare.invite.badgeBlocked', 'Blocked') }}</span>
+                      <span v-else-if="inv.state === 'used'" class="tag tag-warn">{{ t('liveShare.invite.badgeUsed', 'Used up') }}</span>
+                    </span>
+                    <span class="ls-row-meta">
+                      <code class="ls-code-short" :title="inv.code || ''" data-test="ls-invite">{{ shortCode(inv.code) }}</code>
+                      <span aria-hidden="true">·</span>
+                      <span>{{ inviteExpiry(inv, now).text }}</span>
+                    </span>
                   </span>
-                  <input class="ls-input ls-code" type="text" readonly spellcheck="false" :value="inv.code || ''" :aria-label="t('liveShare.invite.codeLabel', 'Code of {{label}}', { label: inviteName(inv) })" data-test="ls-invite" @focus="$event.target.select()" />
-                  <button type="button" class="confirm-btn ls-small primary" :disabled="!inv.code || inv.state !== 'live'" :data-test="'ls-first-copy-' + inv.id" @click="copyInvite(inv)">
-                    <Check v-if="copied === inv.id" :size="13" aria-hidden="true" />
-                    <Copy v-else :size="13" aria-hidden="true" />
-                    {{ copied === inv.id ? t('liveShare.share.copied', 'Copied') : t('liveShare.invite.copyCode', 'Copy code') }}
-                  </button>
+                  <span class="ls-row-actions">
+                    <button type="button" class="confirm-btn ls-small primary" :disabled="!inv.code || inv.state !== 'live'" :data-test="'ls-first-copy-' + inv.id" @click="copyInvite(inv, false)">
+                      <Check v-if="copied === 'code:' + inv.id" :size="13" aria-hidden="true" />
+                      <Copy v-else :size="13" aria-hidden="true" />
+                      {{ copied === 'code:' + inv.id ? t('liveShare.share.copied', 'Copied') : t('liveShare.invite.copyCode', 'Copy code') }}
+                    </button>
+                    <button
+                      type="button"
+                      class="confirm-btn ls-small"
+                      :disabled="!inv.code || inv.state !== 'live'"
+                      :title="t('liveShare.invite.copyMessageTitle', 'The code with a line saying how to join')"
+                      :data-test="'ls-first-message-' + inv.id"
+                      @click="copyInvite(inv, true)"
+                    >
+                      <Check v-if="copied === 'message:' + inv.id" :size="13" aria-hidden="true" />
+                      <MessageSquareText v-else :size="13" aria-hidden="true" />
+                      {{ copied === 'message:' + inv.id ? t('liveShare.share.copied', 'Copied') : t('liveShare.invite.copyMessage', 'Copy message') }}
+                    </button>
+                  </span>
                 </li>
               </ul>
               <button
@@ -541,13 +654,29 @@ function tabKeys(event, list, current, set) {
                 v-text="invites.length > 3 ? t('liveShare.share.allInvites', 'All {{count}} invitations…', { count: invites.length }) : t('liveShare.share.manageInvites', 'Manage invitations…')"
               ></button>
             </div>
-            <div class="ls-field">
-              <div class="ls-label">{{ t('liveShare.share.guests', 'Guests') }}</div>
+
+            <div class="ls-field" data-test="ls-in-now">
+              <div class="ls-label">{{ t('liveShare.overview.inNow', 'In now') }}</div>
               <p class="ls-empty" data-test="ls-people-summary">
                 {{ joined.length || waiting.length || offline.length ? peopleSummary : t('liveShare.share.noGuests', 'No one has joined yet.') }}
-                <button v-if="joined.length || waiting.length || offline.length" type="button" class="ls-link" @click="section = 'people'">{{ t('liveShare.share.seePeople', 'See people…') }}</button>
+                <button v-if="joined.length || waiting.length || offline.length" type="button" class="ls-link" @click="goTo('people')">{{ t('liveShare.share.seePeople', 'See people…') }}</button>
               </p>
+              <ul v-if="joined.length" class="ls-rows ls-in-list">
+                <li v-for="g in joined" :key="g.id" class="ls-row" :data-test="'ls-in-' + g.id">
+                  <LsAvatars :people="[{ id: g.id, name: personName(g) }]" :size="22" />
+                  <span class="ls-row-main">
+                    <span class="ls-row-name">{{ personName(g) }}</span>
+                    <span v-if="inNowMeta(g).text" class="ls-row-meta" :class="{ typing: inNowMeta(g).typing }">
+                      <Keyboard v-if="inNowMeta(g).typing" :size="12" aria-hidden="true" />
+                      <Eye v-else-if="panesOf(g.id, 'watching').length" :size="12" aria-hidden="true" />
+                      {{ inNowMeta(g).text }}
+                    </span>
+                  </span>
+                  <RightsChip :rights="g.rights || {}" />
+                </li>
+              </ul>
             </div>
+
             <div class="ls-field" data-test="ls-recent">
               <div class="ls-label">{{ t('liveShare.recent.title', 'Recent guest actions') }}</div>
               <p v-if="!recentActions.length" class="ls-empty" data-test="ls-recent-none">{{ t('liveShare.recent.none', 'Nothing changed by a guest yet.') }}</p>
@@ -556,38 +685,42 @@ function tabKeys(event, list, current, set) {
                   <span class="ls-recent-time">{{ actionTime(a) }}</span>
                   <span class="ls-recent-text">{{ actionText(a) }}</span>
                   <span v-if="projectName(a.project) && sharedList.length > 1" class="ls-recent-project">{{ projectName(a.project) }}</span>
-                  <span v-if="a.flagged" class="ls-recent-flag" :title="t('liveShare.recent.flaggedHint', 'This file tells agents what to do: check the change.')">{{ t('liveShare.recent.flagged', 'Agent instructions') }}</span>
+                  <span v-if="a.flagged" class="tag tag-warn" :title="t('liveShare.recent.flaggedHint', 'This file tells agents what to do: check the change.')">{{ t('liveShare.recent.flagged', 'Agent instructions') }}</span>
                 </li>
               </ul>
+              <button v-if="actions.length > RECENT_SHOWN" type="button" class="ls-link" :aria-expanded="allRecent" data-test="ls-recent-all" @click="allRecent = !allRecent">
+                {{ recentToggleText }}
+              </button>
             </div>
           </template>
         </div>
 
-        <LsInvitations v-else-if="section === 'invites' && sharing" role="tabpanel" />
-        <LsPeople v-else-if="section === 'people' && sharing" role="tabpanel" />
-        <LsAccess v-else-if="section === 'access'" role="tabpanel" :focus-project="focusProject" />
-        <LsTrusted v-else-if="section === 'trusted'" role="tabpanel" />
-        <p v-else class="ls-empty ls-section-off" role="tabpanel" data-test="ls-section-off">{{ t('liveShare.section.off', 'Start sharing first: invitations and people come with a share.') }}</p>
-
-        <div v-if="hostNotice" class="ls-notice" role="status" data-test="ls-host-notice">{{ hostNotice }}</div>
-        <div v-if="hostError" class="ls-error" role="alert" data-test="ls-host-error">{{ hostError }}</div>
-
-        <div v-if="confirmStop" class="lsd-confirm ls-stop-confirm" role="group" :aria-label="stopText" data-test="ls-stop-confirm" @keydown.escape.stop.prevent="confirmStop = false">
-          <p class="lsd-confirm-text">{{ stopText }}</p>
-          <div class="lsd-actions">
-            <button type="button" class="confirm-btn ls-small" data-test="ls-stop-cancel" @click="confirmStop = false">{{ t('liveShare.share.keepSharing', 'Keep sharing') }}</button>
-            <button type="button" class="confirm-btn ls-small primary danger" data-test="ls-stop-yes" @click="stopSharing">{{ t('liveShare.share.stop', 'Stop sharing') }}</button>
+        <!-- People: the people, the access grid, the trusted people -->
+        <div v-else-if="section === 'people'" role="tabpanel" data-test="ls-people-section">
+          <div class="ls-views" role="group" :aria-label="t('liveShare.section.people', 'People')">
+            <button v-for="v in peopleViews" :key="v.id" type="button" class="chip" :class="{ on: peopleView === v.id }" :aria-pressed="peopleView === v.id" :data-test="'ls-people-view-' + v.id" @click="peopleView = v.id">
+              {{ v.label }}<span v-if="v.count" class="chip-count">{{ v.count }}</span>
+            </button>
           </div>
+          <LsAccess v-if="peopleView === 'grid'" :focus-project="focusProject" />
+          <LsTrusted v-else-if="peopleView === 'trusted'" />
+          <LsPeople v-else-if="sharing" />
+          <p v-else class="ls-empty ls-section-off" data-test="ls-section-off">{{ t('liveShare.section.offPeople', 'No one is here before you share. Trusted people are kept between shares.') }}</p>
+        </div>
+
+        <LsInvitations v-else-if="section === 'invites' && sharing" role="tabpanel" />
+        <LsSettings v-else-if="section === 'settings'" role="tabpanel" />
+        <p v-else class="ls-empty ls-section-off" role="tabpanel" data-test="ls-section-off">{{ t('liveShare.section.offInvites', 'Invitations come with a share: start sharing, and the first one is ready to copy.') }}</p>
+
+        <div v-if="hostNotice" class="set-callout info ls-callout" role="status" data-test="ls-host-notice">{{ hostNotice }}</div>
+        <div v-if="hostError" class="set-callout danger ls-callout" role="alert" data-test="ls-host-error">
+          <AlertTriangle :size="14" aria-hidden="true" />
+          <span class="set-callout-text">{{ hostError }}</span>
         </div>
 
         <div class="confirm-actions">
           <button class="confirm-btn" @click="emit('close')">{{ t('liveShare.close', 'Close') }}</button>
-          <button v-if="preparing" class="confirm-btn" data-test="ls-cancel-share" @click="stopSharing">{{ host.restarting ? t('liveShare.share.stop', 'Stop sharing') : t('liveShare.share.cancel', 'Cancel') }}</button>
-          <template v-else-if="sharing">
-            <!-- Asked inline: that confirm's Stop sharing is the only one. -->
-            <button v-if="!confirmStop" class="confirm-btn primary danger" data-test="ls-stop" @click="askStop">{{ t('liveShare.share.stop', 'Stop sharing') }}</button>
-          </template>
-          <button v-else class="confirm-btn primary" :disabled="busy || !projectIds.length" data-test="ls-start" @click="startSharing">
+          <button v-if="!sharing && !preparing" class="confirm-btn primary" :disabled="busy || !projectIds.length" data-test="ls-start" @click="startSharing">
             {{ t('liveShare.share.start', 'Start sharing') }}
           </button>
         </div>
@@ -728,27 +861,22 @@ function tabKeys(event, list, current, set) {
   line-height: 16px;
   text-align: center;
 }
+/* Someone waits for your answer. */
+.ls-count.warn {
+  background: color-mix(in srgb, #d29922 30%, transparent);
+  color: #ffd98f;
+}
 .ls-intro {
   margin: 0 0 12px;
   color: var(--text-dim);
   font-size: 12.5px;
   line-height: 1.45;
 }
-.ls-warn {
-  display: flex;
-  gap: 8px;
-  padding: 9px 11px;
-  border: 1px solid color-mix(in srgb, var(--warn) 50%, transparent);
-  border-radius: 8px;
-  background: color-mix(in srgb, var(--warn) 12%, transparent);
-  color: var(--text);
-  font-size: 12px;
-  line-height: 1.45;
+.ls-hero .ls-intro {
+  margin: 0;
 }
-.ls-warn svg {
-  flex: 0 0 auto;
-  margin-top: 1px;
-  color: var(--warn);
+.ls-callout {
+  margin: 12px 0 0;
 }
 .ls-field {
   display: block;
@@ -770,37 +898,55 @@ function tabKeys(event, list, current, set) {
 .ls-projects legend {
   padding: 0;
 }
-.ls-project-list {
-  margin: 0;
-  padding: 4px;
-  border: 1px solid var(--border);
-  border-radius: 9px;
-  list-style: none;
-  max-height: 22vh;
-  overflow-y: auto;
-}
-.ls-project {
+/* The projects as chips: ticked ones lit (a check says it, not only the
+   colour). */
+.ls-chips {
   display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.ls-pchip {
+  position: relative;
+  display: inline-flex;
   align-items: center;
-  gap: 8px;
-  padding: 4px 6px;
-  border-radius: 7px;
-  color: var(--text);
-  font-size: 12.5px;
+  gap: 6px;
+  max-width: 100%;
+  height: 26px;
+  padding: 0 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 13px;
+  color: var(--text-dim);
+  font-size: 12px;
   cursor: pointer;
 }
-.ls-project:hover {
-  background: var(--surface-3);
+.ls-pchip input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
 }
-.ls-project.locked {
+.ls-pchip:hover {
+  background: var(--surface-3);
+  color: var(--text);
+}
+.ls-pchip.on {
+  border-color: color-mix(in srgb, var(--accent) 60%, transparent);
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  color: var(--text-strong);
+}
+.ls-pchip.on svg {
+  color: var(--accent);
+}
+.ls-pchip.locked {
   cursor: default;
 }
-.ls-project input {
-  margin: 0;
-  accent-color: var(--accent);
+.ls-pchip:has(:focus-visible) {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
 }
-.ls-project-name {
-  flex: 1;
+.ls-pchip-name {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -812,56 +958,40 @@ function tabKeys(event, list, current, set) {
   font-size: 12px;
   line-height: 1.4;
 }
-.ls-project-note {
-  margin: 2px 0 6px 26px;
-}
 .ls-hint-top {
   margin: 0 0 8px;
 }
-.ls-disclosure {
+.ls-first-row {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 6px;
-  width: 100%;
-  min-width: 0;
-  padding: 6px 8px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: transparent;
-  color: var(--text);
-  font: inherit;
-  font-size: 12.5px;
-  text-align: left;
-  cursor: pointer;
+  gap: 6px 8px;
 }
-.ls-disclosure:hover {
-  background: var(--surface-3);
+.ls-first-label {
+  margin: 0;
 }
-.ls-disclosure:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 1px;
-}
-.ls-disclosure svg {
-  flex: none;
-  transition: transform 0.12s;
-}
-.ls-disclosure svg.closed {
-  transform: rotate(-90deg);
-}
-.ls-disclosure-meta {
-  min-width: 0;
+.ls-first-edit {
   margin-left: auto;
-  overflow: hidden;
-  color: var(--text-dim);
-  font-size: 12px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 .ls-first {
   margin-top: 10px;
-  padding: 0 4px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
 }
-.ls-first-list {
+.ls-facts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 6px;
+  margin: 8px 2px 0;
+  color: var(--text-dim);
+  font-size: 11.5px;
+}
+.ls-facts .ls-link {
+  font-size: 11.5px;
+}
+/* Rows of the overview: who waits, the codes, who is in. */
+.ls-rows {
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -869,30 +999,35 @@ function tabKeys(event, list, current, set) {
   padding: 0;
   list-style: none;
 }
-.ls-first-item {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+.ls-row {
+  display: flex;
   align-items: center;
-  gap: 6px 8px;
+  gap: 10px;
+  min-width: 0;
   padding: 8px 10px;
   border: 1px solid var(--border);
   border-radius: 9px;
+  background: var(--surface-2);
 }
-.ls-first-head {
+.ls-row-waiting {
+  border-color: color-mix(in srgb, #d29922 45%, transparent);
+  background: color-mix(in srgb, #d29922 8%, var(--surface-2));
+}
+.ls-row-main {
   display: flex;
-  grid-column: 1 / -1;
-  align-items: baseline;
-  gap: 8px;
+  flex: 1;
+  flex-direction: column;
+  gap: 3px;
   min-width: 0;
 }
-.ls-first-head .ls-first-name {
-  flex: 1;
+.ls-row-top {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  min-width: 0;
 }
-.ls-first-item > .confirm-btn {
-  justify-content: center;
-  min-width: 120px;
-}
-.ls-first-name {
+.ls-row-name {
   min-width: 0;
   overflow: hidden;
   color: var(--text-strong);
@@ -901,10 +1036,41 @@ function tabKeys(event, list, current, set) {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.ls-first-meta {
+.ls-row-meta {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  overflow: hidden;
   color: var(--text-dim);
   font-size: 11.5px;
-  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ls-row-meta.typing {
+  color: var(--warn);
+}
+.ls-row-meta svg {
+  flex: none;
+}
+.ls-row-actions {
+  display: flex;
+  flex: none;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
+.ls-code-short {
+  flex: none;
+  color: var(--text);
+  font-family: 'Cascadia Mono', Consolas, monospace;
+  font-size: 11.5px;
+}
+.ls-views {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 12px;
 }
 .ls-link {
   margin-left: 4px;
@@ -953,7 +1119,7 @@ function tabKeys(event, list, current, set) {
   gap: 6px;
 }
 .ls-stop-confirm {
-  margin-top: 12px;
+  margin: 0 0 12px;
 }
 .ls-joined,
 .ls-ended {
@@ -971,34 +1137,10 @@ function tabKeys(event, list, current, set) {
   background: var(--surface-2);
   color: var(--text);
 }
-.ls-notice {
-  margin-top: 12px;
-  color: var(--text);
-  font-size: 12.5px;
-}
 .ls-error {
   margin-top: 12px;
   color: var(--danger);
   font-size: 12.5px;
-}
-.ls-setting {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-  font-size: 12.5px;
-  color: var(--text);
-  cursor: pointer;
-}
-.ls-setting input {
-  flex: none;
-  margin: 2px 0 0;
-  accent-color: var(--accent);
-}
-.ls-setting-text {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 0;
 }
 .ls-recent-list {
   list-style: none;
@@ -1029,13 +1171,5 @@ function tabKeys(event, list, current, set) {
 .ls-recent-project {
   flex: none;
   color: var(--text-dim);
-}
-.ls-recent-flag {
-  flex: none;
-  padding: 0 6px;
-  border-radius: 8px;
-  font-size: 11px;
-  color: var(--warn);
-  border: 1px solid currentColor;
 }
 </style>

@@ -47,8 +47,15 @@ export function readForView(file) {
 
 // An image a Markdown file points to (a relative path next to it), as a data
 // URL the viewer can show under Tessel's CSP (img-src 'self' data:).
-export function readImageForView(file) {
+// maxBytes (optional, below MAX_IMAGE_BYTES): a smaller cap, checked before
+// anything is read (an image shown inline in a chat).
+export function readImageForView(file, { maxBytes } = {}) {
   if (fileKind(file) !== 'image') return { ok: false, error: t('main.file.notImage', 'Not an image.') }
+  if (Number.isSafeInteger(maxBytes) && maxBytes > 0 && maxBytes < MAX_IMAGE_BYTES) {
+    const { st, error } = statFile(file)
+    if (error) return { ok: false, error }
+    if (st.size > maxBytes) return { ok: false, kind: 'image', tooLarge: true, error: t('main.file.imageTooLarge', 'This image is too large to show here.') }
+  }
   return readForView(file)
 }
 

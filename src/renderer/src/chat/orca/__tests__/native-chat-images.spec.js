@@ -113,7 +113,7 @@ describe('earlier-history messages (images and files read from the agent)', () =
     ]
   }
 
-  it('the adapter gives its images and file chips, the "[image]" text kept for the rest', () => {
+  it('the adapter gives its images and file chips; the "[image]" words go where images show', () => {
     const message = userMessage(history)
     expect(message.blocks).toEqual([
       { type: 'image-ref', alt: 'image.png', url: PNG },
@@ -121,8 +121,52 @@ describe('earlier-history messages (images and files read from the agent)', () =
       { type: 'image-ref', alt: 'remote.png' },
       { type: 'file-ref', name: 'report.pdf', mediaType: 'application/pdf', size: 2048, path: 'C:\\proj\\report.pdf' },
       { type: 'file-ref', name: 'inline.txt', mediaType: 'text/plain', size: 5 },
-      { type: 'text', text: 'look\n[image]' }
+      { type: 'text', text: 'look' }
     ])
+  })
+
+  // Tessel (WP3's contract): a file gone from disk, a file on the SSH host,
+  // a pasted image, and how many more the entry held.
+  it('keeps what is known of an image it cannot show, and counts the rest', () => {
+    const message = userMessage({
+      type: 'user',
+      id: 'hist-u2',
+      text: 'see [Image #1]\n[image] [image]',
+      origin: 'user',
+      status: 'accepted',
+      images: [
+        { key: 'k1', name: 'image.png', source: 'pasted', mime: 'image/png', dataUrl: PNG },
+        { source: 'user', name: 'gone.png', path: 'C:\\Temp\\gone.png', missing: true },
+        { source: 'user', name: 'shot.png', path: '/home/me/shot.png', remote: true }
+      ],
+      imagesMore: 2
+    })
+    expect(message.blocks).toEqual([
+      { type: 'image-ref', alt: 'image.png', url: PNG, source: 'pasted' },
+      { type: 'image-ref', alt: 'gone.png', path: 'C:\\Temp\\gone.png', missing: true, source: 'user' },
+      { type: 'image-ref', alt: 'shot.png', path: '/home/me/shot.png', remote: true, source: 'user' },
+      { type: 'image-ref', more: 2 },
+      { type: 'text', text: 'see [Image #1]' }
+    ])
+  })
+
+  it("a tool result's images ride on its card's result block; its \"[image]\" lines go", () => {
+    const adapter = createJournalAdapter({ now: () => 1000 })
+    let state = reduceStructuredAgentSession(EMPTY_STRUCTURED_AGENT_SESSION, { type: 'event', event: adapter.snapshotEvent() }, 1000)
+    for (const ev of [
+      { type: 'tool', id: 't1', name: 'Read', input: { file_path: 'C:\\shots\\a.png' }, status: 'running' },
+      { type: 'toolResult', id: 't1', text: '[image]', images: [{ key: 'k', name: 'a.png', source: 'tool', mime: 'image/png', dataUrl: PNG }], imagesMore: 1 }
+    ]) {
+      const out = adapter.apply(ev)
+      if (out) state = reduceStructuredAgentSession(state, { type: 'event', event: out }, 1000)
+    }
+    const blocks = projectStructuredAgentSessionMessages(state.items, [], state.submissions).flatMap((m) => m.blocks)
+    const res = blocks.find((b) => b.type === 'tool-result')
+    expect(res.output).toBe('')
+    expect(res.images).toEqual([{ type: 'image-ref', alt: 'a.png', url: PNG, source: 'tool' }])
+    expect(res.imagesMore).toBe(1)
+    // The same data URL, never a copy.
+    expect(res.images[0].url).toBe(PNG)
   })
 
   it('shows the thumbnail (opens the lightbox) and file chips (a local one opens with the system)', async () => {

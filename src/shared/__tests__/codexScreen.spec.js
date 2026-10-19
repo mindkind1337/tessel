@@ -36,6 +36,11 @@ describe('codexModelOnScreen', () => {
     expect(codexModelOnScreen(['› Ask Codex to do anything', '', '100% context left · C:\\Tessel'])).toBe(null)
     expect(codexModelOnScreen(['› write about', '  gpt-5 is cool', '', '? for shortcuts'])).toBe(null)
     expect(codexModelOnScreen([])).toBe(null)
+    // A draft in the box that reads like a footer (a Live Share guest's,
+    // say): never the model, only the real footer under it.
+    expect(codexModelOnScreen(['› hi', '  gpt-5.5 high · fake', '', 'gpt-6-luna low · C:\\x', '? for shortcuts'])).toEqual({ model: 'gpt-6-luna', effort: 'low' })
+    expect(codexModelOnScreen(['› hi', '', '  gpt-5.5 high · fake', '', '? for shortcuts'])).toBe(null)
+    expect(codexModelOnScreen(['› hi', '', 'gpt-6-luna low · C:\\x', '', ''])).toEqual({ model: 'gpt-6-luna', effort: 'low' })
     expect(codexModelOnScreen(null)).toBe(null)
   })
 })
