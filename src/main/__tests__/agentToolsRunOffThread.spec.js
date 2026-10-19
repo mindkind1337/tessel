@@ -15,7 +15,7 @@ it('runs through execFileOff with the same arguments and result shape', async ()
   expect(res).toEqual({ ok: true, code: 0, stdout: 'git version 2\n', stderr: '', error: null })
   const [file, args, opts] = mocks.execFileOff.mock.calls[0]
   expect(file).toBe('git')
-  expect(args).toEqual(['-c', 'core.fsmonitor=false', '--version'])
+  expect(args).toEqual(['-c', 'core.fsmonitor=false', '-c', 'log.showSignature=false', '--version'])
   expect(opts).toMatchObject({ windowsHide: true, timeout: 5000 })
   expect(mocks.execFile).not.toHaveBeenCalled()
 })

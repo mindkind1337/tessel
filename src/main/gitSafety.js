@@ -3,14 +3,18 @@
 // process (run on files git reads or writes), diff.<x>.textconv / command
 // (run to show a diff), core.hooksPath and the hooks in $GIT_DIR/hooks (on
 // commit, merge...), core.sshCommand, remote.<x>.uploadpack / receivepack,
-// ext:: remote URLs and protocol.ext.allow (run by push / pull / fetch).
+// ext:: remote URLs and protocol.ext.allow (run by push / pull / fetch),
+// gpg.program / gpg.ssh.program / gpg.x509.program (run to check a signed
+// commit, which log.showSignature makes git log and git show do by
+// themselves).
 // Until a repository is trusted, git also runs with no hooks at all and
 // protocol.ext.allow=never. A folder copied from
 // elsewhere (a tarball, a shared drive, a server) can bring them, and Tessel
 // reads a project's git status by itself, without a click.
 //
 // So:
-// - every git call Tessel makes turns core.fsmonitor off (SAFE_ARGS);
+// - every git call Tessel makes turns core.fsmonitor and log.showSignature
+//   off (SAFE_ARGS: reading a commit never checks its signature);
 // - before the first git call on a repository, its local config is read
 //   (git config --local --includes); when it sets any of the above, the user
 //   is asked once whether to trust it (the answer is kept per repository and
@@ -33,8 +37,8 @@ import { AsyncLocalStorage } from 'async_hooks'
 import { dirname, join, resolve } from 'path'
 import { run } from './agentTools'
 
-export const SAFE_ARGS = ['-c', 'core.fsmonitor=false']
-export const RISKY_PATTERN = '^(core\\.fsmonitor|core\\.hookspath|core\\.sshcommand|protocol\\.ext\\.allow|remote\\..+\\.(url|pushurl|uploadpack|receivepack)|filter\\..+\\.(clean|smudge|process)|diff\\..+\\.(textconv|command))$'
+export const SAFE_ARGS = ['-c', 'core.fsmonitor=false', '-c', 'log.showSignature=false']
+export const RISKY_PATTERN = '^(core\\.fsmonitor|core\\.hookspath|core\\.sshcommand|protocol\\.ext\\.allow|log\\.showsignature|gpg\\.(.+\\.)?program|remote\\..+\\.(url|pushurl|uploadpack|receivepack)|filter\\..+\\.(clean|smudge|process)|diff\\..+\\.(textconv|command))$'
 const RISKY_RE = new RegExp(RISKY_PATTERN, 'i')
 // The git arguments that list them (the repository's own config file and
 // what it includes).
@@ -51,7 +55,7 @@ export function parseRisky(out) {
     const key = (nl < 0 ? rec : rec.slice(0, nl)).trim()
     const value = nl < 0 ? '' : rec.slice(nl + 1)
     if (!RISKY_RE.test(key)) continue
-    if (/^core\.fsmonitor$/i.test(key) && /^(false|no|off|0|)$/i.test(value.trim())) continue
+    if (/^(core\.fsmonitor|log\.showsignature)$/i.test(key) &&/^(false|no|off|0|)$/i.test(value.trim())) continue
     if (!value.trim()) continue
     // A remote's URL runs something only through the ext:: transport.
     if (/^remote\..+\.(url|pushurl)$/i.test(key) && !/^\s*ext::/i.test(value)) continue
@@ -125,6 +129,12 @@ export function neutralize(list, { hooksDir } = {}) {
       add(`diff.${m[1]}.textconv`, '')
       add(`diff.${m[1]}.command`, '')
     } else if (k === 'core.sshcommand') add('core.sshCommand', 'ssh')
+    // A signature checker back to git's own default.
+    else if (k === 'gpg.program') add('gpg.program', 'gpg')
+    else if (k === 'gpg.ssh.program') add('gpg.ssh.program', 'ssh-keygen')
+    else if (k === 'gpg.x509.program') add('gpg.x509.program', 'gpgsm')
+    else if (k === 'gpg.openpgp.program') add('gpg.openpgp.program', 'gpg')
+    else if ((m = /^gpg\.(.+)\.program$/i.exec(key))) add(`gpg.${m[1]}.program`, '')
     else if ((m = /^remote\.(.+)\.uploadpack$/i.exec(key))) add(`remote.${m[1]}.uploadpack`, 'git-upload-pack')
     else if ((m = /^remote\.(.+)\.receivepack$/i.exec(key))) add(`remote.${m[1]}.receivepack`, 'git-receive-pack')
   }
@@ -277,7 +287,7 @@ const MERGE_DRIVER_RE = /^merge\.(.+)\.driver$/i
 export const GUEST_CONFIG_ARGS = ['config', '--includes', '-z', '--get-regexp', `${RISKY_PATTERN}|^merge\\..+\\.driver$`]
 // What a guest's git always gets beyond them (credential.helper empty: no
 // helper at all).
-export const GUEST_FIXED_ARGS = ['-c', 'commit.gpgSign=false', '-c', 'tag.gpgSign=false', '-c', 'diff.external=', '-c', 'gc.auto=0', '-c', 'maintenance.auto=false', '-c', 'core.alternateRefsCommand=', '-c', 'core.sshCommand=ssh', '-c', 'credential.helper=']
+export const GUEST_FIXED_ARGS = ['-c', 'log.showSignature=false', '-c', 'gpg.program=gpg', '-c', 'gpg.ssh.program=ssh-keygen', '-c', 'gpg.x509.program=gpgsm', '-c', 'gpg.openpgp.program=gpg', '-c', 'commit.gpgSign=false', '-c', 'tag.gpgSign=false', '-c', 'diff.external=', '-c', 'gc.auto=0', '-c', 'maintenance.auto=false', '-c', 'core.alternateRefsCommand=', '-c', 'core.sshCommand=ssh', '-c', 'credential.helper=']
 // The merge drivers named in config output, each turned off.
 export function mergeDriverArgs(out) {
   const names = new Set()

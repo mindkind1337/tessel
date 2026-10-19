@@ -443,6 +443,7 @@ const api = {
     fileHistory: (q) => ipcRenderer.invoke('scm:fileHistory', q),
     commitInfo: (q) => ipcRenderer.invoke('scm:commitInfo', q),
     resolveCommit: (q) => ipcRenderer.invoke('scm:resolveCommit', q),
+    setCommitRoots: (list) => ipcRenderer.send('scm:commitRoots', Array.isArray(list) ? list.slice(0, 1000) : []),
     generate: (q) => ipcRenderer.invoke('scm:generate', q),
     cancelGenerate: (q) => ipcRenderer.invoke('scm:cancelGenerate', q)
   },

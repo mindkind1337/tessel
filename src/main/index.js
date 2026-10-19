@@ -46,6 +46,7 @@ import { createSignedInPlaces, copilotRows } from './signedInPlaces'
 import { createWslAccounts } from './wslAccounts'
 import { createUsageProviderSources } from './usageProviderSources'
 import { createGitTrust, setGitTrust } from './gitSafety'
+import { cleanCommitRoots, commitRootAllowed } from '../shared/commitRoots'
 import { createWorktreeList, localRootsOfLayout, localRepoRootsOfLayout } from './worktreeList'
 import { createWorktreeCleanup } from './worktreeCleanup'
 import { isRemotePath } from '../shared/remotePath'
@@ -2629,8 +2630,22 @@ ipcMain.handle('scm:commitFiles', safe((q) => scmFor(q).scmCommitFiles(q || {}))
 ipcMain.handle('scm:fileHistory', safe((q) => scmFor(q).scmFileHistory(q || {})))
 ipcMain.handle('scm:commitInfo', safe((q) => scmFor(q).scmCommitInfo(q || {})))
 // A commit hash in a chat, a terminal or a report: a commit of that pane's
-// repository? (its link's hover and click, links/commitLinks.js)
-ipcMain.handle('scm:resolveCommit', safe((q) => scmFor(q).scmResolveCommit(q || {})))
+// repository? (its link's hover and click, links/commitLinks.js). Only for
+// a folder inside one the window has open (its projects, the side panel's
+// folder, the task and pane worktree copies: scm:commitRoots), never a
+// network share: a terminal's text names the folder, and a program can
+// print any (shared/commitRoots.js).
+const commitRootsByWindow = new Map() // webContents id -> [folder]
+ipcMain.on('scm:commitRoots', (e, list) => {
+  const id = e.sender.id
+  if (!commitRootsByWindow.has(id)) e.sender.once('destroyed', () => commitRootsByWindow.delete(id))
+  commitRootsByWindow.set(id, cleanCommitRoots(list))
+})
+ipcMain.handle('scm:resolveCommit', async (e, q) => {
+  const root = q && q.root
+  if (!commitRootAllowed(root, commitRootsByWindow.get(e.sender.id) || [])) return { ok: false }
+  return safe((a) => scmFor(a).scmResolveCommit(a))(e, { root, commit: q.commit })
+})
 const localHistory = createLocalHistory({ dir: join(app.getPath('userData'), 'History') })
 ipcMain.handle('localHistory:add', safe((q) => (isLsharePath(q && q.path) ? { ok: false } : localHistory.add(q || {}))))
 // A Live Share host's file (lshare://…): its Local History is the host's

@@ -121,6 +121,7 @@ import { createAutomationRunner, probeRunAgent } from './automationRunner'
 import { createCliRequests, CliRequestError } from './cliRequests'
 import { createLinkRouter, setLinkRouter, openTarget } from './links/openTarget'
 import { requestCommitFocus } from './links/commitFocus'
+import { setCommitRoots } from './links/commitLinks'
 import { automationsState, applySnapshot as applyAutomations, subscribeAutomations } from './automationsStore'
 import { trackAgent } from '../../shared/tracking'
 import { pasteAndConfirm, turnStarting } from './deliver'
@@ -3163,6 +3164,24 @@ const sideRoot = computed(() => {
   if (active && viewKey(active, ws.cwd)) return leafViewPath(active)
   return ws.cwd
 })
+// The folders commit links may ask git about (links/commitLinks.js, checked
+// again in main): the open projects, the side panel's folder, the task and
+// pane worktree copies. A folder a terminal reports outside them never is.
+watch(
+  () => {
+    const out = []
+    for (const ws of workspaces.value) {
+      const r = wsRepoRoot(ws)
+      if (r) out.push(r)
+      forEachLeaf(ws.tree, (l) => l.worktree && l.worktree.path && out.push(l.worktree.path))
+    }
+    if (sideRoot.value) out.push(sideRoot.value)
+    for (const k of boardTasks) if (k.worktree && k.worktree.path) out.push(k.worktree.path)
+    return [...new Set(out.filter((p) => typeof p === 'string' && p))].join('\n')
+  },
+  (list) => setCommitRoots(list ? list.split('\n') : []),
+  { immediate: true }
+)
 // A Live Share host gave the edit right in one of its projects: the files of
 // it open read-only are read again (editable now, unless the host says no).
 watch(

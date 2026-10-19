@@ -165,8 +165,10 @@ export function slugify(text) {
 // Process helpers
 // ---------------------------------------------------------------------------
 
-// git never starts a repository's core.fsmonitor program for Tessel (a
-// folder from elsewhere could name any program there; see gitSafety.js).
+// git never starts a repository's core.fsmonitor program for Tessel, nor
+// checks a commit's signature by itself (log.showSignature runs the
+// repository's gpg.program); a folder from elsewhere could name any program
+// there (see gitSafety.js).
 const isGit = (file) => /(^|[\\/])git(\.exe)?$/i.test(String(file || ''))
 const isPowerShell = (file) => /(^|[\\/])(powershell|pwsh)(\.exe)?$/i.test(String(file || ''))
 
@@ -176,7 +178,7 @@ export function run(file, args, opts = {}) {
   return new Promise((resolve) => {
     execFileOff(
       file,
-      isGit(file) ? ['-c', 'core.fsmonitor=false', ...args] : args,
+      isGit(file) ? ['-c', 'core.fsmonitor=false', '-c', 'log.showSignature=false', ...args] : args,
       {
         windowsHide: true,
         maxBuffer: 8 * 1024 * 1024,

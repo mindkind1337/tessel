@@ -7,7 +7,7 @@ import { flushPromises, mount } from '@vue/test-utils'
 import ChatMarkdown from '../ChatMarkdown.vue'
 import RichMessage from '../../../RichMessage.vue'
 import { createLinkRouter, setLinkRouter } from '../../../../links/openTarget.js'
-import { clearCommitCache } from '../../../../links/commitLinks.js'
+import { clearCommitCache, setCommitRoots } from '../../../../links/commitLinks.js'
 
 const FULL = '1f6ccc70' + 'b'.repeat(32)
 const context = { worktreeId: 'p1', worktreePath: 'C:\\proj', roots: ['C:\\proj'], runtimeEnvironmentId: null }
@@ -22,6 +22,7 @@ beforeEach(() => {
       resolveCommit: vi.fn(async ({ commit }) => (FULL.startsWith(commit) ? { ok: true, id: FULL, subject: 'Track commits', author: 'Ann', timestamp: Date.UTC(2026, 9, 1) } : { ok: false }))
     }
   }
+  setCommitRoots([context.worktreePath])
   router = { openCommit: vi.fn(() => true), copyText: vi.fn(() => true), notOpened: vi.fn() }
   setLinkRouter(createLinkRouter(router))
 })
@@ -90,6 +91,19 @@ describe('commit hashes in ChatMarkdown', () => {
     expect(root.textContent).toContain('Pushed (1f6ccc70)')
     const guest = render({ text: 'Pushed (`1f6ccc70`)', context, guest: true }, RichMessage)
     expect(refs(guest)).toEqual([])
+  })
+
+  it("an author's own #tessel-commit- link is no commit link", () => {
+    const root = render({ content: '[click me](#tessel-commit-1f6ccc70) and <a href="#tessel-commit-1f6ccc70" data-tessel-commit="1f6ccc70">x</a>', variant: 'document', fileLinkContext: context })
+    expect(refs(root)).toEqual([])
+  })
+
+  it('a folder the window does not have open is never asked about', async () => {
+    const root = render({ content: 'see 1f6ccc70', fileLinkContext: { ...context, worktreePath: 'D:\\other', roots: ['D:\\other'] } })
+    hover(refs(root)[0])
+    await flushPromises()
+    expect(window.shellApi.scm.resolveCommit).not.toHaveBeenCalled()
+    expect(refs(root)[0].classList.contains('commit-ref-ok')).toBe(false)
   })
 
   it('never inside a link or a code block', () => {

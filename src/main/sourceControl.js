@@ -15,6 +15,7 @@ import { run } from './agentTools'
 import { cleanEnv } from './cleanEnv'
 import { localGitArgs, inGuestGit } from './gitSafety'
 import { t } from './i18n'
+import { isForeignShare } from '../shared/commitRoots'
 
 const MAX_FILE = 10 * 1024 * 1024 // a version larger than this is not shown
 const MAX_MESSAGE = 20000
@@ -833,7 +834,7 @@ export function createScm(b) {
       mergeBase = mb.ok ? mb.stdout.trim() || undefined : undefined
     }
     const only = Array.isArray(paths) && paths.length ? ['--', ...paths.map(literal)] : []
-    const log = await git(top, ['log', `--format=${HISTORY_COMMIT_FORMAT}`, '-z', '--topo-order', '--decorate=full', `-n${n + 1}`, headOid, ...only])
+    const log = await git(top, ['log', '--no-show-signature', `--format=${HISTORY_COMMIT_FORMAT}`, '-z', '--topo-order', '--decorate=full', `-n${n + 1}`, headOid, ...only])
     if (!log.ok) return { ok: false, error: gitMessage(log, t('main.scm.logFailed', 'git log failed.')) }
     const parsed = parseHistoryLog(log.stdout)
     return { ok: true, items: parsed.slice(0, n), currentRef, remoteRef, baseRef, mergeBase, hasMore: parsed.length > n, limit: n }
@@ -944,7 +945,7 @@ export function createScm(b) {
     if (!rel) return { ok: false, error: t('main.scm.notRepoFile', 'Not a file of this repository.') }
     const n = Number.isFinite(limit) ? Math.min(500, Math.max(1, Math.trunc(limit))) : 50
     const [log, st] = await Promise.all([
-      git(r.top, ['log', '--follow', '-z', `-n${n + 1}`, '--format=%H%n%aN%n%aE%n%at%n%B', '--', literal(rel)]),
+      git(r.top, ['log', '--no-show-signature', '--follow', '-z', `-n${n + 1}`, '--format=%H%n%aN%n%aE%n%at%n%B', '--', literal(rel)]),
       git(r.top, ['status', '--porcelain', '--', literal(rel)])
     ])
     if (!log.ok) return { ok: false, error: gitMessage(log, t('main.scm.logFailed', 'git log failed.')) }
@@ -969,7 +970,7 @@ export function createScm(b) {
     if (!isCommitId(commit)) return { ok: false, error: t('main.scm.badCommit', 'Unknown commit.') }
     const only = Array.isArray(paths) && paths.length ? ['--', ...paths.map(literal)] : []
     const [stat, url] = await Promise.all([
-      git(r.top, ['show', '--shortstat', '--format=', '--no-color', '--no-ext-diff', '--no-textconv', commit, ...only]),
+      git(r.top, ['show', '--no-show-signature', '--shortstat', '--format=', '--no-color', '--no-ext-diff', '--no-textconv', commit, ...only]),
       git(r.top, ['remote', 'get-url', 'origin'])
     ])
     const line = stat.ok ? stat.stdout.trim() : ''
@@ -992,11 +993,25 @@ export function createScm(b) {
   // option; a name that only looks like one (a branch "abc1234") does not
   // count: the commit found must start with it. A short hash two commits
   // share is not one. -> { ok, id, subject, author, timestamp } | { ok: false }
+  // Many hashes are asked about in the same folder (a terminal row, a long
+  // report): its repository's top is looked up once a while.
+  const resolveTops = new Map() // root -> { at, r }
+  async function resolveTop(root) {
+    const hit = resolveTops.get(root)
+    if (hit && Date.now() - hit.at < 30000) return hit.r
+    const r = await repoOf(root)
+    if (resolveTops.size > 200) resolveTops.delete(resolveTops.keys().next().value)
+    resolveTops.set(root, { at: Date.now(), r })
+    return r
+  }
   async function scmResolveCommit({ root, commit } = {}) {
     if (!isCommitHash(commit)) return { ok: false }
-    const r = await repoOf(root)
+    // Never a network share (index.js also only takes folders the window
+    // has open).
+    if (typeof root !== 'string' || isForeignShare(root)) return { ok: false }
+    const r = await resolveTop(root)
     if (r.error) return { ok: false }
-    const res = await git(r.top, ['show', '-s', '--no-color', '--format=%H%x00%s%x00%aN%x00%at', `${commit}^{commit}`], { timeout: 15000 })
+    const res = await git(r.top, ['show', '-s', '--no-show-signature', '--no-color', '--format=%H%x00%s%x00%aN%x00%at', `${commit}^{commit}`], { timeout: 15000 })
     if (!res.ok) return { ok: false }
     const [id, subject, author, at] = String(res.stdout || '').trim().split('\0')
     if (!isCommitId(id) || !id.startsWith(commit)) return { ok: false }

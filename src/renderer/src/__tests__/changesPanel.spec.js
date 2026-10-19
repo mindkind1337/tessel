@@ -12,7 +12,7 @@ import { addNote, notesFor, clearNotes } from '../reviewNotes'
 import { setNotesDelivery } from '../notesDelivery'
 import { settings, resetSettings } from '../settings'
 import { requestCommitFocus } from '../links/commitFocus'
-import { clearCommitCache } from '../links/commitLinks'
+import { clearCommitCache, setCommitRoots } from '../links/commitLinks'
 
 const ROOT = 'C:\\proj'
 let w
@@ -746,6 +746,7 @@ describe('Source Control: a commit link clicked elsewhere (links/commitFocus.js)
     limit: 50
   })
   const commitFiles = () => ({ ok: true, entries: [{ path: 'src/a.js', status: 'modified', added: 1, removed: 0 }] })
+  beforeEach(() => setCommitRoots([ROOT]))
   afterEach(async () => {
     clearCommitCache()
     if (w && w.find('[data-test="sc-history-list"]').exists()) await w.find('[data-test="sc-history-toggle"]').trigger('click')

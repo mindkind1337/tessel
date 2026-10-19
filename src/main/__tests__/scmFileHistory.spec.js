@@ -78,5 +78,8 @@ describe('scmFileHistory / scmCommitInfo', () => {
       expect(await scmResolveCommit({ root: repo, commit: fake })).toEqual({ ok: false })
     }
     expect(await scmResolveCommit({ root: dir, commit: second })).toEqual({ ok: false })
+    // Never a network share (git there could hand the Windows sign-in to it).
+    expect(await scmResolveCommit({ root: '\\\\evil\\share\\repo', commit: second })).toEqual({ ok: false })
+    expect(await scmResolveCommit({ root: '//evil/share/repo', commit: second })).toEqual({ ok: false })
   })
 })

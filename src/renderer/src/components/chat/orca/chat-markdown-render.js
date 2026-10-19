@@ -245,12 +245,23 @@ export function splitCommitRefText(value) {
   return parts
 }
 
+// Only the links made here are commits: each carries an attribute whose
+// name is drawn once per window, which the message itself cannot write (an
+// author's own [text](#tessel-commit-…) stays an ordinary link to nothing).
+export const COMMIT_MARK = `data-tessel-commit-${Math.random().toString(36).slice(2, 12)}` // i18n-ignore
+
 export function linkifyCommitRefs(root) {
+  const before = new Set(Array.from(root.querySelectorAll ? root.querySelectorAll('a') : []))
   transformTextNodes(root, splitCommitRefText, {
     inlineCode(code) {
       for (const child of Array.from(code.childNodes)) if (child.nodeType === TEXT_NODE) replaceTextNode(child, splitCommitRefText)
     }
   })
+  for (const anchor of Array.from(root.querySelectorAll ? root.querySelectorAll('a') : [])) {
+    if (before.has(anchor)) continue
+    const m = COMMIT_HREF.exec(anchor.getAttribute('href') || '')
+    if (m) anchor.setAttribute(COMMIT_MARK, m[1])
+  }
 }
 
 // --- 3. Vnodes ----------------------------------------------------------------------
@@ -476,10 +487,10 @@ function renderAnchor(element, ctx, state, className) {
   const href = safeHref(element.getAttribute('href'))
   // Tessel: a commit hash (linkifyCommitRefs): the surface's CommitRef, or
   // its text when the message has no repository to ask.
-  const commit = href ? COMMIT_HREF.exec(href) : null
-  if (commit) {
+  const commit = element.getAttribute(COMMIT_MARK)
+  if (commit && href && COMMIT_HREF.exec(href)?.[1] === commit) {
     const kids = renderChildren(element, ctx, state)
-    return ctx.commitRef ? ctx.commitRef(commit[1], kids) : kids
+    return ctx.commitRef ? ctx.commitRef(commit, kids) : kids
   }
   const marker = href && ctx.onImageMarker ? IMAGE_MARKER_HREF.exec(href) : null
   if (marker) {
