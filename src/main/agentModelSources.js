@@ -50,6 +50,7 @@ import { ompSessionsDir, piSessionsDir } from './agentSessionSources'
 import { normDir, readHead, readJson, readRows, readTail, readText } from './fileRead'
 import { latestInFile } from './latestInFile'
 import { effortLevel } from '../shared/modelLabel'
+import { grokHome } from './grokAccount'
 
 const TAIL = 256 * 1024
 const HEAD = 512 * 1024
@@ -719,7 +720,7 @@ function vibeSettings(cwd, home) {
 
 // --- Grok Build -------------------------------------------------------------------------
 
-export const grokHomeDir = (home) => envDir(process.env.GROK_HOME) || join(home, '.grok')
+export const grokHomeDir = (home) => grokHome(home)
 const grokEffort = (v) => {
   const s = str(v)
   return s && ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'].includes(s.toLowerCase()) ? s.toLowerCase() : null

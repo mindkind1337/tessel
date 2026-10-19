@@ -29,6 +29,7 @@ import { t } from './i18n'
 import { skillFrontmatter } from './chat/skills.js'
 import { readTar, gunzipCapped } from './skillsTar'
 import { writeFileAtomic } from './safeJson'
+import { grokHome } from './grokAccount'
 
 export const SKILL_AGENTS = ['claude', 'codex', 'opencode', 'copilot', 'gemini', 'antigravity', 'muse', 'grok']
 
@@ -82,7 +83,7 @@ export function safeRelPath(rel, caps = SKILL_CAPS) {
 // agents it installs for. A folder read by several agents is listed once.
 export function skillRoots({ home = os.homedir(), env = process.env, cwd = null } = {}) {
   const codexHome = env.CODEX_HOME || path.join(home, '.codex')
-  const grokHome = env.GROK_HOME || path.join(home, '.grok')
+  const grokDir = grokHome(home, env)
   const config = env.XDG_CONFIG_HOME || path.join(home, '.config')
   const roots = [
     { scope: 'user', path: path.join(home, '.claude', 'skills'), seenBy: ['claude', 'opencode', 'copilot', 'muse', 'grok'], installFor: ['claude'] },
@@ -96,7 +97,7 @@ export function skillRoots({ home = os.homedir(), env = process.env, cwd = null 
     // Muse Code's own (it also reads the Claude Code, Codex and .agents ones).
     { scope: 'user', path: path.join(config, 'muse', 'skills'), seenBy: ['muse'], installFor: ['muse'] },
     // Grok Build's own (it also reads the Claude Code and .agents ones).
-    { scope: 'user', path: path.join(grokHome, 'skills'), seenBy: ['grok'], installFor: ['grok'] }
+    { scope: 'user', path: path.join(grokDir, 'skills'), seenBy: ['grok'], installFor: ['grok'] }
   ]
   if (typeof cwd === 'string' && path.isAbsolute(cwd)) {
     const at = (...parts) => path.join(cwd, ...parts)

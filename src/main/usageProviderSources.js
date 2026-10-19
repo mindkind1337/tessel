@@ -9,7 +9,7 @@ import { t } from './i18n'
 import { DEFAULT_PROVIDER_SETTINGS } from './providerCredentials'
 import { createGeminiRefresher } from './geminiCliOAuth'
 import { miniMaxModels } from './usageProviderMapping'
-import { grokPlanAttention, readGrokPlanLocal } from './grokAccount'
+import { grokHome, grokPlanAttention, readGrokPlanLocal } from './grokAccount'
 
 // MiniMax's usage endpoint rejects non-browser clients (Orca's
 // minimax-request-context.ts): a real browser user agent, per platform.
@@ -114,7 +114,7 @@ export function createUsageProviderSources({
         'kimi-code.json'
       )
     ],
-    grok: [path.join(env.GROK_HOME || path.join(home, '.grok'), 'auth.json')],
+    grok: [path.join(grokHome(home, env), 'auth.json')],
     cursor: [
       path.join(cursor, 'auth.json'),
       path.join(desktop, 'User', 'globalStorage', 'state.vscdb')

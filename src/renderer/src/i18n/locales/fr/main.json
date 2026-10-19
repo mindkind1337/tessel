@@ -223,7 +223,10 @@
       "notList": "{{file}} a un réglage pour {{event}} qui n'est pas une liste de hooks : Tessel ne l'a pas modifié.",
       "dshFlowList": "{{file}} est écrit sous forme de liste [...] : réécrivez-le avec une entrée « - » par ligne pour que Tessel puisse y ajouter ses hooks.",
       "museManagedTaken": "{{file}} indique déjà un autre fichier de hooks géré ({{other}}) : Tessel ne l'a pas remplacé. Retirez son managed_hooks_path pour que Tessel puisse lire l'état de Muse Code.",
-      "museEnvList": "{{file}} contient un managed_hooks_env_vars qui n'est pas une liste de noms : Tessel ne l'a pas modifié."
+      "museEnvList": "{{file}} contient un managed_hooks_env_vars qui n'est pas une liste de noms : Tessel ne l'a pas modifié.",
+      "badPath": "Le chemin du dossier de données de Tessel ou de node contient un saut de ligne.",
+      "grokUnreadable": "Le config.toml de Grok Build n'est pas un TOML valide (ligne {{line}} : {{error}}), Tessel l'a donc laissé tel quel.",
+      "grokNoEdit": "Tessel n'a pas pu ajouter ses outils d'équipe au config.toml de Grok Build sans le casser (un serveur tessel-team y est défini autrement), il l'a donc laissé tel quel."
     },
     "jsonAgents": {
       "kimiNotObject": "mcpServers de Kimi n'est pas un objet ; le fichier existant n'a pas été modifié.",

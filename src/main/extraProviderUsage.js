@@ -78,8 +78,12 @@ export function createExtraProviderUsage({
 } = {}) {
   const sequences = new Map()
   // Grok's tier as its profile call last answered (grokAccount.js), kept in
-  // memory only: the tier, team and organization names, never a token.
+  // memory only: the tier, team and organization names, and the fingerprint
+  // of the login it was asked with (another sign-in never shows it); never a
+  // token.
   let grokLivePlan = null
+  // The profile call's own time limit, shorter than the usage read's.
+  const GROK_USER_TIMEOUT_MS = Math.min(5000, timeoutMs)
   // The providers to read: installed ones, and the ones a key saved in
   // Settings links (a GLM Coding Plan key without ZCode, named after its plan).
   async function installedProviders() {
@@ -206,6 +210,14 @@ export function createExtraProviderUsage({
     async signIn(provider) {
       const s = await sources.signIn?.(provider)
       if (provider !== 'grok' || !s || !s.signedIn || !grokLivePlan || (s.plan && s.plan.kind === 'api-key')) return s
+      // Only for the login it was read with (no token kept: its fingerprint).
+      let fingerprint = null
+      try {
+        fingerprint = (await sources.auth('grok'))?.fingerprint || null
+      } catch {
+        fingerprint = null
+      }
+      if (!fingerprint || fingerprint !== grokLivePlan.fingerprint) return s
       const plan = { ...(s.plan || {}), ...grokLivePlan, team: grokLivePlan.team || s.plan?.team || null }
       return { ...s, planType: plan.label || s.planType || null, plan: { ...plan, attention: grokPlanAttention(plan) } }
     },
@@ -351,7 +363,9 @@ export function createExtraProviderUsage({
         }
         let windows = [],
           unlimited = false,
-          plan = null
+          plan = null,
+          grokPending = null,
+          grokRefused = false
         if (provider === 'gemini') {
           const project = await fetch('geminiProject', {
             metadata: { ideType: 'GEMINI_CLI', pluginType: 'GEMINI' }
@@ -409,16 +423,16 @@ export function createExtraProviderUsage({
           if (provider === 'grok') {
             windows = mapGrok(data)
             if (!windows.length) windows = mapGrok(await fetch('grokMonthly'))
-            // Its tier, as the CLI's profile call gives it: shown with the
-            // usage; a failure there leaves the usage as read.
+            // Its tier, as the CLI's profile call gives it (its own time
+            // limit): shown with the usage once the login is checked unchanged
+            // below; a failure there leaves the usage as read.
             try {
-              const live = grokUserPlan(await fetch('grokUser'))
-              if (live) grokLivePlan = { ...live, source: 'live', checkedAt: clock() }
+              const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(GROK_USER_TIMEOUT_MS)])
+              const live = grokUserPlan(await json('grokUser', login.headers, signal))
+              if (live) grokPending = { ...live, source: 'live', checkedAt: clock(), fingerprint: login.fingerprint }
             } catch (error) {
-              if (error?.code === 'auth' || error?.code === 'expired') grokLivePlan = null
+              if (error?.code === 'auth' || error?.code === 'expired') grokRefused = true
             }
-            // Else the one Grok Build cached itself (settings_cache.json).
-            plan = grokLivePlan?.label || (await Promise.resolve(sources.signIn?.('grok')).catch(() => null))?.planType || null
           }
           if (provider === 'opencode-go') windows = mapOpenCodeGo(data)
           if (provider === 'zcode') {
@@ -456,6 +470,12 @@ export function createExtraProviderUsage({
         const current = await sources.auth(provider)
         if (login.fingerprint !== current.fingerprint || sequences.get(provider) !== sequence)
           refuse('stale', t('main.usage.loginChanged', 'The provider login or usage request changed. Refresh usage.'))
+        if (provider === 'grok') {
+          if (grokPending) grokLivePlan = grokPending
+          else if (grokRefused || (grokLivePlan && grokLivePlan.fingerprint !== login.fingerprint)) grokLivePlan = null
+          // Else the one Grok Build cached itself (settings_cache.json).
+          plan = grokLivePlan?.label || (await Promise.resolve(sources.signIn?.('grok')).catch(() => null))?.planType || null
+        }
         if (!windows.length && !unlimited)
           refuse('unavailable', t('main.usage.noWindows', 'This account did not return supported quota windows.'))
         return {

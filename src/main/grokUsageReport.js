@@ -12,10 +12,12 @@
 // carries OpenCode's buckets (input, output, reasoning, cacheRead, cacheWrite,
 // each its own). costUsdTicks: 10^10 ticks per dollar (`grok usage`).
 //
-// Bounded: at most 4000 sessions, the newest first; a file is read again only
-// from where the last read stopped (they only grow), each line at most 1 MB,
-// and only its turn_completed lines are parsed.
-import fs from 'node:fs'
+// Bounded: at most 4000 sessions, the newest first; read without blocking the
+// main process (fs.promises, 1 MB at a time), a file again only from where the
+// last read stopped (they only grow); a line longer than 1 MB is passed over
+// (the read goes on after it, even across reads), and only turn_completed
+// lines are parsed.
+import fsp from 'node:fs/promises'
 import os from 'node:os'
 import { join } from 'node:path'
 import { usageDayFormatter, usageQueryRange, usageRootMatcher } from './usageReportFilters'
@@ -23,15 +25,16 @@ import { usageReportFromEvents } from './opencodeUsageReport'
 import { grokHome } from './grokAccount'
 
 const MAX_SESSIONS = 4000
-const MAX_READ = 64 * 1024 * 1024
+const CHUNK = 1024 * 1024
+const MAX_LINE = 1024 * 1024
 const TICKS_PER_USD = 1e10
 const object = (v) => v !== null && typeof v === 'object' && !Array.isArray(v)
 const n = (v) => (typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : 0)
 const str = (v) => (typeof v === 'string' && v.trim() ? v.trim() : null)
 
-function entries(dir) {
+async function entries(dir) {
   try {
-    return fs.readdirSync(dir, { withFileTypes: true })
+    return await fsp.readdir(dir, { withFileTypes: true })
   } catch {
     return []
   }
@@ -79,11 +82,11 @@ export function grokUsageEvents(line, { sessionId, cwd = null, title = null, mod
   return b ? [{ ...base, model, ...b }] : []
 }
 
-function readSummary(file) {
+async function readSummary(file) {
   try {
-    const st = fs.statSync(file)
+    const st = await fsp.stat(file)
     if (!st.isFile() || st.size > 256 * 1024) return {}
-    const o = JSON.parse(fs.readFileSync(file, 'utf8'))
+    const o = JSON.parse(await fsp.readFile(file, 'utf8'))
     const info = object(o?.info) ? o.info : {}
     return { cwd: str(info.cwd), title: str(o.generated_title)?.split(/\r?\n/)[0].slice(0, 200) || null, model: str(o.current_model_id) }
   } catch {
@@ -92,17 +95,17 @@ function readSummary(file) {
 }
 
 // The sessions' update files, newest first: [{ id, file, dir }].
-export function listGrokSessionFiles(root) {
+export async function listGrokSessionFiles(root) {
   const out = []
-  for (const group of entries(root)) {
+  for (const group of await entries(root)) {
     if (!group.isDirectory() || group.isSymbolicLink()) continue
-    for (const s of entries(join(root, group.name))) {
+    for (const s of await entries(join(root, group.name))) {
       if (!s.isDirectory() || s.isSymbolicLink() || !/^[A-Za-z0-9_-]{6,80}$/.test(s.name)) continue
       const dir = join(root, group.name, s.name)
       const file = join(dir, 'updates.jsonl')
       let st
       try {
-        st = fs.lstatSync(file)
+        st = await fsp.lstat(file)
       } catch {
         continue
       }
@@ -112,25 +115,54 @@ export function listGrokSessionFiles(root) {
   return out.sort((a, b) => b.mtimeMs - a.mtimeMs).slice(0, MAX_SESSIONS)
 }
 
-// A file's new complete lines since `offset` -> { lines, offset }.
-function readFrom(file, offset, size) {
-  const start = offset > size ? 0 : offset
-  const len = Math.min(size - start, MAX_READ)
-  if (len <= 0) return { lines: [], offset: start, reset: start !== offset }
-  const fd = fs.openSync(file, 'r')
+// A file's complete lines from `from.offset` to `size`, read 1 MB at a time:
+// onLine(text) for each line of at most 1 MB; a longer one is passed over
+// (skipping: still inside one when the read ends). A last line not ended yet
+// is read again next time. -> { offset, skipping, reset }.
+export async function scanGrokLines(file, from, size, onLine, { chunk = CHUNK, maxLine = MAX_LINE } = {}) {
+  const reset = from.offset > size
+  let offset = reset ? 0 : from.offset
+  let skipping = reset ? false : from.skipping === true
+  if (offset >= size) return { offset, skipping, reset }
+  const fh = await fsp.open(file, 'r')
   try {
-    const buf = Buffer.alloc(len)
-    const got = fs.readSync(fd, buf, 0, len, start)
-    const text = buf.subarray(0, got).toString('utf8')
-    const end = text.lastIndexOf('\n')
-    if (end < 0) return { lines: [], offset: start, reset: start !== offset }
-    return {
-      lines: text.slice(0, end).split('\n').filter((l) => l.length <= 1024 * 1024),
-      offset: start + Buffer.byteLength(text.slice(0, end + 1), 'utf8'),
-      reset: start !== offset
+    let pos = offset
+    let parts = []
+    let partLen = 0
+    const buf = Buffer.alloc(chunk)
+    while (pos < size) {
+      const { bytesRead } = await fh.read(buf, 0, Math.min(chunk, size - pos), pos)
+      if (!bytesRead) break
+      let start = 0
+      for (;;) {
+        const nl = buf.indexOf(10, start)
+        const end = nl < 0 || nl >= bytesRead ? bytesRead : nl
+        if (!skipping) {
+          if (partLen + (end - start) > maxLine) {
+            skipping = true
+            parts = []
+            partLen = 0
+          } else if (end > start) {
+            parts.push(Buffer.from(buf.subarray(start, end)))
+            partLen += end - start
+          }
+        }
+        if (end === bytesRead) break
+        // A whole line: given, or the over-long one ends here.
+        if (!skipping) onLine(Buffer.concat(parts, partLen).toString('utf8').replace(/\r$/, ''))
+        skipping = false
+        parts = []
+        partLen = 0
+        offset = pos + nl + 1
+        start = nl + 1
+      }
+      pos += bytesRead
     }
+    // Inside an over-long line at the end: past it so far, still passing over.
+    if (skipping) offset = pos
+    return { offset, skipping, reset }
   } finally {
-    fs.closeSync(fd)
+    await fh.close().catch(() => {})
   }
 }
 
@@ -147,20 +179,20 @@ export function createGrokUsageReport({
     const time = now()
     const range = usageQueryRange(query, dayOf(time), days)
     const projectIn = usageRootMatcher(range)
-    const files = listGrokSessionFiles(join(grokHome(home, env), 'sessions'))
+    const files = await listGrokSessionFiles(join(grokHome(home, env), 'sessions'))
     const live = new Set(files.map((f) => f.file))
     for (const f of [...cache.keys()]) if (!live.has(f)) cache.delete(f)
     const events = []
     for (const f of files) {
       let entry = cache.get(f.file)
-      if (!entry || entry.mtimeMs !== f.mtimeMs || entry.offset !== f.size) {
+      if (!entry || entry.mtimeMs !== f.mtimeMs || entry.size !== f.size) {
         try {
-          const facts = readSummary(join(f.dir, 'summary.json'))
-          const got = readFrom(f.file, entry ? entry.offset : 0, f.size)
+          const facts = await readSummary(join(f.dir, 'summary.json'))
+          const added = []
+          const got = await scanGrokLines(f.file, entry || { offset: 0, skipping: false }, f.size, (l) => added.push(...grokUsageEvents(l, { sessionId: f.id, ...facts })))
           const kept = entry && !got.reset ? entry.events : []
-          const added = got.lines.flatMap((l) => grokUsageEvents(l, { sessionId: f.id, ...facts }))
           // The folder and title as the summary says them now.
-          entry = { offset: got.offset, mtimeMs: f.mtimeMs, events: [...kept, ...added].map((e) => ({ ...e, cwd: facts.cwd || e.cwd, title: facts.title || e.title })) }
+          entry = { offset: got.offset, skipping: got.skipping, size: f.size, mtimeMs: f.mtimeMs, events: [...kept, ...added].map((e) => ({ ...e, cwd: facts.cwd || e.cwd, title: facts.title || e.title })) }
           cache.set(f.file, entry)
         } catch {
           // busy right now: left out this time

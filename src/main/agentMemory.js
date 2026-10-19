@@ -16,6 +16,7 @@ import fs from 'fs'
 import os from 'os'
 import { join, dirname } from 'path'
 import { writeFileAtomic } from './safeJson'
+import { grokHome as grokHomeDir } from './grokAccount'
 
 export const RULE_START = '<!-- tessel:task-board:start -->'
 export const RULE_END = '<!-- tessel:task-board:end -->'
@@ -47,7 +48,7 @@ export function memoryFile(agent, home = os.homedir(), env = process.env) {
     case 'cline':
       return join(home, 'Documents', 'Cline', 'Rules', 'tessel-task-board.md')
     case 'grok':
-      return join(env.GROK_HOME || join(home, '.grok'), 'rules', 'tessel-task-board.md')
+      return join(grokHomeDir(home, env), 'rules', 'tessel-task-board.md')
     default:
       return null
   }

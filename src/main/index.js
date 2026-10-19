@@ -182,6 +182,7 @@ import {
   installKimiHooks,
   installCodexServer,
   installGrokServer,
+  unsafePath,
   claudeServerPresent,
   claudeServerExists,
   removeTeamHooks,
@@ -2666,6 +2667,11 @@ ipcMain.handle(
         // not readable: ours
       }
       return { ok: false, script, changed, errors: [noNodeError()], version: (/const VERSION = '([^']+)'/.exec(installed) || [])[1] || null }
+    }
+    // A path with a line break or NUL is never written into a settings file.
+    if (unsafePath(script) || unsafePath(node)) {
+      log.error('team', 'team tools: a path with a line break, nothing set up')
+      return { ok: false, script, changed, errors: [t('main.hooks.badPath', 'The Tessel data folder or node has a line break in its path.')], version: null }
     }
     if (!claudeServerPresent(script, undefined, node)) {
       // Registered with another path (an older version, the other build):

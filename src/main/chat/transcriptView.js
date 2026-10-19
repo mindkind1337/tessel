@@ -429,6 +429,11 @@ export function grokUpdateViewEvents(lines, limits = HISTORY_LIMITS) {
 // model it was sent to; a config_option_update names a model or effort picked
 // (/model, /effort) before the next one.
 const GROK_EFFORTS = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']
+// A model id as the file gives it, kept short and on one line (80 characters).
+const grokModelId = (v) => {
+  const s = str(v)
+  return s && !/[\u0000-\u001f\u007f]/.test(s) ? s.trim().slice(0, 80) || null : null // eslint-disable-line no-control-regex
+}
 export function grokModelTimeline(lines) {
   const out = []
   let model = ''
@@ -439,11 +444,11 @@ export function grokModelTimeline(lines) {
     if (!g || !g.at) continue
     let nextModel = model
     let nextEffort = effort
-    if (g.kind === 'user_message_chunk' && str(g.inner.modelId)) nextModel = g.inner.modelId
+    if (g.kind === 'user_message_chunk' && grokModelId(g.inner.modelId)) nextModel = grokModelId(g.inner.modelId)
     else if (g.kind === 'config_option_update') {
       for (const o of Array.isArray(g.u.configOptions) ? g.u.configOptions : []) {
         const opt = obj(o)
-        const value = opt && str(opt.currentValue)
+        const value = opt && grokModelId(opt.currentValue)
         if (!value) continue
         const what = `${str(opt.category) || ''} ${str(opt.id) || ''}`.toLowerCase()
         if (/model/.test(what)) nextModel = value
