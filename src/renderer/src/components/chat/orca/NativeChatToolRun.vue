@@ -195,7 +195,7 @@ const members = computed(() => {
     if (taskLists.value?.consumedResults.has(block)) return
     const edit = editCards.value.editCards.get(block)
     if (edit) {
-      out.push({ kind: 'edit', key: `edit:${edit.key}`, edit }) // i18n-ignore
+      out.push({ kind: 'edit', key: `edit:${edit.key}`, edit, call: block }) // i18n-ignore
       return
     }
     // A result its call now owns is drawn by that call's line, not as a row.
@@ -294,6 +294,8 @@ function diffDisclosureKey(edit, fileIndex) {
               v-for="(file, fileIndex) in member.edit.files"
               :key="`${member.edit.key}:${fileIndex}`"
               :file="file"
+              :call="member.call"
+              :result-text="pairing.resultByCall.get(member.call)?.output || ''"
               :reveal-signal="diffRevealSignal(member.edit, fileIndex)"
               :on-reveal="onRevealDiff"
               :initially-expanded="expandToolLines"

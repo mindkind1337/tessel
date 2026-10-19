@@ -35,6 +35,8 @@ import {
 } from '../../../chat/orca/native-chat-transcript-slots.js'
 import { nativeChatReaderScrollInputHandlers } from '../../../chat/orca/native-chat-reader-scroll-input.js'
 import { nativeChatTurnDiffs } from '../../../chat/orca/native-chat-turn-diffs.js'
+import { buildEditCards } from '../../../chat/orca/native-chat-edit-cards.js'
+import { turnChangedFiles } from '../../../chat/agentEdits.js'
 import { isStructuredAgentSessionThinking } from '../../../chat/orca/shared/structured-agent-session-live-turn.js'
 import { provideNativeChatDisclosures } from '../../../chat/orca/composables/native-chat-disclosure-store.js'
 import { useNativeChatTurnStatus } from '../../../chat/orca/composables/use-native-chat-turn-status.js'
@@ -157,6 +159,13 @@ const turnKeys = computed(() => {
 const turnDiffs = computed(() =>
   props.journalItems ? nativeChatTurnDiffs(messages.value, turnKeys.value) : new Map()
 )
+// Tessel: the files each turn changed (the strip under it), once the turn is
+// over: the one still working has its own cards above.
+const turnChanges = computed(() => {
+  const all = turnChangedFiles(messages.value, turnKeys.value, buildEditCards)
+  if (props.isWorking && currentTurnKey.value) all.delete(currentTurnKey.value)
+  return all
+})
 // "Thinking" is real reasoning content at the tail of the turn, not the absence
 // of output — the latter reports thinking while the request is merely in flight.
 const thinking = computed(() =>
@@ -183,6 +192,7 @@ const slots = computed(() =>
       completedByTurn: turnStatuses.completedByTurn.value
     },
     turnDiffs: turnDiffs.value,
+    turnChanges: turnChanges.value,
     showTurnStatus: props.showTurnStatus,
     expandedTurnKeys: expandedTurnIds.value,
     isWorking: props.isWorking,
