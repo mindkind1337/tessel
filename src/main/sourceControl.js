@@ -283,6 +283,8 @@ function remoteError(res, op) {
 // git-branch-line-total.ts, so a line touched in two areas counts once).
 const OID_RE = /^[0-9a-f]{7,64}$/
 export const isCommitId = (v) => typeof v === 'string' && OID_RE.test(v)
+// A hash as people write one (7 to 40 hex characters, lower case).
+export const isCommitHash = (v) => typeof v === 'string' && /^[0-9a-f]{7,40}$/.test(v)
 const BRANCH_TOTAL_TIMEOUT = 15000
 
 // A GitHub remote URL -> { owner, repo } (https, ssh, git@).
@@ -983,6 +985,24 @@ export function createScm(b) {
     }
   }
 
+  // A commit hash written in text (a chat, a terminal, a task's report):
+  // whether it is a commit of this repository, and if so its full id and
+  // its one line (subject, author, time) for the link's hover. Only hex
+  // (7 to 40 characters) ever reaches git, so it can never be read as an
+  // option; a name that only looks like one (a branch "abc1234") does not
+  // count: the commit found must start with it. A short hash two commits
+  // share is not one. -> { ok, id, subject, author, timestamp } | { ok: false }
+  async function scmResolveCommit({ root, commit } = {}) {
+    if (!isCommitHash(commit)) return { ok: false }
+    const r = await repoOf(root)
+    if (r.error) return { ok: false }
+    const res = await git(r.top, ['show', '-s', '--no-color', '--format=%H%x00%s%x00%aN%x00%at', `${commit}^{commit}`], { timeout: 15000 })
+    if (!res.ok) return { ok: false }
+    const [id, subject, author, at] = String(res.stdout || '').trim().split('\0')
+    if (!isCommitId(id) || !id.startsWith(commit)) return { ok: false }
+    return { ok: true, id, subject: String(subject || '').slice(0, 300), author: String(author || '').slice(0, 200), timestamp: Number(at) > 0 ? Number(at) * 1000 : null }
+  }
+
   // Of these paths (from the top), the ones git reads through a filter
   // (their filter attribute set: git-lfs, git-crypt...).
   async function filteredPaths(top, rels) {
@@ -1022,7 +1042,8 @@ export function createScm(b) {
     scmFileVersions,
     scmStagedDiff,
     scmFileHistory,
-    scmCommitInfo
+    scmCommitInfo,
+    scmResolveCommit
   }
 }
 
@@ -1125,5 +1146,6 @@ export const scmFileVersions = local.scmFileVersions
 export const scmStagedDiff = local.scmStagedDiff
 export const scmFileHistory = local.scmFileHistory
 export const scmCommitInfo = local.scmCommitInfo
+export const scmResolveCommit = local.scmResolveCommit
 export const filteredPaths = local.filteredPaths
 export const stagedPaths = local.stagedPaths

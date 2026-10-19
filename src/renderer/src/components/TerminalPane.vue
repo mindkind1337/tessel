@@ -52,6 +52,9 @@ import { findFileRefs, pickFileLinks } from '../../../shared/fileLinks'
 import { guestFileTarget } from '../liveShareGuestLinks'
 import { logicalLine, rangeOf, onRow } from '../links/terminalLinkLines'
 import { createCwdTracker, linkTarget, paneLinkMode } from '../links/terminalLinkPaths'
+import { findCommitRefs } from '../links/commitRefs'
+import { commitTarget, commitTip, paneCommitRoot, resolveCommit } from '../links/commitLinks'
+import { openTarget as routeTarget } from '../links/openTarget'
 import { hostHome } from '../chat/remoteChatLinks'
 import { isRemotePath } from '../../../shared/remotePath'
 import { osc52Text } from '../../../shared/osc52'
@@ -3431,6 +3434,45 @@ onMounted(() => {
           ).then(() => {
             if (fileLinkCache.size > 2000) for (const k of [...fileLinkCache.keys()].slice(0, 500)) fileLinkCache.delete(k)
             build()
+          })
+        })
+        .catch(() => callback(undefined))
+    }
+  })
+  // A commit hash an agent printed ("pushed abc1234", "abc1234..def5678":
+  // links/commitRefs.js): a link once this pane's repository says it is a
+  // commit there (asked when the pointer reaches its row, the answers kept:
+  // links/commitLinks.js), never before; its subject, author and date on
+  // hover; a click shows it in Source Control, Ctrl+click copies its full
+  // hash (the link router). A Live Share host's pane: asked through what the
+  // host shares of its history.
+  term.registerLinkProvider({
+    provideLinks(y, callback) {
+      if (!term) return callback(undefined)
+      const ll = logicalLine(term.buffer.active, y - 1)
+      const refs = findCommitRefs(ll.text).filter((r) => onRow(ll, r.index, r.length, y - 1))
+      if (!refs.length) return callback(undefined)
+      const where = props.node.backend === 'liveshare' ? Promise.resolve(null) : linkContext()
+      where
+        .then((lc) => {
+          const root = paneCommitRoot(lc, props.node)
+          if (!root) return callback(undefined)
+          return Promise.all(refs.map((r) => resolveCommit(root, r.hash))).then((infos) => {
+            const links = []
+            refs.forEach((r, i) => {
+              const info = infos[i]
+              const range = info ? rangeOf(ll, r.index, r.length) : null
+              if (!range) return
+              links.push({
+                range,
+                text: r.hash,
+                decorations: { underline: true, pointerCursor: true },
+                activate: (event) => (ctx.openTarget || routeTarget)(commitTarget(root, info), { event }),
+                hover: (event) => showLinkTip(event, commitTip(info)),
+                leave: () => hideLinkTip()
+              })
+            })
+            callback(links.length ? links : undefined)
           })
         })
         .catch(() => callback(undefined))

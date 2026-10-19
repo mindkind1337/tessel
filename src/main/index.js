@@ -2628,6 +2628,9 @@ ipcMain.handle('scm:commitFiles', safe((q) => scmFor(q).scmCommitFiles(q || {}))
 // and page, and the versions the editor kept at each save (Local History).
 ipcMain.handle('scm:fileHistory', safe((q) => scmFor(q).scmFileHistory(q || {})))
 ipcMain.handle('scm:commitInfo', safe((q) => scmFor(q).scmCommitInfo(q || {})))
+// A commit hash in a chat, a terminal or a report: a commit of that pane's
+// repository? (its link's hover and click, links/commitLinks.js)
+ipcMain.handle('scm:resolveCommit', safe((q) => scmFor(q).scmResolveCommit(q || {})))
 const localHistory = createLocalHistory({ dir: join(app.getPath('userData'), 'History') })
 ipcMain.handle('localHistory:add', safe((q) => (isLsharePath(q && q.path) ? { ok: false } : localHistory.add(q || {}))))
 // A Live Share host's file (lshare://…): its Local History is the host's

@@ -281,7 +281,8 @@
       "loading": "Chargement du graphe...",
       "none": "Aucun commit pour le moment",
       "loadingFiles": "Chargement des fichiers…",
-      "noFiles": "Aucune modification de fichier dans ce commit"
+      "noFiles": "Aucune modification de fichier dans ce commit",
+      "outsideHint": "Ne fait pas partie des derniers commits de cette branche"
     },
     "committed": {
       "title": "Committé sur la branche",

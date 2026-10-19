@@ -28,7 +28,7 @@
 // host, no path is a link there, a web link goes through the host's filter.
 import { senderDetails, senderRemote } from '../senderIdentity'
 import { computed, nextTick, onBeforeUnmount, reactive, ref, shallowRef, watch } from 'vue'
-import { Check, ChevronRight, Code2, Copy, FileText, Film, Folder, ImageIcon, LayoutGrid, Link2, LocateFixed, MessagesSquare, Search, SquareTerminal, Users, X } from 'lucide-vue-next'
+import { Check, ChevronRight, Code2, Copy, FileText, Film, Folder, GitCommitHorizontal, ImageIcon, LayoutGrid, Link2, LocateFixed, MessagesSquare, Search, SquareTerminal, Users, X } from 'lucide-vue-next'
 import BrandIcon from './BrandIcon.vue'
 import RichMessage from './RichMessage.vue'
 import ConversationMedia from './ConversationMedia.vue'
@@ -293,7 +293,7 @@ const counts = computed(() => typeCounts(matching.value))
 const shown = computed(() => filterByTypes(matching.value, types.value))
 const media = computed(() => (view.value === 'media' ? mediaItems(shown.value, types.value) : []))
 const toggleType = (type) => (types.value = types.value.includes(type) ? types.value.filter((x) => x !== type) : [...types.value, type])
-const TYPE_ICONS = { link: Link2, image: ImageIcon, video: Film, file: FileText, folder: Folder, code: Code2 }
+const TYPE_ICONS = { link: Link2, image: ImageIcon, video: Film, file: FileText, folder: Folder, code: Code2, commit: GitCommitHorizontal }
 const typeLabel = (type) =>
   ({
     link: t('conversations.type.links', 'Links'),
@@ -301,7 +301,8 @@ const typeLabel = (type) =>
     video: t('conversations.type.videos', 'Videos'),
     file: t('conversations.type.files', 'Files'),
     folder: t('conversations.type.folders', 'Folders'),
-    code: t('conversations.type.code', 'Code')
+    code: t('conversations.type.code', 'Code'),
+    commit: t('conversations.type.commits', 'Commits')
   })[type]
 const typeHint = (type) => t('conversations.type.hint', 'Only the messages with: {{type}} ({{count}})', { type: typeLabel(type), count: counts.value[type] })
 

@@ -4,8 +4,10 @@
 // git-history-graph-svg.tsx and git-history-commit-files.tsx (MIT, Copyright
 // (c) 2026 Lovecast Inc.), written for Vue. The last commits of HEAD with
 // Orca's graph and ref pills; a click shows the files of a commit, a click on
-// a file opens its diff in the editor.
-import { ref, computed, watch, onBeforeUnmount } from 'vue'
+// a file opens its diff in the editor. A commit link clicked elsewhere (a
+// hash an agent wrote: links/commitLinks.js) opens it here, selected with
+// its files (focus); one older than the commits listed shows above them.
+import { ref, computed, watch, onBeforeUnmount, nextTick } from 'vue'
 import { ChevronDown, CircleHelp, RefreshCw } from 'lucide-vue-next'
 import {
   buildDefaultGitHistoryColorMap,
@@ -24,6 +26,7 @@ import { dateTimeFormat } from '../../../shared/intlCache'
 import PanelState from './ui/PanelState.vue'
 import TimelineHover from './TimelineHover.vue'
 import { useCommitHover, commitEntry } from '../explorer/useCommitHover'
+import { resolveCommit } from '../links/commitLinks'
 
 const props = defineProps({
   // The repository folder (the project or a task's copy).
@@ -31,7 +34,9 @@ const props = defineProps({
   // The compare base ('origin/main'): its commit gets Orca's base colour.
   base: { type: String, default: null },
   // Changes when HEAD moves (a commit, a pull): the list is read again.
-  head: { type: String, default: null }
+  head: { type: String, default: null },
+  // A commit to show selected with its files: { commit, n } (n: each request).
+  focus: { type: Object, default: null }
 })
 const emit = defineEmits(['open-file'])
 
@@ -59,6 +64,9 @@ async function load() {
     state.value = { status: 'ready', result: res, error: '' }
     expanded.value = new Set()
     files.value = {}
+    outside.value = null
+    selected.value = null
+    if (pendingFocus) applyFocus()
   } else state.value = { status: 'error', result: state.value.result, error: (res && res.error) || t('changes.history.failed', 'Could not read the commits') }
 }
 
@@ -76,9 +84,11 @@ const rows = computed(() =>
     const refs = dedupeRemoteTrackingRefs(vm.historyItem.references || [], {
       preserveRefIds: result.value && result.value.baseRef ? [result.value.baseRef.id] : []
     })
-    return { vm, geo: gitHistoryGraphGeometry(vm), refs: refs.slice(0, 2), hidden: refs.slice(2) }
+    return { id: vm.historyItem.id, item: vm.historyItem, vm, geo: gitHistoryGraphGeometry(vm), refs: refs.slice(0, 2), hidden: refs.slice(2) }
   })
 )
+// The commit a link asked for when it is not among the commits read: first.
+const shownRows = computed(() => (outside.value ? [{ id: outside.value.id, item: outside.value, vm: null }, ...rows.value] : rows.value))
 
 function toggle() {
   collapsed.value = !collapsed.value
@@ -86,6 +96,35 @@ function toggle() {
 function onRefresh() {
   if (collapsed.value) return toggle()
   load()
+}
+
+// --- A commit asked for (a commit link: ChangesPanel's commitFocus) ----------------
+// Opened (the section unfolds), selected, its files shown and scrolled to;
+// after the list is read when a read is on its way (or the section was
+// closed). One the list does not hold (older, another branch) is read on
+// its own and shown first.
+const selected = ref(null) // the selected commit's id
+const outside = ref(null) // { id, subject, author, timestamp, displayId }
+const listEl = ref(null)
+let pendingFocus = null
+async function applyFocus() {
+  const commit = pendingFocus
+  pendingFocus = null
+  const r = result.value
+  if (!commit || !r) return
+  const root = props.root
+  let item = r.items.find((i) => i.id === commit || i.id.startsWith(commit)) || null
+  if (!item) {
+    const info = await resolveCommit(root, commit)
+    if (!info || root !== props.root || result.value !== r) return
+    item = { id: info.id, subject: info.subject || info.id.slice(0, 7), author: info.author, timestamp: info.timestamp, displayId: info.id.slice(0, 7) }
+    outside.value = item
+  }
+  selected.value = item.id
+  if (!expanded.value.has(item.id)) toggleCommit(item)
+  await nextTick()
+  const el = listEl.value && [...listEl.value.querySelectorAll('[data-commit-id]')].find((x) => x.getAttribute('data-commit-id') === item.id)
+  if (el && typeof el.scrollIntoView === 'function') el.scrollIntoView({ block: 'nearest' })
 }
 
 // Files of a commit, read once when it is first opened.
@@ -204,6 +243,17 @@ watch(
   },
   { immediate: true }
 )
+watch(
+  () => props.focus && props.focus.n,
+  () => {
+    if (!props.focus || !props.focus.commit) return
+    pendingFocus = props.focus.commit
+    // Closed: opening it reads the list, which then shows the commit.
+    if (collapsed.value) return void (collapsed.value = false)
+    if (state.value.status === 'ready' && result.value) applyFocus()
+  },
+  { immediate: true }
+)
 onBeforeUnmount(() => {
   seq++
   stopResize()
@@ -290,21 +340,42 @@ const historyHeight = moduleRef(256)
         <span>{{ t('changes.history.loading', 'Loading graph...') }}</span>
       </div>
       <div v-else-if="!rows.length" class="sch-body sch-msg" :style="bodyStyle">{{ t('changes.history.none', 'No commits yet') }}</div>
-      <div v-else class="sch-body" :style="bodyStyle" data-test="sc-history-list">
+      <div v-else ref="listEl" class="sch-body" :style="bodyStyle" data-test="sc-history-list">
         <div v-if="state.status === 'error'" class="sch-file-meta bad sch-stale-error" data-test="sc-history-error">
           <span :title="state.error">{{ state.error }}</span>
           <button type="button" class="exit-btn" data-test="sc-history-retry" @click.stop="load">{{ t('changes.compare.retry', 'Retry') }}</button>
         </div>
-        <template v-for="row in rows" :key="row.vm.historyItem.id">
+        <template v-for="row in shownRows" :key="row.id">
           <button
+            v-if="!row.vm"
+            type="button"
+            class="sch-row sch-outside"
+            :class="{ 'sch-selected': selected === row.id }"
+            :data-commit-id="row.id"
+            :aria-expanded="expanded.has(row.id)"
+            :aria-label="commitAria(row.item, expanded.has(row.id))"
+            :title="t('changes.history.outsideHint', 'Not among the latest commits of this branch')"
+            data-test="git-history-outside"
+            @click="toggleCommit(row.item)"
+          >
+            <span class="sch-subject-wrap">
+              <ChevronDown :size="12" class="sch-row-chev" :class="{ 'sc-rot': !expanded.has(row.id) }" />
+              <span class="sch-hash">{{ row.item.displayId }}</span>
+              <span class="sch-subject">{{ row.item.subject }}</span>
+            </span>
+          </button>
+          <button
+            v-else
             type="button"
             class="sch-row"
-            :aria-expanded="expanded.has(row.vm.historyItem.id)"
-            :aria-label="commitAria(row.vm.historyItem, expanded.has(row.vm.historyItem.id))"
+            :class="{ 'sch-selected': selected === row.id }"
+            :data-commit-id="row.id"
+            :aria-expanded="expanded.has(row.id)"
+            :aria-label="commitAria(row.item, expanded.has(row.id))"
             data-test="git-history-row"
-            @mouseenter="commitHover.onRowEnter(commitEntry(row.vm.historyItem), $event)"
+            @mouseenter="commitHover.onRowEnter(commitEntry(row.item), $event)"
             @mouseleave="commitHover.onRowLeave"
-            @click="commitHover.hide(), toggleCommit(row.vm.historyItem)"
+            @click="commitHover.hide(), toggleCommit(row.item)"
           >
             <svg aria-hidden="true" class="sch-graph" :width="row.geo.width" :height="row.geo.height" :viewBox="`0 0 ${row.geo.width} ${row.geo.height}`">
               <path v-for="p in row.geo.paths" :key="p.key" :d="p.d" fill="none" :stroke="graphColor(p.color)" stroke-linecap="round" stroke-width="1" />
@@ -319,17 +390,17 @@ const historyHeight = moduleRef(256)
               <circle v-else :cx="row.geo.cx" :cy="row.geo.cy" :r="CIRCLE_RADIUS" :fill="graphColor(row.geo.circleColor)" />
             </svg>
             <span class="sch-subject-wrap">
-              <ChevronDown :size="12" class="sch-row-chev" :class="{ 'sc-rot': !expanded.has(row.vm.historyItem.id) }" />
-              <span class="sch-subject">{{ row.vm.historyItem.subject }}</span>
+              <ChevronDown :size="12" class="sch-row-chev" :class="{ 'sc-rot': !expanded.has(row.id) }" />
+              <span class="sch-subject">{{ row.item.subject }}</span>
             </span>
             <span v-if="row.refs.length" class="sch-refs">
               <span v-for="r in row.refs" :key="r.id" class="sch-ref" :style="refStyle(r)" :title="refLabel(r)">{{ r.name }}</span>
               <span v-if="row.hidden.length" class="sch-more" :title="row.hidden.map((r) => r.name).join(', ')">+{{ row.hidden.length }}</span>
             </span>
           </button>
-          <div v-if="expanded.has(row.vm.historyItem.id)" class="sch-files" data-test="sc-history-files">
-            <div v-if="meta(row.vm.historyItem)" class="sch-file-meta">{{ meta(row.vm.historyItem) }}</div>
-            <template v-for="fs in [files[row.vm.historyItem.id] || { status: 'loading' }]" :key="'f'">
+          <div v-if="expanded.has(row.id)" class="sch-files" data-test="sc-history-files">
+            <div v-if="meta(row.item)" class="sch-file-meta">{{ meta(row.item) }}</div>
+            <template v-for="fs in [files[row.id] || { status: 'loading' }]" :key="'f'">
               <div v-if="fs.status === 'loading'" class="sch-file-meta sch-msg-inline">
                 <RefreshCw :size="12" class="sc-spin" />
                 <span>{{ t('changes.history.loadingFiles', 'Loading files…') }}</span>
@@ -344,8 +415,8 @@ const historyHeight = moduleRef(256)
                   class="sch-file"
                   :title="e.path"
                   data-test="git-history-commit-file"
-                  @click="openFile(row.vm.historyItem, e, false)"
-                  @dblclick="openFile(row.vm.historyItem, e, true)"
+                  @click="openFile(row.item, e, false)"
+                  @dblclick="openFile(row.item, e, true)"
                 >
                   <FileIcon class="sc-file-icon" :name="e.path" />
                   <span class="sch-file-name">

@@ -120,6 +120,7 @@ import { agyContinueLaunchArgs } from '../../shared/agyContinue'
 import { createAutomationRunner, probeRunAgent } from './automationRunner'
 import { createCliRequests, CliRequestError } from './cliRequests'
 import { createLinkRouter, setLinkRouter, openTarget } from './links/openTarget'
+import { requestCommitFocus } from './links/commitFocus'
 import { automationsState, applySnapshot as applyAutomations, subscribeAutomations } from './automationsStore'
 import { trackAgent } from '../../shared/tracking'
 import { pasteAndConfirm, turnStarting } from './deliver'
@@ -504,6 +505,35 @@ async function revealInFiles(path) {
   await nextTick()
   return !!(sidePanelRef.value && (await sidePanelRef.value.revealInFiles(path)))
 }
+// A commit link (links/commitLinks.js): the project its repository is in
+// (the one shown first, else another open one: its folder, or one of its
+// tasks' copies), that project's Changes tab, and the commit selected in
+// its Commits section (links/commitFocus.js). false: no open project has it.
+function wsRepoRoot(ws) {
+  if (ws.remote) return remoteRoot(ws.remote.hostId, ws.remote.path)
+  if (ws.liveShare) return lshareRoot(ws.liveShare.project)
+  return ws.cwd
+}
+function wsHoldsRepo(ws, root) {
+  if (!ws) return false
+  if (ws === currentWs.value && samePrefix(root, sideRoot.value)) return true
+  if (samePrefix(root, wsRepoRoot(ws))) return true
+  return boardTasks.some((k) => k.wsId === ws.id && k.worktree && k.worktree.path && samePrefix(root, k.worktree.path))
+}
+function openCommit({ root, commit }) {
+  const ws = wsHoldsRepo(currentWs.value, root) ? currentWs.value : workspaces.value.find((w) => wsHoldsRepo(w, root))
+  if (!ws) return false
+  if (ws.id !== currentWsId.value) selectWorkspace(ws.id)
+  requestCommitFocus({ root, commit })
+  showSideTab('changes')
+  return true
+}
+function copyCommitHash(text) {
+  if (!window.shellApi.writeClipboard) return false
+  window.shellApi.writeClipboard(text)
+  showToast(t('app.link.commitCopied', 'Copied {{hash}}', { hash: text }), { timeout: 2500 })
+  return true
+}
 const linkRouter = createLinkRouter({
   openInEditor: ({ file, line, col, preview }) => openInTesselEditor({ file, line, col, preview }),
   viewFile: ({ file, label, line }) => viewFile({ file, label, line }),
@@ -513,6 +543,8 @@ const linkRouter = createLinkRouter({
   imageCopy: (dataUrl) => (window.shellApi.chat && window.shellApi.chat.imageViewCopy ? window.shellApi.chat.imageViewCopy({ dataUrl }) : null),
   revealInFiles,
   openFolder: (path) => (window.shellApi.chatFiles && window.shellApi.chatFiles.open ? window.shellApi.chatFiles.open(path) : false),
+  openCommit,
+  copyText: copyCommitHash,
   urlMode: () => settings.linksOpenUrlsIn,
   // A new tab of the current project; a Live Share guest's project opens it
   // in the browser's guest session (none of your sign-ins).
@@ -525,6 +557,7 @@ const linkRouter = createLinkRouter({
   openMail: (url) => Promise.resolve(window.shellApi.openExternal ? window.shellApi.openExternal(url) : false),
   notOpened: ({ target, reason }) => {
     const what = target.path || target.url || ''
+    if (target.kind === 'commit') return showToast(t('app.link.commitOutside', 'Commit {{hash}} is not in a project open in Tessel.', { hash: target.commit.slice(0, 12) }), { timeout: 5000 })
     if (reason === 'outside') showToast(t('app.link.outside', 'This folder is not in the project shown in Files: {{path}}', { path: what }), { timeout: 5000 })
     else showToast(t('app.link.failed', 'Could not open {{target}}', { target: what }), { kind: 'error', timeout: 5000 })
   }

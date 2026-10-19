@@ -7,10 +7,14 @@
 // file link checks against the folder of the pane that wrote it), says who
 // shared it and when, and "Show in conversation" goes to its message. A long
 // list grows as it is scrolled (sections of PAGE items), thumbnails load once
-// in view.
+// in view. A commit hash shows its subject once its repository (the
+// pane's that wrote it) says it is a commit there, and opens in Source
+// Control (CommitRef.vue); one that is not stays text.
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
-import { Code2, FileText, Film, Folder, Globe, ImageIcon, Mail, MessageSquareText } from 'lucide-vue-next'
+import { Code2, FileText, Film, Folder, GitCommitHorizontal, Globe, ImageIcon, Mail, MessageSquareText } from 'lucide-vue-next'
 import MessageThumb from './MessageThumb.vue'
+import CommitRef from './CommitRef.vue'
+import { commitRootOf } from '../links/commitLinks'
 import { useMessageLinks } from '../links/useMessageLinks'
 import { formatWhen } from '../timeFormat'
 import { t } from '../i18n'
@@ -26,14 +30,14 @@ const props = defineProps({
 const emit = defineEmits(['jump'])
 const links = useMessageLinks()
 
-const SECTIONS = ['visual', 'link', 'path', 'code']
-const sectionOf = (item) => (item.type === 'image' || item.type === 'video' ? 'visual' : item.type === 'link' ? 'link' : item.type === 'code' ? 'code' : 'path')
+const SECTIONS = ['visual', 'link', 'path', 'code', 'commit']
+const sectionOf = (item) => (item.type === 'image' || item.type === 'video' ? 'visual' : item.type === 'link' ? 'link' : item.type === 'code' ? 'code' : item.type === 'commit' ? 'commit' : 'path')
 const groups = computed(() => {
   const out = Object.fromEntries(SECTIONS.map((s) => [s, []]))
   for (const item of props.items) out[sectionOf(item)].push(item)
   return out
 })
-const PAGE = { visual: 48, link: 40, path: 40, code: 20 }
+const PAGE = { visual: 48, link: 40, path: 40, code: 20, commit: 40 }
 const limit = reactive({ ...PAGE })
 const shownOf = (s) => groups.value[s].slice(0, limit[s])
 const restOf = (s) => Math.max(0, groups.value[s].length - limit[s])
@@ -45,7 +49,9 @@ const sectionTitle = (s) =>
       ? t('conversations.media.links', 'Links')
       : s === 'path'
         ? t('conversations.media.paths', 'Files and folders')
-        : t('conversations.media.code', 'Code')
+        : s === 'commit'
+          ? t('conversations.media.commits', 'Commits')
+          : t('conversations.media.code', 'Code')
 const moreLabel = (s) => t('conversations.media.showMore', 'Show {{count}} more', { count: Math.min(restOf(s), PAGE[s]) })
 
 // The sections grow by themselves as the end of the list comes into view.
@@ -86,6 +92,9 @@ function open(item, event) {
 const iconOf = (item) => (item.type === 'video' ? Film : item.type === 'folder' ? Folder : item.type === 'link' ? (/^mailto:/i.test(item.url || '') ? Mail : Globe) : item.type === 'code' ? Code2 : item.type === 'image' ? ImageIcon : FileText)
 const subOf = (item) => (item.url ? (item.title ? item.site || item.url : item.site && item.url !== item.site ? item.url : '') : item.path && item.path !== item.label ? item.path : item.lang || '')
 const tileLabel = (item) => item.title || item.site || item.label
+// A commit's repository (its message's pane folder) and its subject once known.
+const commitRoot = (item) => (props.guest ? null : commitRootOf(props.contextOf(item)))
+const subjects = reactive({})
 </script>
 
 <template>
@@ -111,7 +120,16 @@ const tileLabel = (item) => item.title || item.site || item.label
         </div>
         <div v-else class="cm-rows">
           <div v-for="item in shownOf(s)" :key="item.key" class="cm-row" data-test="cv-media-item">
-            <button type="button" class="cm-row-main" :title="item.url || item.path || item.preview" @click="open(item, $event)">
+            <div v-if="s === 'commit'" class="cm-row-main cm-row-commit">
+              <GitCommitHorizontal :size="14" class="cm-row-icon" aria-hidden="true" />
+              <span class="cm-row-text">
+                <span class="cm-row-label cm-row-hash">
+                  <CommitRef :hash="item.hash" :root="commitRoot(item)" eager @resolved="(info) => (subjects[item.key] = info ? info.subject : '')">{{ item.hash.slice(0, 12) }}</CommitRef>
+                </span>
+                <span v-if="subjects[item.key]" class="cm-row-sub">{{ subjects[item.key] }}</span>
+              </span>
+            </div>
+            <button v-else type="button" class="cm-row-main" :title="item.url || item.path || item.preview" @click="open(item, $event)">
               <component :is="iconOf(item)" :size="14" class="cm-row-icon" aria-hidden="true" />
               <span class="cm-row-text">
                 <span class="cm-row-label">{{ item.type === 'code' ? item.preview || item.lang : item.label }}</span>
@@ -291,6 +309,16 @@ const tileLabel = (item) => item.title || item.site || item.label
 .cm-row-sub {
   color: var(--text-dim);
   font-size: 10.5px;
+}
+/* A commit: its hash is the link (CommitRef), not the whole row. */
+.cm-row-commit {
+  cursor: default;
+}
+.cm-row-main.cm-row-commit:hover .cm-row-label {
+  text-decoration: none;
+}
+.cm-row-hash {
+  font-family: var(--mono, ui-monospace, Consolas, monospace);
 }
 .cm-row-who {
   flex: 0 1 auto;

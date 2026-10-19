@@ -6,7 +6,7 @@ import { execFileSync } from 'node:child_process'
 import fs from 'node:fs'
 import os from 'node:os'
 import { join } from 'node:path'
-import { scmFileHistory, scmCommitInfo } from '../sourceControl'
+import { scmFileHistory, scmCommitInfo, scmResolveCommit } from '../sourceControl'
 
 vi.setConfig({ testTimeout: 30000, hookTimeout: 30000 })
 
@@ -59,5 +59,24 @@ describe('scmFileHistory / scmCommitInfo', () => {
     g(repo, 'remote', 'add', 'origin', 'https://github.com/someone/tessel.git')
     expect((await scmCommitInfo({ root: repo, commit: second })).webUrl).toBe(`https://github.com/someone/tessel/commit/${second}`)
     expect((await scmCommitInfo({ root: repo, commit: 'HEAD' })).ok).toBe(false)
+  })
+
+  it('a hash written in text: its full id and one line when it is a commit here, nothing else', async () => {
+    const h = await scmFileHistory({ root: repo, path: join(repo, 'b.txt') })
+    const second = h.items[1].id
+    const res = await scmResolveCommit({ root: repo, commit: second.slice(0, 8) })
+    expect(res).toMatchObject({ ok: true, id: second, subject: 'second', author: 'Ann' })
+    expect(res.timestamp).toBeGreaterThan(0)
+    expect((await scmResolveCommit({ root: repo, commit: second })).id).toBe(second)
+    // Not a commit here, not a hash, an option, a revision expression.
+    for (const commit of ['0000000', 'HEAD', '--all', `${second.slice(0, 8)}^`, 'abc12', undefined])
+      expect(await scmResolveCommit({ root: repo, commit }), String(commit)).toEqual({ ok: false })
+    // A branch that only looks like a hash is not the commit it names.
+    const fake = 'abcdef1'
+    if (!second.startsWith(fake)) {
+      g(repo, 'branch', fake, second)
+      expect(await scmResolveCommit({ root: repo, commit: fake })).toEqual({ ok: false })
+    }
+    expect(await scmResolveCommit({ root: dir, commit: second })).toEqual({ ok: false })
   })
 })

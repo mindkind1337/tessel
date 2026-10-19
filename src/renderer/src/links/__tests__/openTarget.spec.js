@@ -208,3 +208,34 @@ describe('openTarget (the window router)', () => {
     expect(window.shellApi.openExternal.mock.calls).toEqual([['https://example.com/'], ['mailto:a@b.c']])
   })
 })
+
+describe("a commit (kind 'commit')", () => {
+  const FULL = 'abc1234' + '0'.repeat(33)
+
+  it('is a hex hash and its repository, nothing else', () => {
+    expect(classifyTarget({ kind: 'commit', commit: FULL, root: 'C:\p' })).toMatchObject({ kind: 'commit', commit: FULL, root: 'C:\p', path: null, url: null })
+    for (const commit of ['--all', 'HEAD', 'abc1234^{commit}', 'ABC1234', 'abc12', '', null])
+      expect(classifyTarget({ kind: 'commit', commit, root: 'C:\p' }), String(commit)).toBeNull()
+    expect(classifyTarget({ kind: 'commit', commit: FULL })).toBeNull()
+    expect(classifyTarget({ kind: 'commit', commit: FULL, root: 'C:\a\u0007b' })).toBeNull()
+    // A path never becomes one by asking.
+    expect(classifyTarget({ kind: 'commit', path: 'C:\p\a.js' })).toBeNull()
+  })
+
+  it('opens in Source Control; Ctrl+click copies its full hash', async () => {
+    const d = { openCommit: vi.fn(() => true), copyText: vi.fn(() => true), notOpened: vi.fn() }
+    const r = createLinkRouter(d)
+    expect(await r.open({ kind: 'commit', commit: FULL, root: 'C:\p' })).toBe(true)
+    expect(d.openCommit).toHaveBeenCalledWith({ root: 'C:\p', commit: FULL })
+    expect(await r.open({ kind: 'commit', commit: FULL, root: 'C:\p' }, { event: { ctrlKey: true } })).toBe(true)
+    expect(d.copyText).toHaveBeenCalledWith(FULL)
+    expect(d.openCommit).toHaveBeenCalledTimes(1)
+  })
+
+  it('says so when no open project has it', async () => {
+    const d = { openCommit: vi.fn(() => false), notOpened: vi.fn() }
+    expect(await createLinkRouter(d).open({ kind: 'commit', commit: FULL, root: 'D:\elsewhere' })).toBe(false)
+    expect(d.notOpened).toHaveBeenCalledWith(expect.objectContaining({ reason: 'outside', target: expect.objectContaining({ kind: 'commit', commit: FULL }) }))
+    expect(await createLinkRouter({}).open({ kind: 'commit', commit: FULL, root: 'C:\p' })).toBe(false)
+  })
+})

@@ -24,6 +24,7 @@ import { formatFileLinkLocation } from '../../../chat/orca/shared/file-link-loca
 import { inlineCodeFileLink, splitTextNode } from './comment-markdown-native-chat-file-links.js'
 import ExpandableMarkdownImage from './ExpandableMarkdownImage.vue'
 import NativeChatMarkdownLocalImage from './NativeChatMarkdownLocalImage.vue'
+import { findCommitRefs } from '../../../links/commitRefs.js'
 
 const TEXT_NODE = 3
 const ELEMENT_NODE = 1
@@ -222,6 +223,34 @@ export function linkifyFilePaths(root) {
 // remarkGitHubReferences on the DOM.
 export function linkifyGitHubReferences(root, repo) {
   transformTextNodes(root, (value) => splitGitHubReferenceText(value, repo))
+}
+
+// Tessel: commit hashes in prose and inline code ("pushed (`1f6ccc70`)",
+// "abc1234..def5678": links/commitRefs.js) as #tessel-commit-<hash> links;
+// renderAnchor makes each one a CommitRef, a link only once its repository
+// says it is a commit (never inside a link or a code block).
+export const COMMIT_HREF = /^#tessel-commit-([0-9a-f]{7,40})$/
+
+export function splitCommitRefText(value) {
+  const refs = findCommitRefs(value)
+  if (!refs.length) return [{ type: 'text', value }]
+  const parts = []
+  let at = 0
+  for (const r of refs) {
+    if (r.index > at) parts.push({ type: 'text', value: value.slice(at, r.index) })
+    parts.push({ type: 'link', url: `#tessel-commit-${r.hash}`, children: [{ type: 'text', value: r.hash }] }) // i18n-ignore
+    at = r.index + r.length
+  }
+  if (at < value.length) parts.push({ type: 'text', value: value.slice(at) })
+  return parts
+}
+
+export function linkifyCommitRefs(root) {
+  transformTextNodes(root, splitCommitRefText, {
+    inlineCode(code) {
+      for (const child of Array.from(code.childNodes)) if (child.nodeType === TEXT_NODE) replaceTextNode(child, splitCommitRefText)
+    }
+  })
 }
 
 // --- 3. Vnodes ----------------------------------------------------------------------
@@ -445,6 +474,13 @@ export const IMAGE_MARKER_HREF = /^#tessel-image-([1-9]\d{0,3})$/
 
 function renderAnchor(element, ctx, state, className) {
   const href = safeHref(element.getAttribute('href'))
+  // Tessel: a commit hash (linkifyCommitRefs): the surface's CommitRef, or
+  // its text when the message has no repository to ask.
+  const commit = href ? COMMIT_HREF.exec(href) : null
+  if (commit) {
+    const kids = renderChildren(element, ctx, state)
+    return ctx.commitRef ? ctx.commitRef(commit[1], kids) : kids
+  }
   const marker = href && ctx.onImageMarker ? IMAGE_MARKER_HREF.exec(href) : null
   if (marker) {
     const n = Number(marker[1])

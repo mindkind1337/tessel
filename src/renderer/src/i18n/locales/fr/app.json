@@ -932,7 +932,14 @@
     },
     "link": {
       "outside": "Ce dossier n'est pas dans le projet affiché dans Fichiers : {{path}}",
-      "failed": "Impossible d'ouvrir {{target}}"
+      "failed": "Impossible d'ouvrir {{target}}",
+      "commitCopied": "{{hash}} copié",
+      "commitOutside": "Le commit {{hash}} n'est dans aucun projet ouvert dans Tessel."
+    }
+  },
+  "links": {
+    "commit": {
+      "hint": "Clic : afficher dans le contrôle de code source. Ctrl+clic : copier le hash complet."
     }
   }
 }

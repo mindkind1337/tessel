@@ -1020,6 +1020,21 @@
   outline: none;
 }
 
+/* The commit a commit link opened: selected; one not among the commits
+   listed shows first, with its short hash. */
+.sch-row.sch-selected {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+}
+.sch-row.sch-outside {
+  grid-template-columns: minmax(0, 1fr);
+}
+.sch-hash {
+  flex: 0 0 auto;
+  font-family: var(--mono, ui-monospace, Consolas, monospace);
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
 .sch-graph {
   flex: 0 0 auto;
   overflow: visible;

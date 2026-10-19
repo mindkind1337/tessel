@@ -12,12 +12,17 @@
 //   url    -> Settings > Browser, "Open web links in": Tessel's built-in
 //             browser (a new tab of the current project, the default) or the
 //             system browser; Ctrl/Cmd+click opens it in the other one;
-//   mailto -> the system's mail program.
+//   mailto -> the system's mail program;
+//   commit -> Source Control's Commits, that commit selected with its files
+//             (a hash an agent wrote, once its repository knows it:
+//             commitLinks.js); Ctrl/Cmd+click copies its full hash.
 //
 // A target is a string (a URL, a mailto: address, a data:image URL, a file:
 // URI, a path) or an object { kind?, path | file, url | href, src, line, col,
-// remote, lshare }. classifyTarget() normalizes it:
-//   { kind, path, url, src, line, col, remote, lshare }
+// remote, lshare }, or { kind: 'commit', commit, root } (root: the
+// repository folder the commit was found in). classifyTarget() normalizes it:
+//   { kind, path, url, src, line, col, remote, lshare } (a commit: { kind,
+//   commit, root } and the rest null)
 //   remote: the SSH host id of an ssh://<host>/… path (src/shared/remotePath.js)
 //   lshare: true for a Live Share host's lshare://… path
 // and returns null for anything Tessel never opens (javascript:, an unknown
@@ -32,7 +37,7 @@ import { isLsharePath } from '../../../shared/liveSharePath.js'
 import { isRemotePath, parseRemotePath } from '../../../shared/remotePath.js'
 import { fileUriToFilesystemPath } from '../chat/orca/shared/file-uri-path.js'
 
-export const TARGET_KINDS = Object.freeze(['file', 'dir', 'image', 'pdf', 'url', 'mailto'])
+export const TARGET_KINDS = Object.freeze(['file', 'dir', 'image', 'pdf', 'url', 'mailto', 'commit'])
 export const URL_MODES = Object.freeze(['builtin', 'system'])
 
 const CONTROL = /[\u0000-\u001f\u007f]/
@@ -63,7 +68,7 @@ function pathTarget(path, { kind = null, line = null, col = null } = {}) {
   // An ssh:// path that does not parse is never treated as a local one.
   if (isRemotePath(path) && !remote) return null
   const lshare = isLsharePath(path)
-  let k = TARGET_KINDS.includes(kind) && kind !== 'url' && kind !== 'mailto' ? kind : null
+  let k = TARGET_KINDS.includes(kind) && kind !== 'url' && kind !== 'mailto' && kind !== 'commit' ? kind : null
   // A path written with a trailing separator names a folder.
   if (!k && /[\\/]$/.test(path) && path.replace(/[\\/]+$/, '')) k = 'dir'
   if (!k) {
@@ -73,10 +78,21 @@ function pathTarget(path, { kind = null, line = null, col = null } = {}) {
   return { kind: k, path, url: null, src: null, line: posInt(line), col: posInt(col), remote, lshare }
 }
 
+// A commit: its hash (hex only: never an option, never a revision
+// expression) and the repository it was found in.
+function commitTarget(obj) {
+  const commit = typeof obj.commit === 'string' ? obj.commit.trim() : ''
+  const root = obj.root
+  if (!/^[0-9a-f]{7,64}$/.test(commit)) return null
+  if (typeof root !== 'string' || !root || root.length > MAX_TARGET || CONTROL.test(root)) return null
+  return { kind: 'commit', commit, root, path: null, url: null, src: null, line: null, col: null, remote: null, lshare: false }
+}
+
 // -> { kind, path, url, src, line, col, remote, lshare } | null
 export function classifyTarget(input) {
   if (input == null) return null
   const obj = typeof input === 'object' ? input : null
+  if (obj && obj.kind === 'commit') return commitTarget(obj)
   const text = obj ? null : String(input).trim()
   if (text !== null && (!text || text.length > MAX_TARGET)) return null
   const line = obj ? obj.line : null
@@ -125,6 +141,8 @@ const fileName = (p) => String(p || '').split(/[\\/]/).filter(Boolean).pop() || 
 //   revealInFiles(path) -> true when the Files tab shows it (false: not in
 //     the project shown there)
 //   openFolder(path) -> the system's file manager (a local folder only)
+//   openCommit({ root, commit }) -> truthy when Source Control shows it
+//   copyText(text) -> the clipboard (Ctrl+click on a commit)
 //   urlMode() -> 'builtin' | 'system'
 //   openUrlBuiltin(url) / openUrlSystem(url) / openMail(url)
 //   notOpened({ target, reason }) -> tells the user (a toast)
@@ -202,8 +220,20 @@ export function createLinkRouter(deps = {}) {
     return true
   }
 
+  async function openCommit(t, opts) {
+    const e = opts.event
+    if (e && (e.ctrlKey || e.metaKey)) {
+      if (!has('copyText')) return fail(t, 'unsupported')
+      const res = await call('copyText', t.commit)
+      return res === false ? fail(t, 'failed') : true
+    }
+    if (!has('openCommit')) return fail(t, 'unsupported')
+    return (await call('openCommit', { root: t.root, commit: t.commit })) ? true : fail(t, 'outside')
+  }
+
   // -> Promise<boolean>: opened (or handed to the program that opens it).
-  // opts: { event (Ctrl/Cmd: the other browser), image: 'lightbox' | 'editor',
+  // opts: { event (Ctrl/Cmd: the other browser; a commit: copy its hash),
+  //         image: 'lightbox' | 'editor',
   //         label (a title for the viewer), preview (an editor preview tab),
   //         external (a web page in the system browser whatever the setting) }
   async function open(input, opts = {}) {
@@ -219,6 +249,7 @@ export function createLinkRouter(deps = {}) {
       }
       if (t.kind === 'dir') return await openDir(t)
       if (t.kind === 'url') return await openUrl(t, opts)
+      if (t.kind === 'commit') return await openCommit(t, opts)
       if (t.kind === 'mailto') {
         const res = await call(has('openMail') ? 'openMail' : 'openUrlSystem', t.url)
         if (res === false || res === undefined || (res && res.ok === false)) return fail(t, 'failed')

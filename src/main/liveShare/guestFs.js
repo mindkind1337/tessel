@@ -604,6 +604,17 @@ export function createGuestFs({ request } = {}) {
     })
   }
 
+  // A commit hash in a host's pane or conversation: a commit of the shared
+  // project? Asked through what the host already shares of its history (the
+  // files of a commit, scm.commitFiles): no right for that, no link. Only
+  // its full id comes back (no subject nor author over this request).
+  function scmResolveCommit({ root, commit } = {}) {
+    const loc = locate(root, root)
+    if (!loc) return Promise.resolve(outside())
+    if (!isCommit(commit) || commit.length > 40) return Promise.resolve(failure('bad-commit'))
+    return call('scm.commitFiles', loc.project, { commit }, (d) => (isCommit(d.commit) && d.commit.startsWith(commit) ? { id: d.commit, subject: '', author: '', timestamp: null } : null))
+  }
+
   function change(op) {
     return ({ root, paths } = {}) => {
       const loc = locate(root, root)
@@ -635,6 +646,7 @@ export function createGuestFs({ request } = {}) {
     scmBranchCompare,
     scmFileHistory,
     scmCommitInfo,
+    scmResolveCommit,
     scmStage: change('scm.stage'),
     scmUnstage: change('scm.unstage'),
     scmDiscard: change('scm.discard'),

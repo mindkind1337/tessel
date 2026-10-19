@@ -13,6 +13,8 @@
 //   folder  a path written with a trailing separator, or whose last part has
 //           no extension (a rooted path: "C:\proj\src")
 //   code    a fenced code block
+//   commit  a commit hash in prose or inline code (commitRefs.js; it opens
+//           only once its repository says it is a commit: CommitRef.vue)
 // A message is read once per text (memoized): the threads are rebuilt often,
 // the texts stay the same.
 import { classifyTarget } from './openTarget.js'
@@ -20,8 +22,9 @@ import { splitTextNode } from '../components/chat/orca/comment-markdown-native-c
 import { routeNativeChatHref } from '../chat/orca/shared/native-chat-href-routing.js'
 import { parseFileLinkLocation } from '../chat/orca/shared/file-link-location.js'
 import { extOf, fileKind } from '../../../shared/fileKinds.js'
+import { findCommitRefs } from './commitRefs.js'
 
-export const MEDIA_TYPES = Object.freeze(['link', 'image', 'video', 'file', 'folder', 'code'])
+export const MEDIA_TYPES = Object.freeze(['link', 'image', 'video', 'file', 'folder', 'code', 'commit'])
 
 const VIDEO_EXT = new Set(['mp4', 'webm', 'mov', 'm4v', 'mkv', 'avi', 'ogv', 'wmv'])
 const VIDEO_HOST = /(?:^|\.)(?:youtube\.com|youtu\.be|youtube-nocookie\.com|vimeo\.com|twitch\.tv)$/i
@@ -171,7 +174,9 @@ function scan(text) {
     return ' '
   })
   // Inline code is read like prose (`src/a.js` is a path, as in the chat).
-  pathsIn(rest.replace(/`([^`\n]+)`/g, ' $1 '), add)
+  const prose = rest.replace(/`([^`\n]+)`/g, ' $1 ')
+  pathsIn(prose, add)
+  for (const r of findCommitRefs(prose)) add({ type: 'commit', id: `h:${r.hash}`, hash: r.hash, label: r.hash }) // i18n-ignore
   return items
 }
 
@@ -234,7 +239,7 @@ export function filterByTypes(threads, types) {
   return out
 }
 
-// How many messages hold each type: { link, image, video, file, folder, code }.
+// How many messages hold each type: { link, image, video, file, folder, code, commit }.
 export function typeCounts(threads) {
   const counts = Object.fromEntries(MEDIA_TYPES.map((x) => [x, 0]))
   for (const thread of threads || []) for (const line of thread.lines) for (const x of mediaOf(line).types) counts[x]++

@@ -66,6 +66,7 @@ import { isVirtualPath, isLsharePath } from '../../../shared/liveSharePath'
 import { accessOf, stateOfAnswer, accessStateText, accessStateKind, localOnlyText } from '../liveShareGuestAccess'
 import { t, intlLocale } from '../i18n'
 import { openTarget } from '../links/openTarget'
+import { commitFocusRequest, takeCommitFocus } from '../links/commitFocus'
 
 const props = defineProps({
   root: { type: String, default: null },
@@ -93,6 +94,34 @@ const repoRoot = computed(() => (copyTask.value ? copyTask.value.worktree.path :
 watch(copies, (list) => {
   if (target.value !== 'project' && !list.some((k) => k.id === target.value)) target.value = 'project'
 })
+
+// A commit link clicked (App's openCommit, links/commitFocus.js): the task
+// copy it was found in when it is one of this project's, else the project;
+// then Commits shows it (ScmHistoryPanel's focus). After the parent has
+// switched to its project (flush 'post'), and on a panel built for it.
+const commitFocus = ref(null) // { commit, n }
+function inFolder(p, root) {
+  if (typeof p !== 'string' || typeof root !== 'string' || !root) return false
+  const virtual = isVirtualPath(root)
+  const norm = (s) => {
+    const v = s.replace(/[\\/]+/g, '/').replace(/\/+$/, '')
+    return virtual ? v : v.toLowerCase()
+  }
+  const a = norm(p)
+  const b = norm(root)
+  return a === b || a.startsWith(`${b}/`)
+}
+watch(
+  () => commitFocusRequest.value && commitFocusRequest.value.n,
+  () => {
+    const req = takeCommitFocus()
+    if (!req) return
+    const copy = copies.value.find((k) => inFolder(req.root, k.worktree.path))
+    target.value = copy ? copy.id : 'project'
+    commitFocus.value = { commit: req.commit, n: req.n }
+  },
+  { immediate: true, flush: 'post' }
+)
 
 const state = computed(() => statusOf(repoRoot.value))
 const data = computed(() => (state.value && state.value.data) || null)
@@ -1701,7 +1730,7 @@ function draftStore() {
 
         <!-- Commits, docked at the bottom as the list scrolls (sync/git-history-panel.tsx). -->
         <div v-if="data && data.repo" class="sc-history-dock">
-          <ScmHistoryPanel :root="repoRoot" :head="data.head || ''" :base="compare && compare.base ? compare.base : null" @open-file="openCommitFile" />
+          <ScmHistoryPanel :root="repoRoot" :focus="commitFocus" :head="data.head || ''" :base="compare && compare.base ? compare.base : null" @open-file="openCommitFile" />
         </div>
       </template>
     </div>

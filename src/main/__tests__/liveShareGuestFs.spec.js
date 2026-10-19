@@ -140,6 +140,20 @@ describe('the guest handlers', () => {
     expect((await h.fs.scm.scmBranchCompare({ root: ROOT })).reviewUrl).toBe('https://github.com/a/b/compare/main...x')
   })
 
+  it("a commit hash in a host's pane: asked through the history the host shares (scm.commitFiles), its full id only", async () => {
+    const full = 'abc1234' + 'd'.repeat(33)
+    const h = host((op, project, args) => (op === 'scm.commitFiles' ? { entries: [], commit: args.commit === 'abc1234' ? full : 'e'.repeat(40), parent: null } : null))
+    expect(await h.fs.scm.scmResolveCommit({ root: ROOT, commit: 'abc1234' })).toEqual({ ok: true, id: full, subject: '', author: '', timestamp: null })
+    expect(h.calls).toEqual([{ op: 'scm.commitFiles', project: 'p1', args: { commit: 'abc1234' } }])
+    // Another commit back is no answer; a non-hash never leaves.
+    expect((await h.fs.scm.scmResolveCommit({ root: ROOT, commit: 'fff1234' })).ok).toBe(false)
+    for (const commit of ['--all', 'HEAD', 'a'.repeat(64)]) expect((await h.fs.scm.scmResolveCommit({ root: ROOT, commit })).ok).toBe(false)
+    expect(h.calls).toHaveLength(2)
+    // No right to the host's history: no link.
+    const denied = host(() => ({ ok: false, code: 'forbidden' }))
+    expect((await denied.fs.scm.scmResolveCommit({ root: ROOT, commit: 'abc1234' })).ok).toBe(false)
+  })
+
   it('words the host codes, and reads a lost connection as no answer', async () => {
     const h = host(() => ({ ok: false, code: 'forbidden' }))
     expect(await h.fs.writeForEdit({ file: 'lshare://p1\\a.js', text: 'x', expectHash: HASH })).toMatchObject({ ok: false, code: 'forbidden', error: 'The host has not given you the right to do this.' })

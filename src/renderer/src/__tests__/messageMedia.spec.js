@@ -24,6 +24,13 @@ describe('messageMedia', () => {
     expect(items('[x](javascript:alert(1)) ftp://host/file')).toEqual([])
   })
 
+  it('commits: hashes in prose and inline code, not in URLs, code blocks or words', () => {
+    const got = items('Pushed (`1f6ccc70`), then abc1234..def5678. See https://github.com/o/r/commit/9fceb02 and deadbeef.\n```\ncafe123 in a block\n```')
+    expect(got.filter((x) => x.type === 'commit').map((x) => x.hash)).toEqual(['1f6ccc70', 'abc1234', 'def5678'])
+    expect(types('commit abc1234')).toEqual(['commit'])
+    expect(types('deadbeef 1234567')).toEqual([])
+  })
+
   it('videos: YouTube, Vimeo and Twitch pages, video files and addresses', () => {
     expect(isVideoUrl('https://youtu.be/dQw4w9WgXcQ')).toBe(true)
     expect(isVideoUrl('https://www.youtube.com/watch?v=dQw4w9WgXcQ')).toBe(true)
@@ -89,7 +96,7 @@ describe('messageMedia', () => {
     const some = filterByTypes(threads, ['video', 'file'])
     expect(some.map((t) => t.lines.map((l) => l.key))).toEqual([['l2'], ['l4']])
     expect(filterByTypes(threads, ['folder'])).toEqual([])
-    expect(typeCounts(threads)).toEqual({ link: 1, image: 0, video: 1, file: 1, folder: 0, code: 1 })
+    expect(typeCounts(threads)).toEqual({ link: 1, image: 0, video: 1, file: 1, folder: 0, code: 1, commit: 0 })
     const all = mediaItems(threads)
     expect(all.map((x) => `${x.line.key}:${x.type}`)).toEqual(['l4:file', 'l3:code', 'l3:link', 'l2:video'])
     expect(all[0].thread.key).toBe('team:t')

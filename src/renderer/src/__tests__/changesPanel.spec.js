@@ -11,6 +11,8 @@ import { scmStatus } from '../scmState'
 import { addNote, notesFor, clearNotes } from '../reviewNotes'
 import { setNotesDelivery } from '../notesDelivery'
 import { settings, resetSettings } from '../settings'
+import { requestCommitFocus } from '../links/commitFocus'
+import { clearCommitCache } from '../links/commitLinks'
 
 const ROOT = 'C:\\proj'
 let w
@@ -44,7 +46,8 @@ function api(scm) {
       ...(scm.branchCompare ? { branchCompare: rec('branchCompare', scm.branchCompare) } : {}),
       ...(scm.history ? { history: rec('history', scm.history) } : {}),
       ...(scm.commitFiles ? { commitFiles: rec('commitFiles', scm.commitFiles) } : {}),
-      ...(scm.commitInfo ? { commitInfo: rec('commitInfo', scm.commitInfo) } : {})
+      ...(scm.commitInfo ? { commitInfo: rec('commitInfo', scm.commitInfo) } : {}),
+      ...(scm.resolveCommit ? { resolveCommit: rec('resolveCommit', scm.resolveCommit) } : {})
     },
     writeClipboard: vi.fn(),
     openExternal: vi.fn()
@@ -726,6 +729,67 @@ describe('Source Control: branch line and Commits', () => {
     await w.find('[data-test="git-history-commit-file"]').trigger('click')
     expect(w.emitted('open-diff')[0][0]).toMatchObject({ root: ROOT, rel: 'src/a.js', area: 'commit', commit: hash, file: 'C:\\proj\\src\\a.js', preview: true })
     await w.find('[data-test="sc-history-toggle"]').trigger('click') // closed again for the next tests
+  })
+})
+
+describe('Source Control: a commit link clicked elsewhere (links/commitFocus.js)', () => {
+  const A = '1'.repeat(40)
+  const B = '2'.repeat(40)
+  const OLD = 'abc1234' + '9'.repeat(33)
+  const history = () => ({
+    ok: true,
+    items: [
+      { id: A, parentIds: [B], subject: 'Second', message: 'Second', displayId: '1111111', author: 'Ann', timestamp: 1700000000000, references: [] },
+      { id: B, parentIds: [], subject: 'First', message: 'First', displayId: '2222222', author: 'Bob', timestamp: 1690000000000, references: [] }
+    ],
+    hasMore: false,
+    limit: 50
+  })
+  const commitFiles = () => ({ ok: true, entries: [{ path: 'src/a.js', status: 'modified', added: 1, removed: 0 }] })
+  afterEach(async () => {
+    clearCommitCache()
+    if (w && w.find('[data-test="sc-history-list"]').exists()) await w.find('[data-test="sc-history-toggle"]').trigger('click')
+  })
+
+  it('opens Commits with that commit selected and its files shown', async () => {
+    api({ status: () => status([], { head: A }), history, commitFiles })
+    requestCommitFocus({ root: ROOT, commit: B })
+    make()
+    await flushPromises()
+    await flushPromises()
+    const rows = w.findAll('[data-test="git-history-row"]')
+    expect(rows.map((r) => r.classes().includes('sch-selected'))).toEqual([false, true])
+    expect(calls.find(([n]) => n === 'commitFiles')[1]).toEqual({ root: ROOT, commit: B })
+    expect(w.find('[data-test="sc-history-files"]').text()).toContain('Bob')
+    expect(w.find('[data-test="git-history-commit-file"]').exists()).toBe(true)
+  })
+
+  it('one older than the commits listed shows first, read on its own', async () => {
+    api({ status: () => status([], { head: A }), history, commitFiles, resolveCommit: () => ({ ok: true, id: OLD, subject: 'Long ago', author: 'Cy', timestamp: 1600000000000 }) })
+    make()
+    await flushPromises()
+    requestCommitFocus({ root: ROOT, commit: 'abc1234' })
+    await flushPromises()
+    await flushPromises()
+    const outside = w.find('[data-test="git-history-outside"]')
+    expect(outside.exists()).toBe(true)
+    expect(outside.text()).toContain('abc1234')
+    expect(outside.text()).toContain('Long ago')
+    expect(outside.classes()).toContain('sch-selected')
+    expect(calls.find(([n]) => n === 'commitFiles')[1]).toEqual({ root: ROOT, commit: OLD })
+    expect(w.find('[data-test="sc-history-files"]').text()).toContain('Cy')
+  })
+
+  it("found in a task's copy: that copy's Commits", async () => {
+    setTasks([{ id: 't1', title: 'T', column: 'doing', worktree: { path: 'C:\\copy', branch: 'b' } }])
+    api({ status: () => status([], { head: A }), history, commitFiles })
+    make()
+    await flushPromises()
+    requestCommitFocus({ root: 'C:\\copy\\sub', commit: A })
+    await flushPromises()
+    await flushPromises()
+    expect(calls.filter(([n]) => n === 'history').pop()[1]).toMatchObject({ root: 'C:\\copy' })
+    expect(calls.find(([n]) => n === 'commitFiles')[1]).toEqual({ root: 'C:\\copy', commit: A })
   })
 })
 

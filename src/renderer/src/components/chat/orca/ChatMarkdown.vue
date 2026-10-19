@@ -26,6 +26,10 @@
  *     fallback link actions (useNativeChatFileLinkContext's value)
  *   onImageMarker ((n, event) => void, Tessel): "[Image #n]" in the text
  *     becomes a chip that calls it (the message's n-th image)
+ * Tessel: commit hashes ("pushed (`1f6ccc70`)") become links once the
+ * repository of the link context (the pane that wrote it) says they are
+ * commits there (CommitRef.vue, links/commitLinks.js); without a context
+ * they stay text.
  * Tessel: a picture named by its path shows inline once read
  * (NativeChatMarkdownLocalImage).
  * Class and attributes go to the root <div>.
@@ -34,6 +38,8 @@
  * prevented (a middle click too); a right click is left alone.
  */
 import { computed, defineComponent, h, inject, shallowRef, toValue, watch } from 'vue'
+import CommitRef from '../../CommitRef.vue'
+import { commitRootOf } from '../../../links/commitLinks'
 import { renderMarkdown } from '../../../markdownView'
 import { useNativeChatLinkActions } from '../../../chat/orca/composables/use-native-chat-link-actions.js'
 import {
@@ -49,6 +55,7 @@ import {
   isTrustedCompactImageSrc,
   linkifyFilePaths as linkifyFilePathsInDom,
   linkifyGitHubReferences,
+  linkifyCommitRefs,
   linkImageMarkers,
   parseSanitizedHtml,
   protectLocalMarkdownLinks,
@@ -98,6 +105,7 @@ export default defineComponent({
       if (props.linkifyFilePaths) linkifyFilePathsInDom(parsed)
       else if (props.linkifyExistingPaths) markGatedLinks(parsed, linkifyFilePathsInDom)
       if (props.githubRepo) linkifyGitHubReferences(parsed, props.githubRepo)
+      linkifyCommitRefs(parsed)
       return parsed
     })
 
@@ -128,9 +136,15 @@ export default defineComponent({
       return codeFiles.value ? applyInlineCodeFileLinks(copy, codeFiles.value) : copy
     })
 
+    // Commit hashes: asked of the repository the message's paths are read
+    // against (its pane's folder, worktree copy or SSH host's folder).
+    const commitRoot = computed(() => commitRootOf(linkContext.value))
+    const commitRef = (hash, kids) => h(CommitRef, { hash, root: commitRoot.value }, () => kids)
+
     return () => {
       const isDocument = props.variant === 'document'
       const ctx = {
+        commitRef: commitRoot.value ? commitRef : null,
         renderers: isDocument ? documentRenderers : compactRenderers,
         renderCodeBlock: props.renderCodeBlock,
         expandImages: props.expandImages,

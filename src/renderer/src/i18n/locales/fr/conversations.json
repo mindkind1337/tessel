@@ -80,7 +80,8 @@
       "folders": "Dossiers",
       "code": "Code",
       "hint": "Seulement les messages avec : {{type}} ({{count}})",
-      "aria": "Messages qui partagent"
+      "aria": "Messages qui partagent",
+      "commits": "Commits"
     },
     "view": {
       "aria": "Afficher",
@@ -107,7 +108,8 @@
       "moreImages": "+{{count}}",
       "moreImagesHint_one": "{{count}} autre image non affichée",
       "moreImagesHint_other": "{{count}} autres images non affichées",
-      "moreImagesHint": "{{count}} autres images non affichées"
+      "moreImagesHint": "{{count}} autres images non affichées",
+      "commits": "Commits"
     },
     "waiting": {
       "offline": "Non lu : {{names}} (leur hôte {{hosts}} n’est pas connecté)",
