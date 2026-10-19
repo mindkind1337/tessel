@@ -58,7 +58,7 @@
 // in survive a restart of this Tessel (accessState(), given back to
 // createShareHost), with their counts, and so do the codes they need and each
 // invitation's block. A guest who leaves or is removed can't come back with
-// its reconnect key; one offline for more than 15 minutes is forgotten.
+// its reconnect key; one offline for more than 30 days is forgotten.
 //
 // The host shares one project or several (projects), and can add or take one
 // out at any time. Each guest sees its own of them (its grant): changed at any
@@ -2142,6 +2142,9 @@ export function createShareHost({ secret = null, hostName, callbacks, log = () =
     },
     // To keep across a restart of this Tessel: invitations, codes, people.
     accessState: () => access.toJSON(),
+    // The secrets of every code that still lets someone in or back
+    // (shareRendezvous.js: where the share says its address).
+    codeSecrets: () => access.secrets(),
     guests: () => [...guests.values()].filter((g) => !inHandshake(g)).map(publicGuest)
   }
 }

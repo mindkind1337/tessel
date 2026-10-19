@@ -34,6 +34,7 @@
       "downloading": "Téléchargement du tunnel Cloudflare… {{percent}} %",
       "starting": "Démarrage…",
       "checking": "Vérification de l'adresse…",
+      "retrying": "Le partage n'a pas encore pu redémarrer ({{error}}). Il réessaie tout seul.",
       "copied": "Copié",
       "copyFailed": "Impossible de copier dans le presse-papiers.",
       "guests": "Invités",

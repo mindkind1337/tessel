@@ -53,6 +53,7 @@ import { isLsharePath } from '../shared/liveSharePath'
 import { lshareArg, pickFs, localOnlyFor } from './liveShare/guestRouting'
 import { createGuestFs } from './liveShare/guestFs'
 import { createShareUsage } from './liveShare/shareUsage'
+import { createRelay } from './liveShare/shareRendezvous'
 import { STATUS_PROVIDERS } from '../shared/agentStateModel'
 import { prepareAgentStateHooks } from './agentStateSetup'
 import { assessNeeds } from './tesselNeeds'
@@ -4152,6 +4153,10 @@ liveShare = registerLiveShare({
   localHistory,
   // Taken back once this is the only Tessel running (below).
   resume: false,
+  // A kept share says its address on a public relay (ntfy.sh) each time it
+  // changes, and a guest whose address went dead finds the new one there
+  // (sealed and signed: liveShare/shareRendezvous.js).
+  rendezvous: createRelay(),
   // Phase 2c: a shared project's past conversations (masked there), what
   // its terminal agents said, and its browser pages (any of the browser's
   // sessions: the host's window lists them, checked against the share).

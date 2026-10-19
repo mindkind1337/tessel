@@ -33,6 +33,7 @@
 import crypto from 'crypto'
 
 const PREFIX = 'TS1.'
+const PREFIX2 = 'TS2.'
 const SECRET_BYTES = 32
 export const NONCE_BYTES = 16
 export const KX_BYTES = 32
@@ -57,32 +58,57 @@ export function newNonce() {
 
 // "TS1.<address>.<secret>", both base64url: one line to paste in a chat. The
 // address may have a path (an invitation's): it is kept as it is.
-export function encodeInvite({ url, secret }) {
-  return PREFIX + b64u(Buffer.from(String(url), 'utf8')) + '.' + b64u(secret)
+// With the share's signing key (hostKey: its raw public half), a TS2 code:
+// "TS2.<address>.<secret>.<host key>". Its address is only the last one
+// known: a share that came back on a new tunnel says where it is now on the
+// rendezvous relay (shareRendezvous.js, whose topic and key come from the
+// secret alone, so a TS1 code finds it too), signed with that key, which the
+// guest also expects in the host's first welcome.
+export function encodeInvite({ url, secret, hostKey = null }) {
+  const base = b64u(Buffer.from(String(url), 'utf8')) + '.' + b64u(secret)
+  return Buffer.isBuffer(hostKey) && hostKey.length === KX_BYTES ? PREFIX2 + base + '.' + b64u(hostKey) : PREFIX + base
 }
 
-// The address and secret of an invite code, or null when it is not one.
-// Only wss:// addresses (and ws:// to this PC or the local network, for
-// tests and a same-network share) are accepted; a query or fragment in the
-// address is dropped.
+// A share's address as a code or the relay gives it, or null: only wss://
+// addresses (and ws:// to this PC or the local network, for tests and a
+// same-network share) are accepted; a query or fragment is dropped.
+export function cleanShareUrl(text) {
+  let url
+  try {
+    url = new URL(String(text))
+  } catch {
+    return null
+  }
+  if (url.protocol !== 'wss:' && !(url.protocol === 'ws:' && isLocalHost(url.hostname))) return null
+  if (url.username || url.password) return null
+  url.hash = ''
+  url.search = ''
+  return url.toString()
+}
+
+// The address, secret (and, for a TS2 code, the host's key) of an invite
+// code, or null when it is not one.
 export function decodeInvite(code) {
   const text = String(code || '').trim()
-  if (!text.startsWith(PREFIX)) return null
+  const v2 = text.startsWith(PREFIX2)
+  if (!v2 && !text.startsWith(PREFIX)) return null
   const parts = text.slice(PREFIX.length).split('.')
-  if (parts.length !== 2) return null
-  let url
+  if (parts.length !== (v2 ? 3 : 2)) return null
   let secret
+  let hostKey = null
+  let address
   try {
-    url = new URL(unb64u(parts[0]).toString('utf8'))
+    address = unb64u(parts[0]).toString('utf8')
     secret = unb64u(parts[1])
+    if (v2) hostKey = unb64u(parts[2])
   } catch {
     return null
   }
   if (secret.length !== SECRET_BYTES) return null
-  if (url.protocol !== 'wss:' && !(url.protocol === 'ws:' && isLocalHost(url.hostname))) return null
-  url.hash = ''
-  url.search = ''
-  return { url: url.toString(), secret }
+  if (v2 && (hostKey.length !== KX_BYTES || isWeakSigningKey(hostKey))) return null
+  const url = address.length <= 2048 ? cleanShareUrl(address) : null
+  if (!url) return null
+  return { url, secret, hostKey }
 }
 
 function isLocalHost(host) {

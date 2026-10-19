@@ -35,7 +35,9 @@
 //   its identity, not to a reconnect key: leaving and joining again resets
 //   nothing, and a join with an invitation it used already is no new use.
 //   The others' counters stay with them across their reconnects and a
-//   restart. One offline for OFFLINE_KEEP_MS is forgotten; at most
+//   restart. One offline for OFFLINE_KEEP_MS (30 days: a share is kept until
+//   the host stops it, and its people come back whenever they can; Remove
+//   is what keeps one out) is forgotten; at most
 //   MAX_PEOPLE (a trusted person's join never pushes out someone the host
 //   let in). No longer trusted: its people go (the host's yes again).
 //
@@ -58,7 +60,7 @@ export const INVITE_TTL_MS = LIFETIMES.hour
 export const MAX_INVITES = 20
 export const MAX_USES = 1000
 export const MAX_PEOPLE = 64
-export const OFFLINE_KEEP_MS = 15 * 60 * 1000
+export const OFFLINE_KEEP_MS = 30 * 24 * 60 * 60 * 1000
 // Connections that got the host's keys and never got in, in 10 min, before
 // an invitation is blocked.
 export const UNFINISHED_MAX = 8
@@ -725,6 +727,9 @@ export function createAccess({ now = Date.now, trust = null, isOnline = () => fa
     invites: () => [...invites.values()],
     codeOf: (id) => (invites.get(id) ? codes.get(invites.get(id).sid) : null),
     hasCode: (sid) => codes.has(sid),
+    // Every code's secret (invitations' and the earlier ones people need):
+    // the topics the share says its address on (shareRendezvous.js).
+    secrets: () => [...codes.values()].map((c) => c.secret),
     usable,
     prune,
     createInvite,

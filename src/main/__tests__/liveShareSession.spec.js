@@ -4,6 +4,7 @@ import { createShareHost, cleanName, stripTerminalReplies, INVITE_TTL_MS, addres
 import { createShareGuest as makeGuest } from '../liveShare/shareGuest'
 import { newSecret, newNonce, newKeyPair, commitment, newSigningKey, sharedSecret, createChannel, sessionKeys } from '../liveShare/shareCrypto'
 import { NO_RIGHTS } from '../../shared/liveShareRights'
+import { OFFLINE_KEEP_MS } from '../liveShare/shareAccess'
 
 // A guest connection: its reconnect key made here unless given.
 const createShareGuest = (opts) => makeGuest({ signingKey: newSigningKey(), ...opts })
@@ -552,14 +553,17 @@ describe('Live Share session', () => {
     expect(code).toBe(4002)
   })
 
-  it('forgets a guest offline for more than 15 minutes', async () => {
+  it('forgets a guest offline for more than 30 days (a share is kept; its people come back whenever they can)', async () => {
     let clock = 1000
     const { r, guest } = await joinOne({ now: () => clock })
     await until(() => r.states.includes('joined'))
     guest.disconnect()
     await until(() => host.guests().length === 0)
     expect(host.offlineGuests().map((g) => g.name)).toEqual(['Alex'])
-    clock += 16 * 60 * 1000
+    // A night, a week away: still let in.
+    clock += 7 * 24 * 60 * 60 * 1000
+    expect(host.offlineGuests().map((g) => g.name)).toEqual(['Alex'])
+    clock += OFFLINE_KEEP_MS
     expect(host.offlineGuests()).toEqual([])
     expect(host.accessState().people).toEqual([])
   })
@@ -1008,15 +1012,16 @@ describe('Live Share session: round 5', () => {
     const saved = host.accessState()
     expect(saved.people[0].lastSeen).toBe(clock)
     expect(saved.knownAt).toBe(clock)
-    // Another guest, offline for 14 minutes when the list was saved.
-    saved.people.push({ ...saved.people[0], key: newSigningKey().publicRaw.toString('base64'), name: 'Sam', lastSeen: clock - 14 * 60 * 1000 })
+    // Another guest, offline for all but a minute of its time when the list
+    // was saved.
+    saved.people.push({ ...saved.people[0], key: newSigningKey().publicRaw.toString('base64'), name: 'Sam', lastSeen: clock - OFFLINE_KEEP_MS + 60 * 1000 })
     // The next Tessel, 5 minutes later (a crash or an update; nothing ran
     // meanwhile): the time away is not counted as theirs offline.
     clock += 5 * 60 * 1000
     const next = hostFor({ hostName: 'Cedric', callbacks: fakeTessel().callbacks, access: saved, hostKey, now: () => clock })
     expect(next.offlineGuests().map((g) => g.name).sort()).toEqual(['Alex', 'Sam'])
-    // Two minutes on: Sam's 15 minutes are over (restarts don't extend them);
-    // Alex has 13 left.
+    // Two minutes on: Sam's time is over (restarts don't extend it); Alex
+    // has most of its time left.
     clock += 2 * 60 * 1000
     expect(next.offlineGuests().map((g) => g.name)).toEqual(['Alex'])
   })

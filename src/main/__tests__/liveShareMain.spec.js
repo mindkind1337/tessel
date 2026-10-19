@@ -635,22 +635,30 @@ describe('registerLiveShare: a restart keeps the share and the session', () => {
     await until(() => next.last('liveShare:host').guests.some((g) => g.name === 'Alex' && g.state === 'joined'))
   }, 20000)
 
-  it('a share whose tunnel stopped meanwhile is not taken back', async () => {
-    const { host } = await shareAndJoin()
+  it('a share whose tunnel stopped meanwhile comes back on a new tunnel, with the same invitations', async () => {
+    const { host, started } = await shareAndJoin()
     host.api.suspend()
     tunnel.alive = false
     const next = fakeMain({ dataDir: host.dataDir, resume: true })
     mains.push(next)
-    expect(await next.api.resumed).toEqual([false, false])
-    expect((await next.handle['liveShare:state']()).host.state).toBe('off')
+    expect(await next.api.resumed).toEqual([true, false])
+    const back = (await next.handle['liveShare:state']()).host
+    expect(back.state).toBe('sharing')
+    expect(back.invites.map((i) => i.id)).toEqual(started.invites.map((i) => i.id))
+    expect(decodeInvite(codeOf(back)).secret.equals(decodeInvite(codeOf(started)).secret)).toBe(true)
   })
 
-  it('stopping or quitting ends the share for good (nothing taken back)', async () => {
+  it('Stop sharing ends the share for good (nothing taken back); quitting only pauses it', async () => {
     const { host } = await shareAndJoin()
-    host.api.stopAll()
+    await host.handle['liveShare:stop']()
     const next = fakeMain({ dataDir: host.dataDir, resume: true })
     mains.push(next)
     expect(await next.api.resumed).toEqual([false, false])
+    const other = await shareAndJoin()
+    other.host.api.stopAll()
+    const after = fakeMain({ dataDir: other.host.dataDir, resume: true })
+    mains.push(after)
+    expect((await after.api.resumed)[0]).toBe(true)
   })
 
   it('the guest Tessel restarts: it joins the session again by itself, without a question', async () => {
@@ -773,14 +781,14 @@ describe('registerLiveShare: taking a share back, carefully', () => {
     expect((await next.handle['liveShare:state']()).host.state).toBe('sharing')
   })
 
-  it('Stop or quitting while it is being taken back: it stays stopped, and its tunnel ends', async () => {
+  it('Stop while it is being taken back: it stays stopped, and its tunnel ends', async () => {
     const host = await shared()
     let release
     tunnel.gate = new Promise((r) => (release = r))
     const next = fakeMain({ dataDir: host.dataDir })
     mains.push(next)
     const taking = next.api.resume()
-    next.api.stopAll()
+    await next.handle['liveShare:stop']()
     // Forgotten at once (Tessel may be gone before the check ends).
     expect(fs.existsSync(join(host.dataDir, 'liveshare-host.json'))).toBe(false)
     release()
@@ -794,7 +802,33 @@ describe('registerLiveShare: taking a share back, carefully', () => {
     expect(await third.api.resumed).toEqual([false, false])
   })
 
-  it('a saved share too old to take back is deleted (with the secrets it holds)', async () => {
+  it('quitting while it is being taken back: let go, kept for the next Tessel', async () => {
+    const host = await shared()
+    let release
+    tunnel.gate = new Promise((r) => (release = r))
+    const next = fakeMain({ dataDir: host.dataDir })
+    mains.push(next)
+    const taking = next.api.resume()
+    next.api.stopAll()
+    release()
+    expect(await taking).toEqual([false, false])
+    expect(fs.existsSync(join(host.dataDir, 'liveshare-host.json'))).toBe(true)
+    const third = fakeMain({ dataDir: host.dataDir, resume: true })
+    mains.push(third)
+    expect(await third.api.resumed).toEqual([true, false])
+  })
+
+  it('a share saved hours ago is taken back (a share has no age)', async () => {
+    const host = await shared()
+    const file = join(host.dataDir, 'liveshare-host.json')
+    const saved = JSON.parse(fs.readFileSync(file, 'utf8'))
+    fs.writeFileSync(file, JSON.stringify({ ...saved, savedAt: Date.now() - 3 * 24 * 60 * 60 * 1000 }))
+    const next = fakeMain({ dataDir: host.dataDir, resume: true })
+    mains.push(next)
+    expect(await next.api.resumed).toEqual([true, false])
+  })
+
+  it('a saved share that can not be read is deleted (with the secrets it holds)', async () => {
     const dir = newDataDir()
     const file = join(dir, 'liveshare-host.json')
     fs.writeFileSync(file, JSON.stringify({ v: 1, savedAt: Date.now() - 60 * 60 * 1000, secret: 'x', url: 'ws://127.0.0.1:1/', port: 1, pid: 4242 }))
@@ -839,13 +873,16 @@ describe('registerLiveShare: taking a share back, carefully', () => {
     expect((await next.handle['liveShare:state']()).host.state).toBe('sharing')
   }, 15000)
 
-  it('a PID that is now another program: not taken back, not killed', async () => {
+  it('a PID that is now another program: never killed; the share comes back on a new tunnel', async () => {
     const host = await shared()
     tunnel.state = 'other'
     const next = fakeMain({ dataDir: host.dataDir })
     mains.push(next)
-    expect(await next.api.resume()).toEqual([false, false])
-    expect(next.api).toBeTruthy()
+    const { stopTunnelPid } = await import('../liveShare/shareTunnel.js')
+    stopTunnelPid.mockClear()
+    expect(await next.api.resume()).toEqual([true, false])
+    expect(stopTunnelPid).not.toHaveBeenCalled()
+    expect((await next.handle['liveShare:state']()).host.state).toBe('sharing')
   })
 
   it('an update starting while a share is being taken back: it lets go and keeps the saved share', async () => {
@@ -865,7 +902,7 @@ describe('registerLiveShare: taking a share back, carefully', () => {
     expect(await third.api.resumed).toEqual([true, false])
   })
 
-  it('quitting before a session is joined again: it never is, and nothing is left to take back', async () => {
+  it('quitting before a session is joined again: it is not joined now, and kept for the next Tessel', async () => {
     const host = fakeMain()
     const guest = fakeMain()
     mains.push(host, guest)
@@ -881,7 +918,7 @@ describe('registerLiveShare: taking a share back, carefully', () => {
     const taking = next.api.resume()
     next.api.stopAll()
     expect(await taking).toEqual([false, false])
-    expect(fs.existsSync(join(guest.dataDir, 'liveshare-guest.json'))).toBe(false)
+    expect(fs.existsSync(join(guest.dataDir, 'liveshare-guest.json'))).toBe(true)
     expect(next.events('liveShare:guest').some((x) => x.state === 'connecting')).toBe(false)
   })
 })
@@ -1093,7 +1130,12 @@ describe('registerLiveShare: several projects shared', () => {
     const back = host.last('liveShare:host')
     expect(back.projectIds).toEqual(['ws-1'])
     // Its one code is a root invitation, offering every shared project.
-    expect(back.invites).toEqual([expect.objectContaining({ root: true, code, projects: ['ws-1'], later: true, state: 'live' })])
+    expect(back.invites).toEqual([expect.objectContaining({ root: true, projects: ['ws-1'], later: true, state: 'live' })])
+    // The same code (now TS2: the same address and secret, with the share's key).
+    const now = decodeInvite(back.invites[0].code)
+    expect(now.url).toBe(url)
+    expect(now.secret.equals(secret)).toBe(true)
+    expect(now.hostKey.equals(hostKey.publicRaw)).toBe(true)
     showLayouts(host, { 'ws-1': ['pane-1-a'] })
     const guest = fakeMain({ dataDir: guestDir, resume: true })
     mains.push(guest)

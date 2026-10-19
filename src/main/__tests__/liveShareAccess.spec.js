@@ -398,7 +398,7 @@ describe('people and trust', () => {
     expect(p.grant.projects).toEqual(['ws-a'])
   })
 
-  it('people offline for 15 minutes are forgotten (with the codes only they needed); at most MAX_PEOPLE', () => {
+  it('people offline for 30 days are forgotten (with the codes only they needed); at most MAX_PEOPLE', () => {
     const online = new Set()
     const { access, clock } = model({ online })
     const inv = access.createInvite({}).invite

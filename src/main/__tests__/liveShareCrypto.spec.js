@@ -64,6 +64,35 @@ describe('Live Share invite code', () => {
   it('drops a query or fragment from the address (they would stop the connection)', () => {
     expect(decodeInvite(encodeInvite({ url: 'wss://a-b.trycloudflare.com/?x=1#frag', secret: newSecret() })).url).toBe('wss://a-b.trycloudflare.com/')
   })
+
+  it('TS2: the last address, the secret and the share’s key; TS1 codes still read, without a key', () => {
+    const secret = newSecret()
+    const hostKey = newSigningKey().publicRaw
+    const code = encodeInvite({ url: 'wss://a-b.trycloudflare.com/i/abcdefghijklmnop', secret, hostKey })
+    expect(code.startsWith('TS2.')).toBe(true)
+    expect(code.split('.')).toHaveLength(4)
+    const back = decodeInvite(code)
+    expect(back.url).toBe('wss://a-b.trycloudflare.com/i/abcdefghijklmnop')
+    expect(back.secret.equals(secret)).toBe(true)
+    expect(back.hostKey.equals(hostKey)).toBe(true)
+    const old = decodeInvite(encodeInvite({ url: 'wss://a-b.trycloudflare.com/', secret }))
+    expect(old.hostKey).toBe(null)
+    expect(old.secret.equals(secret)).toBe(true)
+  })
+
+  it('TS2: refuses a key of the wrong size, a weak key, a missing or extra part, and the TS1 shape under TS2', () => {
+    const secret = newSecret()
+    const url = 'wss://a-b.trycloudflare.com/'
+    const b64 = (x) => Buffer.from(x).toString('base64url')
+    const body = `${b64(url)}.${b64(secret)}`
+    expect(decodeInvite(`TS2.${body}.${b64(Buffer.alloc(16, 1))}`)).toBe(null)
+    expect(decodeInvite(`TS2.${body}.${b64(Buffer.alloc(32))}`)).toBe(null)
+    expect(decodeInvite(`TS2.${body}`)).toBe(null)
+    expect(decodeInvite(`TS1.${body}.${b64(newSigningKey().publicRaw)}`)).toBe(null)
+    expect(decodeInvite(`TS2.${body}.${b64(newSigningKey().publicRaw)}.x`)).toBe(null)
+    // An address with a user and password is no share's.
+    expect(decodeInvite(encodeInvite({ url: 'wss://u:p@a-b.trycloudflare.com/', secret }))).toBe(null)
+  })
 })
 
 describe('Live Share channel', () => {

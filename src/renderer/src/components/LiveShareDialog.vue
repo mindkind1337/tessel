@@ -151,6 +151,9 @@ const preparing = computed(() => ['preparing', 'starting', 'checking'].includes(
 const sharing = computed(() => hostState.value === 'sharing')
 const progressText = computed(() => {
   const h = host.value
+  // A share starting again by itself (after a restart) that could not yet:
+  // it tries again until it works or you stop it.
+  if (h.retry && h.retry.error) return t('liveShare.share.retrying', 'Sharing could not start again yet ({{error}}). It tries again by itself.', { error: h.retry.error })
   if (h.state === 'preparing')
     return h.progress == null
       ? t('liveShare.share.preparing', 'Getting the Cloudflare tunnel ready…')
@@ -560,7 +563,7 @@ function tabKeys(event, list, current, set) {
 
         <div class="confirm-actions">
           <button class="confirm-btn" @click="emit('close')">{{ t('liveShare.close', 'Close') }}</button>
-          <button v-if="preparing" class="confirm-btn" data-test="ls-cancel-share" @click="stopSharing">{{ t('liveShare.share.cancel', 'Cancel') }}</button>
+          <button v-if="preparing" class="confirm-btn" data-test="ls-cancel-share" @click="stopSharing">{{ host.restarting ? t('liveShare.share.stop', 'Stop sharing') : t('liveShare.share.cancel', 'Cancel') }}</button>
           <template v-else-if="sharing">
             <!-- Asked inline: that confirm's Stop sharing is the only one. -->
             <button v-if="!confirmStop" class="confirm-btn primary danger" data-test="ls-stop" @click="askStop">{{ t('liveShare.share.stop', 'Stop sharing') }}</button>

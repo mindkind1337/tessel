@@ -14,7 +14,9 @@
 // instead of asking again. The host signs every welcome with its own key:
 // the guest keeps the one of its first welcome (onHostKey; the code it
 // compared with the host vouches for it) and, coming back, checks the
-// host's signature with it (hostKey) before anything else.
+// host's signature with it (hostKey) before anything else. A new guest
+// whose code names the share's key (TS2) gives it as hostKey too: the
+// welcome must be signed with that one.
 // A connection that hears nothing from the host (not even its pings, every
 // 25 s) for 70 s is over.
 // The join says what this Tessel speaks beyond the protocol version
@@ -230,7 +232,9 @@ export function createShareGuest({ url, secret, name, signingKey, identityKey = 
         // trusted with anything typed here).
         const key = Buffer.from(String(msg.hostKey || ''), 'base64')
         const sig = Buffer.from(String(msg.hostSig || ''), 'base64')
-        if (back ? !(hostKey && key.equals(hostKey) && bindingSigned(hostKey, binding, sig)) : !bindingSigned(key, binding, sig)) return finish('host-unverified')
+        // A new guest whose code names the share's key (a TS2 code) expects
+        // that one too.
+        if (!bindingSigned(key, binding, sig) || (hostKey ? !key.equals(hostKey) : back)) return finish('host-unverified')
         if (!back) callbacks.onHostKey?.(key)
         welcomed = true
         // What it may do first: the window takes it as the starting point.

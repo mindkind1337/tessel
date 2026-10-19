@@ -1,8 +1,10 @@
 // Live Share across a restart of Tessel: what a share (the host's) or a
 // joined session (a guest's) needs to carry on, kept in a file of Tessel's
 // data folder while it runs, written again every minute. The next Tessel
-// takes it back if it is recent (RESUME_MS): a restart, an update, a crash.
-// Stop sharing, Leave or quitting Tessel deletes it. It holds the
+// takes it back if it is recent enough (maxAgeMs: RESUME_MS unless said; a
+// share is kept with no age, a joined session for as long as its host keeps
+// the guest: liveShare.js): a restart, an update, a crash, a reboot. Stop
+// sharing or Leave deletes it. It holds the
 // invitations' secrets and a guest's reconnect key, like the other sign-ins
 // in that folder. What lasts longer (the host's trusted people, a guest's
 // identity key) is in files of its own (createKeptFile): no age, written
@@ -55,7 +57,7 @@ export function createKeptFile(path) {
   }
 }
 
-export function createSessionFile(path, { now = Date.now } = {}) {
+export function createSessionFile(path, { now = Date.now, maxAgeMs = RESUME_MS } = {}) {
   return {
     // The saved session, or null (none, unreadable, or too old: then the
     // file goes, with the secrets it holds).
@@ -66,8 +68,9 @@ export function createSessionFile(path, { now = Date.now } = {}) {
       } catch {
         saved = null
       }
-      const age = saved && saved.v === 1 && Number.isFinite(saved.savedAt) ? now() - saved.savedAt : -1
-      if (age >= 0 && age < RESUME_MS) return saved
+      const age = saved && saved.v === 1 && Number.isFinite(saved.savedAt) ? now() - saved.savedAt : null
+      // (Kept with no age: whatever the clock says, even one set back.)
+      if (age !== null && (maxAgeMs === Infinity || (age >= 0 && age < maxAgeMs))) return saved
       this.clear()
       return null
     },

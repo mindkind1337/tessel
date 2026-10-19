@@ -1004,14 +1004,12 @@
       "placeFailed": "La nouvelle copie n'a pas pu être mise en place ({{error}}). L'ancienne est dans la Corbeille."
     },
     "liveShare": {
-      "tunnelStopped": "Le tunnel Cloudflare s’est arrêté (code {{code}}). Le partage est terminé.",
       "unreachable": "L’adresse du tunnel est injoignable. Vérifiez votre connexion Internet et réessayez.",
       "unreachableWhy": "L’adresse du tunnel est injoignable ({{detail}}). Vérifiez votre connexion Internet, ou si un pare-feu, un antivirus ou un filtre DNS bloque trycloudflare.com.",
       "notConnected": "Le tunnel Cloudflare n’a pas pu se connecter ({{detail}}). Vérifiez votre connexion Internet, ou si un pare-feu ou un antivirus bloque Cloudflare.",
       "badInvite": "Ce n’est pas un code d’invitation Live Share de Tessel.",
       "badInviteSpec": "La première invitation n’a pas pu être créée : vérifiez sa durée et son nombre d’utilisations.",
       "notLocal": "Ce volet appartient à une session Live Share : il ne peut pas lancer de terminal sur cet ordinateur.",
-      "tunnelGone": "Le tunnel Cloudflare s'est arrêté. Le partage est terminé.",
       "err": {
         "download": "cloudflared n'a pas pu être téléchargé ({{detail}}).",
         "checksum": "Le téléchargement de cloudflared ne correspond pas à son empreinte publiée : il n'a pas été utilisé.",

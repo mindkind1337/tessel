@@ -116,6 +116,17 @@ describe('LiveShareDialog: before sharing', () => {
     wrapper.unmount()
   })
 
+  it('a share starting again by itself after a restart: says why it waits, and its button is Stop sharing', async () => {
+    const wrapper = await open()
+    await host({ state: 'starting', restarting: true, retry: { at: Date.now() + 15000, error: 'No internet.' } })
+    expect(wrapper.find('[data-test="ls-progress"]').text()).toBe('Sharing could not start again yet (No internet.). It tries again by itself.')
+    const button = wrapper.find('[data-test="ls-cancel-share"]')
+    expect(button.text()).toBe('Stop sharing')
+    await button.trigger('click')
+    expect(api.stop).toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
   it('shows why sharing failed', async () => {
     api.start.mockResolvedValue({ ok: false, error: 'No internet.' })
     const wrapper = await open(PROJECTS)
