@@ -28,6 +28,8 @@ const JPEG = jpegOf(3, 2)
 const BIG = pngOf(4, 4, ATTACHMENT_LIMITS.imageBytes + 10) // over 2 MB decoded
 const WITH = { ...HISTORY_LIMITS, attachments: ATTACHMENT_LIMITS }
 const users = (events) => events.filter((e) => e.type === 'user')
+// An image shown, as every entry carries it (historyAttachments.js "Resolution").
+const shown = (name, mediaType, url, source = 'user') => ({ key: expect.stringMatching(/^[0-9a-f]{24}$/), name, source, mime: mediaType, mediaType, bytes: Buffer.from(url.split(',')[1], 'base64').length, dataUrl: url })
 
 let tmp
 beforeEach(() => {
@@ -79,11 +81,9 @@ describe('Claude history images and documents', () => {
     const res = readTranscriptHistory({ agent: 'claude', sessionId: CLAUDE_ID, home })
     expect(res.ok).toBe(true)
     const [u] = users(res.events)
-    expect(u.images).toEqual([
-      { name: 'image.png', mediaType: 'image/png', dataUrl: dataUrl(PNG_1x1) },
-      { name: 'image.jpg', mediaType: 'image/jpeg', dataUrl: dataUrl(JPEG, 'image/jpeg') }
-    ])
+    expect(u.images).toEqual([shown('image.png', 'image/png', dataUrl(PNG_1x1)), shown('image.jpg', 'image/jpeg', dataUrl(JPEG, 'image/jpeg'))])
     expect(u.text).toBe('look\n[image] [image] [image] [image]')
+    expect(u.imagesMore).toBe(4)
     expect(u.files).toBeUndefined()
   })
 
@@ -161,14 +161,14 @@ describe('Claude history images and documents', () => {
     const us = users(page.events)
     expect(us.length).toBeGreaterThan(0)
     for (const u of us) {
-      expect(u.images).toEqual([{ name: 'image.png', mediaType: 'image/png', dataUrl: dataUrl(PNG_1x1) }])
+      expect(u.images).toEqual([shown('image.png', 'image/png', dataUrl(PNG_1x1))])
       expect(u.text).not.toContain('[image]')
     }
   })
 })
 
 describe('Codex history images and files', () => {
-  it('data: URLs and local image paths; a folder, a missing file, bad bytes stay "[image]"', () => {
+  it('data: URLs and local image paths; a folder, bad bytes stay "[image]"; a missing file is listed as missing', () => {
     const png = write('shot.png', PNG_1x1)
     const fake = write('fake.png', TEXT)
     const big = write('big.png', BIG)
@@ -186,13 +186,11 @@ describe('Codex history images and files', () => {
     const res = readTranscriptHistory({ agent: 'codex', sessionId: CODEX_ID, home })
     expect(res.ok).toBe(true)
     const [a, b] = users(res.events)
-    expect(a.images).toEqual([
-      { name: 'image.png', mediaType: 'image/png', dataUrl: dataUrl(PNG_1x1) },
-      { name: 'shot.png', mediaType: 'image/png', dataUrl: dataUrl(PNG_1x1) }
-    ])
+    expect(a.images).toEqual([shown('image.png', 'image/png', dataUrl(PNG_1x1)), shown('shot.png', 'image/png', dataUrl(PNG_1x1), 'pasted')])
     expect(a.text).toBe('look\n[image] [image]')
-    expect(b.images).toBeUndefined()
-    expect(b.text).toBe('more\n[image] [image] [image] [image]')
+    expect(b.images).toEqual([{ source: 'pasted', name: 'missing.png', mime: 'image/png', path: join(tmp, 'missing.png'), missing: true }])
+    expect(b.text).toBe('more\n[image] [image] [image]')
+    expect(b.imagesMore).toBe(3)
   })
 
   it('a link, or a file reached through a junction, is never read', () => {
@@ -248,7 +246,7 @@ describe('Codex history images and files', () => {
     )
     resolveHistoryAttachments(events)
     const [u] = users(events)
-    expect(u.images).toEqual([{ name: 'image.jpg', mediaType: 'image/jpeg', dataUrl: dataUrl(JPEG, 'image/jpeg') }])
+    expect(u.images).toEqual([shown('image.jpg', 'image/jpeg', dataUrl(JPEG, 'image/jpeg'))])
     expect(u.files).toEqual([
       { name: 'spec.pdf', mediaType: 'application/pdf', size: 8 },
       { name: 'notes.txt', mediaType: '', size: 10, path: doc }
@@ -278,10 +276,7 @@ describe('OpenCode history images and files', () => {
     const events = opencodeHistoryEvents(messages, WITH)
     resolveHistoryAttachments(events)
     const [u] = users(events)
-    expect(u.images).toEqual([
-      { name: 'a.png', mediaType: 'image/png', dataUrl: dataUrl(PNG_1x1) },
-      { name: 'pic.png', mediaType: 'image/png', dataUrl: dataUrl(PNG_1x1) }
-    ])
+    expect(u.images).toEqual([shown('a.png', 'image/png', dataUrl(PNG_1x1)), shown('pic.png', 'image/png', dataUrl(PNG_1x1))])
     expect(u.files).toEqual([
       { name: 'data.csv', mediaType: 'text/csv', size: 8, path: doc },
       // No longer there: shown, not openable.

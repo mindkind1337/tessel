@@ -44,13 +44,13 @@
 // with it).
 import fs from 'fs'
 import os from 'os'
-import { basename, isAbsolute, join } from 'path'
+import { basename, isAbsolute, join, win32 } from 'path'
 import { claudeTranscriptIn } from '../agentModel.js'
 import { realInside } from '../agentChildren.js'
 import { ompSessionsDir } from '../agentSessionSources.js'
 import { museConversation, museSessionLog, museSessionsDir } from '../museSessions.js'
 import { HISTORY_LIMITS, ATTACHMENT_LIMITS, resolveHistoryAttachments, claudeHistoryEvents, codexHistoryEvents, createBuilder, findTranscript } from './transcriptHistory.js'
-import { resolveHistoryAttachmentsCached } from './historyAttachments.js'
+import { imageFromPath, resolveHistoryAttachmentsCached } from './historyAttachments.js'
 import { createRemoteDrives } from './remoteDrives.js'
 import { createRemoteTail, remoteWindowReader, validRemoteTranscript } from './remoteTranscripts.js'
 
@@ -234,13 +234,14 @@ function toolQueue(b) {
     waiting: () => pending.length,
     // A new prompt: calls never answered are not paired with later results.
     clear: () => pending.splice(0),
-    result(id, output, isError, ts) {
+    // images: the result's (historyAttachments.js candidates).
+    result(id, output, isError, ts, images = []) {
       let key = str(id)
       if (key) {
         const i = pending.indexOf(key)
         if (i >= 0) pending.splice(i, 1)
       } else key = pending.shift()
-      if (key) b.toolResult(key, output, isError, ts)
+      if (key) b.toolResult(key, output, isError, ts, images)
     }
   }
 }
@@ -390,10 +391,25 @@ export function ompViewEvents(lines, limits = HISTORY_LIMITS) {
 //   { type: 'turn_ended', status: 'success' | 'error' | 'aborted', error }.
 // A step's tools are over once a later line comes (the agent went on).
 const CURSOR_REDACTED = /\s*\[REDACTED\]\s*$/
+const CURSOR_IMAGE_LINE = /^\s*\d{1,3}\.\s+(.+\.(?:png|jpe?g|gif|webp))\s*$/i
+// A prompt's images: the files its <image_files> block lists, one numbered
+// line each (Cursor copies them into its project's assets folder; the path
+// mixes / and \\), else one unnamed image per "[Image]" line before it.
 function cursorImages(text) {
-  const open = text.toLowerCase().indexOf('<image_files>')
-  if (open < 0) return 0
-  return text.slice(0, open).split('\n').filter((l) => l.trim() === '[Image]').length
+  const lower = text.toLowerCase()
+  const open = lower.indexOf('<image_files>')
+  if (open < 0) return []
+  const close = lower.indexOf('</image_files>', open)
+  const block = text.slice(open + '<image_files>'.length, close < 0 ? undefined : close)
+  const paths = block
+    .split('\n')
+    .map((l) => CURSOR_IMAGE_LINE.exec(l)?.[1]?.trim())
+    .filter(Boolean)
+    .slice(0, 32)
+    .map((p) => (/^[A-Za-z]:[\\/]/.test(p) ? win32.normalize(p) : p))
+  if (paths.length) return paths.map((p) => imageFromPath(p, undefined, 'user'))
+  const marks = text.slice(0, open).split('\n').filter((l) => l.trim() === '[Image]').length
+  return Array.from({ length: marks }, () => ({ kind: 'image', source: 'user' }))
 }
 
 export function cursorViewEvents(lines, limits = HISTORY_LIMITS) {
@@ -410,10 +426,10 @@ export function cursorViewEvents(lines, limits = HISTORY_LIMITS) {
     const key = `cursor-${index}` // i18n-ignore id
     if (r.role === 'user') {
       const texts = textsOf(content)
-      const images = texts.reduce((n, t) => n + cursorImages(t), 0)
+      const images = texts.flatMap(cursorImages)
       const body = texts.map(grokUserQuery).filter((t) => t.trim()).join('\n')
       b.settleTools(null)
-      b.user(key, body, null, Array.from({ length: images }, () => ({ kind: 'image' })))
+      b.user(key, body, null, images)
       return
     }
     if (r.role !== 'assistant') return
@@ -454,6 +470,18 @@ export function cursorViewEvents(lines, limits = HISTORY_LIMITS) {
 const AGY_PREFIX = /^CORTEX_STEP_(?:TYPE|STATUS|SOURCE)_/
 const agyEnum = (v) => (typeof v === 'string' ? v.replace(AGY_PREFIX, '') : '')
 const AGY_HIDDEN = new Set(['CONVERSATION_HISTORY', 'CHECKPOINT', 'EPHEMERAL_MESSAGE'])
+// A step's images: media [{ mime_type, uri }], uri a local path (its
+// .tempmediaStorage copy) or a file: URL; other media (not images) are not shown.
+function antigravityMedia(r, source) {
+  return (Array.isArray(r.media) ? r.media : [])
+    .map(obj)
+    .filter((m) => m && str(m.uri) && (!str(m.mime_type) || m.mime_type.toLowerCase().startsWith('image/')))
+    .slice(0, 32)
+    .map((m) => {
+      const uri = /^[A-Za-z]:[\\/]/.test(m.uri) ? win32.normalize(m.uri) : m.uri
+      return { ...imageFromPath(uri, undefined, source), ...(str(m.mime_type) ? { mediaType: m.mime_type.toLowerCase() } : {}) }
+    })
+}
 function antigravityRequest(content) {
   const c = typeof content === 'string' ? content : ''
   const open = c.indexOf('<USER_REQUEST>')
@@ -503,10 +531,11 @@ export function antigravityViewEvents(lines, limits = HISTORY_LIMITS) {
     if (source === 'USER_EXPLICIT' || source === 'USER') {
       if (type !== 'USER_INPUT' && type !== 'REQUEST') continue
       const body = antigravityRequest(r.content)
-      if (!body) continue
+      const media = antigravityMedia(r, 'user')
+      if (!body && !media.length) continue
       tools.clear()
       b.settleTools(ts)
-      b.user(key, body, ts)
+      b.user(key, body, ts, media)
       continue
     }
     if (source !== 'MODEL' || AGY_HIDDEN.has(type)) continue
@@ -522,7 +551,10 @@ export function antigravityViewEvents(lines, limits = HISTORY_LIMITS) {
       b.endTurn('failed', ts, str(r.content) || '')
       continue
     } else if (tools.waiting()) {
-      tools.result(null, typeof r.content === 'string' ? r.content : '', status === 'ERROR', ts)
+      tools.result(null, typeof r.content === 'string' ? r.content : '', status === 'ERROR', ts, antigravityMedia(r, 'tool'))
+    } else if (b.openTool() || b.lastTool()) {
+      // Images a step showed after its call was answered: on that call.
+      b.toolImages(b.openTool() || b.lastTool(), antigravityMedia(r, 'tool'))
     }
     if (status === 'CANCELED' || status === 'INTERRUPTED') {
       tools.clear()
@@ -899,8 +931,9 @@ export function createTranscriptViews({ send, roots = transcriptViewRoots, homes
   // out when this view already sent them.
   async function eventsFor(v) {
     const core = eventsCore(v.agent, v.sessionId, v.tail, limits, v.eventCap)
-    // A host's file names the host's paths: none is looked at here.
-    if (limits.attachments) await resolveHistoryAttachmentsCached(core.events, limits.attachments, { cache: v.images, isRemote: v.hostId ? async () => true : remote })
+    // A host's file names the host's paths: none is looked at here (listed
+    // as remote, for the window to fetch through the connection).
+    if (limits.attachments) await resolveHistoryAttachmentsCached(core.events, limits.attachments, { cache: v.images, host: !!v.hostId, isRemote: v.hostId ? async () => true : remote })
     const shown = new Set()
     for (const ev of core.events) {
       if (!Array.isArray(ev.images)) continue

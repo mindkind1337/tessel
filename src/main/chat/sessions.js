@@ -46,6 +46,9 @@ import { validOpencodeModel } from './opencodeChat.js'
 import { isRemotePath, parseRemotePath, remoteRoot } from '../../shared/remotePath.js'
 import { cleanRemoteEnv, killRemoteChild } from './remoteProcess.js'
 import { readRemoteHistory, remoteTranscriptExists } from './remoteTranscripts.js'
+// The tool images one conversation sends the window live (each at most 2 MB,
+// 4 per tool result: historyAttachments.js liveImages).
+export const LIVE_IMAGE_LIMITS = { images: 200, bytes: 64 * 1024 * 1024 }
 
 // teamText: a team message (6000) with the window's "(message <id>, reply to
 // <id>) " prefix; a longer one is cut (teamMessageText), never refused.
@@ -219,6 +222,29 @@ export function createChatSessions(deps) {
     seqs.set(paneId, seq)
     return seq
   }
+  // A live tool result's images (claudeFrames.js, codexChat.js: already
+  // checked and capped per entry), within the conversation's caps: past them,
+  // only counted (imagesMore).
+  function liveToolImages(s, e) {
+    const list = Array.isArray(e.images) ? e.images : []
+    let more = Number.isSafeInteger(e.imagesMore) && e.imagesMore > 0 ? e.imagesMore : 0
+    const images = []
+    for (const img of list) {
+      if (!img || typeof img !== 'object') continue
+      const bytes = Number.isSafeInteger(img.bytes) ? img.bytes : 0
+      if (img.dataUrl && (s.liveImages.count >= LIVE_IMAGE_LIMITS.images || s.liveImages.bytes + bytes > LIVE_IMAGE_LIMITS.bytes)) {
+        more++
+        continue
+      }
+      if (img.dataUrl) {
+        s.liveImages.count++
+        s.liveImages.bytes += bytes
+      }
+      images.push(img)
+    }
+    return { ...(images.length ? { images } : {}), ...(more ? { imagesMore: more } : {}) }
+  }
+
   function emit(paneId, event) {
     const seq = nextSeq(paneId)
     if (!forgotten.has(paneId)) journalOf(paneId).append(seq, event)
@@ -920,7 +946,7 @@ export function createChatSessions(deps) {
       s.tools.delete(e.toolUseId)
       const owner = s.toolAgents.get(e.toolUseId) || provenance(e)
       s.toolAgents.delete(e.toolUseId)
-      emit(s.paneId, { type: 'toolResult', id: e.toolUseId, isError: e.isError === true, text: String(e.text ?? ''), ...owner })
+      emit(s.paneId, { type: 'toolResult', id: e.toolUseId, isError: e.isError === true, text: String(e.text ?? ''), ...liveToolImages(s, e), ...owner })
     })
     on('question', (e) => {
       if (!validId(e.requestId) || s.questions.has(e.requestId)) return
@@ -1364,6 +1390,8 @@ export function createChatSessions(deps) {
       questions: new Map(),
       tools: new Set(),
       toolAgents: new Map(),
+      // The tool images this conversation sent the window (LIVE_IMAGE_LIMITS).
+      liveImages: from ? from.liveImages : { count: 0, bytes: 0 },
       messages: new Map(), // messageId -> { text, thinking } merged so far
       lastInterrupted: false,
       started: false,

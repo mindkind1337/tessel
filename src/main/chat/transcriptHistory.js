@@ -25,7 +25,7 @@
 // Codex: only the thread's own lines (a line naming another thread, such as a
 // sub-agent's, is skipped; sub-agents are reported by their own events).
 import fs from 'fs'
-import { isAbsolute, join, relative, resolve, sep } from 'path'
+import { basename, isAbsolute, join, relative, resolve, sep } from 'path'
 import { claudeTranscriptIn, codexRolloutIn } from '../agentModel.js'
 import { realInside } from '../agentChildren.js'
 import { allowedCodexHome } from '../codexTurnEnd.js'
@@ -167,6 +167,12 @@ export function createBuilder(limits) {
   const messages = new Map() // key -> the event holding its text
   const openTools = new Set()
   const seenTools = new Set() // a result whose call is before the window is dropped
+  // A tool's images can come apart from its result (Codex reports the images
+  // a code cell made as their own items): kept by tool id until its result.
+  const toolEvents = new Map() // id -> its 'tool' event
+  const resultEvents = new Map() // id -> its 'toolResult' event
+  const toolPictures = new Map() // id -> candidates waiting for its result
+  let lastToolId = null
   let lastAt = null
   let turn = null // { at } of the open turn
   let n = 0
@@ -190,6 +196,7 @@ export function createBuilder(limits) {
       if (!turn) return
       for (const id of openTools) push({ type: 'tool', id, status: status === 'interrupted' ? 'stopped' : 'done' }, ts)
       openTools.clear()
+      lastToolId = null
       const when = at(ts)
       push({ type: 'turnEnd', status, ...(when != null && turn.at != null ? { durationMs: Math.max(0, when - turn.at) } : {}), ...(error ? { error: text(error) } : {}) }, ts)
       turn = null
@@ -240,7 +247,21 @@ export function createBuilder(limits) {
       }
       openTools.add(id)
       seenTools.add(id)
-      push({ type: 'tool', id, name: String(name || ''), summary: typeof summary === 'string' && summary.trim() ? oneLineSummary(summary) : toolSummary(value), input: clipDeep(value ?? {}), status: 'running' }, ts)
+      lastToolId = id
+      toolEvents.set(id, push({ type: 'tool', id, name: String(name || ''), summary: typeof summary === 'string' && summary.trim() ? oneLineSummary(summary) : toolSummary(value), input: clipDeep(value ?? {}), status: 'running' }, ts))
+    },
+    hasTool: (id) => seenTools.has(id),
+    lastTool: () => lastToolId,
+    // The tool call last started (in this window) while it still runs, or null.
+    openTool: () => (lastToolId && openTools.has(lastToolId) ? lastToolId : null),
+    // Images of tool `id` (historyAttachments.js candidates, source 'tool'):
+    // on its result, the one it has or the one to come.
+    toolImages(id, images) {
+      const list = (Array.isArray(images) ? images : []).filter(Boolean)
+      if (!limits.attachments || !list.length || !seenTools.has(id)) return
+      const done = resultEvents.get(id)
+      if (done) noteAttachments(done, list)
+      else toolPictures.set(id, [...(toolPictures.get(id) || []), ...list])
     },
     // The calls still open are over (a file that never writes their results:
     // the agent went on after them).
@@ -248,14 +269,23 @@ export function createBuilder(limits) {
       for (const id of openTools) push({ type: 'tool', id, status: 'done' }, ts)
       openTools.clear()
     },
-    toolResult(id, output, isError, ts) {
+    // images: what the result held (candidates), resolved with the page.
+    toolResult(id, output, isError, ts, images = []) {
       if (!seenTools.has(id)) return
       b.work(ts)
       openTools.delete(id)
-      push({ type: 'toolResult', id, isError: isError === true, text: clipString(resultText(output)) }, ts)
+      const e = push({ type: 'toolResult', id, isError: isError === true, text: clipString(resultText(output)) }, ts)
+      resultEvents.set(id, e)
+      if (limits.attachments) {
+        noteAttachments(e, [...(Array.isArray(images) ? images : []), ...(toolPictures.get(id) || [])])
+        toolPictures.delete(id)
+      }
     },
     finish() {
       b.endTurn('completed')
+      // Images of a call whose result never came: on the call itself.
+      for (const [id, list] of toolPictures) if (toolEvents.has(id)) noteAttachments(toolEvents.get(id), list)
+      toolPictures.clear()
       return events
     }
   }
@@ -283,10 +313,24 @@ function claudePrompt(textIn) {
 
 // An image block: { source: { type: 'base64', media_type, data } } (a URL or
 // a file id: not shown).
-function claudeImage(o) {
+function claudeImage(o, source) {
   const src = obj(o.source) || {}
-  if (src.type === 'base64') return imageFromBase64(src.data, src.media_type)
-  return imageFromUrl(null)
+  if (src.type === 'base64') return imageFromBase64(src.data, src.media_type, undefined, source)
+  return imageFromUrl(null, undefined, source)
+}
+
+// A tool result's images: the image blocks of its content (a Read of an
+// image file, a screenshot an MCP tool returned). The line's toolUseResult
+// keeps a copy of a Read image (file.base64): used only when the content has
+// none (never the same image twice).
+function claudeToolImages(content, toolUseResult) {
+  const blocks = Array.isArray(content) ? content.map(obj).filter(Boolean) : []
+  const images = blocks.filter((o) => o.type === 'image').map((o) => claudeImage(o, 'tool'))
+  if (images.length) return images
+  const tur = obj(toolUseResult)
+  const file = obj(tur?.file)
+  if (tur && tur.type === 'image' && file && str(file.base64)) return [imageFromBase64(file.base64, file.type, undefined, 'tool')]
+  return []
 }
 
 // A document block (a PDF, a text file): { source: { type: 'base64' | 'text',
@@ -315,12 +359,17 @@ export function claudeHistoryEvents(lines, limits = HISTORY_LIMITS) {
       const blocks = typeof content === 'string' ? [{ type: 'text', text: content }] : Array.isArray(content) ? content : []
       const texts = []
       const attachments = []
+      // Pasted in the terminal ("[Image #N]"): its file in %TEMP% is soon
+      // gone; the transcript's bytes are the copy that lasts.
+      const pasted = Array.isArray(r.imagePasteIds) && r.imagePasteIds.length > 0
+      const results = blocks.filter((blk) => obj(blk)?.type === 'tool_result').length
       for (const blk of blocks) {
         const o = obj(blk)
         if (!o) continue
-        if (o.type === 'tool_result' && str(o.tool_use_id)) b.toolResult(o.tool_use_id, o.content, o.is_error, ts)
+        // toolUseResult describes the line's one tool result.
+        if (o.type === 'tool_result' && str(o.tool_use_id)) b.toolResult(o.tool_use_id, o.content, o.is_error, ts, limits.attachments ? claudeToolImages(o.content, results === 1 ? r.toolUseResult : null) : [])
         else if (o.type === 'text' && str(o.text) && !meta) texts.push(o.text)
-        else if (o.type === 'image' && !meta) attachments.push(claudeImage(o))
+        else if (o.type === 'image' && !meta) attachments.push(claudeImage(o, pasted ? 'pasted' : 'user'))
         else if (o.type === 'document' && !meta && limits.attachments) attachments.push(claudeDocument(o))
       }
       if (!texts.length && !attachments.length) continue
@@ -358,12 +407,43 @@ const CODEX_FILE_ITEMS = new Set(['input_file'])
 const CODEX_CONTEXT = /^\s*<\/?(image|skill|environment_context|user_instructions|permissions instructions|user_shell_command|turn_aborted|subagent_notification)\b/i
 
 // One image item: a data: URL or a URL (image, input_image), or a local
-// path (localImage).
-function codexImage(o) {
+// path (localImage: pasted in the terminal, its file in %TEMP%). fallback: the
+// data: URL the model was sent for that same image (the rollout's own copy,
+// shown when the file is gone).
+function codexImage(o, fallback = null) {
   const url = typeof o.image_url === 'string' ? o.image_url : str(obj(o.image_url)?.url) || str(o.url)
-  if (url) return imageFromUrl(url)
+  if (url) return imageFromUrl(url, undefined, 'user')
   const path = str(o.path)
-  return path ? imageFromPath(path) : imageFromUrl(null)
+  if (!path) return imageFromUrl(null, undefined, 'user')
+  const c = imageFromPath(path, undefined, 'pasted')
+  return fallback && /^data:/i.test(fallback) ? { ...c, fallback: imageFromUrl(fallback, undefined, 'pasted') } : c
+}
+
+// The data: URLs of a response item's user message, in order (null for an
+// image item without one).
+function codexDataImages(content) {
+  if (!Array.isArray(content)) return []
+  return content
+    .map(obj)
+    .filter((o) => o && CODEX_IMAGE_ITEMS.has(o.type))
+    .map((o) => (typeof o.image_url === 'string' ? o.image_url : str(obj(o.image_url)?.url) || str(o.url)))
+    .map((u) => (u && /^data:/i.test(u) ? u : null))
+}
+
+// A tool's output items -> its images: input_image (a data: URL, what a code
+// cell or view_image gave the model) and an MCP image block ({ type: 'image',
+// data, mimeType }).
+function codexToolImages(items) {
+  const out = []
+  for (const it of Array.isArray(items) ? items : []) {
+    const o = obj(it)
+    if (!o) continue
+    if (o.type === 'input_image' || o.type === 'inputImage') {
+      const url = typeof o.image_url === 'string' ? o.image_url : str(o.imageUrl) || str(obj(o.image_url)?.url)
+      out.push(imageFromUrl(url && /^data:/i.test(url) ? url : null, undefined, 'tool'))
+    } else if (o.type === 'image' && str(o.data)) out.push(imageFromBase64(o.data, str(o.mimeType) || str(o.mime_type), undefined, 'tool'))
+  }
+  return out
 }
 
 // A file item (input_file): { filename, file_data (a data: URL), file_url }.
@@ -378,16 +458,18 @@ function codexFile(o) {
   })
 }
 
-// -> { text, attachments }
-function codexContent(content) {
+// -> { text, attachments }. fallbacks: the data: URLs the model was sent for
+// this message's images, in the same order (codexDataImages).
+function codexContent(content, fallbacks = []) {
   if (typeof content === 'string') return { text: content, attachments: [] }
   if (!Array.isArray(content)) return { text: '', attachments: [] }
   const parts = []
   const attachments = []
+  let nth = 0
   for (const c of content) {
     const o = obj(c)
     if (o && ['text', 'Text', 'input_text', 'output_text'].includes(o.type) && str(o.text) && !CODEX_CONTEXT.test(o.text)) parts.push(o.text)
-    else if (o && CODEX_IMAGE_ITEMS.has(o.type)) attachments.push(codexImage(o))
+    else if (o && CODEX_IMAGE_ITEMS.has(o.type)) attachments.push(codexImage(o, fallbacks[nth++] || null))
     else if (o && CODEX_FILE_ITEMS.has(o.type)) attachments.push(codexFile(o))
   }
   return { text: parts.join('\n'), attachments }
@@ -401,21 +483,46 @@ function codexSummary(summary) {
     .join('\n\n')
 }
 
-// A tool output: text, or { output | content, success }, or that as JSON text.
+// A tool output: text, or { output | content, success }, or that as JSON
+// text, or a list of items (input_text, input_image). images: its images.
 function codexOutput(output) {
   let v = output
   if (typeof v === 'string' && v.startsWith('{')) {
     try {
       v = JSON.parse(v)
     } catch {
-      return { text: output, isError: false }
+      return { text: output, isError: false, images: [] }
     }
   }
   const o = obj(v)
-  if (!o) return { text: resultText(v), isError: false }
+  if (!o) return { text: resultText(v), isError: false, images: codexToolImages(v) }
   const exit = obj(o.metadata)?.exit_code
   const isError = o.success === false || o.is_error === true || (Number.isInteger(exit) && exit !== 0)
-  return { text: resultText(o.output ?? o.content ?? o), isError }
+  const body = o.output ?? o.content ?? o
+  return { text: resultText(body), isError, images: codexToolImages(body) }
+}
+
+// The images of a tool the agent ran on its own record (item_completed):
+// view_image (ImageView: a file: URL), an MCP tool's image blocks, a
+// generated image (its bytes, else the file Codex saved it to, in
+// <codex home>/generated_images). -> { name, input, images } | null
+function codexItemTool(item) {
+  const type = String(item.type || '')
+  if (type === 'ImageView' || type === 'imageView') {
+    const path = localPath(str(item.path))
+    return path ? { name: 'view_image', input: { path }, images: [imageFromPath(path, undefined, 'tool')] } : null // i18n-ignore tool name
+  }
+  if (type === 'McpToolCall' || type === 'mcpToolCall') {
+    const images = codexToolImages(obj(item.result)?.content)
+    return images.length ? { name: `mcp:${str(item.server) || ''}.${str(item.tool) || ''}`, input: obj(item.arguments) || {}, images } : null
+  }
+  if ((type === 'Extension' && /^image_gen\b/.test(str(item.kind) || '')) || type === 'imageGeneration') {
+    const saved = localPath(str(item.savedPath) || str(item.saved_path))
+    const bytes = str(item.result)
+    const images = bytes ? [imageFromBase64(bytes, '', saved ? basename(saved) : undefined, 'tool')] : saved ? [imageFromPath(saved, undefined, 'tool')] : []
+    return images.length ? { name: 'image_gen', input: { prompt: str(item.revisedPrompt) || str(item.revised_prompt) || '' }, images } : null // i18n-ignore tool name
+  }
+  return null
 }
 
 export function codexHistoryEvents(lines, threadId, limits = HISTORY_LIMITS) {
@@ -439,10 +546,22 @@ export function codexHistoryEvents(lines, threadId, limits = HISTORY_LIMITS) {
     : records.some((r) => r.type === 'event_msg' && ['user_message', 'agent_message'].includes(obj(r.payload)?.type))
       ? 'events'
       : 'response'
+  // The data: URLs each turn's user message sent the model (response items),
+  // for a pasted image whose file is gone (item_completed names its path).
+  const turnImages = new Map()
+  for (const r of records) {
+    const p = obj(r.payload)
+    if (r.type !== 'response_item' || p?.type !== 'message' || p.role !== 'user') continue
+    const turnId = str(obj(p.internal_chat_message_metadata_passthrough)?.turn_id)
+    const urls = codexDataImages(p.content)
+    if (turnId && urls.some(Boolean)) turnImages.set(turnId, urls)
+  }
+  let lastSentImages = [] // the newest response user message's, for the event lines
   const b = createBuilder(limits)
   const responseItem = (p, ts) => {
     const type = p.type
     if (type === 'message') {
+      if (p.role === 'user') lastSentImages = codexDataImages(p.content).filter(Boolean)
       if (mode !== 'response') return
       const { text: body, attachments } = codexContent(p.content)
       if (p.role === 'user') b.user(str(p.id) || b.nextId('u'), body, ts, attachments)
@@ -463,7 +582,7 @@ export function codexHistoryEvents(lines, threadId, limits = HISTORY_LIMITS) {
       const id = str(p.call_id) || str(p.id)
       if (!id) return
       const out = codexOutput(p.output)
-      b.toolResult(id, out.text, out.isError, ts)
+      b.toolResult(id, out.text, out.isError, ts, out.images)
     }
   }
   for (const r of records) {
@@ -488,9 +607,14 @@ export function codexHistoryEvents(lines, threadId, limits = HISTORY_LIMITS) {
         break
       case 'user_message':
         if (mode === 'events' && !CODEX_CONTEXT.test(str(p.message) || '')) {
+          const urls = (Array.isArray(p.images) ? p.images : []).map((u) => (typeof u === 'string' ? u : str(obj(u)?.url)))
+          // A pasted file's bytes as sent to the model: the sent images that
+          // are not this event's own data: URLs, in order.
+          const sent = lastSentImages.filter((u) => !urls.includes(u))
+          lastSentImages = []
           const attachments = [
-            ...(Array.isArray(p.images) ? p.images : []).map((u) => imageFromUrl(typeof u === 'string' ? u : str(obj(u)?.url))),
-            ...(Array.isArray(p.local_images) ? p.local_images : []).map((f) => imageFromPath(typeof f === 'string' ? f : str(obj(f)?.path)))
+            ...urls.map((u) => imageFromUrl(u, undefined, 'user')),
+            ...(Array.isArray(p.local_images) ? p.local_images : []).map((f, i) => codexImage({ path: typeof f === 'string' ? f : str(obj(f)?.path) }, sent[i] || null))
           ]
           b.user(b.nextId('u'), str(p.message) || '', ts, attachments)
         }
@@ -499,10 +623,27 @@ export function codexHistoryEvents(lines, threadId, limits = HISTORY_LIMITS) {
         if (mode === 'events' && str(p.message)) b.message('assistant', b.nextId('a'), p.message, ts, '\n\n')
         break
       case 'item_completed': {
-        if (mode !== 'completed') break
         const item = obj(p.item)
         if (!item) break
-        const { text: body, attachments } = codexContent(item.content)
+        // A tool's images, whatever lines carry the messages.
+        const pictured = limits.attachments ? codexItemTool(item) : null
+        if (pictured) {
+          const id = str(item.id)
+          // Its own call (by id), else the code cell running it (its output
+          // usually holds the same image inline: this copy only when it does
+          // not), else a call of its own.
+          const own = id && b.hasTool(id) ? id : null
+          const host = own ? null : b.openTool()
+          if (own) b.toolImages(own, pictured.images)
+          else if (host) b.toolImages(host, pictured.images.map((c) => ({ ...c, secondary: true })))
+          else {
+            const callId = id || b.nextId('t')
+            b.tool(callId, pictured.name, pictured.input, ts)
+            b.toolResult(callId, '', false, ts, pictured.images)
+          }
+        }
+        if (mode !== 'completed') break
+        const { text: body, attachments } = codexContent(item.content, turnImages.get(str(p.turn_id) || '') || [])
         if (item.type === 'UserMessage' || item.type === 'user_message') b.user(str(item.id) || b.nextId('u'), body, ts, attachments)
         else if ((item.type === 'AgentMessage' || item.type === 'agent_message') && body.trim()) b.message('assistant', str(item.id) || b.nextId('a'), body, ts, '\n\n')
         break
@@ -529,13 +670,14 @@ export function codexHistoryEvents(lines, threadId, limits = HISTORY_LIMITS) {
 // typed or read: skipped. A message that failed with an abort ends its turn
 // as interrupted; another error as failed.
 // A file part: { mime, filename, url (a data: or file: URL), source: { path } }.
-function opencodeFile(p) {
+// source: 'user' (a message's), 'tool' (a tool result's attachments).
+function opencodeFile(p, source = 'user') {
   const url = str(p.url)
   const path = localPath(url) || localPath(str(obj(p.source)?.path))
   const name = str(p.filename) || undefined
   if (typeof p.mime === 'string' && p.mime.startsWith('image/')) {
-    if (url && /^data:/i.test(url)) return imageFromUrl(url, name)
-    return path ? imageFromPath(path, name) : imageFromUrl(null, name)
+    if (url && /^data:/i.test(url)) return imageFromUrl(url, name, source)
+    return path ? imageFromPath(path, name, source) : imageFromUrl(null, name, source)
   }
   return fileCandidate({ name, mediaType: p.mime, ...(url && /^data:/i.test(url) ? { dataUrl: url } : {}), ...(path ? { path } : {}) })
 }
@@ -551,7 +693,7 @@ export function opencodeHistoryEvents(messages, limits = HISTORY_LIMITS) {
     const ts = obj(info.time)?.created
     if (info.role === 'user') {
       const typed = parts.filter((p) => p.type === 'text' && str(p.text) && p.synthetic !== true).map((p) => p.text)
-      const attachments = parts.filter((p) => p.type === 'file').map(opencodeFile)
+      const attachments = parts.filter((p) => p.type === 'file').map((p) => opencodeFile(p))
       b.user(info.id, typed.join('\n'), ts, attachments)
       continue
     }
@@ -567,7 +709,9 @@ export function opencodeHistoryEvents(messages, limits = HISTORY_LIMITS) {
         b.tool(p.callID, opencodeToolName(p.tool), opencodeToolInput(p.tool, obj(st.input) || {}), obj(st.time)?.start ?? pts)
         if (st.status === 'completed' || st.status === 'error') {
           const exit = obj(st.metadata)?.exit
-          b.toolResult(p.callID, st.status === 'error' ? str(st.error) || '' : st.output ?? '', st.status === 'error' || (Number.isInteger(exit) && exit !== 0), obj(st.time)?.end ?? pts)
+          // Its attachments (a read image, a screenshot): the image file parts.
+          const images = (Array.isArray(st.attachments) ? st.attachments : []).map(obj).filter((f) => f && typeof f.mime === 'string' && f.mime.startsWith('image/')).map((f) => opencodeFile(f, 'tool'))
+          b.toolResult(p.callID, st.status === 'error' ? str(st.error) || '' : st.output ?? '', st.status === 'error' || (Number.isInteger(exit) && exit !== 0), obj(st.time)?.end ?? pts, images)
         }
       }
     }

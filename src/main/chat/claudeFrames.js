@@ -8,6 +8,7 @@
 
 import { createClaudeSubagents, observeClaudeSubagents } from './claudeSubagents.js'
 import { createClaudeBackground, observeClaudeBackground } from './claudeBackgroundTasks.js'
+import { liveImages } from './historyAttachments.js'
 export const TOOL_OUTPUT_MAX_BYTES = 8 * 1024
 
 // The state the normalizer keeps between frames of one process.
@@ -96,17 +97,36 @@ export function clipText(text, maxBytes = TOOL_OUTPUT_MAX_BYTES) {
 }
 
 // tool_result content: a string, or blocks ({type:'text'} / {type:'image'} …).
-export function toolResultText(content) {
+// images: false when the images go on the event itself (toolResultImages):
+// the text leaves them out.
+export function toolResultText(content, { images = true } = {}) {
   if (typeof content === 'string') return content
   if (!Array.isArray(content)) return content == null ? '' : JSON.stringify(content)
   return content
     .map((b) => {
       if (!b || typeof b !== 'object') return ''
       if (b.type === 'text') return String(b.text ?? '')
-      if (b.type === 'image') return '[image]'
+      if (b.type === 'image') return images ? '[image]' : null
       return `[${String(b.type || 'content')}]`
     })
+    .filter((line) => line !== null)
     .join('\n')
+}
+
+// A tool result's images (historyAttachments.js liveImages): Claude's image
+// blocks ({ source: { type: 'base64', media_type, data } }; a URL one is not
+// shown) and an MCP image block ({ data, mimeType }).
+// -> { images?, imagesMore? }
+export function toolResultImages(content) {
+  if (!Array.isArray(content)) return {}
+  const items = content
+    .filter((b) => b && typeof b === 'object' && b.type === 'image')
+    .map((b) => {
+      const src = b.source && typeof b.source === 'object' ? b.source : null
+      if (src) return src.type === 'base64' ? { base64: src.data, mediaType: src.media_type } : { bad: true }
+      return typeof b.data === 'string' ? { base64: b.data, mediaType: b.mimeType } : { bad: true }
+    })
+  return items.length ? liveImages(items) : {}
 }
 
 // Wording the CLI uses when it has no usable credentials. Only a hint for
@@ -312,7 +332,8 @@ function normalizeClaudeFrame(m, state) {
             type: 'toolResult',
             toolUseId: String(b.tool_use_id || ''),
             isError: b.is_error === true,
-            text: clipText(toolResultText(b.content)),
+            text: clipText(toolResultText(b.content, { images: false })),
+            ...toolResultImages(b.content),
             parentToolUseId
           })
         }

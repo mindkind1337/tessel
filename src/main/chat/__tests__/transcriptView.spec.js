@@ -546,7 +546,7 @@ describe('transcript view: images pasted in the terminal', () => {
     const views = createTranscriptViews({ send, roots: () => roots, watch: () => ({ close() {}, on() {} }), isRemote: async () => false })
     const opened = await views.open({ agent: 'openclaude', sessionId: OC_ID })
     const [first] = imagesOf(opened)
-    expect(first).toEqual([{ key: expect.stringMatching(/^[0-9a-f]{24}$/), name: 'image.png', mediaType: 'image/png', dataUrl: `data:image/png;base64,${PNG}` }])
+    expect(first).toEqual([{ key: expect.stringMatching(/^[0-9a-f]{24}$/), name: 'image.png', source: 'user', mime: 'image/png', mediaType: 'image/png', bytes: Buffer.from(PNG, 'base64').length, dataUrl: `data:image/png;base64,${PNG}` }])
     const key = first[0].key
 
     // The agent writes on: the old message's image comes without its bytes.
@@ -554,7 +554,7 @@ describe('transcript view: images pasted in the terminal', () => {
     await views.refresh(opened.viewId)
     expect(send).toHaveBeenCalledTimes(1)
     let [old, added] = imagesOf(send.mock.calls[0][1])
-    expect(old).toEqual([{ key, name: 'image.png', mediaType: 'image/png' }])
+    expect(old).toEqual([{ key, name: 'image.png', source: 'user', mime: 'image/png', mediaType: 'image/png', bytes: Buffer.from(PNG, 'base64').length }])
     expect(added[0].dataUrl).toBe(`data:image/png;base64,${PNG2}`)
 
     // Again: no image bytes at all.

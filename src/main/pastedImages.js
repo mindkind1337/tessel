@@ -9,6 +9,7 @@ import fs from 'fs'
 import os from 'os'
 import { join, resolve, relative, isAbsolute, dirname, basename } from 'path'
 import readline from 'readline'
+import { createHash } from 'crypto'
 import { claudeTranscript } from './agentModel'
 
 export const PASTE_DIR = join(os.tmpdir(), 'tessel-paste')
@@ -36,13 +37,16 @@ export function imageInEntry(o, n) {
 }
 
 // -> the image's file, or null. The transcript can be large: read line by
-// line, parsing only the lines that name this image.
+// line, parsing only the lines that name this image. The transcript is always
+// read first (the file Claude Code pasted from %TEMP% is soon gone; its bytes
+// in the transcript are the copy that lasts), and the saved copy is named by
+// the whole session and the image's own bytes: another session, or this
+// number reused for another image (a resumed session), never gets a copy of
+// the wrong image.
 export async function claudeImageFile({ sessionId, n }, home = os.homedir(), outDir = PASTE_DIR) {
   if (!Number.isInteger(n) || n < 1) return null
   const file = claudeTranscript(sessionId, home)
   if (!file) return null
-  const out = join(outDir, `claude-${String(sessionId).slice(0, 8)}-image-${n}`)
-  for (const ext of Object.values(EXT)) if (fs.existsSync(`${out}.${ext}`)) return `${out}.${ext}`
   const needle = new RegExp(`"imagePasteIds":\\[[^\\]]*\\b${n}\\b`)
   let found = null
   const rl = readline.createInterface({ input: fs.createReadStream(file, { encoding: 'utf8' }), crlfDelay: Infinity })
@@ -60,9 +64,14 @@ export async function claudeImageFile({ sessionId, n }, home = os.homedir(), out
     rl.close()
   }
   if (!found) return null
-  const path = `${out}.${EXT[found.mediaType] || 'png'}`
+  const bytes = Buffer.from(found.data, 'base64')
+  if (!bytes.length) return null
+  const session = createHash('sha256').update(String(sessionId)).digest('hex').slice(0, 16)
+  const image = createHash('sha256').update(bytes).digest('hex').slice(0, 16)
+  const path = join(outDir, `claude-${session}-image-${n}-${image}.${EXT[found.mediaType] || 'png'}`)
+  if (fs.existsSync(path)) return path
   fs.mkdirSync(outDir, { recursive: true })
-  fs.writeFileSync(path, Buffer.from(found.data, 'base64'))
+  fs.writeFileSync(path, bytes)
   return path
 }
 
