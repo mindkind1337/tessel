@@ -9,7 +9,9 @@
 //   Invitations, People, Manage… and Stop Live Share;
 // - guest: "● Live with <host>". Its popover: what it means, what you may
 //   do, your verification code, the host's projects shared with you, Manage…
-//   and Leave.
+//   and Leave. In a host's project, your screen follows the host's until you
+//   pick something yourself: then "Follow host" shows beside the pill; the
+//   task copy the host looks at is said too.
 // Escape or a click outside closes the popover (the keyboard goes back to
 // the pill).
 import { ref, computed, nextTick, onMounted, onBeforeUnmount } from 'vue'
@@ -22,11 +24,11 @@ const props = defineProps({
   //   [pane names], typing: [pane names] }], waiting, projects: [{ id, name,
   //   here, people: [{ id, name }] }], current: { id, name, shared } | null }
   // Guest: { mode: 'guest', host, reconnecting, rights, code, projects:
-  //   [{ id, name, here }] }
+  //   [{ id, name, here }], follow: { on, copy } | null }
   pill: { type: Object, required: true }
 })
-// open(section), goto(id), share(id, on), stop, leave
-const emit = defineEmits(['open', 'goto', 'share', 'stop', 'leave'])
+// open(section), goto(id), share(id, on), stop, leave, follow
+const emit = defineEmits(['open', 'goto', 'share', 'stop', 'leave', 'follow'])
 
 const open = ref(false)
 const root = ref(null)
@@ -63,6 +65,13 @@ const waitingText = computed(() =>
 const canRemove = computed(() => !props.pill.starting && projects.value.length > 1)
 const current = computed(() => (isHost.value ? props.pill.current || null : null))
 const codeText = computed(() => (props.pill.code ? t('liveShare.pill.code', 'Your verification code: {{code}}', { code: props.pill.code }) : ''))
+// Guest: in a host's project, following the host's screen or not, and the
+// task copy the host looks at.
+const follow = computed(() => (!isHost.value && props.pill.follow ? props.pill.follow : null))
+const copyText = computed(() => (follow.value && follow.value.copy ? t('liveShare.follow.copy', '{{host}} is looking at the task copy {{branch}}.', { host: props.pill.host || '?', branch: follow.value.copy }) : ''))
+const followText = computed(() =>
+  follow.value && follow.value.on ? t('liveShare.follow.on', 'Your screen follows {{host}}’s.', { host: props.pill.host || '?' }) : t('liveShare.follow.off', 'You picked your own view: it no longer follows {{host}}’s.', { host: props.pill.host || '?' })
+)
 const guestText = computed(() => t('liveShare.pill.guestText', 'You are in {{host}}’s session: its panes run on {{host}}’s computer, and {{host}} decides what you can do.', { host: props.pill.host || '?' }))
 function whatText(g) {
   if (g.typing && g.typing.length) return t('liveShare.pill.typing', 'Typing in {{panes}}', { panes: g.typing.join(', ') })
@@ -106,6 +115,16 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', onDocDown, tru
     >
       <span class="lsp-dot" :class="{ lit, pulse: !lit && (pill.starting || pill.reconnecting) }" aria-hidden="true" data-test="live-pill-dot"></span>
       <span class="lsp-text">{{ label }}</span>
+    </button>
+    <button
+      v-if="follow && !follow.on"
+      type="button"
+      class="lsp-follow"
+      data-test="live-pill-follow"
+      :title="t('liveShare.follow.hint', 'Your screen follows {{host}}’s again: the tab, pane and file {{host}} has on screen', { host: pill.host || '?' })"
+      @click="emit('follow')"
+    >
+      {{ t('liveShare.follow.button', 'Follow host') }}
     </button>
 
     <div v-if="open" ref="pop" class="lsp-pop" role="dialog" :aria-label="t('liveShare.title', 'Live Share')" data-test="live-pill-popover">
@@ -178,6 +197,10 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', onDocDown, tru
         <p class="lsp-text-block" data-test="live-pill-guest-text">{{ guestText }}</p>
         <p v-if="pill.rights" class="lsp-text-block lsp-dim" data-test="live-pill-rights">{{ pill.rights }}</p>
         <p v-if="codeText" class="lsp-text-block lsp-dim" data-test="live-pill-code">{{ codeText }}</p>
+        <p v-if="follow" class="lsp-text-block lsp-dim" data-test="live-pill-following">
+          {{ followText }}
+          <span v-if="copyText" data-test="live-pill-copy"> {{ copyText }}</span>
+        </p>
         <template v-if="projects.length">
           <div class="lsp-title">{{ t('liveShare.pill.sharedWithYou', 'Shared with you') }}</div>
           <ul class="lsp-list">
@@ -199,6 +222,8 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', onDocDown, tru
 .lsp-wrap {
   position: relative;
   display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }
 .lsp-pill {
   display: inline-flex;
@@ -435,5 +460,21 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', onDocDown, tru
 .lsp-icon:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 1px;
+}
+.lsp-follow {
+  height: 22px;
+  padding: 0 9px;
+  border: 1px solid var(--accent);
+  border-radius: 11px;
+  background: transparent;
+  color: var(--accent);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.lsp-follow:hover {
+  background: var(--accent);
+  color: var(--chrome);
 }
 </style>

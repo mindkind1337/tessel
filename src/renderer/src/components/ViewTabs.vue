@@ -43,7 +43,8 @@ function editorTabs(leaf) {
       path: f.path,
       kind: 'editor',
       label,
-      hint: f.preview ? t('app.viewTabs.previewHint', '{{path}}\nPreview: double-click to keep it open', { path: label === path ? path : `${label}\n${path}` }) : label === path ? path : `${label}\n${path}`,
+      host: !!hostOf2(leaf),
+      hint: hostOf2(leaf) ? hostHint(leaf, label === path ? path : `${label}\n${path}`) : f.preview ? t('app.viewTabs.previewHint', '{{path}}\nPreview: double-click to keep it open', { path: label === path ? path : `${label}\n${path}` }) : label === path ? path : `${label}\n${path}`,
       preview: !!f.preview,
       current: samePath(f.path, leaf.activePath),
       // Unsaved changes (a dot, as in the editor), deleted on disk, or failed to open.
@@ -53,17 +54,23 @@ function editorTabs(leaf) {
     }
   })
 }
+// A Live Share host's tab on a guest's screen (its editor tabs, one of its
+// pages): its hint says whose it is; its × hides it here only.
+const hostOf2 = (leaf) => (leaf && leaf.backend === 'liveshare' && leaf.liveShare && (leaf.liveShare.link || leaf.liveShare.hostTabs) ? leaf.liveShare.host || '?' : null)
+const hostHint = (leaf, hint) => {
+  const host = hostOf2(leaf)
+  return host ? t('app.viewTabs.hostTab', '{{host}}’s tab: {{hint}}', { host, hint }) : hint
+}
 function browserTab(leaf) {
-  // A Live Share host's page (a guest's screen): the title its frames gave
-  // (LiveSharePageView.vue), else "Browser page"; the host's to close, never
-  // the guest's.
+  // A Live Share host's page whose address only opens on the host's side (a
+  // guest's screen, LiveSharePageView.vue): its title, else "Browser page".
   if (isLiveSharePage(leaf)) {
     const label = leaf.liveShare.pageTitle || t('liveShare.page.title', 'Browser page')
-    return { key: leaf.id, id: leaf.id, path: null, kind: 'browser', label, hint: leaf.liveShare.pageUrl || label, fixed: true }
+    return { key: leaf.id, id: leaf.id, path: null, kind: 'browser', label, hint: hostHint(leaf, leaf.liveShare.pageUrl || label), host: true }
   }
   const url = leaf.url && leaf.url !== BLANK_URL ? leaf.url : ''
   const label = leaf.title || (url && hostOf(url)) || t('app.viewTabs.browser', 'Browser')
-  return { key: leaf.id, id: leaf.id, path: null, kind: 'browser', label, hint: url ? displayUrl(url) : label, leaf }
+  return { key: leaf.id, id: leaf.id, path: null, kind: 'browser', label, hint: hostHint(leaf, url ? displayUrl(url) : label), leaf, host: !!hostOf2(leaf) }
 }
 const tabs = computed(() => [
   { key: 'terminal', id: 'terminal', path: null, kind: 'terminal', label: t('app.viewTabs.terminal', 'Terminal'), hint: t('app.viewTabs.terminalHint', 'The terminals and agents of this project') },
@@ -75,7 +82,7 @@ const isActive = (tab) => tab.id === props.shown && (!tab.path || tab.current)
 // An editor's or a browser's tab pulled moves that pane (not its x); the
 // line's free space moves the pane it sits in (id null).
 function onTabPointerDown(e, tab) {
-  if (e.button !== 0 || tab.kind === 'terminal' || tab.fixed || (e.target.closest && e.target.closest('button'))) return
+  if (e.button !== 0 || tab.kind === 'terminal' || tab.fixed || tab.host || (e.target.closest && e.target.closest('button'))) return
   emit('drag', tab.id, e)
 }
 function onStripPointerDown(e) {
@@ -100,7 +107,7 @@ function onAuxClick(e, tab) {
       v-for="tab in tabs"
       :key="tab.key"
       class="view-tab"
-      :class="[tab.kind, { active: isActive(tab), preview: tab.preview, dirty: tab.dirty, deleted: tab.deleted, failed: tab.failed }]"
+      :class="[tab.kind, { active: isActive(tab), preview: tab.preview, dirty: tab.dirty, deleted: tab.deleted, failed: tab.failed, host: tab.host }]"
       role="tab"
       tabindex="0"
       data-test="view-tab"
@@ -143,6 +150,11 @@ function onAuxClick(e, tab) {
 </template>
 
 <style scoped>
+/* A Live Share host's tab (a guest's screen): a dotted line under it. */
+.view-tab.host .view-tab-label {
+  text-decoration: underline dotted;
+  text-underline-offset: 3px;
+}
 /* A preview file (one click): in italics, like VS Code's. */
 .view-tab.preview .view-tab-label {
   font-style: italic;

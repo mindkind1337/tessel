@@ -108,7 +108,9 @@ describe('cleanLayout', () => {
         ]
       },
       activeId: 'pane-2',
-      maximizedId: 'pane-1'
+      maximizedId: 'pane-1',
+      shown: 'pane-3',
+      copy: 'tessel/fix'
     })
     expect(layout).toEqual({
       project: 'tessel',
@@ -130,8 +132,13 @@ describe('cleanLayout', () => {
         ]
       },
       activeId: 'pane-2',
-      maximizedId: 'pane-1'
+      maximizedId: 'pane-1',
+      shown: 'pane-3',
+      copy: 'tessel/fix'
     })
+    // A tab shown that is not one of its panes: none.
+    expect(cleanLayout({ tree: leaf('pane-1'), shown: '../x' }).shown).toBe(null)
+    expect(cleanLayout({ tree: leaf('pane-1'), shown: 'terminal' }).shown).toBe('terminal')
   })
 
   it('drops what is not a pane, and fixes what it can', () => {
@@ -165,7 +172,7 @@ describe('cleanLayout', () => {
 
   it('a split of one pane is that pane; nothing usable is no tree', () => {
     expect(cleanLayout({ tree: { type: 'split', children: [leaf('pane-1')] } }).tree).toMatchObject({ type: 'leaf', id: 'pane-1' })
-    expect(cleanLayout({ tree: { type: 'split', children: [{ type: 'leaf', id: 'a b' }] } })).toEqual({ project: null, tree: null, activeId: null, maximizedId: null })
+    expect(cleanLayout({ tree: { type: 'split', children: [{ type: 'leaf', id: 'a b' }] } })).toEqual({ project: null, tree: null, activeId: null, maximizedId: null, shown: null, copy: null })
     expect(cleanLayout(null)).toBe(null)
     expect(cleanLayout('layout')).toBe(null)
   })
@@ -318,7 +325,9 @@ describe('registerLiveShare: joining a host', () => {
             ]
           },
           activeId: localId,
-          maximizedId: null
+          maximizedId: null,
+          shown: null,
+          copy: null
         }
       }
     ])
@@ -462,7 +471,7 @@ describe('registerLiveShare: one Tessel shares, another joins', () => {
     const localId = 'pane-ls1-1-ps'
     expect(joined).toMatchObject({ host: 'Cedric', panes: [{ id: localId, title: 'PowerShell', kind: 'shell', cols: 120, rows: 40 }] })
     expect(joined.projects.map((p) => p.id)).toEqual(['ws-1'])
-    expect(joined.projects[0].layout.tree.children.map((c) => c.id)).toEqual([localId, 'pane-ls1-2-web'])
+    expect(joined.projects[0].layout.tree.children.map((c) => c.id)).toEqual([localId, 'lnk-ls1-2-web'])
     expect(joined.projects[0].layout.activeId).toBe(localId)
     await until(() => host.last('liveShare:host').guests.some((g) => g.name === 'Alex' && g.state === 'joined'))
 

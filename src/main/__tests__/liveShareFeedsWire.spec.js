@@ -1,16 +1,17 @@
 // @vitest-environment node
 // Live Share phase 2c end to end over real WebSockets on 127.0.0.1 (only
-// Cloudflare's tunnel is faked): the channel's page stream (shareHost.js,
-// shareGuest.js: a 'page' subscription needs "See my browser pages", is the
-// guest's own stream, one page at a time, ends the moment the right goes;
-// input needs "Use my browser pages" on the page it watches), then two
-// Tessels (liveShare.js): the host's past conversations, what its terminal
-// agents said and its activity reach the guest masked, with no session id,
-// account or folder; the host's browser panes of a shared project's layout
-// (never another page) stream to a guest that watches one, hidden and
-// paused pages show nothing, the guest's clicks and keys reach the page with
-// the right (refusals and limits said back), a new window from its click is
-// its own, and taking the right away stops the frames at once.
+// Cloudflare's tunnel is faked): the channel's 'links' topic (shareHost.js,
+// shareGuest.js: needs "See my browser pages", ends the moment the right
+// goes), then two Tessels (liveShare.js): the host's past conversations,
+// what its terminal agents said and its activity reach the guest masked,
+// with no session id, account or folder; the host's browser pages of a
+// shared project's layout (never another page, never a hidden one) reach a
+// guest with the right as links: their address (an address with a secret in
+// it as its origin only; one only the host's side opens marked local), their
+// title, a new address as the host's page navigates (in-page too), and their
+// videos' state; never a picture of the page, never an input to it. The
+// host's editor tabs reach the guest as paths from the project's folder,
+// without a hidden or outside file.
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest'
 import fs from 'fs'
 import os from 'os'
@@ -53,9 +54,10 @@ function jpeg(w, h, bytes = 4000) {
 }
 // A browser page as the host's main process sees it (its debugger answers
 // as Chromium's would, enough for the screencast and the input).
-function fakePage(id, { url = 'https://mail.example/inbox/42?code=abc', title = 'Inbox' } = {}) {
+function fakePage(id, { url = 'https://mail.example/inbox/42?code=abc', title = 'Inbox', media = [] } = {}) {
   const dbg = new EventEmitter()
-  const state = { url, title, focus: 'none', destroyed: false, inFlight: 0 }
+  const events = new EventEmitter()
+  const state = { url, title, focus: 'none', destroyed: false, inFlight: 0, media }
   dbg.attached = false
   dbg.sent = []
   dbg.isAttached = () => dbg.attached
@@ -89,11 +91,19 @@ function fakePage(id, { url = 'https://mail.example/inbox/42?code=abc', title = 
     id,
     state,
     debugger: dbg,
+    on: (ev, fn) => events.on(ev, fn),
+    once: (ev, fn) => events.once(ev, fn),
+    removeListener: (ev, fn) => events.removeListener(ev, fn),
+    // The page went somewhere (a reload, or in the page: pushState, a hash).
+    go(next, ev = 'did-navigate') {
+      state.url = next
+      events.emit(ev, {}, next)
+    },
+    executeJavaScriptInIsolatedWorld: vi.fn(async () => state.media),
     isDestroyed: () => state.destroyed,
     getURL: () => state.url,
     getTitle: () => state.title,
     capturePage: vi.fn(async () => null),
-    executeJavaScriptInIsolatedWorld: vi.fn(async () => (state.focus === 'password' ? 'secret' : 'ok')),
     sendInputEvent: vi.fn(),
     insertText: vi.fn(async () => {}),
     loadURL: vi.fn(async () => {}),
@@ -107,14 +117,13 @@ function fakePage(id, { url = 'https://mail.example/inbox/42?code=abc', title = 
   }
 }
 
-// --- The channel's page stream ------------------------------------------------------
-describe('Live Share pages: the channel', () => {
+// --- The channel's links topic -------------------------------------------------------
+describe('Live Share pages as links: the channel', () => {
   let host
   afterEach(() => host?.stop())
 
-  it('a page needs its right, is one guest stream, one page at a time, ends with the right; input needs "use" on the watched page', async () => {
-    const streams = []
-    const inputs = []
+  it('the links need "See my browser pages" on that project, and stop with the right; no page stream any more', async () => {
+    const watched = []
     const callbacks = {
       projects: () => [{ id: 'ws-1', layout: { project: 'site', tree: { type: 'leaf', id: 'pane-1', view: 'terminal', title: 't', kind: 'shell' }, activeId: 'pane-1' }, panes: [{ id: 'pane-1', title: 't', kind: 'shell', cols: 80, rows: 24 }] }],
       snapshot: async () => ({ data: '', cols: 80, rows: 24 }),
@@ -122,88 +131,46 @@ describe('Live Share pages: the channel', () => {
       openPane: () => {},
       closePane: () => {},
       askApproval: async () => true,
-      watchGuest: (topic, project, key, stream, on) => streams.push({ topic, project, key, stream, on }),
-      pageInput: async (stream, project, page, events, mayUse) => {
-        inputs.push({ project, page, events, may: mayUse() })
-        return { ok: true, done: events.length, refused: events.some((e) => e.button === 'right') ? ['button'] : [] }
-      }
+      opInfo: () => null,
+      request: async () => ({ ok: false }),
+      offers: (f) => f === 'links' || f === 'tabs',
+      watch: (topic, project, key, on) => watched.push({ topic, project, on })
     }
     const secret = newSecret()
     host = createShareHost({ secret, hostName: 'Ada', callbacks })
     const port = await host.start()
-    const r = { frames: [], events: [], rights: [], states: [] }
+    const r = { pushes: [], rights: [], states: [] }
     const client = createShareGuest({
       url: `ws://127.0.0.1:${port}/`,
       secret,
       name: 'Alex',
       signingKey: newSigningKey(),
-      callbacks: {
-        onState: (s) => r.states.push(s),
-        onProjects: (p) => (r.projects = p),
-        onRights: (x) => r.rights.push(x),
-        onPageFrame: (m) => r.frames.push(m),
-        onPageEvent: (m) => r.events.push(m)
-      }
+      callbacks: { onState: (s) => r.states.push(s), onProjects: (p) => (r.projects = p), onRights: (x) => r.rights.push(x), onPush: (topic, project, key, data) => r.pushes.push({ topic, project, data }) }
     })
     client.connect()
     await until(() => r.states.includes('joined') && r.projects)
-    expect(client.speaks('pages')).toBe(true)
-    // No requests on this host: no history.
-    expect(client.speaks('history')).toBe(false)
+    expect(client.speaks('links')).toBe(true)
+    expect(client.speaks('tabs')).toBe(true)
+    expect(client.speaks('pages')).toBe(false)
     const id = host.guests().find((g) => g.name === 'Alex').id
     // Without the right: the subscription is ignored.
-    client.subscribe('page', 'ws-1', 'pane-web', true)
+    client.subscribe('links', 'ws-1', null, true)
     await wait(80)
-    expect(streams).toEqual([])
+    expect(watched).toEqual([])
     host.setGrant(id, { rights: { pagesView: true } })
     await until(() => r.rights.length === 2)
-    client.subscribe('page', 'ws-1', 'pane-web', false)
-    client.subscribe('page', 'ws-1', 'pane-web', true)
-    await until(() => streams.length === 1)
-    const s = streams[0]
-    expect(s).toMatchObject({ topic: 'page', project: 'ws-1', key: 'pane-web', on: true })
-    expect(s.stream).toMatchObject({ name: 'Alex' })
-    expect(s.stream.live()).toBe(true)
-    expect(s.stream.send('frame', { seq: 1, jpeg: 'AAAA', w: 1, h: 1, meta: {} })).toBe(true)
-    expect(s.stream.send('push', {})).toBe(false)
-    await until(() => r.frames.length === 1)
-    expect(r.frames[0]).toMatchObject({ t: 'frame', project: 'ws-1', page: 'pane-web', seq: 1 })
-    // A second page while one is watched: ignored (one page per guest).
-    client.subscribe('page', 'ws-1', 'pane-web2', true)
-    await wait(80)
-    expect(streams).toHaveLength(1)
-    // Input without "use": refused, nothing reaches the host's page.
-    client.input('ws-1', 'pane-web', [{ type: 'mouse', action: 'down', x: 0.5, y: 0.5, button: 'left' }])
-    await until(() => r.events.length === 1)
-    expect(r.events[0]).toMatchObject({ t: 'page', page: 'pane-web', state: 'input', code: 'forbidden' })
-    expect(inputs).toEqual([])
-    host.setGrant(id, { rights: { pagesView: true, pagesUse: true } })
-    await until(() => r.rights.length === 3)
-    client.input('ws-1', 'pane-web', [{ type: 'mouse', action: 'down', x: 0.5, y: 0.5, button: 'right' }])
-    await until(() => inputs.length === 1 && r.events.length === 2)
-    expect(inputs[0]).toMatchObject({ project: 'ws-1', page: 'pane-web', may: true })
-    expect(r.events[1]).toMatchObject({ state: 'input', refused: ['button'] })
-    // Input on a page it does not watch: ignored.
-    client.input('ws-1', 'pane-web2', [{ type: 'key', key: 'a' }])
-    await wait(80)
-    expect(inputs).toHaveLength(1)
-    // The host ends the page for everyone (endTopic): that guest's stream ends.
-    host.endTopic('page', 'ws-1', 'pane-web')
-    await until(() => streams.length === 2)
-    expect(streams[1]).toMatchObject({ on: false })
-    expect(streams[1].stream).toBe(s.stream)
-    expect(s.stream.send('frame', { seq: 2, jpeg: 'AAAA' })).toBe(false)
-    client.subscribe('page', 'ws-1', 'pane-web', false)
-    client.subscribe('page', 'ws-1', 'pane-web', true)
-    await until(() => streams.length === 3)
-    const s2 = streams[2]
-    // The right taken away: the stream ends at once and sends nothing more.
+    client.subscribe('links', 'ws-1', null, false)
+    client.subscribe('links', 'ws-1', null, true)
+    await until(() => watched.length === 1)
+    host.push('links', 'ws-1', null, { pages: [{ id: 'pane-web', url: 'https://a.test/', local: false, title: 'A' }] })
+    await until(() => r.pushes.length === 1)
+    expect(r.pushes[0]).toMatchObject({ topic: 'links', project: 'ws-1' })
+    // The right taken away: nothing more.
     host.change(id, { right: 'pagesView', on: false })
-    await until(() => streams.length === 4)
-    expect(streams[3]).toMatchObject({ on: false })
-    expect(streams[3].stream).toBe(s2.stream)
-    expect(s2.stream.live()).toBe(false)
-    expect(s2.stream.send('frame', { seq: 3, jpeg: 'AAAA' })).toBe(false)
+    await until(() => watched.length === 2)
+    host.push('links', 'ws-1', null, { pages: [] })
+    await wait(80)
+    expect(r.pushes).toHaveLength(1)
     client.leave()
   })
 })
@@ -296,7 +263,8 @@ describe('Live Share phase 2c: two Tessels', () => {
 
   it('past conversations, terminal agents and activity reach the guest masked, without ids, accounts or folders', async () => {
     const { host, guest, local } = await session()
-    expect(guest.last('liveShare:guest').features).toEqual(expect.arrayContaining(['history', 'pages']))
+    expect(guest.last('liveShare:guest').features).toEqual(expect.arrayContaining(['history', 'links', 'tabs']))
+    expect(guest.last('liveShare:guest').features).not.toContain('pages')
     const list = await guest.handle['liveShare:sessions'](null, { op: 'list', project: 'ws-1', args: { limit: 30 } })
     expect(host.sessions.list).toHaveBeenCalledWith({ cwd: join(tmp, 'site'), limit: 30 })
     expect(list.ok).toBe(true)
@@ -338,85 +306,96 @@ describe('Live Share phase 2c: two Tessels', () => {
     for (const leak of [SESSION, 'acct-7', 'ada@example.com', SECRET, tmp, tmp.replace(/\\/g, '\\\\'), 'not for this guest', 'x.jsonl', 'tok999']) expect(said).not.toContain(leak)
   })
 
-  it('pages: only the shared project panes, frames while watched, one at a time, input with the right, hidden and paused show nothing, the right taken away stops them', async () => {
-    const p11 = fakePage(11)
+  it('pages as links: only the shared project pages, never a hidden one, with the right; their address followed (in-page too) and their videos; no picture', async () => {
+    const video = [{ kind: 'video', i: 0, paused: false, ended: false, t: 3, rate: 1 }]
+    const p11 = fakePage(11, { url: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=30s', title: 'Song', media: video })
     const p12 = fakePage(12, { url: 'http://localhost:5173/', title: 'Dev' })
-    const p13 = fakePage(13)
+    const p13 = fakePage(13, { url: 'https://docs.example.com/side', title: 'Side' })
     const p14 = fakePage(14)
-    const { host, guest, give, local } = await session({ pages: [p11, p12, p13, p14] })
+    const p15 = fakePage(15, { url: 'https://bank.example.com/accounts', title: 'Bank' })
+    const { host, guest, give, local } = await session({ pages: [p11, p12, p13, p14, p15] })
     host.on['liveShare:pages'](null, [
       { project: 'ws-1', paneId: 'pane-web', webContentsId: 11 },
       { project: 'ws-1', paneId: 'pane-web2', webContentsId: 12 },
-      // The side panel's page (no pane of a layout), and another project's.
-      { project: 'ws-1', paneId: 'web-side', webContentsId: 13 },
+      // The side panel's page (the window puts it in the project on screen),
+      // a pane of no layout, and another project's.
+      { project: 'ws-1', paneId: 'web-side1', webContentsId: 13, side: true, optIn: true },
+      // A side panel page the host did not share itself: never.
+      { project: 'ws-1', paneId: 'web-side2', webContentsId: 15, side: true },
+      { project: 'ws-1', paneId: 'pane-nowhere', webContentsId: 14 },
       { project: 'ws-2', paneId: 'pane-web3', webContentsId: 14 }
     ])
-    // Without "See my browser pages": refused here, nothing on the host.
-    expect(await guest.handle['liveShare:pageWatch'](null, { id: local.web, on: true })).toEqual({ ok: false, code: 'forbidden' })
+    // Without "See my browser pages": nothing.
+    await wait(400)
+    expect(guest.events('liveShare:push').some((p) => p.topic === 'links' && p.data.pages.length)).toBe(false)
     await give('pagesView')
-    expect(await guest.handle['liveShare:pageWatch'](null, { id: 'pane-nowhere', on: true })).toEqual({ ok: false, code: 'missing' })
-    expect(await guest.handle['liveShare:pageWatch'](null, { id: local.web, on: true })).toEqual({ ok: true })
-    await until(() => p11.debugger.attached)
-    expect(p13.debugger.attach).not.toHaveBeenCalled()
-    expect(p14.debugger.attach).not.toHaveBeenCalled()
-    const watched = await until(() => host.events('liveShare:pagesWatched').find((l) => l.length === 1))
-    expect(watched).toEqual([{ id: 'pane-web', guests: [{ id: expect.any(String), name: 'Alex' }] }])
-    p11.paint()
-    const frame = await until(() => guest.last('liveShare:pageFrame'))
-    expect(frame).toMatchObject({ id: local.web, seq: 1, w: 1000, h: 700, meta: { title: 'Inbox', url: 'https://mail.example/inbox/42?…' } })
-    expect(Buffer.isBuffer(frame.jpeg)).toBe(true)
-    // One page at a time: the second replaces the first.
-    expect(await guest.handle['liveShare:pageWatch'](null, { id: local.web2, on: true })).toEqual({ ok: true })
-    await until(() => p12.debugger.attached && !p11.debugger.attached)
-    p12.paint()
-    await until(() => guest.events('liveShare:pageFrame').some((f) => f.id === local.web2))
-    // Input: refused without "use" (never sent), then with it.
-    guest.on['liveShare:pageInput'](null, { id: local.web2, events: [{ type: 'mouse', action: 'down', x: 0.5, y: 0.5, button: 'left' }] })
-    await wait(100)
-    expect(p12.sentOf('Input.dispatchMouseEvent')).toEqual([])
-    await give('pagesUse')
-    guest.on['liveShare:pageInput'](null, { id: local.web2, events: [{ type: 'mouse', action: 'down', x: 0.5, y: 0.5, button: 'left' }, { type: 'mouse', action: 'up', x: 0.5, y: 0.5, button: 'left' }, { type: 'mouse', action: 'down', x: 0.2, y: 0.2, button: 'right' }, { type: 'key', key: 'v', modifiers: { ctrl: true } }] })
-    await until(() => p12.sentOf('Input.dispatchMouseEvent').length === 2)
-    expect(p12.sentOf('Input.dispatchMouseEvent')[0]).toMatchObject({ type: 'mousePressed', x: 500, y: 350, button: 'left' })
-    const refused = await until(() => guest.events('liveShare:pageEvent').find((e) => e.state === 'input'))
-    expect(refused).toEqual({ id: local.web2, state: 'input', refused: ['button', 'key'] })
-    // A new window from that click: the guest's (a new pane in the guest session).
-    expect(host.api.pagePopup(12)).toEqual({ allowed: true })
-    expect(host.api.pagePopup(11)).toBe(null)
-    // Past the clicks' limit: a notice, once.
-    const many = Array.from({ length: 25 }, () => ({ type: 'mouse', action: 'down', x: 0.5, y: 0.5, button: 'left' }))
-    guest.on['liveShare:pageInput'](null, { id: local.web2, events: many })
-    await until(() => guest.events('liveShare:pageEvent').some((e) => e.notice === 'limit'))
-    // Hidden by the host: paused, nothing captured.
+    const first = await until(() => guest.events('liveShare:push').find((p) => p.topic === 'links' && p.data.pages.length === 3))
+    const byId = Object.fromEntries(first.data.pages.map((x) => [x.id, x]))
+    expect(byId[local.web]).toMatchObject({ url: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=30s', local: false, title: 'Song', side: false })
+    expect(byId[local.web2]).toMatchObject({ url: 'http://localhost:5173/', local: true, title: 'Dev' })
+    expect(Object.values(byId).find((x) => x.side)).toMatchObject({ url: 'https://docs.example.com/side', title: 'Side', side: true })
+    // Its video, read only once the guest has that page on screen.
+    await wait(1500)
+    expect(p11.executeJavaScriptInIsolatedWorld).not.toHaveBeenCalled()
+    expect(await guest.handle['liveShare:pageMedia'](null, { id: local.web, on: true })).toEqual({ ok: true })
+    await until(() => guest.events('liveShare:push').some((p) => p.topic === 'links' && p.data.pages.some((x) => x.id === local.web && x.media)))
+    expect(p11.executeJavaScriptInIsolatedWorld).toHaveBeenCalled()
+    // A page only the host's side opens: nothing of it is read.
+    expect(p12.executeJavaScriptInIsolatedWorld).not.toHaveBeenCalled()
+    // The host's page navigates in the page (a single-page app): the new address.
+    p11.go('https://www.youtube.com/watch?v=9bZkp7q19f0', 'did-navigate-in-page')
+    await until(() => guest.events('liveShare:push').some((p) => p.topic === 'links' && p.data.pages.some((x) => x.url === 'https://www.youtube.com/watch?v=9bZkp7q19f0')))
+    // An address with a secret in it: its origin only.
+    p11.go('https://mail.example/reset?token=abc123&user=ada')
+    const trimmed = await until(() => guest.events('liveShare:push').map((p) => p.topic === 'links' && p.data.pages.find((x) => x.id === local.web)).filter(Boolean).find((x) => x.url === 'https://mail.example/'))
+    expect(trimmed.trimmed).toBe(true)
+    // Hidden by the host: gone from the links.
     host.on['liveShare:pages'](null, [
-      { project: 'ws-1', paneId: 'pane-web', webContentsId: 11 },
-      { project: 'ws-1', paneId: 'pane-web2', webContentsId: 12, hidden: true }
-    ])
-    await until(() => guest.events('liveShare:pageEvent').some((e) => e.state === 'paused' && e.reason === 'hidden'))
-    await until(() => !p12.debugger.attached)
-    host.on['liveShare:pages'](null, [
-      { project: 'ws-1', paneId: 'pane-web', webContentsId: 11 },
+      { project: 'ws-1', paneId: 'pane-web', webContentsId: 11, hidden: true },
       { project: 'ws-1', paneId: 'pane-web2', webContentsId: 12 }
     ])
-    await until(() => p12.debugger.attached)
-    // A password field with the keyboard: paused.
-    p12.state.focus = 'password'
-    await wait(600)
-    p12.paint()
-    await until(() => guest.events('liveShare:pageEvent').some((e) => e.state === 'paused' && e.reason === 'password'))
-    p12.state.focus = 'none'
-    await wait(600)
-    const before = guest.events('liveShare:pageFrame').length
-    p12.paint()
-    await until(() => guest.events('liveShare:pageFrame').length > before)
-    // The right taken away: frames stop at once, the capture ends.
+    await until(() => guest.events('liveShare:push').filter((p) => p.topic === 'links').at(-1).data.pages.length === 1)
+    expect(guest.events('liveShare:push').filter((p) => p.topic === 'links').at(-1).data.pages[0].id).toBe(local.web2)
+    // Never a picture of a page, never the debugger.
+    expect(guest.events('liveShare:pageFrame')).toEqual([])
+    for (const page of [p11, p12, p13, p14, p15]) expect(page.debugger.attach).not.toHaveBeenCalled()
+    // Ids of links: never a terminal's.
+    expect(local.web).toMatch(/^lnk-/)
+    // The right taken away: the links go.
     await give('pagesView', false)
-    await until(() => !p12.debugger.attached)
-    const count = guest.events('liveShare:pageFrame').length
-    p12.paint()
-    await wait(300)
-    expect(guest.events('liveShare:pageFrame')).toHaveLength(count)
-    await until(() => host.last('liveShare:pagesWatched').length === 0)
+    await until(() => guest.events('liveShare:push').filter((p) => p.topic === 'links').at(-1).data.pages.length === 0)
+    const said = JSON.stringify(guest.sent)
+    expect(said).not.toContain('token=abc123')
+    expect(said).not.toContain('pane-web3')
+    expect(said).not.toContain('bank.example.com')
+  })
+
+  it('editor tabs: the host files open in the shared project, as paths from it, never a hidden or an outside one', async () => {
+    const { host, guest } = await session()
+    const site = join(tmp, 'site')
+    fs.writeFileSync(join(site, 'src', 'a.js'), 'a')
+    fs.writeFileSync(join(site, '.env'), 'SECRET=1')
+    host.on['liveShare:layouts'](null, [
+      {
+        id: 'ws-1',
+        layout: { project: 'site', tree: { type: 'split', dir: 'row', sizes: [50, 50], children: [term('pane-1-ag', { kind: 'agent', agentId: 'claude' }), { type: 'leaf', id: 'pane-ed', view: 'editor', title: '' }] }, activeId: 'pane-1-ag', shown: 'pane-ed' },
+        chats: [],
+        root: site,
+        tabs: { files: [join(site, 'src', 'a.js'), join(site, '.env'), join(site, '.git', 'config'), join(tmp, 'elsewhere.txt'), 'C:\\Windows\\win.ini'], active: join(site, 'src', 'a.js') }
+      }
+    ])
+    const got = await until(() => guest.events('liveShare:push').filter((p) => p.topic === 'tabs' && p.data.tabs.length).at(-1))
+    expect(got).toEqual({ topic: 'tabs', project: 'ws-1', data: { tabs: ['src/a.js'], active: 'src/a.js' } })
+    // The tab the host shows: an editor (its id here).
+    const lay = guest.last('liveShare:guest').projects[0].layout
+    expect(lay.shown).toMatch(/^pane-ls\d+-ed$/)
+    // The host closes it: gone here too.
+    host.on['liveShare:layouts'](null, [{ id: 'ws-1', layout: { project: 'site', tree: term('pane-1-ag', { kind: 'agent', agentId: 'claude' }), activeId: 'pane-1-ag', shown: 'terminal' }, chats: [], root: site, tabs: { files: [], active: null } }])
+    await until(() => guest.events('liveShare:push').filter((p) => p.topic === 'tabs').at(-1).data.tabs.length === 0)
+    const said = JSON.stringify(guest.sent)
+    expect(said).not.toContain('.env')
+    expect(said).not.toContain('elsewhere')
+    expect(said).not.toContain(tmp.replace(/\\/g, '\\\\'))
   })
 
   it('an older host: no page and no history, said as such', async () => {
@@ -441,8 +420,8 @@ describe('Live Share phase 2c: two Tessels', () => {
       const s = await until(() => guest.events('liveShare:guest').find((x) => x.state === 'joined' && x.projects.length))
       expect(s.features).not.toContain('pages')
       expect(s.features).not.toContain('history')
-      const pageId = s.projects[0].layout.tree.children[1].id
-      expect(await guest.handle['liveShare:pageWatch'](null, { id: pageId, on: true })).toEqual({ ok: false, code: 'outdated-host' })
+      expect(s.features).not.toContain('links')
+      expect(await guest.handle['liveShare:subscribe'](null, { topic: 'links', project: 'ws-1', on: true })).toMatchObject({ outdated: true })
       expect(await guest.handle['liveShare:sessions'](null, { op: 'list', project: 'ws-1', args: {} })).toEqual({ ok: false, code: 'outdated-host' })
       expect(await guest.handle['liveShare:subscribe'](null, { topic: 'activity', project: 'ws-1', on: true })).toMatchObject({ outdated: true })
     } finally {

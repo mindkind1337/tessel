@@ -24,7 +24,8 @@
       "aria": "Terminal, éditeurs et navigateurs",
       "close": "Fermer {{name}}",
       "previewHint": "{{path}}\nAperçu : double-cliquez pour le garder ouvert",
-      "unsaved": "Modifications non enregistrées"
+      "unsaved": "Modifications non enregistrées",
+      "hostTab": "Onglet de {{host}} : {{hint}}"
     },
     "unsaved": {
       "title": "Modifications non enregistrées",

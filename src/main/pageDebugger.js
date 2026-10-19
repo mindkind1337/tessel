@@ -1,8 +1,8 @@
 // A browser page's debugger (webContents.debugger, CDP), shared in the main
 // process by everyone who needs it: agents driving the page
-// (agentBrowser.js) and Live Share's view of it (liveShare/sharePages.js).
-// A page has one debugger: before, an agent let it go after a minute
-// without a command, which would have cut Live Share's view in the middle.
+// (agentBrowser.js) and any other holder. A page has one debugger: before,
+// an agent let it go after a minute without a command, which would have cut
+// another holder's use in the middle.
 //
 // Each user takes a lease. The first lease attaches the debugger, the last
 // one released detaches it; a lease released in between leaves it to the

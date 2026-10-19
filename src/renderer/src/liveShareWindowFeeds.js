@@ -1,27 +1,45 @@
 // Live Share phase 2c in the window (main side: src/main/liveShare.js,
-// liveShare/sharePageFeed.js, shareHistory.js, shareActivity.js), used by
+// liveShare/shareLinks.js, shareHistory.js, shareActivity.js), used by
 // liveShareWindow.js.
 //
 // Host: the browser panes of every shared project (all its views: the grid
 // and its task copies' Browser tabs) go to main with their page's
 // webContents id and your "Hide this page from guests" (setPages; main keeps
-// only the panes of the layouts guests get, never a page of the side
-// panel); which of your pages guests watch comes back (pagesWatched: the eye
-// on the page). The activity of the projects guests follow goes to main
-// while they follow it (feeds), at most every ACTIVITY_MS, the newest
-// events of each one (main masks them).
+// only the panes of the layouts guests get, reads each page's address and
+// title itself and sends guests links, never the page). A page of the side
+// panel goes only once you shared it yourself ("Share with guests" on it,
+// for this session), and only while a shared project is on screen. A page
+// whose address guests get says so ("Shared with guests"). The activity of the projects guests
+// follow goes to main while they follow it (feeds), at most every
+// ACTIVITY_MS, the newest events of each one (main masks them).
 //
-// Guest: the host's browser panes are leaves of their own in a Live Share
-// project (pageLeaf: LiveSharePageView.vue) while you may see its pages; a
-// page view watches its page only while it is on screen (pageSource), and
-// sends your clicks and keys with "Use my browser pages". The Agents tab of
-// a Live Share project lists the host's past conversations of it
-// (sessionSource), the Conversations tab and the Activity panel show its
-// activity (activitySource, followed while one of them is shown) and what
-// its terminal agents said.
+// Guest: with "See my browser pages", each of the host's pages is a tab of
+// its own in a Live Share project: a browser of this computer on its
+// address, in a session of its own for this Live Share session (in memory,
+// never your signed-in one; "Open in my own browser session" on the page
+// opens it in yours, on your word), following the host's page (a new
+// address, at most once a second and NAV_PER_MINUTE a minute; its videos
+// playing or paused while the tab is on screen, liveShareMedia.js) until you
+// go somewhere else in it yourself ("Follow host" on the page takes it up
+// again). A site of the host's opens only after your click ("Open
+// <site>"), once per site for the session. A page that only opens on the host's computer or network
+// (localhost, a private address) is a note instead (LiveSharePageView.vue),
+// never opened. The Agents tab of a Live Share project lists the host's past
+// conversations of it (sessionSource), the Conversations tab and the
+// Activity panel show its activity (activitySource, followed while one of
+// them is shown) and what its terminal agents said.
 import { reactive, watch } from 'vue'
 import { t } from './i18n'
-import { personName } from './liveShareAccess'
+import { samePage, originOf } from '../../shared/liveShareLink'
+import { viewPartition } from './browser/pageHost'
+
+// A page's address you changed yourself, this long after following last
+// loaded one (a redirect of the address it loaded is not yours).
+export const OWN_NAV_MS = 3000
+// Followed navigations: at least this far apart, and at most so many a
+// minute (the host's page can change its address as often as it likes).
+export const NAV_GAP_MS = 1000
+export const NAV_PER_MINUTE = 30
 
 // The activity sent to main at most this often.
 export const ACTIVITY_MS = 2000
@@ -46,20 +64,39 @@ function hasLeaf(node, id) {
 // core: { api, state, hostSharing, sharedWss, isShared, guestWs }.
 export function createLiveShareFeeds(deps, core) {
   const { api, state, hostSharing, sharedWss, isShared, guestWs } = core
-  // Host: what main says guests follow and watch.
-  const feeds = reactive({ activity: [], pagesWatched: [] })
+  // Host: what main says guests follow.
+  const feeds = reactive({ activity: [] })
   // Guest: the activity that came (project -> { events, teams }), and who
   // follows each project's (project -> count).
   const activity = reactive({})
   const following = new Map()
-  // Guest: the host's pages shown here (local pane id -> leaf).
+  // Guest: the host's pages as links (project -> { pages }), each one's tab
+  // here (local pane id -> leaf: your browser on it, or a note), and the
+  // ones you hid (local pane ids).
+  const links = reactive({})
   const pageLeaves = new Map()
-  const frameListeners = new Set()
-  const eventListeners = new Set()
+  const pageWatches = new Map() // local pane id -> stop()
+  const hiddenPages = new Set()
+  let mediaSeq = 0
   const stops = []
   const offs = []
 
   // --- Host: pages --------------------------------------------------------------
+  // The side panel's pages ([{ id, sharedWithGuests }]) belong to no
+  // project: one goes only once you shared it yourself (sharedWithGuests,
+  // for this session), with the shared project on screen (none while
+  // another is).
+  function sidePagesNow() {
+    const cur = deps.currentWs ? deps.currentWs() : null
+    if (!cur || !isShared(cur.id) || typeof deps.sidePages !== 'function') return []
+    const list = deps.sidePages()
+    return (Array.isArray(list) ? list : []).filter((b) => b && typeof b.id === 'string').map((b) => ({ project: cur.id, page: b }))
+  }
+  // Whether guests get a page's address now: in the list main gets, not
+  // hidden, and someone in with "See my browser pages" who sees its project.
+  function sentNow(project) {
+    return (state.host.guests || []).some((g) => g.state === 'joined' && g.rights && g.rights.pagesView === true && Array.isArray(g.projects) && g.projects.includes(project))
+  }
   function pagesNow() {
     const out = []
     for (const ws of sharedWss()) {
@@ -69,25 +106,50 @@ export function createLiveShareFeeds(deps, core) {
         if (Number.isSafeInteger(id)) out.push({ project: ws.id, paneId: leaf.id, webContentsId: id, hidden: leaf.hiddenFromGuests === true })
       })
     }
+    for (const { project, page } of sidePagesNow()) {
+      if (page.sharedWithGuests !== true) continue
+      const id = deps.pageGuest ? deps.pageGuest(page.id) : null
+      if (Number.isSafeInteger(id)) out.push({ project, paneId: page.id, webContentsId: id, hidden: false, side: true, optIn: true })
+    }
     return out
   }
-  // A page of yours while sharing: whether it is in a project you share,
-  // whether you hide it from guests, and who watches it.
+  const sidePage = (paneId) => {
+    const list = typeof deps.sidePages === 'function' ? deps.sidePages() : []
+    return (Array.isArray(list) ? list : []).find((b) => b && b.id === paneId) || null
+  }
+  // A page of yours while sharing: whether guests may get it (in a project
+  // you share, or of the side panel while one is on screen) and whether you
+  // hide it from them.
+  // -> { project, side, hidden, shared, sent } | null (sent: its address
+  // goes to guests now).
   function pageShare(paneId) {
     if (!hostSharing() || !paneId) return null
     const ws = sharedWss().find((w) => hasLeaf(w.tree, paneId))
-    if (!ws) return null
-    const leaf = deps.findLeaf(paneId)
-    const entry = (feeds.pagesWatched || []).find((p) => p && p.id === paneId)
-    const inNow = (state.host.guests || []).filter((g) => g.state === 'joined')
-    const watchers = entry && Array.isArray(entry.guests) ? entry.guests.map((g) => inNow.find((x) => x.id === g.id)).filter(Boolean).map(personName) : []
-    return { project: ws.id, hidden: !!(leaf && leaf.hiddenFromGuests === true), watchers }
+    if (ws) {
+      const leaf = deps.findLeaf(paneId)
+      const hidden = !!(leaf && leaf.hiddenFromGuests === true)
+      const listed = Number.isSafeInteger(deps.pageGuest ? deps.pageGuest(paneId) : null)
+      return { project: ws.id, side: false, hidden, shared: !hidden, sent: listed && !hidden && sentNow(ws.id) }
+    }
+    const side = sidePagesNow().find((x) => x.page.id === paneId)
+    if (!side) return null
+    const shared = side.page.sharedWithGuests === true
+    const listed = Number.isSafeInteger(deps.pageGuest ? deps.pageGuest(paneId) : null)
+    return { project: side.project, side: true, hidden: !shared, shared, sent: shared && listed && sentNow(side.project) }
   }
   function setPageHidden(paneId, hidden) {
     const leaf = deps.findLeaf(paneId)
     if (!leaf || leaf.kind !== 'browser') return false
     if (hidden) leaf.hiddenFromGuests = true
     else delete leaf.hiddenFromGuests
+    return true
+  }
+  // A side panel page shared with guests (on) or not; never saved.
+  function setPageShared(paneId, on) {
+    const page = sidePage(paneId)
+    if (!page) return false
+    if (on) page.sharedWithGuests = true
+    else delete page.sharedWithGuests
     return true
   }
 
@@ -116,88 +178,225 @@ export function createLiveShareFeeds(deps, core) {
 
   function onHost(s) {
     feeds.activity = s && s.feeds && Array.isArray(s.feeds.activity) ? s.feeds.activity : []
-    feeds.pagesWatched = s && Array.isArray(s.pagesWatched) ? s.pagesWatched : []
   }
 
-  // --- Guest: pages ---------------------------------------------------------------
-  // A host's browser pane here (the same leaf each time, so its view stays).
-  function pageLeaf(l, project, session) {
-    let leaf = pageLeaves.get(l.id)
-    if (leaf && leaf.liveShare.session === session) {
-      leaf.liveShare.project = project
-      return leaf
-    }
-    const host = state.guest.host || ''
-    leaf = reactive({
-      type: 'leaf',
-      id: l.id,
-      shellId: 'liveshare',
-      shellName: host || t('liveShare.title', 'Live Share'),
-      title: t('liveShare.page.title', 'Browser page'),
-      kind: 'shell',
-      agentId: null,
-      agentCommand: null,
-      accent: null,
-      worktree: null,
-      backend: 'liveshare',
-      pid: null,
-      startDir: null,
-      sessionId: null,
-      // No terminal: the host's page, as frames (LiveSharePageView.vue), in
-      // a tab of its own as on the host's screen (paneViews.js isTabLeaf);
-      // pageTitle and pageUrl: what its last frame said (its tab's name).
-      liveShare: { session, project, cols: 0, rows: 0, kind: 'shell', agentId: null, canType: false, host, terminal: false, page: true, chat: null, view: 'page', pageTitle: '', pageUrl: '' },
-      gen: 0,
-      launchedAt: Date.now(),
-      exitedAtStart: false,
-      restoredText: '',
-      broadcast: false
-    })
-    pageLeaves.set(l.id, leaf)
-    return leaf
-  }
+  // --- Guest: pages, as links -------------------------------------------------------
   // A right the host gave, exactly (a host from before rights gives no page).
   const right = (r) => !!(state.guest.rights && state.guest.rights[r] === true)
-  // The host's pages are shown with "See my browser pages" (a host whose
-  // Tessel does not share them yet: its page views say so).
+  // The host's pages are shown with "See my browser pages".
   const showsPages = () => right('pagesView')
-  // The pages no longer in any of the host's layouts go.
-  function syncPages(ids) {
-    for (const id of [...pageLeaves.keys()]) if (!ids.has(id)) pageLeaves.delete(id)
-    for (const leaf of pageLeaves.values()) leaf.liveShare.host = state.guest.host || ''
+  const linkOf = (project, id) => {
+    const got = links[project]
+    return got ? got.pages.find((x) => x.id === id) || null : null
   }
-  // A page view's source: its state, watching (only while it is on screen),
-  // input, frames and news. id: the pane's id here.
-  function pageSource(id) {
-    const a = api()
-    if (!a || typeof a.pageWatch !== 'function') return null
-    return {
-      info() {
-        const g = state.guest
-        const leaf = pageLeaves.get(id)
-        return {
-          host: g.host || '',
-          joined: g.state === 'joined',
-          ended: !(g.state === 'joined' || g.state === 'reconnecting'),
-          outdated: g.state === 'joined' && !(Array.isArray(g.features) && g.features.includes('pages')),
-          canView: right('pagesView'),
-          canUse: right('pagesView') && right('pagesUse'),
-          project: leaf ? leaf.liveShare.project : null
-        }
-      },
-      watch: (on) => Promise.resolve(a.pageWatch({ id, on })).catch(() => ({ ok: false, code: 'offline' })),
-      input: (events) => a.pageInput && a.pageInput({ id, events }),
-      onFrame(cb) {
-        const fn = (m) => m && m.id === id && cb(m)
-        frameListeners.add(fn)
-        return () => frameListeners.delete(fn)
-      },
-      onEvent(cb) {
-        const fn = (m) => m && m.id === id && cb(m)
-        eventListeners.add(fn)
-        return () => eventListeners.delete(fn)
-      }
+  // A host's page here: your browser on its address (the same leaf each
+  // time, so its page stays), or a note for an address that only works on
+  // the host's side; null when you may not see it, it is hidden, or you hid
+  // it.
+  function pageLeaf(l, project, session) {
+    const link = linkOf(project, l.id)
+    return link && !hiddenPages.has(l.id) && showsPages() ? linkLeaf(link, project, session) : null
+  }
+  // The side panel's pages of the host's (no pane of its layout): tabs too.
+  function sideLeaves(project, session) {
+    const got = links[project]
+    if (!got || !showsPages()) return []
+    return got.pages.filter((x) => x.side && !hiddenPages.has(x.id)).map((x) => linkLeaf(x, project, session))
+  }
+  function linkLeaf(link, project, session) {
+    const host = state.guest.host || ''
+    let leaf = pageLeaves.get(link.id)
+    const kind = link.local ? 'note' : 'browser'
+    if (leaf && (leaf.liveShare.session !== session || leaf.liveShare.linkKind !== kind)) {
+      dropPage(link.id)
+      leaf = null
     }
+    if (!leaf) {
+      const base = { session, project, host, link: true, linkKind: kind, following: true, hostUrl: '', pendingUrl: '', setAt: 0, local: link.local, trimmed: !!link.trimmed, side: !!link.side, pageTitle: link.title, pageUrl: link.url, media: null }
+      leaf = link.local
+        ? reactive({
+            // An address only the host's side opens: a note, never a page.
+            type: 'leaf',
+            id: link.id,
+            shellId: 'liveshare',
+            shellName: host || t('liveShare.title', 'Live Share'),
+            title: link.title || t('liveShare.page.title', 'Browser page'),
+            kind: 'shell',
+            agentId: null,
+            agentCommand: null,
+            accent: null,
+            worktree: null,
+            backend: 'liveshare',
+            pid: null,
+            startDir: null,
+            sessionId: null,
+            liveShare: { ...base, cols: 0, rows: 0, kind: 'shell', agentId: null, canType: false, terminal: false, page: true, chat: null, view: 'page' },
+            gen: 0,
+            launchedAt: Date.now(),
+            exitedAtStart: false,
+            restoredText: '',
+            broadcast: false
+          })
+        : reactive({
+            // Your own browser on the host's page's address.
+            type: 'leaf',
+            kind: 'browser',
+            id: link.id,
+            title: link.title || '',
+            // Blank until followed there (a site you opened, or one click).
+            url: 'about:blank',
+            viewPartition: viewPartition(session),
+            zoom: null,
+            focusAddress: 0,
+            audible: false,
+            muted: false,
+            broadcast: false,
+            backend: 'liveshare',
+            liveShare: base
+          })
+      pageLeaves.set(link.id, leaf)
+      if (!link.local) watchOwnNav(leaf)
+    }
+    applyLink(leaf, link, project)
+    return leaf
+  }
+  // The host's page changed (an address, a title, its videos): followed by
+  // your tab while it follows: a site you opened already at once (paced),
+  // a new one after your click ("Open <site>": pendingUrl).
+  function applyLink(leaf, link, project) {
+    const ls = leaf.liveShare
+    ls.project = project
+    ls.host = state.guest.host || ''
+    ls.pageTitle = link.title
+    ls.pageUrl = link.url
+    ls.trimmed = !!link.trimmed
+    if (leaf.kind === 'browser') {
+      if (!leaf.url || leaf.url === 'about:blank') leaf.title = link.title || leaf.title
+      if (link.url !== ls.hostUrl) {
+        ls.hostUrl = link.url
+        if (ls.following) go(leaf, link.url)
+      }
+      // Its videos and sounds, played as the host's (only while following,
+      // on the same page).
+      if (link.media && ls.following && samePage(leaf.url, link.url)) ls.media = { seq: ++mediaSeq, items: link.media, at: Date.now() }
+    } else leaf.title = link.title || t('liveShare.page.title', 'Browser page')
+  }
+  // Sites of the host's you opened (this session), and the pace of followed
+  // navigations (their times, the last minute).
+  const approved = new Set()
+  const navTimes = []
+  const navTimers = new Map() // leaf id -> timer
+  function go(leaf, url) {
+    const ls = leaf.liveShare
+    const origin = originOf(url)
+    if (!origin || !approved.has(origin)) {
+      ls.pendingUrl = url
+      return
+    }
+    ls.pendingUrl = ''
+    clearTimeout(navTimers.get(leaf.id))
+    navTimers.delete(leaf.id)
+    const now = Date.now()
+    while (navTimes.length && now - navTimes[0] >= 60000) navTimes.shift()
+    const last = navTimes.length ? navTimes[navTimes.length - 1] : -Infinity
+    const wait = navTimes.length >= NAV_PER_MINUTE ? navTimes[0] + 60000 - now : Math.max(0, last + NAV_GAP_MS - now)
+    if (wait > 0) {
+      // The latest address, once its time comes.
+      navTimers.set(
+        leaf.id,
+        setTimeout(() => {
+          navTimers.delete(leaf.id)
+          if (pageLeaves.get(leaf.id) === leaf && ls.following && ls.hostUrl === url) go(leaf, url)
+        }, wait)
+      )
+      return
+    }
+    navTimes.push(now)
+    ls.setAt = now
+    leaf.url = url
+  }
+  // "Open <site>": that site of the host's opens, now and from then on.
+  function approvePage(id) {
+    const leaf = pageLeaves.get(id)
+    if (!leaf || leaf.kind !== 'browser' || !leaf.liveShare.pendingUrl) return false
+    const url = leaf.liveShare.pendingUrl
+    const origin = originOf(url)
+    if (!origin) return false
+    approved.add(origin)
+    leaf.liveShare.following = true
+    go(leaf, url)
+    return true
+  }
+  // Your tab went somewhere else than the host's page (an address you typed,
+  // a link you clicked, back or forward: not a redirect of the one following
+  // loaded): it stops following that page.
+  function watchOwnNav(leaf) {
+    const stop = watch(
+      () => leaf.url,
+      (url) => {
+        const ls = leaf.liveShare
+        if (!ls.following || !url || samePage(url, ls.hostUrl)) return
+        if (Date.now() - ls.setAt > OWN_NAV_MS) ls.following = false
+      }
+    )
+    pageWatches.set(leaf.id, stop)
+  }
+  function dropPage(id) {
+    pageWatches.get(id)?.()
+    pageWatches.delete(id)
+    pageLeaves.delete(id)
+    clearTimeout(navTimers.get(id))
+    navTimers.delete(id)
+    if (mediaPage === id) setMediaPage(null)
+  }
+  // "Follow host" on one of the host's pages: back to its address.
+  function followPage(id) {
+    const leaf = pageLeaves.get(id)
+    if (!leaf || leaf.kind !== 'browser') return false
+    leaf.liveShare.following = true
+    if (leaf.liveShare.hostUrl) go(leaf, leaf.liveShare.hostUrl)
+    return true
+  }
+  // The host's page on your screen (the tab shown, following): its videos
+  // follow the host's while it is (main asks the host for them).
+  let mediaPage = null
+  function setMediaPage(id) {
+    const leaf = id ? pageLeaves.get(id) : null
+    const want = leaf && leaf.kind === 'browser' && leaf.liveShare.following && !leaf.liveShare.pendingUrl ? id : null
+    if (want === mediaPage) return
+    mediaPage = want
+    const a = api()
+    if (a && typeof a.pageMedia === 'function') Promise.resolve(a.pageMedia({ id: want, on: !!want })).catch(() => {})
+  }
+  // Every page of a project follows the host's again, the ones you hid back.
+  function followAll(project) {
+    for (const leaf of pageLeaves.values()) {
+      if (leaf.liveShare.project !== project) continue
+      hiddenPages.delete(leaf.id)
+      if (leaf.kind === 'browser') followPage(leaf.id)
+    }
+    for (const x of (links[project] && links[project].pages) || []) hiddenPages.delete(x.id)
+  }
+  // One of the host's pages closed here: hidden on your screen only.
+  function hidePage(id) {
+    if (!pageLeaves.has(id)) return false
+    hiddenPages.add(id)
+    return true
+  }
+  // What a page's note says (an address the host's side only opens):
+  // { host, url, title } or null.
+  function pageNote(id) {
+    const leaf = pageLeaves.get(id)
+    if (!leaf || leaf.kind === 'browser') return null
+    return { host: leaf.liveShare.host || state.guest.host || '', url: leaf.liveShare.pageUrl || '', title: leaf.liveShare.pageTitle || '', ended: !(state.guest.state === 'joined' || state.guest.state === 'reconnecting') }
+  }
+  // The pages no longer in any of the host's layouts, nor of its side
+  // panel, go.
+  function syncPages(ids) {
+    const side = new Set()
+    for (const got of Object.values(links)) for (const x of got.pages) if (x.side) side.add(x.id)
+    for (const id of [...pageLeaves.keys()]) if (!ids.has(id) && !side.has(id)) dropPage(id)
+    for (const leaf of pageLeaves.values()) leaf.liveShare.host = state.guest.host || ''
   }
 
   // --- Guest: past conversations and activity ------------------------------------
@@ -270,13 +469,25 @@ export function createLiveShareFeeds(deps, core) {
     return { events: data.events.map((e) => ({ ...e, wsId })), teams: Array.isArray(data.teams) ? data.teams : [] }
   }
   function onPush(m) {
+    // The host's pages of a project, as links (none: the right went).
+    if (m && m.topic === 'links' && typeof m.project === 'string') {
+      const pages = m.data && Array.isArray(m.data.pages) ? m.data.pages : []
+      if ((state.guest.projects || []).some((p) => p.id === m.project) && showsPages()) links[m.project] = { pages }
+      else delete links[m.project]
+      return true
+    }
     if (!m || m.topic !== 'activity' || typeof m.project !== 'string' || !m.data || !Array.isArray(m.data.events)) return false
     if ((state.guest.projects || []).some((p) => p.id === m.project) && following.has(m.project)) activity[m.project] = withWs(m.project, m.data)
     return true
   }
 
   function endGuest() {
-    pageLeaves.clear()
+    for (const id of [...pageLeaves.keys()]) dropPage(id)
+    hiddenPages.clear()
+    approved.clear()
+    navTimes.length = 0
+    mediaPage = null
+    for (const k of Object.keys(links)) delete links[k]
     following.clear()
     for (const k of Object.keys(activity)) delete activity[k]
   }
@@ -284,13 +495,13 @@ export function createLiveShareFeeds(deps, core) {
   function syncProjects(ids) {
     for (const k of Object.keys(activity)) if (!ids.has(k)) delete activity[k]
     for (const k of [...following.keys()]) if (!ids.has(k)) following.delete(k)
+    for (const k of Object.keys(links)) if (!ids.has(k)) delete links[k]
+    // "See my browser pages" taken away: the pages go.
+    if (!showsPages()) for (const k of Object.keys(links)) delete links[k]
   }
 
   function init(a) {
     if (a.onFeeds) offs.push(a.onFeeds((m) => (feeds.activity = m && Array.isArray(m.activity) ? m.activity : [])))
-    if (a.onPagesWatched) offs.push(a.onPagesWatched((list) => (feeds.pagesWatched = Array.isArray(list) ? list : [])))
-    if (a.onPageFrame) offs.push(a.onPageFrame((m) => frameListeners.forEach((fn) => fn(m))))
-    if (a.onPageEvent) offs.push(a.onPageEvent((m) => eventListeners.forEach((fn) => fn(m))))
     stops.push(
       // Your browser panes in the shared projects, for main (its check
       // against the layouts guests get), at once and whenever they change.
@@ -301,6 +512,16 @@ export function createLiveShareFeeds(deps, core) {
         },
         { immediate: true }
       ),
+      // As a guest: the host's page on screen, its videos followed.
+      watch(
+        () => {
+          const ws = deps.currentWs ? deps.currentWs() : null
+          if (!ws || !ws.liveShare || state.guest.state !== 'joined') return null
+          const leaf = ws.activeId && ws.view === ws.activeId ? pageLeaves.get(ws.activeId) : null
+          return leaf && leaf.liveShare.following && !leaf.liveShare.pendingUrl ? leaf.id : null
+        },
+        (id) => setMediaPage(id)
+      ),
       // The activity of the projects guests follow, while they do.
       watch(
         () => (hostSharing() && (feeds.activity || []).length ? `${feeds.activity.join(',')}|${deps.activityRev ? deps.activityRev() : 0}` : ''),
@@ -310,10 +531,12 @@ export function createLiveShareFeeds(deps, core) {
     )
   }
   function dispose() {
+    for (const timer of navTimers.values()) clearTimeout(timer)
+    navTimers.clear()
     for (const off of offs.splice(0)) if (typeof off === 'function') off()
     for (const stop of stops.splice(0)) stop()
     clearTimeout(activityTimer)
   }
 
-  return { feeds, activity, init, dispose, onHost, onPush, pageShare, setPageHidden, pageLeaf, showsPages, syncPages, pageSource, sessionSource, activitySource, endGuest, syncProjects }
+  return { feeds, activity, links, init, dispose, onHost, onPush, pageShare, setPageHidden, setPageShared, pageLeaf, sideLeaves, showsPages, syncPages, followPage, approvePage, followAll, hidePage, pageNote, sessionSource, activitySource, endGuest, syncProjects }
 }

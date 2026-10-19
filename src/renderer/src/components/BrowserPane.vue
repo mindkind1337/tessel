@@ -62,7 +62,8 @@ import {
 } from '../browser/browserPage'
 import { registerWebview } from '../browser/webviewPassthrough'
 import { registerNavigationOwner, focusNavigationOwner, isNavigationOwner, releaseNavigationOwner } from '../browser/navigationFocus'
-import { claimPage, releasePage, placePage, createWebview, notePageGuest, MAIN_PARTITION, AGENT_PARTITION, GUEST_PARTITION } from '../browser/pageHost'
+import { claimPage, releasePage, placePage, createWebview, notePageGuest, MAIN_PARTITION, AGENT_PARTITION, GUEST_PARTITION, VIEW_PARTITION } from '../browser/pageHost'
+import { mediaApplyScript } from '../../../shared/liveShareMedia'
 import DesignModePanel from './DesignModePanel.vue'
 import ViewTabs from './ViewTabs.vue'
 import PageAudioButton from './PageAudioButton.vue'
@@ -103,14 +104,74 @@ const currentUrl = ref(allowedBrowserUrl(props.node.url) || BLANK_URL)
 const initialSrc = currentUrl.value
 // A page an agent opened when "Agents use a separate browser session" was on
 // is marked on the leaf; it keeps that session for its whole life. So does a
-// page a Live Share guest opened (the guest session, in memory only).
-const partition = props.node.guestSession ? GUEST_PARTITION : props.node.agentSession ? AGENT_PARTITION : MAIN_PARTITION
-// Live Share, while you share this page's project: { hidden, watchers }.
-const liveShare = computed(() => (!props.inSidePanel && ctx.liveSharePageShare ? ctx.liveSharePageShare(props.node.id) : null))
-const liveWatchers = computed(() => (liveShare.value ? liveShare.value.watchers : []))
-const liveEyeTitle = computed(() => t('browser.liveShare.watched', 'Guests watching this page: {{names}}', { names: liveWatchers.value.join(', ') }))
+// page a Live Share guest opened (the guest session, in memory only), and a
+// Live Share host's page on a guest's screen (viewPartition: a session of
+// its own for that Live Share session, in memory only, never the guest's
+// signed-in one).
+const partition = typeof props.node.viewPartition === 'string' && VIEW_PARTITION.test(props.node.viewPartition) ? props.node.viewPartition : props.node.guestSession ? GUEST_PARTITION : props.node.agentSession ? AGENT_PARTITION : MAIN_PARTITION
+// Live Share, while you share this page's project (or, for a page of the
+// side panel, while a shared project is on screen): { hidden, side, sent }
+// (sent: guests get its address now).
+const liveShare = computed(() => (ctx.liveSharePageShare ? ctx.liveSharePageShare(props.node.id) : null))
+// Live Share, as a guest: this tab is your own browser on one of the host's
+// pages ({ host, following, hostUrl, trimmed, media }): it follows the host's
+// page (its address, its videos) until you go somewhere else in it.
+const hostLink = computed(() => (props.node.backend === 'liveshare' && props.node.liveShare && props.node.liveShare.link ? props.node.liveShare : null))
+const hostLinkText = computed(() => {
+  const l = hostLink.value
+  if (!l) return ''
+  const host = l.host || '?'
+  if (!l.following) return t('browser.liveShare.notFollowing', 'You left {{host}}’s page: this tab no longer follows it.', { host })
+  return l.trimmed
+    ? t('browser.liveShare.followingTrimmed2', '{{host}}’s page, in a browser session of its own. Part of its address stayed private.', { host })
+    : t('browser.liveShare.following2', '{{host}}’s page, in a browser session of its own (not your sign-ins, never {{host}}’s).', { host })
+})
+// A site of the host's not opened yet: one click of yours opens it.
+const hostPending = computed(() => (hostLink.value && hostLink.value.pendingUrl ? hostLink.value.pendingUrl : ''))
+const hostPendingSite = computed(() => {
+  try {
+    return new URL(hostPending.value).host
+  } catch {
+    return ''
+  }
+})
+const hostPendingText = computed(() => t('browser.liveShare.pending', '{{host}} opened {{site}}. It opens here only when you say so, in a session of its own (not your sign-ins).', { host: (hostLink.value && hostLink.value.host) || '?', site: hostPendingSite.value }))
+const hostOpenSiteText = computed(() => t('browser.liveShare.openSite', 'Open {{site}}', { site: hostPendingSite.value }))
+function approveHostPage() {
+  if (ctx.liveShareApprovePage) ctx.liveShareApprovePage(props.node.id)
+}
+// The host's page in your own signed-in browser: a tab of yours, on your
+// word only.
+function openInOwnSession() {
+  const l = hostLink.value
+  const url = l && (l.pendingUrl || l.hostUrl)
+  if (url && ctx.openBrowserPane) ctx.openBrowserPane(url, { activate: true })
+}
+const hostLinkShort = computed(() => (hostLink.value && hostLink.value.following ? t('browser.liveShare.followingShort', 'Following {{host}}', { host: hostLink.value.host || '?' }) : t('browser.liveShare.notFollowingShort', 'Not following')))
+// You went somewhere else yourself (the address bar, back, forward): this
+// tab stops following the host's page.
+function leaveHostPage() {
+  if (hostLink.value && hostLink.value.following) props.node.liveShare.following = false
+}
+function followHostPage() {
+  if (ctx.liveShareFollowPage) ctx.liveShareFollowPage(props.node.id)
+}
+// The host's videos and sounds, played the same way here while following
+// (only numbers reach the page: liveShareMedia.js).
+watch(
+  () => (hostLink.value && hostLink.value.media ? hostLink.value.media.seq : 0),
+  () => {
+    const l = hostLink.value
+    if (!l || !l.following || !l.media || !ready) return
+    Promise.resolve(call('executeJavaScript', mediaApplyScript(l.media.items, Date.now() - l.media.at), false)).catch(() => {})
+  }
+)
 function toggleLiveHidden() {
   if (liveShare.value && ctx.setLiveSharePageHidden) ctx.setLiveSharePageHidden(props.node.id, !liveShare.value.hidden)
+}
+// A side panel page: never sent to guests unless you share it yourself.
+function toggleLiveShared() {
+  if (liveShare.value && ctx.setLiveSharePageShared) ctx.setLiveSharePageShared(props.node.id, !liveShare.value.shared)
 }
 const pageTitle = ref(pageTitleFor(props.node.title, currentUrl.value))
 const loading = ref(false)
@@ -237,10 +298,9 @@ function onDomReady() {
   clearTimeout(startTimer)
   const id = call('getWebContentsId')
   if (id != null) guestId.value = id
-  if (page) {
-    page.ready = true
-    notePageGuest(props.node.id, guestId.value)
-  }
+  if (page) page.ready = true
+  // Its webContents id (a page of the side panel too: Live Share lists it).
+  notePageGuest(props.node.id, guestId.value)
   call('setZoomLevel', pageZoom())
   applyMuted()
   syncHistory()
@@ -365,10 +425,14 @@ const WEBVIEW_EVENTS = {
 
 // --- Navigation controls ---------------------------------------------------------------------
 function goBack() {
-  if (canGoBack.value) call('goBack')
+  if (!canGoBack.value) return
+  leaveHostPage()
+  call('goBack')
 }
 function goForward() {
-  if (canGoForward.value) call('goForward')
+  if (!canGoForward.value) return
+  leaveHostPage()
+  call('goForward')
 }
 function reload() {
   if (failure.value) return retry()
@@ -503,6 +567,7 @@ function submitAddress() {
     addressError.value = t('browser.address.invalid', 'Enter a valid http(s) or localhost URL.')
     return
   }
+  leaveHostPage()
   navigate(url)
   // The page gets the keys once it starts loading.
   if (addressEl.value) addressEl.value.blur()
@@ -771,8 +836,10 @@ function focusPane() {
   else if (wv() && typeof wv().focus === 'function') wv().focus()
   else root.focus()
 }
+// (Not when following a Live Share host made it active: the keyboard stays
+// where you were typing.)
 watch(isActive, (a) => {
-  if (a) nextTick(focusPane)
+  if (a && !(ctx.liveShareQuietFocus && ctx.liveShareQuietFocus(props.node.id))) nextTick(focusPane)
 })
 function onPaneMouseDown() {
   focusNavigationOwner(pageOwner)
@@ -971,7 +1038,7 @@ onBeforeUnmount(() => {
     // Kept a moment: this pane built again elsewhere takes it back as it is.
     releasePage(props.node.id, pageOwner)
     page = null
-  }
+  } else notePageGuest(props.node.id, null)
   for (const off of unsubscribers.splice(0)) {
     try {
       off()
@@ -1157,12 +1224,36 @@ defineExpose({ navigate, focusAddress })
           </button>
         </div>
 
+        <div v-if="hostLink" class="bp-agent bp-host-link" :class="{ off: !hostLink.following }" role="status" data-test="browser-host-link" :title="hostLinkText">
+          <Eye :size="14" aria-hidden="true" />
+          <span class="bp-agent-text">{{ hostLinkShort }}</span>
+          <button v-if="!hostLink.following" type="button" class="bp-agent-stop" data-test="browser-follow-host" :title="t('browser.liveShare.followHint', 'Back to {{host}}’s page, and follow it again', { host: hostLink.host || '?' })" @click="followHostPage">
+            {{ t('liveShare.follow.button', 'Follow host') }}
+          </button>
+          <button type="button" class="bp-btn" data-test="browser-open-own" :title="t('browser.liveShare.openOwn', 'Open in my own browser session (with my sign-ins)')" :aria-label="t('browser.liveShare.openOwn', 'Open in my own browser session (with my sign-ins)')" @click="openInOwnSession">
+            <ExternalLink :size="14" />
+          </button>
+        </div>
         <template v-if="liveShare">
-          <span v-if="liveWatchers.length && !liveShare.hidden" class="bp-live-eye" role="status" data-test="browser-live-eye" :title="liveEyeTitle" :aria-label="liveEyeTitle">
+          <span v-if="liveShare.sent" class="bp-live-eye" role="status" data-test="browser-live-sent" :title="t('browser.liveShare.sentHint', 'Guests with “See my browser pages” get this page’s address and title.')">
             <Eye :size="14" aria-hidden="true" />
-            <span class="bp-live-count">{{ liveWatchers.length }}</span>
+            <span class="bp-live-count">{{ t('browser.liveShare.sent', 'Shared with guests') }}</span>
           </span>
           <button
+            v-if="liveShare.side"
+            type="button"
+            class="bp-btn"
+            data-test="browser-live-share"
+            :class="{ on: liveShare.shared }"
+            :aria-pressed="liveShare.shared"
+            :title="liveShare.shared ? t('browser.liveShare.sharedHint', 'Shared with guests while this project is on your screen. Click to stop.') : t('browser.liveShare.share', 'Share with guests (pages of the side panel are never shared unless you do)')"
+            :aria-label="t('browser.liveShare.shareLabel', 'Share with guests')"
+            @click="toggleLiveShared"
+          >
+            <Eye :size="16" />
+          </button>
+          <button
+            v-else
             type="button"
             class="bp-btn"
             data-test="browser-live-hide"
@@ -1288,6 +1379,10 @@ defineExpose({ navigate, focusAddress })
         </button>
       </div>
 
+      <div v-if="hostPending" class="bp-host-pending" role="status" data-test="browser-host-pending">
+        <span>{{ hostPendingText }}</span>
+        <button type="button" class="bp-agent-stop" data-test="browser-host-approve" @click="approveHostPage">{{ hostOpenSiteText }}</button>
+      </div>
       <div ref="pageEl" class="bp-page" :class="{ hosted }" data-test="browser-page" @pointerleave="saveScroll">
         <!-- Over the page: in its box when it lives in the page layer. -->
         <Teleport :to="overlayTarget" :disabled="!overlayTarget">
@@ -1639,6 +1734,27 @@ defineExpose({ navigate, focusAddress })
   font-size: 11px;
   font-weight: 600;
   white-space: nowrap;
+}
+/* A Live Share host's site not opened yet: one click opens it. */
+.bp-host-pending {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text);
+  font-size: 12px;
+}
+/* A Live Share host's page followed here: calmer than an agent's badge. */
+.bp-host-link {
+  border-color: var(--border);
+  color: var(--text-dim);
+  font-weight: 500;
+}
+.bp-host-link.off {
+  border-color: var(--warn);
+  color: var(--warn);
 }
 .bp-agent-text {
   overflow: hidden;

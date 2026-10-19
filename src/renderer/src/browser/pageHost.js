@@ -36,10 +36,15 @@ export const AGENT_PARTITION = 'persist:tessel-browser-agent'
 // memory only, with none of your logins (src/main/browserGuest.js).
 export const GUEST_PARTITION = 'tessel-browser-guest'
 const PARTITIONS = [MAIN_PARTITION, AGENT_PARTITION, GUEST_PARTITION]
+// A Live Share guest's view of the host's pages: a session of its own per
+// Live Share session, in memory only (src/main/liveShareView.js).
+export const VIEW_PARTITION = /^liveshare-view-[\w-]{1,40}$/
+export const viewPartition = (session) => `liveshare-view-${String(session).replace(/[^\w-]/g, '_').slice(0, 40)}` // i18n-ignore
+const allowedPartition = (p) => PARTITIONS.includes(p) || (typeof p === 'string' && VIEW_PARTITION.test(p))
 
 export function createWebview(src, partition = MAIN_PARTITION) {
   const el = document.createElement('webview')
-  el.setAttribute('partition', PARTITIONS.includes(partition) ? partition : MAIN_PARTITION)
+  el.setAttribute('partition', allowedPartition(partition) ? partition : MAIN_PARTITION)
   el.setAttribute('allowpopups', 'true')
   el.setAttribute('webpreferences', 'contextIsolation=yes,sandbox=yes,nodeIntegration=no')
   el.className = 'bp-webview'

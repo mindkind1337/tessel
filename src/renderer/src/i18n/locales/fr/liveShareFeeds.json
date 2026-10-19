@@ -1,45 +1,38 @@
 {
   "browser": {
     "liveShare": {
-      "watched": "Invités qui regardent cette page : {{names}}",
       "hiddenHint": "Masquée aux invités : ils ne voient rien de cette page. Cliquez pour la leur montrer de nouveau.",
-      "hide": "Masquer cette page aux invités"
+      "hide": "Masquer cette page aux invités",
+      "notFollowing": "Vous avez quitté la page de {{host}} : cet onglet ne la suit plus.",
+      "followingShort": "Suit {{host}}",
+      "notFollowingShort": "Ne suit plus",
+      "followHint": "Revenir à la page de {{host}} et la suivre de nouveau",
+      "following2": "La page de {{host}}, dans une session de navigateur à part (pas vos connexions, jamais celles de {{host}}).",
+      "followingTrimmed2": "La page de {{host}}, dans une session de navigateur à part. Une partie de son adresse est restée privée.",
+      "sent": "Partagée avec les invités",
+      "sentHint": "Les invités qui ont « Voir mes pages de navigateur » reçoivent l'adresse et le titre de cette page.",
+      "sharedHint": "Partagée avec les invités tant que ce projet est à votre écran. Cliquez pour arrêter.",
+      "share": "Partager avec les invités (les pages du panneau latéral ne sont jamais partagées sans votre accord)",
+      "shareLabel": "Partager avec les invités",
+      "openOwn": "Ouvrir dans ma propre session de navigateur (avec mes connexions)",
+      "pending": "{{host}} a ouvert {{site}}. Le site s'ouvre ici seulement si vous le voulez, dans une session à part (pas vos connexions).",
+      "openSite": "Ouvrir {{site}}"
     }
   },
   "liveShare": {
     "page": {
       "title": "Page de navigateur",
-      "refused": {
-        "button": "Seul le bouton gauche de la souris est transmis (un menu contextuel s'ouvrirait sur l'écran de l'hôte).",
-        "key": "Cette touche n'est pas transmise : elle appartient au navigateur de l'hôte ou à Tessel (coller, copier, fermer, outils de développement, enregistrer, imprimer…).",
-        "url": "Seules les adresses web (http et https) peuvent être ouvertes.",
-        "tooLong": "Trop de texte d'un coup.",
-        "password": "Live Share ne tape jamais de texte dans un champ de mot de passe.",
-        "agent": "Un agent utilise cette page : attendez qu'il ait terminé.",
-        "hidden": "L'hôte a masqué cette page aux invités.",
-        "forbidden": "{{host}} ne vous permet plus d'utiliser ses pages.",
-        "busy": "Les outils de développement de la page sont ouverts chez l'hôte : la saisie attend qu'ils soient fermés.",
-        "other": "La page de l'hôte n'a pas pris cela en compte."
-      },
-      "limit": "Le Tessel de {{host}} limite la vitesse des clics et de la frappe des invités : ralentissez un instant.",
-      "unavailable": "Cette page n'est pas disponible.",
-      "outdated": "Le Tessel de {{host}} est trop ancien pour partager ses pages de navigateur : l'hôte doit mettre Tessel à jour.",
-      "noRight": "{{host}} ne vous a pas permis de voir ses pages de navigateur.",
-      "reconnecting": "Reconnexion à {{host}}…",
-      "stopped": "{{host}} a arrêté de partager cette page.",
-      "gone": "Cette page n'est plus partagée.",
-      "busy": "Le Tessel de {{host}} montre quelques pages à la fois : celle-ci attend une place.",
-      "hiddenByHost": "Masquée par l'hôte",
-      "waiting": "En attente de la page…",
-      "useLine": "Vos clics et vos touches agissent dans le navigateur de {{host}}, connecté en tant que {{host}}.",
-      "viewLine": "Lecture seule : la page de {{host}}, en direct.",
-      "openHint": "Ouvrir {{url}} dans votre propre navigateur (aucune session de {{host}} ne l'accompagne)",
-      "openLocal": "Cette adresse ne fonctionne que sur l'ordinateur ou le réseau de l'hôte.",
-      "openNone": "Seules les adresses web (http et https) peuvent être ouvertes.",
-      "open": "Ouvrir cette adresse dans mon propre navigateur",
-      "openAsk": "Ouvrir cette adresse dans votre navigateur ?",
-      "openAskText": "{{url}} vient de la page de {{host}}. Aucune session ni aucun cookie de {{host}} ne l'accompagne.",
-      "openConfirm": "Ouvrir"
+      "localNote": "Cette page tourne sur l'ordinateur de {{host}} : elle ne peut pas s'ouvrir ici.",
+      "copyUrl": "Copier l'adresse",
+      "copy": "Copier",
+      "copied": "Copiée"
+    },
+    "follow": {
+      "button": "Suivre l'hôte",
+      "hint": "Votre écran suit de nouveau celui de {{host}} : l'onglet, le panneau et le fichier que {{host}} a à l'écran",
+      "on": "Votre écran suit celui de {{host}}.",
+      "off": "Vous avez choisi votre propre vue : elle ne suit plus celle de {{host}}.",
+      "copy": "{{host}} regarde la copie de tâche {{branch}}."
     }
   },
   "conversations": {

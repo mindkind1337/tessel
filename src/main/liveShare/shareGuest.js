@@ -38,10 +38,6 @@
 // not speak (an older Tessel). subscribe(topic, project, key, on) follows a
 // topic; its news come with onPush(topic, project, key, data), in order
 // (an older or repeated one is dropped).
-// Phase 2c, with 'pages' on both sides: a page watched (subscribe('page',
-// project, paneId)) comes as the host's frames (onPageFrame(message)) and
-// news (onPageEvent(message): paused, ended, what became of an input), both
-// unchecked here; input(project, page, events) sends a guest's input on it.
 // The guest's identity key (identityKey: made once on this computer, kept in
 // liveshare-identity.json by liveShare.js): its public half and a proof that it holds it (shareCrypto.js
 // signIdentity, bound to this connection) go with a new join, so a host that
@@ -288,12 +284,6 @@ export function createShareGuest({ url, secret, name, signingKey, identityKey = 
       case 'push':
         onPushed(msg)
         return
-      case 'frame':
-        if (hostSpeaks.has('pages')) callbacks.onPageFrame?.(msg)
-        return
-      case 'page':
-        if (hostSpeaks.has('pages')) callbacks.onPageEvent?.(msg)
-        return
       case 'bye':
         finish(BYE_REASONS.has(msg.reason) ? msg.reason : 'closed')
         return
@@ -422,21 +412,6 @@ export function createShareGuest({ url, secret, name, signingKey, identityKey = 
       if (closed || !welcomed || !spec || !hostSpeaks.has(spec.feature)) return false
       if (!on) lastSeq.delete(subKey(topic, project, key))
       send({ t: 'sub', topic, ...(project ? { project } : {}), ...(key ? { key } : {}), on: !!on })
-      return true
-    },
-    // A guest's input on a page it watches (a host that speaks 'pages'):
-    // false when not sent.
-    input(project, page, events) {
-      if (closed || !welcomed || !hostSpeaks.has('pages') || !Array.isArray(events)) return false
-      const message = { t: 'input', project, page, events }
-      let size
-      try {
-        size = Buffer.byteLength(JSON.stringify(message), 'utf8')
-      } catch {
-        return false
-      }
-      if (size > MAX_REQUEST_BYTES) return false
-      send(message)
       return true
     },
     leave() {

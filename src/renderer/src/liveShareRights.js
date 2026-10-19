@@ -55,14 +55,8 @@ const WORDS = {
   pagesView: () => ({
     label: t('liveShare.right.pagesView', 'See my browser pages'),
     short: t('liveShare.right.pagesViewShort', 'Pages'),
-    hint: t('liveShare.right.pagesViewHint', 'The browser pages of the projects they see, live. Pages of the side panel are never shared.'),
+    hint: t('liveShare.right.pagesViewHint3', 'Guests see the address of your pages and open them on their side, in a browser session of their own (never with your sessions). The pages of the projects they see; a page of your side panel only if you share it. Hidden pages are never sent.'),
     part: t('liveShare.rights.pagesViewPart', 'see its browser pages')
-  }),
-  pagesUse: () => ({
-    label: t('liveShare.right.pagesUse', 'Use my browser pages: they act in your browser with your logged-in sessions and can reach your network'),
-    short: t('liveShare.right.pagesUseShort', 'Use pages'),
-    hint: t('liveShare.right.pagesUseHint', 'They click and type in your pages as you, signed in wherever you are, and those pages reach what your computer reaches (localhost, your network, cloud metadata addresses). Comes with “See my browser pages”.'),
-    part: t('liveShare.rights.pagesUsePart', 'use its browser pages')
   })
 }
 
@@ -84,7 +78,7 @@ export function rightsShort(rights) {
 
 // An invitation's rights in one click (its editor's presets): View only
 // (watch, nothing else), Collaborate (open, close, edit, commit, tasks and
-// see pages; never type, use pages or see usage) and Full control (every
+// see pages; never type or see usage) and Full control (every
 // right, typing included). 'custom': rights that are none of them.
 export const RIGHTS_PRESETS = Object.freeze({
   view: Object.freeze([]),

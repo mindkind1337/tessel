@@ -24,6 +24,9 @@ describe('hostLayoutFromWorkspace', () => {
       project: 'tessel',
       activeId: 'pane-2',
       maximizedId: 'pane-1',
+      // Its grid on screen (the active pane is a terminal), no task copy.
+      shown: 'terminal',
+      copy: null,
       tree: {
         type: 'split',
         dir: 'row',
@@ -58,7 +61,7 @@ describe('hostLayoutFromWorkspace', () => {
   })
 
   it('an empty project has no tree; no project gives null', () => {
-    expect(hostLayoutFromWorkspace({ name: 'empty', tree: null, activeId: null })).toEqual({ project: 'empty', tree: null, activeId: null, maximizedId: null })
+    expect(hostLayoutFromWorkspace({ name: 'empty', tree: null, activeId: null })).toEqual({ project: 'empty', tree: null, activeId: null, maximizedId: null, shown: 'terminal', copy: null })
     expect(hostLayoutFromWorkspace(null)).toBeNull()
   })
 

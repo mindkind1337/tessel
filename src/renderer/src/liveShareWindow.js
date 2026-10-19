@@ -72,10 +72,23 @@
 //
 // Phase 2c (liveShareWindowFeeds.js): your browser panes in the shared
 // projects and the activity guests follow go to main; as a guest, the host's
-// browser panes, its past conversations and its activity come to the panels.
+// browser pages (as links you open in your own browser), its past
+// conversations and its activity come to the panels.
+//
+// Following the host: in each of the host's projects, your screen follows
+// the host's (the tab it shows: its terminals, a browser page, one of its
+// editor tabs; its active pane; the task copy it looks at) until you pick
+// something yourself; "Follow host" (the Live Share pill) takes it up again.
+// The host's editor tabs of the project (the files its Files tab shows you)
+// are a tab of their own here (tabsLeaf: they open through your usual access
+// to its files, read-only without "Edit files"); closing one only hides it
+// on your screen.
 import { reactive, watch } from 'vue'
 import { t } from './i18n'
-import { buildGuestTree, hostLayoutFromWorkspace, hostChatsFromWorkspace, GUEST_CHAT_AGENTS } from './liveShareLayout'
+import { buildGuestTree, hostLayoutFromWorkspace, hostChatsFromWorkspace, hostTabsFromWorkspace, GUEST_CHAT_AGENTS } from './liveShareLayout'
+import { lsharePath } from '../../shared/liveSharePath'
+import { docs } from './editor/documents'
+import { pathKey, samePath } from './editor/editorTabs'
 import { cleanRights } from '../../shared/liveShareRights'
 import { shownRights } from './liveShareRights'
 import { initials, inviteName, personName, joinedGuests } from './liveShareAccess'
@@ -243,7 +256,12 @@ export function createLiveShareWindow(deps) {
     paneAgents: {},
     hostUsage: null,
     histories: {},
-    review: null
+    review: null,
+    // Guest: whether your screen follows the host's in each of its projects
+    // (project -> { on }), and the host's editor tabs there (project -> {
+    // tabs: [rel], active }).
+    follow: {},
+    tabs: {}
   })
   const guestLeaves = new Map() // local pane id -> leaf
   const attaching = new Set()
@@ -260,13 +278,21 @@ export function createLiveShareWindow(deps) {
   const isGuestWs = (ws) => !!(ws && ws.liveShare)
   const isGuestLeaf = (leaf) => !!(leaf && leaf.backend === 'liveshare')
   // Per project of the host you see: its fullscreen pane last followed (only
-  // its changes are), and whether its active pane is still to be taken
-  // (once, when it is first shown).
-  const follow = new Map() // host project id -> { maximized, takeActive }
+  // its changes are), and what following last put on your screen (applied:
+  // your active pane, tab and editor file then; any other is your own pick).
+  const follow = new Map() // host project id -> { maximized, pending, applied }
   const followOf = (id) => {
-    if (!follow.has(id)) follow.set(id, { maximized: null, takeActive: true, pending: false })
+    if (!follow.has(id)) follow.set(id, { maximized: null, pending: false, applied: null })
     return follow.get(id)
   }
+  const followState = (id) => {
+    if (!state.follow[id]) state.follow[id] = { on: true }
+    return state.follow[id]
+  }
+  // The host's editor tabs of each project, as a tab here (project -> leaf),
+  // and the ones you hid (project -> Set of paths).
+  const tabsLeaves = new Map()
+  const hiddenTabs = new Map()
   // Each time you start sharing: a request from an earlier sharing is stale.
   let generation = 0
   const guestWss = (session) => deps.workspaces().filter((w) => w.liveShare && w.liveShare.session === session)
@@ -295,7 +321,9 @@ export function createLiveShareWindow(deps) {
       id: ws.id,
       layout: hostLayoutFromWorkspace(ws, deps.currentWsId() === ws.id ? deps.maximizedId() : null),
       chats: hostChatsFromWorkspace(ws),
-      root: !ws.remote && typeof ws.cwd === 'string' && ws.cwd ? ws.cwd : null
+      root: !ws.remote && typeof ws.cwd === 'string' && ws.cwd ? ws.cwd : null,
+      // Its editor tabs (host-only: main keeps those guests may see).
+      tabs: ws.remote ? { files: [], active: null } : hostTabsFromWorkspace(ws)
     }))
   }
 
@@ -855,26 +883,40 @@ export function createLiveShareWindow(deps) {
 
   function applyLayout(ws, p) {
     const f = followOf(p.id)
-    // The host's browser panes too, with "See my browser pages" (phase 2c).
-    const built = buildGuestTree(p.layout, (l) => (l.view === 'browser' ? feeds.pageLeaf(l, p.id, ws.liveShare.session) : leafIn(l.id, p.id)), { pages: feeds.showsPages() })
+    const session = ws.liveShare.session
+    // Your own pick since following last put something on your screen (the
+    // watch below may not have seen it yet): not following any more.
+    if (followState(p.id).on && f.applied && followKey(ws, p.id) !== f.applied) followState(p.id).on = false
+    // The host's browser panes too, with "See my browser pages" (as links
+    // opened in your own browser, phase 2c).
+    const built = buildGuestTree(p.layout, (l) => (l.view === 'browser' ? feeds.pageLeaf(l, p.id, session) : leafIn(l.id, p.id)), { pages: feeds.showsPages() })
+    // Tabs of the host's that are no pane of its layout: its editor tabs, the
+    // pages of its side panel.
+    const tabs = tabsLeaf(p.id, session)
+    const extra = [tabs, ...feeds.sideLeaves(p.id, session)].filter(Boolean)
     // Panes of this computer that opened here (a page, a file) stay, beside
     // the host's.
     const local = localLeaves(ws.tree)
-    if (!local.length) ws.tree = built
+    if (!local.length && !extra.length) ws.tree = built
     else {
-      const children = built ? [built, ...local] : local
-      ws.tree = children.length === 1 ? children[0] : reactive({ type: 'split', id: 'ls-split-local', dir: 'row', sizes: children.map(() => 100 / children.length), children })
+      const children = [built, ...extra, ...local].filter(Boolean)
+      ws.tree = !children.length ? null : children.length === 1 ? children[0] : reactive({ type: 'split', id: 'ls-split-local', dir: 'row', sizes: children.map(() => 100 / children.length), children })
     }
-    // Your own active pane stays yours (the keyboard never jumps to the
-    // host's pane while you type): the host's is taken once, when it is
-    // there; after that only when yours is gone.
-    // (The host's browser page on screen counts too, when you see its pages:
-    // its tab comes up, as on the host's screen.)
-    const hostActive = p.layout && (leafIn(p.layout.activeId, p.id) || (built && hasLeaf(built, p.layout.activeId))) ? p.layout.activeId : null
-    if (f.takeActive && hostActive) {
-      ws.activeId = hostActive
-      f.takeActive = false
-    } else if (!ws.activeId || !hasLeaf(ws.tree, ws.activeId)) ws.activeId = hostActive || [...guestLeaves.keys()].find((id) => leafIn(id, p.id) && hasLeaf(ws.tree, id)) || null
+    const target = hostTarget(ws, p, tabs)
+    if (followState(p.id).on && target) {
+      // Following: the host's tab, active pane and editor file, never the
+      // keyboard (quietFocus: the pane made active does not take it).
+      if (target.path && tabs) tabs.activePath = target.path
+      if (target.activeId && target.activeId !== ws.activeId) quiet(target.activeId)
+      if (target.view !== ws.view && target.view !== 'terminal') quiet(target.view)
+      if (target.activeId) ws.activeId = target.activeId
+      ws.view = target.view
+      f.applied = followKey(ws, p.id)
+    } else if (!ws.activeId || !hasLeaf(ws.tree, ws.activeId)) {
+      // Your own pick is gone: the host's, or a pane of the host's here.
+      ws.activeId = (target && target.activeId) || [...guestLeaves.keys()].find((id) => leafIn(id, p.id) && hasLeaf(ws.tree, id)) || null
+      if (followState(p.id).on) f.applied = followKey(ws, p.id)
+    }
     // The host's fullscreen pane: followed when the host changes it (you can
     // leave it meanwhile).
     const max = p.layout && leafIn(p.layout.maximizedId, p.id) ? p.layout.maximizedId : null
@@ -886,6 +928,106 @@ export function createLiveShareWindow(deps) {
         if (deps.maximizedId() !== max) deps.setMaximized(max)
       } else f.pending = true
     }
+  }
+
+  // Panes following made active just now: their own focus is skipped, so
+  // the keyboard stays where you were typing (a key of yours then is your
+  // own pick: onGuestKey).
+  const QUIET_MS = 1500
+  const quietIds = new Map() // pane id -> when
+  function quiet(id) {
+    quietIds.set(id, Date.now())
+    if (quietIds.size > 32) quietIds.delete(quietIds.keys().next().value)
+  }
+  const quietFocus = (id) => quietIds.has(id) && Date.now() - quietIds.get(id) < QUIET_MS
+  // A key you press in a host's project while your screen follows the
+  // host's: your own pick (following stops), in the pane you typed in.
+  function onGuestKey(e) {
+    if (!e || ['Shift', 'Control', 'Alt', 'Meta', 'AltGraph', 'CapsLock'].includes(e.key)) return
+    const ws = deps.currentWs()
+    if (!isGuestWs(ws) || ws.liveShare.session !== state.guest.session) return
+    const fs = state.follow[ws.liveShare.project]
+    if (!fs || !fs.on) return
+    fs.on = false
+    const el = e.target && typeof e.target.closest === 'function' ? e.target.closest('[data-pane-id]') : null
+    const id = el ? el.getAttribute('data-pane-id') : null
+    if (id && id !== ws.activeId && hasLeaf(ws.tree, id)) ws.activeId = id
+  }
+
+  // What the host shows in a project, as this window can show it: { activeId,
+  // view, path } (view: 'terminal' or the id of a tab here; path: the editor
+  // file, for its editor tabs), or null. A tab of the host's you do not have
+  // here (a page you may not see, a file its Files tab hides from you): its
+  // grid.
+  function hostTarget(ws, p, tabs) {
+    const L = p.layout
+    if (!L) return null
+    const inTree = (id) => !!id && hasLeaf(ws.tree, id)
+    if (L.shown && L.shown !== 'terminal') {
+      const l = layoutLeaf(L.tree, L.shown)
+      if (l && l.view === 'browser' && inTree(L.shown)) return { activeId: L.shown, view: L.shown, path: null }
+      if (l && l.view === 'editor' && tabs && inTree(tabs.id)) {
+        const got = state.tabs[p.id]
+        const path = got && got.active ? lsharePath(p.id, got.active) : null
+        if (path && (tabs.files || []).some((x) => samePath(x.path, path))) return { activeId: tabs.id, view: tabs.id, path }
+      }
+    }
+    const grid = (id) => inTree(id) && !!guestLeaves.get(id)
+    const activeId = grid(L.activeId) ? L.activeId : grid(ws.activeId) ? ws.activeId : [...guestLeaves.keys()].find((id) => leafIn(id, p.id) && hasLeaf(ws.tree, id)) || null
+    return { activeId, view: 'terminal', path: null }
+  }
+  // Your screen in a host's project, as following compares it.
+  function followKey(ws, project) {
+    const tabs = tabsLeaves.get(project)
+    return JSON.stringify([ws.activeId || null, ws.view || null, tabs ? tabs.activePath || null : null])
+  }
+
+  // The host's editor tabs of a project, as one editor tab here (the same
+  // leaf each time): its files the host's open ones you may see, minus the
+  // ones you hid; one you are editing stays while it has unsaved changes.
+  // null when there are none.
+  function tabsLeaf(project, session) {
+    const got = state.tabs[project]
+    let leaf = tabsLeaves.get(project)
+    if (leaf && leaf.liveShare.session !== session) {
+      tabsLeaves.delete(project)
+      leaf = null
+    }
+    const hidden = hiddenTabs.get(project) || new Set()
+    // The host's tabs you closed here since: hidden from now on.
+    if (leaf) {
+      const open = new Set((leaf.files || []).map((x) => x.path))
+      for (const path of leaf.liveShare.sent || []) if (!open.has(path)) hidden.add(path)
+      hiddenTabs.set(project, hidden)
+    }
+    const wanted = (got ? got.tabs : []).map((rel) => lsharePath(project, rel)).filter((path) => path && !hidden.has(path))
+    const dirty = (path) => !!(docs[pathKey(path)] && docs[pathKey(path)].dirty)
+    const kept = leaf ? (leaf.files || []).filter((x) => !wanted.includes(x.path) && dirty(x.path)) : []
+    if (!wanted.length && !kept.length) {
+      if (leaf) tabsLeaves.delete(project)
+      return null
+    }
+    if (!leaf) {
+      const host = state.guest.host || ''
+      leaf = reactive({
+        type: 'leaf',
+        kind: 'editor',
+        id: `pane-lstabs-${project}`.slice(0, 80), // i18n-ignore
+        title: t('app.pane.editor', 'Editor'),
+        files: [],
+        activePath: null,
+        broadcast: false,
+        reveal: null,
+        backend: 'liveshare',
+        liveShare: { session, project, host, hostTabs: true, sent: [] }
+      })
+      tabsLeaves.set(project, leaf)
+    }
+    const byPath = new Map((leaf.files || []).map((x) => [x.path, x]))
+    leaf.files = [...wanted.map((path) => byPath.get(path) || { path }), ...kept]
+    leaf.liveShare.sent = wanted
+    if (!leaf.files.some((x) => samePath(x.path, leaf.activePath))) leaf.activePath = leaf.files[0].path
+    return leaf
   }
 
   // Every project of the host's shown, built again from its layout.
@@ -977,7 +1119,13 @@ export function createLiveShareWindow(deps) {
     ws.tree = null
     if (local.length) deps.adoptLeaves(local)
     ws.activeId = null
-    if (ws.liveShare) follow.delete(ws.liveShare.project)
+    if (ws.liveShare) {
+      follow.delete(ws.liveShare.project)
+      delete state.follow[ws.liveShare.project]
+      delete state.tabs[ws.liveShare.project]
+      tabsLeaves.delete(ws.liveShare.project)
+      hiddenTabs.delete(ws.liveShare.project)
+    }
     deps.removeWorkspace(ws.id, true, true)
   }
 
@@ -1199,8 +1347,12 @@ export function createLiveShareWindow(deps) {
   }
   function onPush(m) {
     if (!m) return
-    // Phase 2c's news (the activity of a project followed).
-    if (feeds.onPush(m)) return
+    // Phase 2c's news (the activity of a project followed, its pages as
+    // links: its layout here again).
+    if (feeds.onPush(m)) {
+      if (m.topic === 'links') applyAll(state.guest.session)
+      return
+    }
     // The host's usage (null: the right was taken away).
     if (m.topic === 'usage') {
       state.hostUsage = m.data && Array.isArray(m.data.providers) ? m.data : null
@@ -1208,6 +1360,11 @@ export function createLiveShareWindow(deps) {
     }
     if (typeof m.project !== 'string' || !m.data || !(state.guest.projects || []).some((p) => p.id === m.project)) return
     if (m.topic === 'agents' && Array.isArray(m.data.panes)) return setPaneAgents(m.project, m.data.panes)
+    // The host's editor tabs of a project: its layout here again.
+    if (m.topic === 'tabs' && Array.isArray(m.data.tabs)) {
+      state.tabs[m.project] = { tabs: m.data.tabs.slice(), active: typeof m.data.active === 'string' ? m.data.active : null }
+      return applyAll(state.guest.session)
+    }
     if (m.topic !== 'tasks' || !Array.isArray(m.data.tasks)) return
     state.boards[m.project] = { tasks: m.data.tasks }
   }
@@ -1366,6 +1523,10 @@ export function createLiveShareWindow(deps) {
       Promise.resolve(a.subscribe({ topic: 'agents', project: p.id, on: true }))
         .then((r) => r && r.ok && r.data && Array.isArray(r.data.panes) && setPaneAgents(p.id, r.data.panes))
         .catch(() => {})
+      for (const topic of ['tabs', 'links'])
+        Promise.resolve(a.subscribe({ topic, project: p.id, on: true }))
+          .then((r) => r && r.ok && r.data && onPush({ topic, project: p.id, data: r.data }))
+          .catch(() => {})
     }
     Promise.resolve(a.subscribe({ topic: 'usage', on: true }))
       .then((r) => {
@@ -1393,6 +1554,10 @@ export function createLiveShareWindow(deps) {
     // Its panes are not terminals of this computer: nothing to stop here.
     for (const ws of deps.workspaces().filter((w) => w.liveShare)) dropGuestWs(ws)
     follow.clear()
+    tabsLeaves.clear()
+    hiddenTabs.clear()
+    for (const k of Object.keys(state.follow)) delete state.follow[k]
+    for (const k of Object.keys(state.tabs)) delete state.tabs[k]
     if (s.reason && s.reason !== 'left') deps.showToast(t('liveShare.toast.ended', 'Live Share with {{host}} ended: {{reason}}', { host: s.host || '?', reason: endReason(s.reason) }), { kind: 'error', timeout: 9000 })
   }
 
@@ -1552,9 +1717,55 @@ export function createLiveShareWindow(deps) {
     }
   }
 
+  // --- Following the host --------------------------------------------------------
+  // Your screen in one of the host's projects follows the host's again (the
+  // pill's "Follow host"), the tabs you hid there back too.
+  function followHost(ws = deps.currentWs()) {
+    if (!isGuestWs(ws) || ws.liveShare.session !== state.guest.session) return false
+    const project = ws.liveShare.project
+    followState(project).on = true
+    followOf(project).applied = null
+    hiddenTabs.delete(project)
+    const lt = tabsLeaves.get(project)
+    if (lt) lt.liveShare.sent = []
+    feeds.followAll(project)
+    const p = (state.guest.projects || []).find((x) => x.id === project)
+    if (p) applyLayout(ws, p)
+    return true
+  }
+  // What the pill says of a host's project on screen: { on (following), copy
+  // (the task copy the host looks at, its branch, or null) }, or null.
+  function followInfo(ws = deps.currentWs()) {
+    if (!isGuestWs(ws) || ws.liveShare.session !== state.guest.session) return null
+    const project = ws.liveShare.project
+    const p = (state.guest.projects || []).find((x) => x.id === project)
+    return { on: followState(project).on, copy: (p && p.layout && p.layout.copy) || null }
+  }
+  // A tab of the host's closed here (its editor tabs, one of its pages):
+  // hidden on your screen only, never closed on the host's.
+  function hideHostTab(id) {
+    const ws = deps.workspaces().find((w) => isGuestWs(w) && hasLeaf(w.tree, id))
+    if (!ws) return false
+    const project = ws.liveShare.project
+    const lt = tabsLeaves.get(project)
+    if (lt && lt.id === id) {
+      const hidden = hiddenTabs.get(project) || new Set()
+      for (const x of lt.files || []) hidden.add(x.path)
+      hiddenTabs.set(project, hidden)
+    } else if (!feeds.hidePage(id)) return false
+    const p = (state.guest.projects || []).find((x) => x.id === project)
+    if (p) applyLayout(ws, p)
+    return true
+  }
+  const isHostTab = (leaf) => !!(leaf && leaf.backend === 'liveshare' && leaf.liveShare && (leaf.liveShare.hostTabs || leaf.liveShare.link))
+
   async function init() {
     const a = api()
     if (!a) return
+    if (typeof document !== 'undefined') {
+      document.addEventListener('keydown', onGuestKey, true)
+      offs.push(() => document.removeEventListener('keydown', onGuestKey, true))
+    }
     offs.push(a.onHost(onHost), a.onGuest(onGuest), a.onAsk(onAsk), a.onHostRequest(onHostRequest))
     if (a.onNotice) offs.push(a.onNotice(onNotice))
     if (a.onPresence) offs.push(a.onPresence(onPresence))
@@ -1590,6 +1801,22 @@ export function createLiveShareWindow(deps) {
           if (text && a.setLayouts) a.setLayouts(JSON.parse(text))
         },
         { immediate: true }
+      ),
+      // Your own pick in a host's project (another pane, tab or editor file
+      // than following put there): your screen stops following the host's.
+      watch(
+        () => {
+          const ws = deps.currentWs()
+          if (!isGuestWs(ws) || state.guest.state !== 'joined') return ''
+          const project = ws.liveShare.project
+          return followState(project).on ? `${project}\n${followKey(ws, project)}` : ''
+        },
+        (key) => {
+          if (!key) return
+          const project = key.slice(0, key.indexOf('\n'))
+          const f = follow.get(project)
+          if (f && f.applied && key.slice(project.length + 1) !== f.applied) followState(project).on = false
+        }
       ),
       // A host's project comes on screen: the fullscreen pane the host chose
       // while it was not on screen is applied then.
@@ -1746,7 +1973,16 @@ export function createLiveShareWindow(deps) {
     feeds: feeds.feeds,
     pageShare: feeds.pageShare,
     setPageHidden: feeds.setPageHidden,
-    pageSource: feeds.pageSource,
+    setPageShared: feeds.setPageShared,
+    pageNote: feeds.pageNote,
+    followPage: feeds.followPage,
+    approvePage: feeds.approvePage,
+    quietFocus,
+    // Following the host (guest).
+    followHost,
+    followInfo,
+    hideHostTab,
+    isHostTab,
     sessionSource: feeds.sessionSource,
     activitySource: feeds.activitySource
   }
@@ -1765,6 +2001,17 @@ function localLeaves(node, out = []) {
     if (node.backend !== 'liveshare') out.push(node)
   } else for (const c of node.children || []) localLeaves(c, out)
   return out
+}
+
+// A leaf of a host's layout by its id here.
+function layoutLeaf(node, id) {
+  if (!node) return null
+  if (node.type === 'leaf') return node.id === id ? node : null
+  for (const c of node.children || []) {
+    const l = layoutLeaf(c, id)
+    if (l) return l
+  }
+  return null
 }
 
 function firstLeafId(node) {

@@ -53,7 +53,7 @@ describe('LiveShareAsk: someone asks to join', () => {
     await nextTick()
     expect(boxes(w, 'ls-ask-project-')).toEqual([false, true, false])
     // (Every right of the catalog, in its order: type, open, close, then the rest off.)
-    expect(boxes(w, 'ls-right-')).toEqual([false, true, false, false, false, false, false, false, false])
+    expect(boxes(w, 'ls-right-')).toEqual([false, true, false, false, false, false, false, false])
     await arm()
     await w.find('[data-test="ls-ask-allow"]').trigger('click')
     expect(w.emitted('answer')).toEqual([[{ key: 'g1', yes: true, projects: ['ws-2'], rights: { ...NO_RIGHTS, type: false, open: true, close: false }, trust: false }]])
@@ -75,7 +75,7 @@ describe('LiveShareAsk: someone asks to join', () => {
     await nextTick()
     expect(w.find('[data-test="ls-ask-invite"]').exists()).toBe(false)
     expect(boxes(w, 'ls-ask-project-')).toEqual([true, true, true])
-    expect(boxes(w, 'ls-right-')).toEqual([false, false, false, false, false, false, false, false, false])
+    expect(boxes(w, 'ls-right-')).toEqual([false, false, false, false, false, false, false, false])
   })
 
   it('Trust this person: only once the code was checked, and only for a Tessel that can be trusted', async () => {
