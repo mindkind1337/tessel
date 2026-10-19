@@ -462,16 +462,46 @@ async function openFrames(entries, openFrame, nextRef) {
 // null: no clickable pass, which looks at the page's own document only).
 // openFrame: see openFrames (null: frames are listed, their content not).
 export async function buildSnapshot(send, { contextId = null, maxChars = MAX_SNAPSHOT_CHARS, openFrame = null } = {}) {
-  await send('Accessibility.enable')
-  let counter = 1
-  const nextRef = () => counter++
-  const entries = await documentEntries(send, { nextRef })
-  if (contextId != null) {
-    for (const e of await findCursorInteractiveElements(send, entries, contextId)) {
-      e.ref = `@e${counter++}`
-      entries.push(e)
+  // Reading the tree turns Chromium's accessibility on in the page (and in
+  // each frame read in its own session), and it stays on, updated at every
+  // change of the page, until it is turned off or the debugger goes. The
+  // agents' debugger stays attached up to a minute after their last command:
+  // a busy page's process worked about 55% more all that time (measured in
+  // Electron 42). So it is turned off again once the snapshot is read.
+  const axSends = new Set([send])
+  try {
+    await send('Accessibility.enable')
+    let counter = 1
+    const nextRef = () => counter++
+    const entries = await documentEntries(send, { nextRef })
+    if (contextId != null) {
+      for (const e of await findCursorInteractiveElements(send, entries, contextId)) {
+        e.ref = `@e${counter++}`
+        entries.push(e)
+      }
+    }
+    if (openFrame) {
+      const open = async (where) => {
+        const at = await openFrame(where)
+        if (at && typeof at.send === 'function') axSends.add(at.send)
+        return at
+      }
+      await openFrames(entries, open, nextRef)
+    }
+    return formatSnapshot(entries, maxChars)
+  } finally {
+    await accessibilityOff(axSends)
+  }
+}
+
+// Chromium's accessibility off again in each document read (see buildSnapshot);
+// a session already gone changes nothing.
+async function accessibilityOff(sends) {
+  for (const s of sends) {
+    try {
+      await s('Accessibility.disable')
+    } catch {
+      // gone
     }
   }
-  if (openFrame) await openFrames(entries, openFrame, nextRef)
-  return formatSnapshot(entries, maxChars)
 }

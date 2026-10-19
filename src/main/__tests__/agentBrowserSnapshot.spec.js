@@ -274,7 +274,34 @@ describe('snapshot of the accessibility tree', () => {
     }
     const r = await buildSnapshot(send)
     expect(r.snapshot).toBe('[@e1] button "OK"')
-    expect(calls).toEqual(['Accessibility.enable', 'Accessibility.getFullAXTree'])
+    // Chromium's accessibility off again: left on, it slows a busy page for
+    // as long as the debugger stays attached.
+    expect(calls).toEqual(['Accessibility.enable', 'Accessibility.getFullAXTree', 'Accessibility.disable'])
+  })
+
+  it('turns accessibility off again in every session it read, even when reading fails', async () => {
+    const off = []
+    const sendFor = (session, fail = false) => async (m) => {
+      if (m === 'Accessibility.disable') {
+        off.push(session)
+        if (session === 'gone') throw new Error('session closed')
+        return {}
+      }
+      if (m === 'Accessibility.getFullAXTree') {
+        if (fail) throw new Error('target closed')
+        return session === 'main' ? { nodes: [{ nodeId: '1', role: { value: 'RootWebArea' }, childIds: ['2', '3'] }, { nodeId: '2', role: { value: 'Iframe' }, name: { value: 'A' }, backendDOMNodeId: 2, childIds: [] }, { nodeId: '3', role: { value: 'Iframe' }, name: { value: 'B' }, backendDOMNodeId: 3, childIds: [] }] } : { nodes: [] }
+      }
+      return {}
+    }
+    const main = sendFor('main')
+    const frames = { 2: { session: 'S1', send: sendFor('gone'), frameId: null }, 3: { session: null, send: main, frameId: 'F3' } }
+    await buildSnapshot(main, { openFrame: async ({ backendNodeId }) => frames[backendNodeId] })
+    // The page once (a frame of its own process shares its session), the
+    // frame from another site once; one already gone changes nothing.
+    expect(off.sort()).toEqual(['gone', 'main'])
+    off.length = 0
+    await expect(buildSnapshot(sendFor('broken', true))).rejects.toThrow('target closed')
+    expect(off).toEqual(['broken'])
   })
 
   // An <iframe> is an "Iframe" node without children in its page's tree: its
