@@ -55,5 +55,6 @@ describe('Settings in French', () => {
     await nextTick()
     await nextTick()
     expect(visiblePages(wrapper)).toContain('appearance')
-  })
+    // (Searches every page a few times: about 5.5 s on this PC.)
+  }, 20000)
 })

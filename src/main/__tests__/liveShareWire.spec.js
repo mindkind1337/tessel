@@ -224,8 +224,8 @@ describe('Live Share phase 2a: a shared project on a guest\u2019s screen', () =>
 
   it('shows ignored and secret files only with the setting off, and nothing once the project is taken away', async () => {
     const { host, fs: gfs, guestId } = await session()
-    expect(host.last('liveShare:host').settings).toEqual({ hideIgnored: true })
-    expect(await host.handle['liveShare:setSettings'](null, { hideIgnored: false })).toEqual({ ok: true, settings: { hideIgnored: false } })
+    expect(host.last('liveShare:host').settings).toEqual({ hideIgnored: true, rendezvous: true })
+    expect(await host.handle['liveShare:setSettings'](null, { hideIgnored: false })).toEqual({ ok: true, settings: { hideIgnored: false, rendezvous: true } })
     const names = (await gfs.listDir({ root: 'lshare://ws-1' })).entries.map((e) => e.name)
     expect(names).toEqual(expect.arrayContaining(['.env', 'dist']))
     expect(names).not.toContain('.git')
