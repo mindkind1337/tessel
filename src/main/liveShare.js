@@ -115,6 +115,7 @@ import { createShareHost, cleanAgents, isAgentId } from './liveShare/shareHost.j
 import { cleanProjectIds, cleanName, isProjectId, MAX_PROJECTS } from './liveShare/shareGrant.js'
 import { createTrustStore, isTrustId, trustId, MAX_TRUSTED, MAX_TRUSTED_PROJECTS } from './liveShare/shareTrust.js'
 import { cleanRights, isRightId } from '../shared/liveShareRights'
+import { cleanAgentRule, effectiveAgentRule, paneTypeAllowed, agentAllowed, modelAllowed, isModelId } from '../shared/liveShareAgents'
 import { createShareGuest } from './liveShare/shareGuest.js'
 import { encodeInvite, decodeInvite, newSecret, newSigningKey, exportSigningKey, importSigningKey } from './liveShare/shareCrypto.js'
 import { ensureCloudflared, startTunnel, waitReachable, waitRegistered, tunnelLogTail, endLeftoverTunnel, tunnelState, stopTunnelPid, stopTunnelLater, processState } from './liveShare/shareTunnel.js'
@@ -616,6 +617,9 @@ export function registerLiveShare({
       // The share's settings (also while not sharing), and what guests
       // changed lately (newest first; only while sharing).
       settings: { ...shareSettings },
+      // The agents (and their models) this window can start, for the
+      // "Agents guests may use" lists.
+      agents: hostAgents.map((a) => ({ ...a, ...(a.models ? { models: a.models.map((m) => ({ ...m })) } : {}) })),
       // The projects last shared (the dialog ticks them first next time).
       lastProjectIds: [...lastProjects],
       actions: live ? actions.map((a) => ({ ...a })) : [],
@@ -717,13 +721,16 @@ export function registerLiveShare({
     ...DEFAULT_SHARE_SETTINGS,
     rendezvous: true,
     ...(settingsRead.status === 'ok' && settingsRead.data.hideIgnored === false ? { hideIgnored: false } : {}),
-    ...(settingsRead.status === 'ok' && settingsRead.data.rendezvous === false ? { rendezvous: false } : {})
+    ...(settingsRead.status === 'ok' && settingsRead.data.rendezvous === false ? { rendezvous: false } : {}),
+    // agents: the agents and models guests may use, for whoever has no rule
+    // of its own (liveShareAgents.js); none: all of them.
+    ...(settingsRead.status === 'ok' && cleanAgentRule(settingsRead.data.agents) ? { agents: cleanAgentRule(settingsRead.data.agents) } : {})
   }
   // The projects last shared (the window's ids), kept here too: a share
   // started again from the dialog after a restart ticks them first, not only
   // the project on screen.
   let lastProjects = settingsRead.status === 'ok' ? cleanProjectIds(Array.isArray(settingsRead.data.lastProjects) ? settingsRead.data.lastProjects : []) : []
-  const writeSettings = () => settingsFile.write({ hideIgnored: shareSettings.hideIgnored, rendezvous: shareSettings.rendezvous, lastProjects })
+  const writeSettings = () => settingsFile.write({ hideIgnored: shareSettings.hideIgnored, rendezvous: shareSettings.rendezvous, lastProjects, ...(shareSettings.agents ? { agents: shareSettings.agents } : {}) })
   function rememberProjects(ids) {
     const next = cleanProjectIds(ids)
     if (!next.length || (next.length === lastProjects.length && next.every((x, i) => x === lastProjects[i]))) return
@@ -1107,6 +1114,8 @@ export function registerLiveShare({
     if (!isPaneId(a.pane) || homes(s).get(a.pane) !== req.project) return { ok: false, code: 'not-found' }
     // (The type right: checked by the server before it came here, and again below.)
     if (ctx.rights.type !== true) return { ok: false, code: 'forbidden' }
+    // Nor in a pane of an agent or a model its agents rule leaves out.
+    if (!paneTypeAllowed(effectiveAgentRule(ctx.rights.agents, shareSettings.agents), paneAgents.get(a.pane))) return { ok: false, code: 'forbidden' }
     // One upload and one minute's images per person, whatever its connection.
     const owner = typeof ctx.person === 'string' ? ctx.person : ctx.guest.id
     if (req.op === 'paste.part') return pasteUploads.part(owner, req.project, a)
@@ -1167,6 +1176,9 @@ export function registerLiveShare({
   // ('usage', shareUsage.js: never a reading taken for them).
   const agentsFeed = createAgentsFeed({ push: (project, data) => sharing?.server?.push('agents', project, null, data) })
   let rawPanes = new Map() // project -> the window's panes
+  // What runs in each pane shared ({ agent, model }: an agent or chat pane),
+  // for the guests' agents rules (shareHost.js paneAgent): host-only.
+  let paneAgents = new Map()
   let paneChildren = new Map() // project -> Map(pane id -> { agent, sessionId, accountId })
   let histories = new Map() // project -> records (hostHistory)
   let historyCosts = new Map() // project -> { at, costs }: figures read here
@@ -1627,6 +1639,8 @@ export function registerLiveShare({
         offers: (feature) => (feature === 'usage' ? !!usage : feature === 'links' ? !!linkFeed : feature === 'paste' ? !!images : feature === 'panes2' || feature === 'history' || feature === 'tabs'),
         write: (id, data) => host.send('write', { id, data }),
         agents: () => hostAgents,
+        agentDefault: () => shareSettings.agents || null,
+        paneAgent: (id) => paneAgents.get(id) || null,
         openPane: (spec, guest) => requestOpen('open', spec, guest),
         askOpen: (spec, guest) => requestOpen('ask-open', spec, guest),
         closePane: (id, guest) => send('liveShare:hostRequest', { action: 'close', id, guest }),
@@ -2708,7 +2722,7 @@ export function registerLiveShare({
           }
           send('liveShare:chat', { id: entry.localId, ...entry.last })
         },
-        onNotice: (code) => joined === g && g.client === client && send('liveShare:notice', { code: str(code, 40) }),
+        onNotice: (code, about = {}) => joined === g && g.client === client && send('liveShare:notice', { code: str(code, 40), agent: cleanName(str(about.agent, 80)), model: cleanName(str(about.model, 80)) }),
         onPush: (topic, project, key, data) => joined === g && g.client === client && onGuestPush(g, topic, project, key, data),
         onProjects: (projects) => joined === g && g.client === client && onProjects(g, projects),
         onSnapshot: (remoteId, data, cols, rows) => {
@@ -3098,6 +3112,18 @@ export function registerLiveShare({
       else if (sharing) publishAddress(sharing, true)
       pushHost()
     }
+    // The agents guests may use (a rule, or null: all of them), for whoever
+    // has none of its own: guests in follow it at once.
+    if (patch && Object.hasOwn(patch, 'agents')) {
+      const rule = cleanAgentRule(patch.agents)
+      const rest = { ...shareSettings }
+      delete rest.agents
+      shareSettings = rule ? { ...rest, agents: rule } : rest
+      keep()
+      info(`guests ${rule ? 'now use only the agents the share allows' : 'may use every agent'}`)
+      sharing?.server?.agentRuleChanged()
+      pushHost()
+    }
     return { ok: true, settings: { ...shareSettings } }
   })
   // The window's task boards of the projects shared: [{ project, tasks }].
@@ -3128,6 +3154,10 @@ export function registerLiveShare({
     const keep = new Set(s.projects || [])
     for (const item of (Array.isArray(list) ? list : []).slice(0, MAX_PROJECTS)) if (item && keep.has(item.project) && Array.isArray(item.panes)) rawPanes.set(item.project, item.panes)
     for (const id of [...rawPanes.keys()]) if (!keep.has(id)) rawPanes.delete(id)
+    paneAgents = new Map()
+    for (const panes of rawPanes.values())
+      for (const p of panes.slice(0, 256))
+        if (p && typeof p.id === 'string' && (p.kind === 'agent' || p.kind === 'chat') && isAgentId(p.agentId)) paneAgents.set(p.id, { agent: p.agentId, model: str(p.modelId, 120) })
     for (const id of agentsFeed.projects()) {
       if (keep.has(id)) continue
       agentsFeed.drop(id)
@@ -3190,9 +3220,11 @@ export function registerLiveShare({
   // clicks in a row never undo each other): one project or one right of a
   // guest in, a person let in (offline: it comes back with it), a trusted
   // person (also while not sharing) or an invitation.
-  ipcMain.handle('liveShare:access', (_evt, { subject, project, right, on } = {}) => {
+  ipcMain.handle('liveShare:access', (_evt, args = {}) => {
+    const { subject, project, right, on } = args || {}
     const id = subjectId(subject)
-    const change = project !== undefined ? (isProjectId(project) ? { project, on: !!on } : null) : isRightId(right) ? { right, on: !!on } : null
+    // agents: the agents rule given (null: back to the share's setting).
+    const change = Object.hasOwn(args || {}, 'agents') ? { agents: cleanAgentRule(args.agents) } : project !== undefined ? (isProjectId(project) ? { project, on: !!on } : null) : isRightId(right) ? { right, on: !!on } : null
     if (!id || !change) return { ok: false }
     const live = sharing && sharing.state === 'sharing' && sharing.server
     // The trusted entry the change goes to, if any (a trusted person, or a
@@ -3280,6 +3312,7 @@ export function registerLiveShare({
   ipcMain.on('liveShare:agents', (_evt, list) => {
     hostAgents = cleanAgents(list)
     sharing?.server?.agentsChanged()
+    pushHost()
   })
   ipcMain.handle('liveShare:join', (_evt, opts) => joinSession({ invite: opts && opts.invite, name: opts && opts.name }))
   ipcMain.handle('liveShare:leave', () => {
@@ -3482,8 +3515,14 @@ export function registerLiveShare({
     const project = spec && g.projects.some((p) => p.id === spec.project) ? spec.project : null
     if (!project) return { ok: false, reason: 'project' }
     const agent = spec.kind === 'agent' ? spec.agent : null
+    // An agent or a model the host's rule leaves out (the host refuses it
+    // anyway; said here at once).
+    const rule = g.rights ? g.rights.agents : null
+    const model = agent !== null && isModelId(spec.model) ? spec.model : null
+    if (agent !== null && isAgentId(agent) && !agentAllowed(rule, agent)) return { ok: false, reason: 'agent-denied' }
+    if (model && !modelAllowed(rule, agent, model)) return { ok: false, reason: 'model-denied' }
     if (agent !== null && (!isAgentId(agent) || (canAsk && !g.agents.some((a) => a.id === agent)))) return { ok: false, reason: 'agent' }
-    g.client.open(agent ? { kind: 'agent', agent, project } : { kind: 'terminal', project })
+    g.client.open(agent ? { kind: 'agent', agent, project, ...(model ? { model } : {}) } : { kind: 'terminal', project })
     return { ok: true, asked: !may(g, 'open') }
   })
   // The host's pane this window has on screen (null: none of the host's),

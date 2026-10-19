@@ -26,7 +26,8 @@ const props = defineProps({
   // of their accounts (on an SSH host, they use the host's sign-in).
   accountChoice: { type: Boolean, default: true },
   // A Live Share project of a host that lists its agents: { host, agents:
-  // [{ id, name }], canOpen } (null: this computer's menu).
+  // [{ id, name, models? }], canOpen } (null: this computer's menu); models:
+  // the only ones the host lets you use with that agent.
   hostMenu: { type: Object, default: null },
   x: { type: Number, default: 0 },
   y: { type: Number, default: 0 }
@@ -169,12 +170,21 @@ onMounted(async () => {
           <span class="launch-name" v-text="t('liveShare.launch.terminal', 'Terminal ({{host}}’s shell)', { host: hostName })"></span>
         </button>
       </div>
-      <div v-for="agent in hostAgents" :key="agent.id" class="launch-row">
-        <button class="launch-item" role="menuitem" :data-test="'launch-host-agent-' + agent.id" @click="emit('launch', { kind: 'agent', id: agent.id })">
-          <BrandIcon :kind="agent.id" :label="agent.name" :size="16" />
-          <span class="launch-name">{{ agent.name }}</span>
-        </button>
-      </div>
+      <template v-for="agent in hostAgents" :key="agent.id">
+        <!-- The host lets you use only some of its models: one item each. -->
+        <div v-for="m in agent.models || []" :key="m.id" class="launch-row">
+          <button class="launch-item" role="menuitem" :data-test="'launch-host-agent-' + agent.id + '-model-' + m.id" @click="emit('launch', { kind: 'agent', id: agent.id, sessionOptions: { model: m.id } })">
+            <BrandIcon :kind="agent.id" :label="agent.name" :size="16" />
+            <span class="launch-name" v-text="t('liveShare.launch.agentModel', '{{agent}} · {{model}}', { agent: agent.name, model: m.label || m.id })"></span>
+          </button>
+        </div>
+        <div v-if="!agent.models || !agent.models.length" class="launch-row">
+          <button class="launch-item" role="menuitem" :data-test="'launch-host-agent-' + agent.id" @click="emit('launch', { kind: 'agent', id: agent.id })">
+            <BrandIcon :kind="agent.id" :label="agent.name" :size="16" />
+            <span class="launch-name">{{ agent.name }}</span>
+          </button>
+        </div>
+      </template>
       <p v-if="!hostAgents.length" class="launch-empty" data-test="launch-host-no-agents" v-text="t('liveShare.launch.noAgents', '{{host}} offers no agents.', { host: hostName })"></p>
       <p v-if="!hostMenu.canOpen" class="launch-empty" data-test="launch-host-asks" v-text="t('liveShare.launch.asks', '{{host}} is asked first: it opens once they say yes.', { host: hostName })"></p>
       <div class="launch-foot">

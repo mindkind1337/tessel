@@ -60,7 +60,7 @@ import { getAgentSessionOptionCatalog, modelOptions, resolveSessionOptionDefault
 import { cursorContextOnScreen, cursorModelOnScreen, cursorPickerFilter, cursorPickerShown } from '../../../shared/cursorModels'
 import { antigravityListed, antigravityModelOnScreen } from '../../../shared/antigravityModels'
 import { codexModelOnScreen } from '../../../shared/codexScreen'
-import { paneModels } from '../paneModels'
+import { paneModels, paneModelIds } from '../paneModels'
 import { modelsFor, refreshIfStale } from '../agentModels'
 import { afterStartup, isStartupFinished } from '../startupIdle'
 import { CLAUDE_PRICING } from '../../../shared/claudePricing'
@@ -552,22 +552,47 @@ const hasModelChoice = computed(() => isAgent.value && !props.node.detected && !
 const paneModelList = computed(() => (hasModelChoice.value ? modelsFor(props.node.agentId) : []))
 // The listed model the agent runs with (what it shows, else the list's
 // default): its effort can be chosen without picking a model first.
+// The listed row a shown model is (its id), or null.
+function effectiveModelIdOf(list, shown) {
+  const exact = list.find((m) => m.id === shown) || list.find((m) => m.label === shown)
+  if (exact) return exact.id
+  // A Cursor variant id (gpt-5.3-codex-high-fast): its model's row.
+  const listed = listedModelValues(list, shown)
+  if (listed) return listed.model
+  const alias = list.find((m) => shown.includes(`-${m.id}-`) || shown.endsWith(`-${m.id}`))
+  return alias ? alias.id : null
+}
 const effectiveModelId = computed(() => {
   const list = paneModelList.value
   if (!list.length) return null
   const shown = agentModel.value && agentModel.value.model
-  if (shown) {
-    const exact = list.find((m) => m.id === shown) || list.find((m) => m.label === shown)
-    if (exact) return exact.id
-    // A Cursor variant id (gpt-5.3-codex-high-fast): its model's row.
-    const listed = listedModelValues(list, shown)
-    if (listed) return listed.model
-    const alias = list.find((m) => shown.includes(`-${m.id}-`) || shown.endsWith(`-${m.id}`))
-    if (alias) return alias.id
-  }
+  const found = shown ? effectiveModelIdOf(list, shown) : null
+  if (found) return found
   const byDefault = list.find((m) => m.isDefault)
   return (byDefault || list[0]).id
 })
+// For a Live Share host (guests' agents rules): the model's id. What the
+// header shows, matched to the agent's list; shown but not listed: the shown
+// text as is (a rule that lists models never matches it); nothing shown
+// yet: the model it was started with, else the list's default.
+const enforcedModelId = computed(() => {
+  if (!isAgent.value) return ''
+  const shown = agentModel.value && agentModel.value.model
+  const list = paneModelList.value
+  if (shown) return list.length ? effectiveModelIdOf(list, shown) || String(shown) : String(shown)
+  const chosen = props.node.sessionOptions && props.node.sessionOptions.model
+  if (typeof chosen === 'string' && chosen) return chosen
+  return effectiveModelId.value || ''
+})
+watch(
+  enforcedModelId,
+  (id) => {
+    if (id) paneModelIds[props.node.id] = id
+    else delete paneModelIds[props.node.id]
+  },
+  { immediate: true }
+)
+onBeforeUnmount(() => delete paneModelIds[props.node.id])
 // The menu's checked values: the pane's own choice; a running Cursor, what
 // its status line shows (a pick in its own picker included).
 const paneMenuValues = computed(() => {

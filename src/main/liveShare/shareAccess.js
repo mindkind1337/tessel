@@ -50,7 +50,8 @@
 // pauses its own invitation only, so no code can pause the others.
 // Nothing here touches the network: shareHost.js does.
 import crypto from 'crypto'
-import { cleanRights, isRightId, sameRights, setRight, RIGHT_IDS } from '../../shared/liveShareRights'
+import { cleanRights, isRightId, sameRights, setRight, withAgents, RIGHT_IDS } from '../../shared/liveShareRights'
+import { sameAgentRule } from '../../shared/liveShareAgents'
 import { cleanGrant, cleanName, cleanProjectIds, copyGrant, isProjectId } from './shareGrant.js'
 import { KX_BYTES, identityFingerprint } from './shareCrypto.js'
 
@@ -359,6 +360,9 @@ export function createAccess({ now = Date.now, trust = null, isOnline = () => fa
     const added = after.projects.filter((x) => !before.projects.includes(x))
     const off = RIGHT_IDS.filter((r) => before.rights[r] && !after.rights[r])
     const on = RIGHT_IDS.filter((r) => !before.rights[r] && after.rights[r])
+    // A changed agents rule may take agents or models away: its people take
+    // it with what is taken away.
+    const agentsChanged = !sameAgentRule(before.rights.agents, after.rights.agents)
     let applied = 0
     for (const person of people.values()) {
       if (person.via !== id || person.trust) continue
@@ -368,6 +372,10 @@ export function createAccess({ now = Date.now, trust = null, isOnline = () => fa
       if (applyRemovals) {
         projects = projects.filter((x) => !removed.includes(x))
         for (const r of off) rights[r] = false
+        if (agentsChanged) {
+          delete rights.agents
+          if (after.rights.agents) rights.agents = after.rights.agents
+        }
       }
       if (applyAdditions) {
         for (const x of added) if (!projects.includes(x) && shared.has(x)) projects.push(x)
@@ -576,9 +584,11 @@ export function createAccess({ now = Date.now, trust = null, isOnline = () => fa
 
   // --- Changing what someone gets (one place for each grant) ---------------------
   // subject: { person } (its hash), { trust } (a fingerprint) or { invite }
-  // (an id). change: { project, on } or { right, on }. A trusted person's
-  // change is the trusted entry's, whoever it is made through.
-  function change(subject, { project, right, on } = {}) {
+  // (an id). change: { project, on }, { right, on } or { agents } (its agents
+  // rule; null: the share's setting counts). A trusted person's change is the
+  // trusted entry's, whoever it is made through.
+  function change(subject, { project, right, on, ...rest } = {}) {
+    if (Object.hasOwn(rest, 'agents')) return changeAgents(subject, rest.agents)
     const byProject = project !== undefined
     if (byProject ? !isProjectId(project) : !isRightId(right)) return false
     if (subject.invite) {
@@ -602,6 +612,26 @@ export function createAccess({ now = Date.now, trust = null, isOnline = () => fa
     if (!p || (byProject && on && !shared.has(project))) return false
     if (byProject) p.grant.projects = on ? cleanProjectIds([...p.grant.projects, project]) : p.grant.projects.filter((x) => x !== project)
     else p.grant.rights = setRight(p.grant.rights, right, on)
+    changed('grants')
+    return true
+  }
+  function changeAgents(subject, rule) {
+    if (subject.invite) {
+      const inv = invites.get(subject.invite)
+      if (!inv) return false
+      inv.grant.rights = withAgents(inv.grant.rights, rule)
+      changed('invites')
+      return true
+    }
+    const fp = subject.trust || (subject.person && trusted(people.get(subject.person)) ? people.get(subject.person).trust : null)
+    if (fp) {
+      const ok = !!trust && trust.change(fp, { agents: rule })
+      if (ok) changed('grants')
+      return ok
+    }
+    const p = subject.person ? people.get(subject.person) : null
+    if (!p) return false
+    p.grant.rights = withAgents(p.grant.rights, rule)
     changed('grants')
     return true
   }

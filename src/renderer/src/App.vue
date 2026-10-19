@@ -131,7 +131,7 @@ import { usageScopeEntries, usageScopeRoots, rememberUsageCopies, loadUsageCopie
 import { taskHistory, setTaskHistory, backfillHistory, setHistoryDescriber } from './taskHistory'
 import { restoredSideTab } from './sideTabs'
 import { runSettingsTool } from './settingsTools'
-import { paneModels } from './paneModels'
+import { paneModels, paneModelIds } from './paneModels'
 import { buildSenderSnapshot } from './senderIdentity'
 import { sleepBlocker } from '../../shared/agentSleep'
 import { updateBlocker, planUpdate, autoUpdateMoment } from '../../shared/agentUpdatePlan'
@@ -2582,7 +2582,10 @@ const liveShare = createLiveShareWindow({
   killPty: (id) => window.shellApi.killPty(id),
   hasAgent: (id) => !!agentById(id),
   // The agents guests may ask for: the ones the "+" menu offers here.
-  agentList: () => launchableAgents.value.filter((a) => a.available !== false).map((a) => ({ id: a.id, name: a.name || a.id })),
+  // With each agent's models (the "Agents guests may use" lists; a guest's
+  // menu when you limit them).
+  agentList: () => launchableAgents.value.filter((a) => a.available !== false).map((a) => ({ id: a.id, name: a.name || a.id, models: modelsFor(a.id).map((m) => ({ id: m.id, label: m.label || m.id })) })),
+  agentModels: (id) => modelsFor(id),
   agentName: (id) => (agentById(id) || {}).name || null,
   activePaneId: () => activeId.value,
   layoutReady: () => layoutReady.value,
@@ -3754,7 +3757,7 @@ async function launch({ kind, id, sessionOptions = null, accountId, installOnHos
   // computer (its own install and settings), and shows here from there.
   const shareWs = (targetId && wsOfLeaf(targetId)) || currentWs.value
   if (liveShare.isGuestWs(shareWs)) {
-    if (kind === 'agent' || kind === 'shell') liveShare.openOnHost(kind === 'agent' ? { kind: 'agent', agent: id } : { kind: 'terminal' }, shareWs)
+    if (kind === 'agent' || kind === 'shell') liveShare.openOnHost(kind === 'agent' ? { kind: 'agent', agent: id, ...(sessionOptions && typeof sessionOptions.model === 'string' ? { model: sessionOptions.model } : {}) } : { kind: 'terminal' }, shareWs)
     else showToast(t('liveShare.onlyTerminals', 'In a Live Share project, only terminals and agents can be opened (on the host’s computer).'), { timeout: 6000 })
     return
   }
@@ -6362,6 +6365,8 @@ function liveSharePaneRows(wsId) {
         kind: agent ? x.kind : 'shell',
         agentId: x.agentId,
         model: agent ? x.headerModel || paneModels[x.id] || '' : '',
+        // The model's id (host-only: guests' agents rules are checked with it).
+        modelId: x.kind === 'chat' ? x.model || '' : agent ? paneModelIds[x.id] || '' : '',
         state: agent ? x.state : null,
         sleeping: !!x.sleeping,
         since: x.since || 0,
