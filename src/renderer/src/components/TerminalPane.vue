@@ -3393,8 +3393,10 @@ onMounted(() => {
   readModelAtMount()
 })
 
+// (Not when following a Live Share host made it active: the keyboard stays
+// where you were typing.)
 watch(isActive, (a) => {
-  if (a && term) termFocus()
+  if (a && term && !(ctx.liveShareQuietFocus && ctx.liveShareQuietFocus(props.node.id))) termFocus()
   if (a && document.hasFocus()) acknowledge()
 })
 

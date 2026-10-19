@@ -872,8 +872,10 @@ function focusEditor() {
 function onPaneMouseDown() {
   ctx.setActive(props.node.id)
 }
+// (Not when following a Live Share host made it active: the keyboard stays
+// where you were typing.)
 watch(isActive, (a) => {
-  if (a) nextTick(focusEditor)
+  if (a && !(ctx.liveShareQuietFocus && ctx.liveShareQuietFocus(props.node.id))) nextTick(focusEditor)
 })
 
 // Drag the header to move the pane; a click on it activates the pane.

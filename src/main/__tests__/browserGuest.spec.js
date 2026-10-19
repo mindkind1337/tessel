@@ -16,6 +16,7 @@ function fakeSession() {
   ses.setPermissionRequestHandler = vi.fn((h) => (ses.request = h))
   ses.setPermissionCheckHandler = vi.fn((h) => (ses.check = h))
   ses.setDisplayMediaRequestHandler = vi.fn((h) => (ses.display = h))
+  ses.webRequest = { onBeforeRequest: vi.fn((h) => (ses.beforeRequest = h)) }
   for (const name of ['clearStorageData', 'clearCache', 'clearAuthCache', 'clearHostResolverCache']) ses[name] = vi.fn(() => Promise.resolve())
   return ses
 }
@@ -89,7 +90,7 @@ function setup(opts = {}) {
   }
   const log = { warn: vi.fn() }
   const openExternal = vi.fn()
-  const bg = createBrowserGuests({ getWindow: () => win, send: (ch, payload) => sent.push([ch, payload]), log, screenshotDir: dir, electron, openExternal, agentSessionOnly: opts.agentSessionOnly, guestPopup: opts.guestPopup, guestInput: opts.guestInput })
+  const bg = createBrowserGuests({ getWindow: () => win, send: (ch, payload) => sent.push([ch, payload]), log, screenshotDir: dir, electron, openExternal, agentSessionOnly: opts.agentSessionOnly })
   bg.attachToWindow(win)
   const handlers = {}
   bg.register({ handle: (ch, fn) => (handlers[ch] = fn) })
@@ -1121,47 +1122,28 @@ describe('Live Share: the guest session and the host’s own pages', () => {
     expect(s.bg.pageById(7)).toBeNull()
   })
 
-  it('a new window from a guest’s click: a new pane in the guest session, refused past its limit; the host’s own as before', () => {
-    let answer = { allowed: true }
-    const guestPopup = vi.fn(() => answer)
-    const s = setup({ guestPopup })
+  it('a new window from a click is a new pane of this window, as always (no Live Share guest acts in these pages any more)', () => {
+    const s = setup()
     const g = s.attach()
     s.click(g)
-    expect(g.openHandler({ url: 'https://example.com/a', disposition: 'foreground-tab' })).toEqual({ action: 'deny' })
-    expect(guestPopup).toHaveBeenCalledWith(7)
-    expect(s.sent).toEqual([['browser:popup', { webContentsId: 7, url: 'https://example.com/a', newPane: true, guest: true }]])
-    s.sent.length = 0
-    answer = { allowed: false }
-    s.click(g)
-    expect(g.openHandler({ url: 'https://example.com/b' })).toEqual({ action: 'deny' })
-    expect(s.sent).toEqual([])
-    answer = null
-    s.click(g)
-    g.openHandler({ url: 'https://example.com/c' })
+    expect(g.openHandler({ url: 'https://example.com/c', disposition: 'foreground-tab' })).toEqual({ action: 'deny' })
     expect(s.sent).toEqual([['browser:popup', { webContentsId: 7, url: 'https://example.com/c' }]])
   })
 })
 
-describe('Live Share: no clipboard for a page a guest uses', () => {
-  it('refuses the clipboard permission (request and check) while a guest uses that page, grants it again after', () => {
-    const using = new Set([7])
-    const guestInput = vi.fn((id) => (id == null ? using.size > 0 : using.has(id)))
-    const s = setup({ guestInput })
-    s.bg.browserSession()
-    const page = (id) => ({ id, isDestroyed: () => false, getURL: () => 'https://page.test/x' })
-    const cb = vi.fn()
-    s.ses.request(page(7), 'clipboard-sanitized-write', cb, { requestingUrl: 'https://page.test/x' })
-    expect(cb).toHaveBeenCalledWith(false)
-    expect(s.ses.check(page(7), 'clipboard-sanitized-write')).toBe(false)
-    // Another page, and full screen on this one: as before.
-    expect(s.ses.check(page(8), 'clipboard-sanitized-write')).toBe(true)
-    expect(s.ses.check(page(7), 'fullscreen')).toBe(true)
-    // The browser not saying which page: any guest's use counts.
-    expect(s.ses.check(null, 'clipboard-sanitized-write')).toBe(false)
-    using.clear()
-    const again = vi.fn()
-    s.ses.request(page(7), 'clipboard-sanitized-write', again, {})
-    expect(again).toHaveBeenCalledWith(true)
-    expect(s.ses.check(null, 'clipboard-sanitized-write')).toBe(true)
+describe('Live Share: a guest\u2019s view of the host\u2019s pages', () => {
+  it('attaches in its own in-memory session, hardened, every request checked; nothing else of that shape', () => {
+    const params = { src: 'about:blank', partition: 'liveshare-view-3' }
+    const prefs = {}
+    t.winWc.emit('will-attach-webview', ev(), prefs, params)
+    expect(prefs.partition).toBe('liveshare-view-3')
+    expect(t.electron.session.fromPartition).toHaveBeenCalledWith('liveshare-view-3')
+    expect(t.ses.setPermissionRequestHandler).toHaveBeenCalled()
+    expect(t.ses.webRequest.onBeforeRequest).toHaveBeenCalledTimes(1)
+    for (const partition of ['persist:liveshare-view-3', 'liveshare-view-', 'liveshare-view-../x']) {
+      const e = ev()
+      t.winWc.emit('will-attach-webview', e, {}, { src: 'https://example.com', partition })
+      expect(e.preventDefault).toHaveBeenCalled()
+    }
   })
 })

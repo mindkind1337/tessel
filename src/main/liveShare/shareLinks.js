@@ -14,16 +14,19 @@
 // pushState or a hash change), never taken from the window's word. The
 // window only says which pages there are and which the host hides.
 //
-// Media are read while a guest follows the project (watch), every
-// MEDIA_POLL_MS (MEDIA_IDLE_MS while the page has none), in an isolated
-// world of the page, each read raced with a timeout (a page that does not
-// answer is asked again later, never waited on). A project's links go out
+// Media are read only for the pages a guest has on screen and follows
+// (watchMedia: its 'media' subscription, one page at a time per guest),
+// every MEDIA_POLL_MS (MEDIA_IDLE_MS while the page has none), in an
+// isolated world of the page. A read that does not answer within
+// PROBE_TIMEOUT_MS is not waited on, but no other read of that page starts
+// until it settles, and the page is asked less and less often while it
+// hangs (up to HUNG_MAX_MS). A project's links go out
 // when they changed, at most every PUSH_MS, and while something plays every
 // RESYNC_MS (liveShareMedia.js).
 import { linkForGuest, linkTitle } from '../../shared/liveShareLink.js'
 import { mediaProbeScript, cleanMedia, mediaChanged, anyPlaying, RESYNC_MS } from '../../shared/liveShareMedia.js'
 
-export const LINK_FEED = Object.freeze({ listed: 64, pushMs: 250, mediaPollMs: 1000, mediaIdleMs: 3000, probeTimeoutMs: 1500, pagesPerProject: 32 })
+export const LINK_FEED = Object.freeze({ listed: 64, pushMs: 250, mediaPollMs: 1000, mediaIdleMs: 3000, probeTimeoutMs: 1500, hungMaxMs: 60000, pagesPerProject: 32 })
 const ID = /^[\w-]{1,80}$/
 const MEDIA_WORLD = 1996
 const NAV_EVENTS = ['did-navigate', 'did-navigate-in-page', 'page-title-updated', 'did-finish-load']
@@ -37,6 +40,8 @@ export function createLinkFeed({ guestById, push, maskTitle = (x) => x, timers =
   let listed = new Map()
   const projects = new Map() // project -> { json, sentAt, timer, mediaSentAt }
   const watched = new Set()
+  // Pages whose media a guest follows: page id -> how many guests.
+  const mediaWatched = new Map()
   let pollTimer = null
 
   const alive = (wc) => !!wc && !(typeof wc.isDestroyed === 'function' && wc.isDestroyed())
@@ -87,7 +92,7 @@ export function createLinkFeed({ guestById, push, maskTitle = (x) => x, timers =
       ...(entry.side ? { side: true } : {}),
       // A page that only opens on the host's computer: nothing of it plays
       // on the guest's side.
-      ...(!link.local && entry.media && entry.media.length ? { media: entry.media } : {})
+      ...(!link.local && mediaWatched.has(entry.id) && entry.media && entry.media.length ? { media: entry.media } : {})
     }
   }
   function links(project) {
@@ -141,42 +146,50 @@ export function createLinkFeed({ guestById, push, maskTitle = (x) => x, timers =
     if (entry.probing || !alive(wc) || typeof wc.executeJavaScriptInIsolatedWorld !== 'function') return
     entry.probing = true
     let timer = null
-    const timeout = new Promise((resolve) => {
-      timer = timers.setTimeout(() => resolve(undefined), LINK_FEED.probeTimeoutMs)
-      timer?.unref?.()
-    })
-    const read = Promise.resolve()
+    let late = false
+    // Not answered in time: given up on for now (asked again later, less
+    // often each time), but this read stays the page's only one.
+    timer = timers.setTimeout(() => {
+      late = true
+      entry.hung = (entry.hung || 0) + 1
+      entry.nextProbe = clock() + Math.min(LINK_FEED.hungMaxMs, LINK_FEED.mediaIdleMs * 2 ** entry.hung)
+    }, LINK_FEED.probeTimeoutMs)
+    timer?.unref?.()
+    Promise.resolve()
       .then(() => wc.executeJavaScriptInIsolatedWorld(MEDIA_WORLD, [{ code: mediaProbeScript() }]))
       .catch(() => undefined)
-    Promise.race([read, timeout]).then((got) => {
-      timers.clearTimeout(timer)
-      entry.probing = false
-      if (listed.get(entry.id) !== entry) return
-      const now = clock()
-      const media = got === undefined ? entry.media : cleanMedia(got) || []
-      entry.nextProbe = now + (media && media.length ? LINK_FEED.mediaPollMs : LINK_FEED.mediaIdleMs)
-      const elapsed = now - (entry.mediaAt || now)
-      const before = entry.media
-      entry.media = media
-      entry.mediaAt = now
-      const p = projects.get(entry.project)
-      // A play, a pause, a jump: at once; while it plays, again every
-      // RESYNC_MS so a guest that drifted is put back.
-      if (mediaChanged(before, media, elapsed)) schedule(entry.project)
-      else if (anyPlaying(media) && p && now - p.mediaSentAt >= RESYNC_MS) {
-        if (!p.timer) {
-          p.timer = timers.setTimeout(() => flush(entry.project, true), 0)
-          p.timer?.unref?.()
-        }
+      .then((got) => {
+        timers.clearTimeout(timer)
+        entry.probing = false
+        if (late || got === undefined || listed.get(entry.id) !== entry) return
+        entry.hung = 0
+        took(entry, cleanMedia(got) || [])
+      })
+  }
+  function took(entry, media) {
+    const now = clock()
+    entry.nextProbe = now + (media.length ? LINK_FEED.mediaPollMs : LINK_FEED.mediaIdleMs)
+    const elapsed = now - (entry.mediaAt || now)
+    const before = entry.media
+    entry.media = media
+    entry.mediaAt = now
+    const p = projects.get(entry.project)
+    // A play, a pause, a jump: at once; while it plays, again every
+    // RESYNC_MS so a guest that drifted is put back.
+    if (mediaChanged(before, media, elapsed)) schedule(entry.project)
+    else if (anyPlaying(media) && p && now - p.mediaSentAt >= RESYNC_MS) {
+      if (!p.timer) {
+        p.timer = timers.setTimeout(() => flush(entry.project, true), 0)
+        p.timer?.unref?.()
       }
-    })
+    }
   }
   function poll() {
     pollTimer = null
-    if (!watched.size) return
+    if (!mediaWatched.size) return
     const now = clock()
     for (const entry of listed.values()) {
-      if (!watched.has(entry.project) || entry.hidden || (entry.nextProbe || 0) > now) continue
+      if (!mediaWatched.has(entry.id) || entry.hidden || (entry.nextProbe || 0) > now) continue
       // A page only the host's side opens: nothing of it plays on a guest's.
       if (isLocal(entry)) continue
       probe(entry)
@@ -185,7 +198,7 @@ export function createLinkFeed({ guestById, push, maskTitle = (x) => x, timers =
     pollTimer?.unref?.()
   }
   function startPoll() {
-    if (!pollTimer && watched.size) poll()
+    if (!pollTimer && mediaWatched.size) poll()
   }
 
   return {
@@ -234,10 +247,21 @@ export function createLinkFeed({ guestById, push, maskTitle = (x) => x, timers =
     watch(project, on) {
       if (on) watched.add(project)
       else watched.delete(project)
-      if (on) {
-        flush(project, true)
-        startPoll()
+      if (on) flush(project, true)
+    },
+    // A guest has one of the project's pages on screen and follows it (on),
+    // or no longer: its videos are read while at least one does.
+    watchMedia(project, pageId, on) {
+      const entry = listed.get(pageId)
+      const n = (mediaWatched.get(pageId) || 0) + (on ? 1 : -1)
+      if (n > 0) mediaWatched.set(pageId, n)
+      else mediaWatched.delete(pageId)
+      if (!on && n <= 0 && entry) {
+        entry.media = null
+        schedule(entry.project)
       }
+      if (on && entry && entry.project === project) entry.nextProbe = 0
+      startPoll()
     },
     // A project's links now ({ pages }), for a guest that starts following.
     links,
@@ -247,6 +271,7 @@ export function createLinkFeed({ guestById, push, maskTitle = (x) => x, timers =
       for (const p of projects.values()) if (p.timer) timers.clearTimeout(p.timer)
       projects.clear()
       watched.clear()
+      mediaWatched.clear()
       if (pollTimer) timers.clearTimeout(pollTimer)
       pollTimer = null
     }

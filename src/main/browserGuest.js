@@ -35,6 +35,7 @@ import crypto from 'crypto'
 import { allowedBrowserUrl, BLANK_URL } from '../shared/browserUrl'
 import { pickerScript, clampPickPayload } from './browserPicker'
 import { t } from './i18n'
+import { isViewPartition, guardViewSession } from './liveShareView'
 
 export const BROWSER_PARTITION = 'persist:tessel-browser'
 // A second session for agent-driven pages, used only when the user turns on
@@ -45,8 +46,11 @@ export const BROWSER_PARTITION_AGENT = 'persist:tessel-browser-agent'
 // host lets it use): a session kept in memory only, with none of the host's
 // logins or cookies, gone when Tessel quits; hardened like the others.
 export const BROWSER_PARTITION_GUEST = 'tessel-browser-guest'
-// Every partition a browser page may use (nothing else attaches).
+// Every partition a browser page may use (nothing else attaches), and a
+// Live Share guest's view of the host's pages (liveShareView.js: in memory,
+// one per session, its requests to the guest's own network refused).
 export const BROWSER_PARTITIONS = new Set([BROWSER_PARTITION, BROWSER_PARTITION_AGENT, BROWSER_PARTITION_GUEST])
+export const isBrowserPartition = (p) => BROWSER_PARTITIONS.has(p) || isViewPartition(p)
 // A picked element's screenshot, a page's: at most this big (PNG).
 const MAX_SCREENSHOT_BYTES = 8 * 1024 * 1024
 // A screenshot the page never gives.
@@ -181,14 +185,7 @@ export function contextMenuItems(params = {}, nav = {}) {
 // agentSessionOnly() -> bool: Settings > Browser > "Agents use a separate
 // browser session". On, guestById (the agents' only way to a page) gives only
 // pages of the agents' own session, never the user's with its logins.
-// guestPopup(webContentsId) -> null | { allowed }: a new window a page asks
-// for came from a Live Share guest's click: it opens in a new pane in the
-// guest session, if allowed (none now: guests no longer use the host's pages).
-// guestInput(webContentsId | null) -> bool: a Live Share guest uses that page
-// now or did lately (null: any page): no clipboard permission for it then
-// (a guest's click on a page's "Copy" never writes the host's clipboard
-// through the permission; a page's own execCommand('copy') asks none).
-export function createBrowserGuests({ getWindow, send, log = null, screenshotDir, electron, openExternal = null, onGuest = null, agentSessionOnly = () => false, guestPopup = null, guestInput = null }) {
+export function createBrowserGuests({ getWindow, send, log = null, screenshotDir, electron, openExternal = null, onGuest = null, agentSessionOnly = () => false }) {
   const { webContents, clipboard, nativeImage, session: electronSession, Menu = null } = electron
   // guest id -> { cancel } while an element is being picked.
   const picking = new Map()
@@ -210,13 +207,14 @@ export function createBrowserGuests({ getWindow, send, log = null, screenshotDir
   // A browser session (the main one, or the agents' when asked): its
   // permissions and downloads, hardened once.
   function browserSession(partition = BROWSER_PARTITION) {
-    if (!BROWSER_PARTITIONS.has(partition)) partition = BROWSER_PARTITION
+    if (!isBrowserPartition(partition)) partition = BROWSER_PARTITION
     const existing = ourSessions.get(partition)
     if (existing) return existing
     const ses = electronSession.fromPartition(partition)
     ourSessions.set(partition, ses)
+    if (isViewPartition(partition)) guardViewSession(ses, { log })
     ses.setPermissionRequestHandler((wc, permission, callback, details) => {
-      const ok = GRANTED_PERMISSIONS.has(permission) && !guestUsing(wc, permission)
+      const ok = GRANTED_PERMISSIONS.has(permission)
       if (!ok && shouldTellDenied(wc, permission)) {
         send('browser:permissionDenied', {
           webContentsId: wc && !wc.isDestroyed() ? wc.id : null,
@@ -226,7 +224,7 @@ export function createBrowserGuests({ getWindow, send, log = null, screenshotDir
       }
       callback(ok)
     })
-    ses.setPermissionCheckHandler((wc, permission) => GRANTED_PERMISSIONS.has(permission) && !guestUsing(wc, permission))
+    ses.setPermissionCheckHandler((wc, permission) => GRANTED_PERMISSIONS.has(permission))
     // Screen sharing: never. null refuses it (an object without the video
     // asked for makes Electron throw a TypeError in the main process).
     if (typeof ses.setDisplayMediaRequestHandler === 'function') ses.setDisplayMediaRequestHandler((_req, callback) => callback(null))
@@ -241,17 +239,6 @@ export function createBrowserGuests({ getWindow, send, log = null, screenshotDir
       })
     })
     return ses
-  }
-
-  // A clipboard permission while a Live Share guest uses the page (or did
-  // lately; the browser not saying which page: any guest's use counts).
-  function guestUsing(wc, permission) {
-    if (!guestInput || !/^clipboard/i.test(String(permission))) return false
-    try {
-      return !!guestInput(wc && !wc.isDestroyed() ? wc.id : null)
-    } catch {
-      return true
-    }
   }
 
   const deniedAt = new Map()
@@ -278,7 +265,7 @@ export function createBrowserGuests({ getWindow, send, log = null, screenshotDir
   // browser's, and always locked down.
   function onWillAttach(event, webPreferences, params) {
     const src = params.src ? allowedBrowserUrl(params.src) : BLANK_URL
-    if (!BROWSER_PARTITIONS.has(params.partition) || !src) {
+    if (!isBrowserPartition(params.partition) || !src) {
       warn(`refused a page: ${String(params.partition || '').slice(0, 60)} ${String(params.src || '').slice(0, 200)}`)
       event.preventDefault()
       return
@@ -363,19 +350,6 @@ export function createBrowserGuests({ getWindow, send, log = null, screenshotDir
         return { action: 'deny' }
       }
       gestureAt = 0
-      // A Live Share guest's click: a new pane in the guest session (never
-      // the host's own page, with its logins), a few a minute.
-      let byGuest
-      try {
-        byGuest = guestPopup ? guestPopup(guest.id) : null
-      } catch {
-        byGuest = { allowed: false }
-      }
-      if (byGuest) {
-        lastMouse = null
-        if (byGuest.allowed) send('browser:popup', { webContentsId: guest.id, url: target, newPane: true, guest: true })
-        return { action: 'deny' }
-      }
       const newPane = wantsNewPane(disposition, lastMouse)
       lastMouse = null
       send('browser:popup', { webContentsId: guest.id, url: target, ...(newPane ? { newPane: true } : {}) })

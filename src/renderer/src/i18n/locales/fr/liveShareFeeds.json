@@ -1,15 +1,22 @@
 {
   "browser": {
     "liveShare": {
-      "watched": "Invités qui regardent cette page : {{names}}",
       "hiddenHint": "Masquée aux invités : ils ne voient rien de cette page. Cliquez pour la leur montrer de nouveau.",
       "hide": "Masquer cette page aux invités",
-      "following": "La page de {{host}}, dans votre propre navigateur (votre session, jamais celle de {{host}}).",
-      "followingTrimmed": "La page de {{host}}, dans votre propre navigateur. Seul le site est venu : le reste de son adresse semblait privé.",
       "notFollowing": "Vous avez quitté la page de {{host}} : cet onglet ne la suit plus.",
       "followingShort": "Suit {{host}}",
       "notFollowingShort": "Ne suit plus",
-      "followHint": "Revenir à la page de {{host}} et la suivre de nouveau"
+      "followHint": "Revenir à la page de {{host}} et la suivre de nouveau",
+      "following2": "La page de {{host}}, dans une session de navigateur à part (pas vos connexions, jamais celles de {{host}}).",
+      "followingTrimmed2": "La page de {{host}}, dans une session de navigateur à part. Une partie de son adresse est restée privée.",
+      "sent": "Partagée avec les invités",
+      "sentHint": "Les invités qui ont « Voir mes pages de navigateur » reçoivent l'adresse et le titre de cette page.",
+      "sharedHint": "Partagée avec les invités tant que ce projet est à votre écran. Cliquez pour arrêter.",
+      "share": "Partager avec les invités (les pages du panneau latéral ne sont jamais partagées sans votre accord)",
+      "shareLabel": "Partager avec les invités",
+      "openOwn": "Ouvrir dans ma propre session de navigateur (avec mes connexions)",
+      "pending": "{{host}} a ouvert {{site}}. Le site s'ouvre ici seulement si vous le voulez, dans une session à part (pas vos connexions).",
+      "openSite": "Ouvrir {{site}}"
     }
   },
   "liveShare": {

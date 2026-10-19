@@ -18,11 +18,16 @@ import { createLinkFeed, checkLinks, LINK_FEED } from '../liveShare/shareLinks'
 import { cleanHostTabs, tabRels, guestTabs, checkTabs } from '../liveShare/shareTabs'
 
 describe('an address as a guest gets it', () => {
-  it('the whole address when nothing in it reads as a secret (a video at its time, a search)', () => {
+  it('the path, plain navigation parameters and a plain anchor; every other parameter goes (a search too)', () => {
     expect(linkForGuest('https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=30s')).toEqual({ url: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=30s', local: false, trimmed: false })
-    expect(linkForGuest('https://www.google.com/search?q=youtube')).toMatchObject({ url: 'https://www.google.com/search?q=youtube', trimmed: false })
-    expect(linkForGuest('https://app.test/#/settings/profile')).toMatchObject({ url: 'https://app.test/#/settings/profile', trimmed: false })
-    expect(linkForGuest('https://blog.test/2024-05-01-my-post')).toMatchObject({ trimmed: false })
+    expect(linkForGuest('https://developer.mozilla.org/en-US/docs/Web/API/URL#examples')).toMatchObject({ url: 'https://developer.mozilla.org/en-US/docs/Web/API/URL#examples', trimmed: false })
+    expect(linkForGuest('https://blog.example.com/2024-05-01-my-post')).toMatchObject({ trimmed: false })
+    expect(linkForGuest('https://www.google.com/search?q=symptoms+of+hiv')).toEqual({ url: 'https://www.google.com/search', local: false, trimmed: true })
+    expect(linkForGuest('https://news.example.com/list?author=ada&page=2;utm=x')).toMatchObject({ url: 'https://news.example.com/list?page=2', trimmed: true })
+    // A route or a search in the fragment goes; a time that is not a time too.
+    expect(linkForGuest('https://app.example.com/home#/settings/profile')).toMatchObject({ url: 'https://app.example.com/home', trimmed: true })
+    expect(linkForGuest('https://www.notion.so/loginwithemail?t=abcd')).toMatchObject({ url: 'https://www.notion.so/loginwithemail', trimmed: true })
+    expect(linkForGuest('https://example.com/watch?v=eyJhbGciOi')).toMatchObject({ url: 'https://example.com/watch' })
   })
 
   it('never a user or a password; http(s) only', () => {
@@ -42,14 +47,39 @@ describe('an address as a guest gets it', () => {
       'https://app.test/cb#access_token=ya29.a0Af',
       'https://share.test/s/9f8e7d6c5b4a39281706f5e4d3c2b1a0',
       'https://docs.google.com/document/d/1aB2cD3eF4gH5iJ6kL7mN8oP9qR0sT/edit',
-      'https://site.test/invite/q7w8e9r0t1y2'
+      'https://site.test/invite/q7w8e9r0t1y2',
+      // The review's probes: magic links, short ids, rooms, sessions, PII.
+      'https://example.com/m/Kq7xP2vN9wLz',
+      'https://example.com/auth/email/7f3k9q2m',
+      'https://example.com/login/link/kf83jf92kf',
+      'https://example.com/accept-invite/abcdefgh',
+      'https://example.com/join/AbCdEfGh',
+      'https://example.com/r/xyzzyplugh',
+      'https://meet.google.com/abc-defg-hij',
+      'https://www.dropbox.com/scl/fi/k3j4h5g6/report.pdf?rlkey=abcd1234efgh&dl=0',
+      'https://onedrive.live.com/?authkey=%21AbCd&id=1234',
+      'https://example.com/dl?nonce=abcdefgh',
+      'https://example.com/x?pin=1234',
+      'https://example.com/x?state=abc',
+      'https://example.com/x?license=ABCD-EFGH',
+      'https://example.com/x?hmac=0123',
+      'https://example.com/x?passcode=1',
+      'https://example.com/a?x=1;token=abc',
+      'https://example.com/;jsessionid=ABCDEF0123456789',
+      'https://example.com/(S(abcdefghijklmnopqrstuvwx))/default.aspx',
+      'https://example.com/session/abcdefgh/home',
+      'https://example.com/patient/12345678/records',
+      'https://bank.example.com/accounts/0012-345678/statement',
+      'https://mail.google.com/mail/u/0/#inbox/FMfcgzQXJWDsKDfakeFAKE',
+      'https://example.com/a#!/reset/kd8f7g6h',
+      'https://pastebin.com/AbCd1234'
     ]) {
       const got = linkForGuest(raw)
       expect(got.trimmed, raw).toBe(true)
       expect(got.url, raw).toBe(`${new URL(raw).origin}/`)
     }
-    // A parameter merely named like one is not ("author").
-    expect(linkForGuest('https://news.test/list?author=ada&page=2').trimmed).toBe(false)
+    // A parameter merely named like one is not ("author"): only dropped.
+    expect(linkForGuest('https://news.example.com/list?author=ada').url).toBe('https://news.example.com/list')
   })
 
   it('local: only the host side opens it (still sent, never opened by the guest)', () => {
@@ -57,8 +87,13 @@ describe('an address as a guest gets it', () => {
     expect(linkForGuest('https://example.com/').local).toBe(false)
   })
 
-  it('a title is one line, masked, cut', () => {
+  it('a title is one line, masked (emails, digit runs, long tokens too), cut', () => {
     expect(linkTitle('  Inbox\n(3)\u200b ', (x) => x.replace('Inbox', 'Mail'))).toBe('Mail (3)')
+    expect(linkTitle('Inbox (3) - jane.doe@example.com - Gmail')).toBe('Inbox (3) - •••• - Gmail')
+    expect(linkTitle('Order #702-1234567-1234567 - Amazon.ca')).toBe('Order #•••• - Amazon.ca')
+    expect(linkTitle('Account 0012-345678 balance $12,345.67')).toBe('Account •••• balance $12,345.67')
+    expect(linkTitle('token abc123def456ghi789jkl012')).toBe('token ••••')
+    expect(linkTitle('Draft v3 - 2024 notes')).toBe('Draft v3 - 2024 notes')
     expect(linkTitle('x'.repeat(500))).toHaveLength(200)
     expect(samePage('https://a.example.com/p?x=1', 'https://a.example.com/p/?y=2')).toBe(true)
     expect(samePage('https://a.example.com/p', 'https://a.example.com/q')).toBe(false)
@@ -140,7 +175,7 @@ describe('the host feed of links', () => {
     feed.stop()
   })
 
-  it('videos are read only while a guest follows, sent on a change, again every few seconds while one plays, never for a local page', async () => {
+  it('videos are read only for a page a guest has on screen and follows, sent on a change, again every few seconds while one plays, never for a local page', async () => {
     const playing = [{ kind: 'video', i: 0, paused: false, ended: false, t: 10, rate: 1 }]
     const a = fakeWc('https://video.example.com/w', 'Video', playing)
     const dev = fakeWc('http://localhost:3000/', 'Dev', playing)
@@ -154,7 +189,12 @@ describe('the host feed of links', () => {
     )
     await vi.advanceTimersByTimeAsync(3000)
     expect(a.executeJavaScriptInIsolatedWorld).not.toHaveBeenCalled()
+    // A guest follows the project's links: still no read (no page on screen).
     feed.watch('ws-1', true)
+    await vi.advanceTimersByTimeAsync(3000)
+    expect(a.executeJavaScriptInIsolatedWorld).not.toHaveBeenCalled()
+    feed.watchMedia('ws-1', 'pane-a', true)
+    feed.watchMedia('ws-1', 'pane-dev', true)
     await vi.advanceTimersByTimeAsync(LINK_FEED.pushMs + 50)
     expect(a.executeJavaScriptInIsolatedWorld).toHaveBeenCalled()
     expect(a.executeJavaScriptInIsolatedWorld.mock.calls[0][1][0].code).toBe(mediaProbeScript())
@@ -180,11 +220,13 @@ describe('the host feed of links', () => {
     await vi.advanceTimersByTimeAsync(1000 + LINK_FEED.pushMs)
     expect(pushes.length).toBe(before + 1)
     expect(last().data.pages.find((p) => p.id === 'pane-a').media[0].paused).toBe(true)
-    // Nobody follows: reading stops.
-    feed.watch('ws-1', false)
+    // Nobody has it on screen any more: reading stops, its videos go.
+    feed.watchMedia('ws-1', 'pane-a', false)
+    feed.watchMedia('ws-1', 'pane-dev', false)
     const reads = a.executeJavaScriptInIsolatedWorld.mock.calls.length
     await vi.advanceTimersByTimeAsync(5000)
     expect(a.executeJavaScriptInIsolatedWorld.mock.calls.length).toBe(reads)
+    expect(last().data.pages.find((p) => p.id === 'pane-a').media).toBeUndefined()
     // Hidden: what it played is forgotten.
     feed.setPages([{ project: 'ws-1', paneId: 'pane-a', webContentsId: 1, hidden: true }], allowed)
     await vi.advanceTimersByTimeAsync(LINK_FEED.pushMs + 10)
@@ -192,14 +234,22 @@ describe('the host feed of links', () => {
     feed.stop()
   })
 
-  it('a page that does not answer is never waited on', async () => {
+  it('a page that does not answer: one read at a time until it settles, then asked less and less often', async () => {
     const a = fakeWc('https://video.example.com/w', 'Video')
-    a.executeJavaScriptInIsolatedWorld = vi.fn(() => new Promise(() => {}))
+    let settle = null
+    a.executeJavaScriptInIsolatedWorld = vi.fn(() => new Promise((r) => (settle = r)))
     const { feed, allowed } = setup([a])
     feed.setPages([{ project: 'ws-1', paneId: 'pane-a', webContentsId: 1 }], allowed)
-    feed.watch('ws-1', true)
-    await vi.advanceTimersByTimeAsync(LINK_FEED.probeTimeoutMs + LINK_FEED.mediaIdleMs + 1100)
-    expect(a.executeJavaScriptInIsolatedWorld.mock.calls.length).toBeGreaterThanOrEqual(2)
+    feed.watchMedia('ws-1', 'pane-a', true)
+    await vi.advanceTimersByTimeAsync(20000)
+    // Hung: never a second read while the first one is still out.
+    expect(a.executeJavaScriptInIsolatedWorld).toHaveBeenCalledTimes(1)
+    settle([])
+    await vi.advanceTimersByTimeAsync(100)
+    // Settled (late: what it said is not taken): asked again, and that read
+    // hangs too: still one at a time.
+    await vi.advanceTimersByTimeAsync(LINK_FEED.mediaIdleMs * 2 + 1100)
+    expect(a.executeJavaScriptInIsolatedWorld.mock.calls.length).toBe(2)
     feed.stop()
   })
 

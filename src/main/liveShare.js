@@ -352,6 +352,11 @@ export function visibleScreen(data, cols, rows) {
 export function guestPaneId(session, remoteId) {
   return `pane-ls${session}-${String(remoteId).replace(/^pane-/, '').replace(/[^\w-]/g, '_')}`.slice(0, 80)
 }
+// A host's browser page's id in this window: a link's (lnk-...), never one a
+// terminal or a chat of the host could have (pane-ls...).
+export function linkPaneId(session, remoteId) {
+  return `lnk-ls${session}-${String(remoteId).replace(/^pane-/, '').replace(/[^\w-]/g, '_')}`.slice(0, 80)
+}
 
 // What a share's start says when cloudflared failed (shareTunnel.js
 // TunnelError), in the user's language.
@@ -741,7 +746,8 @@ export function registerLiveShare({
     // The host's editor tabs, and its pages as links: the latest at once to
     // the first guest that follows (shareHost keeps it for the next ones).
     ['tabs', (s, project, key, on) => on && refreshTabs(project, true)],
-    ['links', (s, project, key, on) => linkFeed?.watch(project, on)]
+    ['links', (s, project, key, on) => linkFeed?.watch(project, on)],
+    ['media', (s, project, key, on) => linkFeed?.watchMedia(project, key, on)]
   ])
   const projectRoots = (project) => {
     const root = roots.get(project)
@@ -800,17 +806,22 @@ export function registerLiveShare({
 
   // The browser pages of the shared projects as links (shareLinks.js): the
   // window's list, each page kept only when it is a browser pane of its
-  // shared project's layout, or a page of the side panel the window puts in
-  // a shared project (the one on the host's screen); its address, title and
-  // media read from the page, pushed on 'links' (guests with "See my browser
-  // pages" there).
+  // shared project's layout, or a page of the side panel the host shared
+  // with guests itself (optIn: the page's own "Share with guests"; all of
+  // them in one shared project, the one on the host's screen; never an id
+  // of a layout's pane); its address, title and media read from the page,
+  // pushed on 'links' (guests with "See my browser pages" there).
   const linkFeed = typeof pageById === 'function' ? createLinkFeed({ guestById: pageById, log, maskTitle: maskSecrets, push: (project, data) => sharing?.server?.push('links', project, null, data) }) : null
   let pageList = []
   const pageAllowed = (s) => (project, paneId, side) => (s.projects || []).includes(project) && (side || layoutLeaves(layouts.get(project)).some((l) => l.id === paneId && l.view === 'browser'))
   function refreshPages() {
     const s = sharing
     if (!linkFeed || !s || !s.server) return
-    linkFeed.setPages(pageList, pageAllowed(s))
+    const inLayouts = new Set()
+    for (const id of s.projects || []) for (const l of layoutLeaves(layouts.get(id))) inLayouts.add(l.id)
+    const sideProject = (pageList.find((x) => x && x.side === true) || {}).project
+    const list = pageList.filter((x) => x && (x.side !== true || (x.optIn === true && x.project === sideProject && !inLayouts.has(x.paneId))))
+    linkFeed.setPages(list, pageAllowed(s))
   }
 
   // --- The host's editor tabs, for guests ('tabs', shareTabs.js) -------------------
@@ -2061,6 +2072,8 @@ export function registerLiveShare({
       if (want && !has) guestSubscribe('links', p.id, null, true)
       else if (!want && has) guestSubscribe('links', p.id, null, false)
     }
+    // Without the right, no page's videos are followed either.
+    if (!want) for (const sub of [...g.subs.values()]) if (sub.topic === 'media') guestSubscribe('media', sub.project, sub.key, false)
     if (!want && g.links.size) {
       for (const project of g.links.keys()) send('liveShare:push', { topic: 'links', project, data: { pages: [] } })
       g.links.clear()
@@ -2173,10 +2186,14 @@ export function registerLiveShare({
     // page by its id in this window.
     if (topic === 'links') {
       if (!(g.rights && g.rights.pagesView === true)) return
-      const checked = checkLinks(data, maskSecrets)
+      let checked = checkLinks(data, maskSecrets)
       if (!checked) return
-      for (const p of checked.pages) p.id = guestPaneId(g.session, p.id)
+      for (const p of checked.pages) {
+        p.remote = p.id
+        p.id = linkPaneId(g.session, p.id)
+      }
       g.links.set(project, checked)
+      checked = { pages: checked.pages.map(({ remote: _remote, ...rest }) => rest) }
       return send('liveShare:push', { topic: 'links', project, data: checked })
     }
   }
@@ -2212,10 +2229,13 @@ export function registerLiveShare({
       const pane = id && g.panes.get(id)
       return pane && pane.project === project.id ? pane : null
     }
-    const map = (n) => (n.type === 'leaf' ? { ...n, id: n.view === 'terminal' && mine(n.id) ? mine(n.id).localId : guestPaneId(g.session, n.id) } : { ...n, children: n.children.map(map) })
+    // A browser pane's id is a link's here (linkPaneId): never a terminal's.
+    const idOf = (n) => (n.view === 'terminal' && mine(n.id) ? mine(n.id).localId : n.view === 'browser' ? linkPaneId(g.session, n.id) : guestPaneId(g.session, n.id))
+    const map = (n) => (n.type === 'leaf' ? { ...n, id: idOf(n) } : { ...n, children: n.children.map(map) })
     const local = (id) => (mine(id) ? mine(id).localId : null)
     // The tab shown: an editor or a browser pane is never a terminal here.
-    const shown = layout.shown === 'terminal' ? 'terminal' : layout.shown ? guestPaneId(g.session, layout.shown) : null
+    const shownLeaf = layout.shown && layout.shown !== 'terminal' ? layoutLeaves(layout).find((l) => l.id === layout.shown) : null
+    const shown = layout.shown === 'terminal' ? 'terminal' : shownLeaf ? idOf(shownLeaf) : null
     return { project: layout.project, tree: layout.tree ? map(layout.tree) : null, activeId: local(layout.activeId), maximizedId: local(layout.maximizedId), shown, copy: layout.copy || null }
   }
   const guestStatus = () =>
@@ -3118,7 +3138,9 @@ export function registerLiveShare({
           : topic === 'tabs'
             ? g.tabs.get(project) || null
             : topic === 'links'
-              ? (g.rights && g.rights.pagesView === true && g.links.get(project)) || null
+              ? g.rights && g.rights.pagesView === true && g.links.get(project)
+                ? { pages: g.links.get(project).pages.map(({ remote: _remote, ...rest }) => rest) }
+                : null
               : g.paneAgents.has(project)
                 ? { panes: g.paneAgents.get(project) }
                 : null
@@ -3180,6 +3202,21 @@ export function registerLiveShare({
       entry.agentId = pane ? pane.agentId || null : null
     }
     return { ok: true, panes: checked.panes }
+  })
+  // Guest: one of the host's pages on this window's screen, followed (on), or
+  // no longer: its videos come with its link while it is ({ id }: its id
+  // here; one page at a time).
+  ipcMain.handle('liveShare:pageMedia', (_evt, { id, on } = {}) => {
+    const g = joined
+    if (!g) return { ok: false }
+    for (const sub of [...g.subs.values()]) if (sub.topic === 'media') guestSubscribe('media', sub.project, sub.key, false)
+    if (!on) return { ok: true }
+    if (!(g.rights && g.rights.pagesView === true) || !g.features.has('links')) return { ok: false }
+    for (const [project, got] of g.links) {
+      const page = got.pages.find((p) => p.id === id)
+      if (page && !page.local) return { ok: guestSubscribe('media', project, page.remote, true) }
+    }
+    return { ok: false }
   })
   // Guest: a change of a host's board ({ op: add | move | edit | remove |
   // answer, project, args }): the host checks the right, and its window

@@ -312,13 +312,16 @@ describe('Live Share phase 2c: two Tessels', () => {
     const p12 = fakePage(12, { url: 'http://localhost:5173/', title: 'Dev' })
     const p13 = fakePage(13, { url: 'https://docs.example.com/side', title: 'Side' })
     const p14 = fakePage(14)
-    const { host, guest, give, local } = await session({ pages: [p11, p12, p13, p14] })
+    const p15 = fakePage(15, { url: 'https://bank.example.com/accounts', title: 'Bank' })
+    const { host, guest, give, local } = await session({ pages: [p11, p12, p13, p14, p15] })
     host.on['liveShare:pages'](null, [
       { project: 'ws-1', paneId: 'pane-web', webContentsId: 11 },
       { project: 'ws-1', paneId: 'pane-web2', webContentsId: 12 },
       // The side panel's page (the window puts it in the project on screen),
       // a pane of no layout, and another project's.
-      { project: 'ws-1', paneId: 'web-side1', webContentsId: 13, side: true },
+      { project: 'ws-1', paneId: 'web-side1', webContentsId: 13, side: true, optIn: true },
+      // A side panel page the host did not share itself: never.
+      { project: 'ws-1', paneId: 'web-side2', webContentsId: 15, side: true },
       { project: 'ws-1', paneId: 'pane-nowhere', webContentsId: 14 },
       { project: 'ws-2', paneId: 'pane-web3', webContentsId: 14 }
     ])
@@ -331,7 +334,10 @@ describe('Live Share phase 2c: two Tessels', () => {
     expect(byId[local.web]).toMatchObject({ url: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=30s', local: false, title: 'Song', side: false })
     expect(byId[local.web2]).toMatchObject({ url: 'http://localhost:5173/', local: true, title: 'Dev' })
     expect(Object.values(byId).find((x) => x.side)).toMatchObject({ url: 'https://docs.example.com/side', title: 'Side', side: true })
-    // Its video, read while the guest follows the project.
+    // Its video, read only once the guest has that page on screen.
+    await wait(1500)
+    expect(p11.executeJavaScriptInIsolatedWorld).not.toHaveBeenCalled()
+    expect(await guest.handle['liveShare:pageMedia'](null, { id: local.web, on: true })).toEqual({ ok: true })
     await until(() => guest.events('liveShare:push').some((p) => p.topic === 'links' && p.data.pages.some((x) => x.id === local.web && x.media)))
     expect(p11.executeJavaScriptInIsolatedWorld).toHaveBeenCalled()
     // A page only the host's side opens: nothing of it is read.
@@ -352,13 +358,16 @@ describe('Live Share phase 2c: two Tessels', () => {
     expect(guest.events('liveShare:push').filter((p) => p.topic === 'links').at(-1).data.pages[0].id).toBe(local.web2)
     // Never a picture of a page, never the debugger.
     expect(guest.events('liveShare:pageFrame')).toEqual([])
-    for (const page of [p11, p12, p13, p14]) expect(page.debugger.attach).not.toHaveBeenCalled()
+    for (const page of [p11, p12, p13, p14, p15]) expect(page.debugger.attach).not.toHaveBeenCalled()
+    // Ids of links: never a terminal's.
+    expect(local.web).toMatch(/^lnk-/)
     // The right taken away: the links go.
     await give('pagesView', false)
     await until(() => guest.events('liveShare:push').filter((p) => p.topic === 'links').at(-1).data.pages.length === 0)
     const said = JSON.stringify(guest.sent)
     expect(said).not.toContain('token=abc123')
     expect(said).not.toContain('pane-web3')
+    expect(said).not.toContain('bank.example.com')
   })
 
   it('editor tabs: the host files open in the shared project, as paths from it, never a hidden or an outside one', async () => {

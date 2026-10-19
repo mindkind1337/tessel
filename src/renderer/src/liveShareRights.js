@@ -55,7 +55,7 @@ const WORDS = {
   pagesView: () => ({
     label: t('liveShare.right.pagesView', 'See my browser pages'),
     short: t('liveShare.right.pagesViewShort', 'Pages'),
-    hint: t('liveShare.right.pagesViewHint2', 'Guests see the address of your pages and open them on their side, in their own browser (never with your sessions). The pages of the projects they see, and of your side panel while one of those is on your screen. Hidden pages are never sent.'),
+    hint: t('liveShare.right.pagesViewHint3', 'Guests see the address of your pages and open them on their side, in a browser session of their own (never with your sessions). The pages of the projects they see; a page of your side panel only if you share it. Hidden pages are never sent.'),
     part: t('liveShare.rights.pagesViewPart', 'see its browser pages')
   })
 }

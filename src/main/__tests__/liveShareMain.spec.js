@@ -471,7 +471,7 @@ describe('registerLiveShare: one Tessel shares, another joins', () => {
     const localId = 'pane-ls1-1-ps'
     expect(joined).toMatchObject({ host: 'Cedric', panes: [{ id: localId, title: 'PowerShell', kind: 'shell', cols: 120, rows: 40 }] })
     expect(joined.projects.map((p) => p.id)).toEqual(['ws-1'])
-    expect(joined.projects[0].layout.tree.children.map((c) => c.id)).toEqual([localId, 'pane-ls1-2-web'])
+    expect(joined.projects[0].layout.tree.children.map((c) => c.id)).toEqual([localId, 'lnk-ls1-2-web'])
     expect(joined.projects[0].layout.activeId).toBe(localId)
     await until(() => host.last('liveShare:host').guests.some((g) => g.name === 'Alex' && g.state === 'joined'))
 

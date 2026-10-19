@@ -61,7 +61,9 @@ export const OP_AREAS = Object.freeze({ fs: 'files', notes: 'files', scm: 'scm',
 // teams }, shareActivity.js); tabs: the host's editor tabs of the project
 // ({ tabs: [rel], active }, shareTabs.js: only the files its Files tab
 // shows); links: its browser pages as links ({ pages: [{ id, url, local,
-// title, side, media }] }, shareLinks.js), with "See my browser pages".
+// title, side, media }] }, shareLinks.js), with "See my browser pages";
+// media: one of those pages a guest has on screen and follows (its id as
+// the key): its videos are read and sent with its link while one does.
 export const TOPICS = Object.freeze({
   fs: Object.freeze({ feature: 'files', project: true, key: null, right: null, max: 16, keep: false }),
   scm: Object.freeze({ feature: 'scm', project: true, key: null, right: null, max: 16, keep: false }),
@@ -71,7 +73,8 @@ export const TOPICS = Object.freeze({
   usage: Object.freeze({ feature: 'usage', project: false, key: null, right: 'usage', max: 1, keep: true }),
   activity: Object.freeze({ feature: 'history', project: true, key: null, right: null, max: 16, keep: true }),
   tabs: Object.freeze({ feature: 'tabs', project: true, key: null, right: null, max: 16, keep: true }),
-  links: Object.freeze({ feature: 'links', project: true, key: null, right: 'pagesView', max: 16, keep: true })
+  links: Object.freeze({ feature: 'links', project: true, key: null, right: 'pagesView', max: 16, keep: true }),
+  media: Object.freeze({ feature: 'links', project: true, key: 'id', right: 'pagesView', max: 2, keep: false })
 })
 
 // What one guest may cost the host (shareHost.js), counted per person so a

@@ -1303,3 +1303,55 @@ describe('Live Share in the window, as a guest: following the host', () => {
     expect(t.ls.followInfo()).toEqual({ on: true, copy: 'tessel/fix-login' })
   })
 })
+
+// Following never takes the keyboard: the pane it makes active does not take
+// the focus (quietFocus), and a key you press is your own pick (following
+// stops, in the pane you typed in).
+describe('Live Share in the window, as a guest: following and the keyboard', () => {
+  let t
+  beforeEach(async () => {
+    t = setup()
+    t.api.subscribe = vi.fn(async () => ({ ok: true }))
+    t.api.onPush = (cb) => {
+      t.listeners.onPush = cb
+      return () => delete t.listeners.onPush
+    }
+    await t.ls.init()
+  })
+  afterEach(() => t.ls.dispose())
+  const tree = { type: 'split', dir: 'row', sizes: [50, 50], children: [leaf('pane-ls1-a'), leaf('pane-ls1-b')] }
+  const status = (layout = {}) => ({ state: 'joined', host: 'Ada', session: 1, panes: [pane('pane-ls1-a'), pane('pane-ls1-b')], layout: { project: 'site', tree, activeId: 'pane-ls1-a', maximizedId: null, shown: 'terminal', copy: null, ...layout }, rights: { ...NO_RIGHTS, type: true }, features: ['files', 'tabs', 'links'] })
+
+  it('the pane following makes active leaves the keyboard where it is', async () => {
+    t.listeners.onGuest(status())
+    await flush()
+    t.listeners.onGuest(status({ activeId: 'pane-ls1-b' }))
+    await flush()
+    expect(t.workspaces.value[0].activeId).toBe('pane-ls1-b')
+    expect(t.ls.quietFocus('pane-ls1-b')).toBe(true)
+    expect(t.ls.quietFocus('pane-other')).toBe(false)
+  })
+
+  it('a key you press is your own pick: following stops, in the pane you typed in', async () => {
+    t.listeners.onGuest(status())
+    await flush()
+    t.listeners.onGuest(status({ activeId: 'pane-ls1-b' }))
+    await flush()
+    const el = document.createElement('div')
+    el.setAttribute('data-pane-id', 'pane-ls1-a')
+    const input = document.createElement('textarea')
+    el.appendChild(input)
+    document.body.appendChild(el)
+    // A modifier alone is nothing.
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Shift', bubbles: true }))
+    expect(t.ls.followInfo().on).toBe(true)
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'l', bubbles: true }))
+    expect(t.ls.followInfo().on).toBe(false)
+    expect(t.workspaces.value[0].activeId).toBe('pane-ls1-a')
+    // The host moves on: your screen stays.
+    t.listeners.onGuest(status({ activeId: 'pane-ls1-b' }))
+    await flush()
+    expect(t.workspaces.value[0].activeId).toBe('pane-ls1-a')
+    el.remove()
+  })
+})

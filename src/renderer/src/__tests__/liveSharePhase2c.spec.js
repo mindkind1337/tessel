@@ -12,7 +12,7 @@
 // Agents tab and the Conversations tab of a host's project read the host's,
 // read only.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { reactive, ref, nextTick } from 'vue'
+import { reactive, ref, nextTick, watch } from 'vue'
 import { mount, flushPromises, config } from '@vue/test-utils'
 import { createLiveShareWindow } from '../liveShareWindow'
 import { buildGuestTree } from '../liveShareLayout'
@@ -195,30 +195,40 @@ describe('Live Share phase 2c in the window, as the host', () => {
     await flush()
     expect(t.api.setPages.mock.calls.at(-1)[0].map((p) => p.paneId)).toEqual(['b1', 'b2'])
     // Hidden by the host: said to main, shown on the page.
-    expect(t.ls.pageShare('b1')).toEqual({ project: 'ws-1', hidden: false, watchers: [] })
+    // Guests get its address now (Ana, in, sees its project with the right): said on it.
+    expect(t.ls.pageShare('b1')).toEqual({ project: 'ws-1', side: false, hidden: false, shared: true, sent: true })
     expect(t.ls.pageShare('b9')).toBe(null)
     expect(t.ls.setPageHidden('b1', true)).toBe(true)
     await flush()
     expect(t.api.setPages.mock.calls.at(-1)[0][0]).toEqual({ project: 'ws-1', paneId: 'b1', webContentsId: 11, hidden: true })
-    expect(t.ls.pageShare('b1').hidden).toBe(true)
+    expect(t.ls.pageShare('b1')).toMatchObject({ hidden: true, sent: false })
     expect(t.ls.setPageHidden('p1', true)).toBe(false)
+    // Nobody in with the right: nothing is sent, nothing said.
+    t.ls.setPageHidden('b1', false)
+    t.listeners.onHost(sharing({ guests: [{ id: 'g1', name: 'Ana', state: 'joined', rights: { ...NO_RIGHTS }, projects: ['ws-1'] }] }))
+    await flush()
+    expect(t.ls.pageShare('b1').sent).toBe(false)
   })
 
-  it('the side panel pages go with the shared project on screen, never while another is', async () => {
+  it('a side panel page is never sent unless the host shares it, and then only with the shared project on screen', async () => {
     await host()
-    t.side.value = [reactive({ id: 'web-side1', url: 'https://docs.test/' })]
+    t.side.value = [reactive({ id: 'web-side1', url: 'https://bank.example.com/', hiddenFromGuests: false })]
     t.pages['web-side1'] = 21
+    t.currentWsId.value = 'ws-1'
+    await flush()
+    // Not shared by the host (whatever an old "hide" said): not sent.
+    expect(t.api.setPages.mock.calls.at(-1)[0].some((p) => p.paneId === 'web-side1')).toBe(false)
+    expect(t.ls.pageShare('web-side1')).toEqual({ project: 'ws-1', side: true, hidden: true, shared: false, sent: false })
+    expect(t.ls.setPageShared('web-side1', true)).toBe(true)
+    await flush()
+    expect(t.api.setPages.mock.calls.at(-1)[0].find((p) => p.paneId === 'web-side1')).toEqual({ project: 'ws-1', paneId: 'web-side1', webContentsId: 21, hidden: false, side: true, optIn: true })
+    expect(t.ls.pageShare('web-side1')).toMatchObject({ shared: true, sent: true })
+    // Another project on screen (not shared): the panel's pages are not sent.
+    t.currentWsId.value = 'ws-2'
     await flush()
     expect(t.api.setPages.mock.calls.at(-1)[0].some((p) => p.paneId === 'web-side1')).toBe(false)
     t.currentWsId.value = 'ws-1'
-    await flush()
-    expect(t.api.setPages.mock.calls.at(-1)[0].find((p) => p.paneId === 'web-side1')).toEqual({ project: 'ws-1', paneId: 'web-side1', webContentsId: 21, hidden: false, side: true })
-    expect(t.ls.pageShare('web-side1')).toEqual({ project: 'ws-1', hidden: false, watchers: [] })
-    expect(t.ls.setPageHidden('web-side1', true)).toBe(true)
-    await flush()
-    expect(t.api.setPages.mock.calls.at(-1)[0].find((p) => p.paneId === 'web-side1').hidden).toBe(true)
-    // Another project on screen (not shared): the panel's pages are not sent.
-    t.currentWsId.value = 'ws-2'
+    expect(t.ls.setPageShared('web-side1', false)).toBe(true)
     await flush()
     expect(t.api.setPages.mock.calls.at(-1)[0].some((p) => p.paneId === 'web-side1')).toBe(false)
   })
@@ -274,7 +284,7 @@ describe('Live Share phase 2c in the window, as a guest', () => {
     return out
   }
 
-  it('shows the host pages only with "See my browser pages", as your own browser on their address', async () => {
+  it('shows the host pages only with "See my browser pages", in a view session of their own, a new site after one click', async () => {
     t.listeners.onGuest(joined())
     await flush()
     links([web()])
@@ -285,8 +295,12 @@ describe('Live Share phase 2c in the window, as a guest', () => {
     links([web()])
     await flush()
     const page = leaves(lsWs().tree).find((l) => l.id === 'pane-ls1-web')
-    // A browser of this computer (your session), on the host's address.
-    expect(page).toMatchObject({ kind: 'browser', url: 'https://mail.example/inbox', backend: 'liveshare', liveShare: { link: true, following: true, project: 'ws-1', host: 'Cedric' } })
+    // A browser of this computer in a session of its own (never your
+    // signed-in one), blank until you open the host's site.
+    expect(page).toMatchObject({ kind: 'browser', url: 'about:blank', viewPartition: 'liveshare-view-1', backend: 'liveshare', liveShare: { link: true, following: true, project: 'ws-1', host: 'Cedric', pendingUrl: 'https://mail.example/inbox' } })
+    expect(t.ls.approvePage('pane-ls1-web')).toBe(true)
+    expect(page.url).toBe('https://mail.example/inbox')
+    expect(page.liveShare.pendingUrl).toBe('')
     // A page the host hid (or never sent): no tab.
     links([])
     await flush()
@@ -299,35 +313,77 @@ describe('Live Share phase 2c in the window, as a guest', () => {
     expect(leaves(lsWs().tree).some((l) => l.id === 'pane-ls1-web')).toBe(false)
   })
 
-  it('follows the host page (a new address, its videos) until you go elsewhere; "Follow host" brings it back', async () => {
-    t.listeners.onGuest(joined({ pagesView: true }))
-    await flush()
-    links([web()])
-    await flush()
-    const page = () => leaves(lsWs().tree).find((l) => l.id === 'pane-ls1-web')
-    const leaf = page()
-    links([web({ url: 'https://mail.example/inbox/2', title: 'Second', media: [{ kind: 'video', i: 0, paused: false, ended: false, t: 12, rate: 1 }] })])
-    await flush()
-    expect(page()).toBe(leaf)
-    expect(leaf.url).toBe('https://mail.example/inbox/2')
-    expect(leaf.liveShare.media).toMatchObject({ items: [{ kind: 'video', i: 0, paused: false, t: 12 }] })
-    // A redirect right after following loaded it: still following.
-    leaf.url = 'https://mail.example/consent'
-    await flush()
-    expect(leaf.liveShare.following).toBe(true)
-    // You went elsewhere yourself (later): not following that page any more.
-    leaf.liveShare.setAt = Date.now() - 5000
-    leaf.url = 'https://mail.example/settings'
-    await flush()
-    expect(leaf.liveShare.following).toBe(false)
-    const seq = leaf.liveShare.media.seq
-    links([web({ url: 'https://mail.example/inbox/3', media: [{ kind: 'video', i: 0, paused: true, ended: false, t: 20, rate: 1 }] })])
-    await flush()
-    expect(leaf.url).toBe('https://mail.example/settings')
-    expect(leaf.liveShare.media.seq).toBe(seq)
-    expect(t.ls.followPage('pane-ls1-web')).toBe(true)
-    expect(leaf.liveShare.following).toBe(true)
-    expect(leaf.url).toBe('https://mail.example/inbox/3')
+  it('follows the host page (paced; a new site asks first) until you go elsewhere; "Follow host" brings it back', async () => {
+    vi.useFakeTimers()
+    try {
+      t.listeners.onGuest(joined({ pagesView: true }))
+      await flush()
+      links([web()])
+      await flush()
+      const page = () => leaves(lsWs().tree).find((l) => l.id === 'pane-ls1-web')
+      const leaf = page()
+      t.ls.approvePage('pane-ls1-web')
+      // The same site: followed, but at least a second apart.
+      links([web({ url: 'https://mail.example/inbox/2', title: 'Second', media: [{ kind: 'video', i: 0, paused: false, ended: false, t: 12, rate: 1 }] })])
+      await flush()
+      expect(page()).toBe(leaf)
+      expect(leaf.url).toBe('https://mail.example/inbox')
+      await vi.advanceTimersByTimeAsync(1100)
+      expect(leaf.url).toBe('https://mail.example/inbox/2')
+      links([web({ url: 'https://mail.example/inbox/2', media: [{ kind: 'video', i: 0, paused: false, ended: false, t: 12, rate: 1 }] })])
+      await flush()
+      expect(leaf.liveShare.media).toMatchObject({ items: [{ kind: 'video', i: 0, paused: false, t: 12 }] })
+      // Another site: not opened before your click.
+      await vi.advanceTimersByTimeAsync(1100)
+      links([web({ url: 'https://other.example.com/x' })])
+      await flush()
+      expect(leaf.url).toBe('https://mail.example/inbox/2')
+      expect(leaf.liveShare.pendingUrl).toBe('https://other.example.com/x')
+      t.ls.approvePage('pane-ls1-web')
+      expect(leaf.url).toBe('https://other.example.com/x')
+      // You went elsewhere yourself (well after following loaded it): not following.
+      await vi.advanceTimersByTimeAsync(61000)
+      leaf.url = 'https://other.example.com/mine'
+      await flush()
+      expect(leaf.liveShare.following).toBe(false)
+      const at = leaf.url
+      links([web({ url: 'https://other.example.com/next' })])
+      await flush()
+      await vi.advanceTimersByTimeAsync(2000)
+      expect(leaf.url).toBe(at)
+      expect(t.ls.followPage('pane-ls1-web')).toBe(true)
+      expect(leaf.liveShare.following).toBe(true)
+      await vi.advanceTimersByTimeAsync(2000)
+      expect(leaf.url).toBe('https://other.example.com/next')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('followed navigations: 30 a minute at most', async () => {
+    vi.useFakeTimers()
+    try {
+      t.listeners.onGuest(joined({ pagesView: true }))
+      await flush()
+      links([web()])
+      await flush()
+      const leaf = leaves(lsWs().tree).find((l) => l.id === 'pane-ls1-web')
+      t.ls.approvePage('pane-ls1-web')
+      const urls = []
+      const stop = watch(() => leaf.url, (u) => urls.push(u))
+      for (let i = 0; i < 50; i++) {
+        links([web({ url: `https://mail.example/p${i}` })])
+        await flush()
+        await vi.advanceTimersByTimeAsync(1001)
+      }
+      stop()
+      // 50 s, one a second at most, and the first minute holds 30 (the one
+      // approved included).
+      expect(urls.length).toBeLessThanOrEqual(30)
+      expect(urls.length).toBeGreaterThan(20)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('an address only the host side opens is a note with the address, never a page', async () => {
@@ -342,7 +398,7 @@ describe('Live Share phase 2c in the window, as a guest', () => {
     // The host goes to a public address: your browser on it.
     links([web({ url: 'https://example.com/' })])
     await flush()
-    expect(leaves(lsWs().tree).find((l) => l.id === 'pane-ls1-web')).toMatchObject({ kind: 'browser', url: 'https://example.com/' })
+    expect(leaves(lsWs().tree).find((l) => l.id === 'pane-ls1-web')).toMatchObject({ kind: 'browser', url: 'about:blank', liveShare: { pendingUrl: 'https://example.com/' } })
   })
 
   it('the side panel pages of the host are tabs too; closing a host tab only hides it here', async () => {
@@ -577,19 +633,40 @@ describe('BrowserPane.vue while sharing', () => {
     return node
   }
 
-  it('"Hide this page from guests" toggles; nothing while not shared; a side panel page too', async () => {
+  it('"Hide this page from guests" toggles; "Shared with guests" shows on a page sent; a side panel page is shared only on your click', async () => {
     await mountPane()
     expect(wrapper.find('[data-test="browser-live-hide"]').exists()).toBe(false)
-    share.value = { project: 'ws-1', hidden: false, watchers: [] }
+    share.value = { project: 'ws-1', side: false, hidden: false, shared: true, sent: true }
     await nextTick()
+    expect(wrapper.find('[data-test="browser-live-sent"]').text()).toBe('Shared with guests')
     await wrapper.find('[data-test="browser-live-hide"]').trigger('click')
     expect(ctx.setLiveSharePageHidden).toHaveBeenCalledWith('b1', true)
+    share.value = { ...share.value, hidden: true, sent: false }
     await nextTick()
     expect(wrapper.find('[data-test="browser-live-hide"]').attributes('aria-pressed')).toBe('true')
+    expect(wrapper.find('[data-test="browser-live-sent"]').exists()).toBe(false)
     wrapper.unmount()
+    share.value = { project: 'ws-1', side: true, hidden: true, shared: false, sent: false }
+    ctx.setLiveSharePageShared = vi.fn()
     wrapper = mount(BrowserPane, { props: { node: reactive({ type: 'leaf', kind: 'browser', id: 'web-side1', title: '', url: 'https://docs.test/', zoom: 0, focusAddress: 0 }), inSidePanel: true }, attachTo: document.body, global: { provide: { panelCtx: ctx } } })
     await nextTick()
-    expect(wrapper.find('[data-test="browser-live-hide"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="browser-live-hide"]').exists()).toBe(false)
+    const shareBtn = wrapper.find('[data-test="browser-live-share"]')
+    expect(shareBtn.attributes('aria-pressed')).toBe('false')
+    await shareBtn.trigger('click')
+    expect(ctx.setLiveSharePageShared).toHaveBeenCalledWith('web-side1', true)
+  })
+
+  it('a host page not opened yet: one click opens its site; "Open in my own browser session" on your word only; in its own view session', async () => {
+    ctx.liveShareApprovePage = vi.fn()
+    const node = await mountPane({ url: 'about:blank', viewPartition: 'liveshare-view-1', backend: 'liveshare', liveShare: { link: true, host: 'Cedric', following: true, hostUrl: 'https://mail.example/a', pendingUrl: 'https://mail.example/a', setAt: 0, media: null } })
+    expect(wrapper.find('webview').attributes('partition')).toBe('liveshare-view-1')
+    expect(wrapper.find('[data-test="browser-host-pending"]').text()).toContain('Cedric opened mail.example')
+    await wrapper.find('[data-test="browser-host-approve"]').trigger('click')
+    expect(ctx.liveShareApprovePage).toHaveBeenCalledWith('b1')
+    await wrapper.find('[data-test="browser-open-own"]').trigger('click')
+    expect(ctx.openBrowserPane).toHaveBeenCalledWith('https://mail.example/a', { activate: true })
+    void node
   })
 
   it('a host page followed here: says so; going elsewhere yourself stops it, "Follow host" asks again; the host videos played here', async () => {

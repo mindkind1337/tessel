@@ -3304,7 +3304,12 @@ provide('panelCtx', {
   liveSharePageShare: (id) => liveShare.pageShare(id),
   setLiveSharePageHidden: (id, hidden) => liveShare.setPageHidden(id, hidden),
   liveShareFollowPage: (id) => liveShare.followPage(id),
+  liveShareApprovePage: (id) => liveShare.approvePage(id),
+  setLiveSharePageShared: (id, on) => liveShare.setPageShared(id, on),
   liveSharePageNote: (id) => liveShare.pageNote(id),
+  // A pane following a Live Share host made active: it leaves the keyboard
+  // where it is.
+  liveShareQuietFocus: (id) => liveShare.quietFocus(id),
   // A terminal agent's chat view (nothing restarts): what you write there,
   // and its agent's real end (back to the terminal).
   sendFromChatView: (id, text, callbacks) => sendFromChatView(id, text, callbacks),
@@ -3376,7 +3381,10 @@ provide('panelCtx', {
     const ws = (fromId && wsOfLeaf(fromId)) || currentWs.value
     const from = fromId && ws ? findLeafIn(ws.tree, fromId) : null
     const guest = guestSession === true || inheritsGuestSession(from)
-    return openInBrowser({ url, ws, newPane: true, activate, agentSession: !guest && inheritsAgentSession(from), guestSession: guest })
+    const leaf = openInBrowser({ url, ws, newPane: true, activate, agentSession: !guest && inheritsAgentSession(from), guestSession: guest })
+    // A link from a Live Share host's page shown here: its own view session too.
+    if (leaf && from && typeof from.viewPartition === 'string') leaf.viewPartition = from.viewPartition
+    return leaf
   },
   // A chat agent pane: open or resume its Claude (asks to trust its folder
   // the first time), and the permissions it runs with.

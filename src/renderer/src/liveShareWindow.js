@@ -891,8 +891,11 @@ export function createLiveShareWindow(deps) {
     }
     const target = hostTarget(ws, p, tabs)
     if (followState(p.id).on && target) {
-      // Following: the host's tab, active pane and editor file.
+      // Following: the host's tab, active pane and editor file, never the
+      // keyboard (quietFocus: the pane made active does not take it).
       if (target.path && tabs) tabs.activePath = target.path
+      if (target.activeId && target.activeId !== ws.activeId) quiet(target.activeId)
+      if (target.view !== ws.view && target.view !== 'terminal') quiet(target.view)
       if (target.activeId) ws.activeId = target.activeId
       ws.view = target.view
       f.applied = followKey(ws, p.id)
@@ -912,6 +915,30 @@ export function createLiveShareWindow(deps) {
         if (deps.maximizedId() !== max) deps.setMaximized(max)
       } else f.pending = true
     }
+  }
+
+  // Panes following made active just now: their own focus is skipped, so
+  // the keyboard stays where you were typing (a key of yours then is your
+  // own pick: onGuestKey).
+  const QUIET_MS = 1500
+  const quietIds = new Map() // pane id -> when
+  function quiet(id) {
+    quietIds.set(id, Date.now())
+    if (quietIds.size > 32) quietIds.delete(quietIds.keys().next().value)
+  }
+  const quietFocus = (id) => quietIds.has(id) && Date.now() - quietIds.get(id) < QUIET_MS
+  // A key you press in a host's project while your screen follows the
+  // host's: your own pick (following stops), in the pane you typed in.
+  function onGuestKey(e) {
+    if (!e || ['Shift', 'Control', 'Alt', 'Meta', 'AltGraph', 'CapsLock'].includes(e.key)) return
+    const ws = deps.currentWs()
+    if (!isGuestWs(ws) || ws.liveShare.session !== state.guest.session) return
+    const fs = state.follow[ws.liveShare.project]
+    if (!fs || !fs.on) return
+    fs.on = false
+    const el = e.target && typeof e.target.closest === 'function' ? e.target.closest('[data-pane-id]') : null
+    const id = el ? el.getAttribute('data-pane-id') : null
+    if (id && id !== ws.activeId && hasLeaf(ws.tree, id)) ws.activeId = id
   }
 
   // What the host shows in a project, as this window can show it: { activeId,
@@ -1722,6 +1749,10 @@ export function createLiveShareWindow(deps) {
   async function init() {
     const a = api()
     if (!a) return
+    if (typeof document !== 'undefined') {
+      document.addEventListener('keydown', onGuestKey, true)
+      offs.push(() => document.removeEventListener('keydown', onGuestKey, true))
+    }
     offs.push(a.onHost(onHost), a.onGuest(onGuest), a.onAsk(onAsk), a.onHostRequest(onHostRequest))
     if (a.onNotice) offs.push(a.onNotice(onNotice))
     if (a.onPresence) offs.push(a.onPresence(onPresence))
@@ -1929,8 +1960,11 @@ export function createLiveShareWindow(deps) {
     feeds: feeds.feeds,
     pageShare: feeds.pageShare,
     setPageHidden: feeds.setPageHidden,
+    setPageShared: feeds.setPageShared,
     pageNote: feeds.pageNote,
     followPage: feeds.followPage,
+    approvePage: feeds.approvePage,
+    quietFocus,
     // Following the host (guest).
     followHost,
     followInfo,
