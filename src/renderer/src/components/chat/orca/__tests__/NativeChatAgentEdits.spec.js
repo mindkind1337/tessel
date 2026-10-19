@@ -8,7 +8,7 @@ import { computed } from 'vue'
 import NativeChatToolLine from '../NativeChatToolLine.vue'
 import NativeChatDiffCard from '../NativeChatDiffCard.vue'
 import NativeChatChangedFiles from '../NativeChatChangedFiles.vue'
-import { buildEditCards } from '../../../../chat/orca/native-chat-edit-cards.js'
+import { buildEditCards, buildEditSummaries } from '../../../../chat/orca/native-chat-edit-cards.js'
 import { turnChangedFiles } from '../../../../chat/agentEdits.js'
 
 let wrapper = null
@@ -132,7 +132,7 @@ describe('changed files strip', () => {
         ]
       }
     ]
-    return turnChangedFiles(messages, ['u1', 'u1'], buildEditCards).get('u1')
+    return turnChangedFiles(messages, ['u1', 'u1'], buildEditSummaries).get('u1')
   }
 
   it('lists each file with its counts; a file opens at its first change, its diff opens in a tab', async () => {

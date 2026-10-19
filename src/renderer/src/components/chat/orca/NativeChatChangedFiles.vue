@@ -46,7 +46,8 @@ const rows = computed(() =>
     title: t('chat.agentEdits.openAtChange', 'Open {{path}} at its first change', { path: file.path })
   }))
 )
-const editsOf = (file) => file.edits.map((e) => ({ block: e.block, file: e.file }))
+// Each edit's summary, and detail(): its full file, parsed only when opened.
+const editsOf = (file) => file.edits.map((e) => ({ block: e.block, file: e.file, detail: e.detail }))
 function openFile(file, event) {
   void actions.openAt({ path: file.path, edits: editsOf(file) }, event)
 }

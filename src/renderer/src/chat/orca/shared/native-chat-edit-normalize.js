@@ -23,9 +23,9 @@
  */
 import { editFilesFromBeginPatch, unwrapBeginPatch } from "./native-chat-begin-patch.js";
 import { editLinesFromContents } from "./native-chat-edit-lcs.js";
-import { finalizeEditFile, pushEditGap } from "./native-chat-edit-model.js";
+import { finalizeEditFile, pushEditGap, summarizeEditFile } from "./native-chat-edit-model.js";
 import { editFilesFromPatchText, splitMoveMarker } from "./native-chat-edit-patch-files.js";
-import { editLinesFromUnifiedPatch, editLinesFromWholeFile } from "./native-chat-unified-patch.js";
+import { editLinesFromUnifiedPatch, editLinesFromWholeFile, summarizeUnifiedPatch } from "./native-chat-unified-patch.js";
 const CLAUDE_EDIT_TOOLS = new Set([
     'Edit',
     'MultiEdit',
@@ -166,7 +166,7 @@ function claudeEditFiles(name, input, output) {
         })
     ];
 }
-function codexChangeFiles(changes) {
+function codexChangeFiles(changes, summaryOnly = false) {
     return changes.flatMap((entry)=>{
         const change = record(entry);
         const path = text(change?.path);
@@ -179,16 +179,31 @@ function codexChangeFiles(changes) {
         const movePath = text(kind?.move_path) ?? text(change.movePath);
         if (kindType === 'add' || kindType === 'delete') {
             const whole = editLinesFromWholeFile(diff, kindType === 'add' ? 'add' : 'del');
+            const file = finalizeEditFile({
+                path,
+                oldPath: null,
+                changeKind: kindType === 'add' ? 'added' : 'deleted',
+                lines: whole.lines,
+                lineNumbersKnown: true,
+                truncated: whole.truncated
+            });
             return [
-                finalizeEditFile({
-                    path,
-                    oldPath: null,
-                    changeKind: kindType === 'add' ? 'added' : 'deleted',
-                    lines: whole.lines,
-                    lineNumbersKnown: true,
-                    truncated: whole.truncated
-                })
+                summaryOnly ? summarizeEditFile(file) : file
             ];
+        }
+        if (summaryOnly) {
+            const summary = summarizeUnifiedPatch(splitMoveMarker(diff).body);
+            return summary ? [
+                {
+                    path: movePath ?? path,
+                    oldPath: movePath ? path : null,
+                    changeKind: movePath ? 'renamed' : 'edited',
+                    truncated: summary.truncated,
+                    added: summary.added,
+                    removed: summary.removed,
+                    firstLine: summary.firstLine
+                }
+            ] : [];
         }
         const parsed = editLinesFromUnifiedPatch(splitMoveMarker(diff).body);
         if (!parsed) {
@@ -252,4 +267,51 @@ export function editFilesFromToolPair(pair) {
         return null;
     }
     return editFilesFromPatchText(patchText, text(input?.path) ?? text(input?.file_path));
+}
+// Tessel: editFilesFromToolPair's files reduced to what a list of changed
+// files shows (path, change kind, counts, first changed line: summarizeEditFile's
+// shape), in the same order. A patch is only summarized (its hunk headers give
+// the first changed line), never parsed into rows: those wait until the user
+// opens the file's diff. Edits whose files are not patches (an Edit's strings,
+// a structured patch) come from `detailed` (the tool's full files, which the
+// caller may cache) and are reduced.
+export function editSummariesFromToolPair(pair, detailed = ()=>editFilesFromToolPair(pair)) {
+    if (pair.state === 'failed' || pair.state === 'running' || pair.result?.isError === true) {
+        return null;
+    }
+    if (pair.state !== 'completed' && pair.result === undefined) {
+        return null;
+    }
+    const reduced = ()=>detailed()?.map(summarizeEditFile) ?? null;
+    const input = record(pair.input);
+    const patch = pair.result?.editPatch;
+    if (patch && patch.hunks.length > 0) {
+        return reduced();
+    }
+    if (PATCH_ENVELOPE_TOOLS.has(pair.name)) {
+        const envelope = unwrapBeginPatch(pair.input, {
+            requireApplyCommand: COMMAND_PATCH_TOOLS.has(pair.name)
+        });
+        const files = envelope ? editFilesFromBeginPatch(envelope, true) : [];
+        if (files.length > 0) {
+            return files;
+        }
+    }
+    if (input && Array.isArray(input.changes)) {
+        const files = codexChangeFiles(input.changes, true);
+        if (files.length > 0) {
+            return files;
+        }
+    }
+    if (input && CLAUDE_EDIT_TOOLS.has(pair.name)) {
+        return reduced();
+    }
+    if (!PATCH_TEXT_TOOLS.has(pair.name)) {
+        return null;
+    }
+    const patchText = text(input?.patch) ?? text(input?.diff) ?? (pair.name === 'Diff' ? pair.result?.output : null);
+    if (!patchText) {
+        return null;
+    }
+    return editFilesFromPatchText(patchText, text(input?.path) ?? text(input?.file_path), true);
 }

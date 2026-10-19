@@ -26,6 +26,7 @@ import { describe, expect, it } from 'vitest';
 import { foldToolMessages } from "../native-chat-tool-fold.js";
 import { buildDiffSummaries, buildEditCards } from "../native-chat-edit-cards.js";
 import { nativeChatTurnDiffs } from "../native-chat-turn-diffs.js";
+import { firstChangedLine } from "../../agentEdits.js";
 function diff(id, path, patch = '@@ -1 +1 @@\n-old\n+new') {
     return {
         id,
@@ -239,6 +240,8 @@ describe('turn diff rollups', ()=>{
         const detailed = [
             ...buildEditCards(message.blocks).editCards.values()
         ][0].files;
-        expect(summary).toEqual(detailed.map(({ lines: _lines, lineNumbersKnown: _known, ...file })=>file));
+        expect(summary.map(({ firstLine: _first, ...file })=>file)).toEqual(detailed.map(({ lines: _lines, lineNumbersKnown: _known, ...file })=>file));
+        // The first changed line, from the hunk headers alone, is the expanded card's.
+        expect(summary.map((file)=>file.firstLine)).toEqual(detailed.map(firstChangedLine));
     });
 });

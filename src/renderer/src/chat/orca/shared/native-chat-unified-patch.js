@@ -22,7 +22,7 @@
  * SOFTWARE.
  */
 import { FILE_SECTION_START, isFileHeaderPair } from "./native-chat-diff.js";
-import { MAX_EDIT_LINES, splitEditContent } from "./native-chat-edit-model.js";
+import { MAX_EDIT_LINES, createFirstChangeFinder, splitEditContent } from "./native-chat-edit-model.js";
 const HUNK_RANGES = /^@@+ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/;
 export function editLinesFromUnifiedPatch(text, options) {
     const lines = [];
@@ -39,21 +39,27 @@ export function editLinesFromUnifiedPatch(text, options) {
         ...metadata
     } : null;
 }
-export function summarizeUnifiedPatch(text) {
+// Tessel: also the first changed new-side line (firstLine, null when the hunk
+// headers carry no ranges), so a list of changed files can open a file at its
+// first change without the full parse above.
+export function summarizeUnifiedPatch(text, options) {
     let added = 0;
     let removed = 0;
     let rowCount = 0;
-    const metadata = visitUnifiedPatch(text, (kind)=>{
+    const first = createFirstChangeFinder();
+    const metadata = visitUnifiedPatch(text, (kind, _raw, oldLineNumber, newLineNumber)=>{
         rowCount += 1;
         if (rowCount <= MAX_EDIT_LINES) {
             added += Number(kind === 'add');
             removed += Number(kind === 'del');
+            first.visit(kind, oldLineNumber, newLineNumber);
         }
-    });
+    }, options);
     return metadata ? {
         added,
         removed,
-        truncated: metadata.truncated || rowCount > MAX_EDIT_LINES
+        truncated: metadata.truncated || rowCount > MAX_EDIT_LINES,
+        firstLine: metadata.lineNumbersKnown ? first.line : null
     } : null;
 }
 function visitUnifiedPatch(text, visit, options) {
