@@ -78,11 +78,15 @@ describe('LiveShareAsk: someone asks to join', () => {
     expect(boxes(w, 'ls-right-')).toEqual([false, false, false, false, false, false, false, false])
   })
 
-  it('Trust this person: only once the code was checked, and only for a Tessel that can be trusted', async () => {
+  it('Trust next time: only once the code was checked, and only for a Tessel that can be trusted', async () => {
     const w = mount(LiveShareAsk, { props: { ask: bob, projects: PROJECTS } })
     expect(w.find('[data-test="ls-ask-trust"]').exists()).toBe(true)
-    expect(w.find('[data-test="ls-ask-trust-box"]').exists()).toBe(false)
+    // Shown, but waiting for the code check (and it says so).
+    expect(w.find('[data-test="ls-ask-trust-box"] input').element.disabled).toBe(true)
+    expect(w.find('[data-test="ls-ask-trust-why"]').text()).toBe('Check the verification code first.')
     await w.find('[data-test="ls-ask-code-checked"] input').setValue(true)
+    expect(w.find('[data-test="ls-ask-trust-box"] input').element.disabled).toBe(false)
+    expect(w.find('[data-test="ls-ask-trust-why"]').exists()).toBe(false)
     await w.find('[data-test="ls-ask-trust-box"] input').setValue(true)
     await arm()
     await w.find('[data-test="ls-ask-allow"]').trigger('click')
@@ -92,15 +96,49 @@ describe('LiveShareAsk: someone asks to join', () => {
     await w.find('[data-test="ls-ask-code-checked"] input').setValue(true)
     await w.find('[data-test="ls-ask-trust-box"] input').setValue(true)
     await w.find('[data-test="ls-ask-code-checked"] input').setValue(false)
-    expect(w.find('[data-test="ls-ask-trust-box"]').exists()).toBe(false)
+    expect(w.find('[data-test="ls-ask-trust-box"] input').element.checked).toBe(false)
+    expect(w.find('[data-test="ls-ask-trust-box"] input').element.disabled).toBe(true)
     await arm()
     await w.find('[data-test="ls-ask-allow"]').trigger('click')
     expect(w.emitted('answer')[1][0].trust).toBe(false)
     // An older Tessel (no identity key), or no code: no trust offered.
     await w.setProps({ ask: { ...bob, key: 'g3', guestId: 'g3', trustable: false } })
     expect(w.find('[data-test="ls-ask-trust"]').exists()).toBe(false)
+    // (The code is still there to check.)
+    expect(w.find('[data-test="ls-ask-code-checked"]').exists()).toBe(true)
     await w.setProps({ ask: { ...bob, key: 'g4', guestId: 'g4', code: null } })
     expect(w.find('[data-test="ls-ask-trust"]').exists()).toBe(false)
+    expect(w.find('[data-test="ls-ask-code"]').exists()).toBe(false)
+  })
+
+  it('a preset sets every right; Type warns in red; the agents rule goes with the rights', async () => {
+    const agents = [{ id: 'claude', name: 'Claude Code' }, { id: 'codex', name: 'Codex' }]
+    const w = mount(LiveShareAsk, { props: { ask: bob, projects: PROJECTS, agents } })
+    expect(w.find('[data-test="ls-ask-type-warning"]').exists()).toBe(false)
+    // Type ticked by itself: a red line; Full control says it in its own line.
+    const type = w.find('[data-test="ls-right-type-ask"] input')
+    type.element.checked = true
+    await type.trigger('change')
+    expect(w.find('[data-test="ls-ask-type-warning"]').exists()).toBe(true)
+    await w.find('[data-test="ls-ask-preset-full"] input').trigger('change')
+    expect(boxes(w, 'ls-right-').every(Boolean)).toBe(true)
+    expect(w.find('[data-test="ls-ask-type-warning"]').exists()).toBe(false)
+    expect(w.find('[data-test="ls-ask-preset-hint"]').classes()).toContain('warn')
+    await w.find('[data-test="ls-ask-preset-view"] input').trigger('change')
+    expect(boxes(w, 'ls-right-').some(Boolean)).toBe(false)
+    // Codex left out (the share's setting copied, then changed).
+    await w.find('[data-test="ls-agents-ask-toggle"]').trigger('click')
+    const follow = w.find('[data-test="ls-agents-ask-follow"] input')
+    follow.element.checked = false
+    await follow.trigger('change')
+    const codex = w.find('[data-test="ls-agents-ask-agent-codex"] input')
+    codex.element.checked = false
+    await codex.trigger('change')
+    await arm()
+    await w.find('[data-test="ls-ask-allow"]').trigger('click')
+    const sent = w.emitted('answer')[0][0].rights
+    expect(sent.type).toBe(false)
+    expect(sent.agents.deny).toEqual(['codex'])
   })
 
   it('Allow only answers after a moment; Deny answers; Escape or a click beside it do not', async () => {
@@ -162,6 +200,10 @@ describe('LiveShareAsk: open and close requests', () => {
     await arm()
     await w.find('[data-test="ls-ask-allow"]').trigger('click')
     expect(w.emitted('answer')).toEqual([[{ key: 'open-g1-1', yes: true }]])
+    // Always let Bob open: the same yes, and the right from now on.
+    expect(w.find('[data-test="ls-ask-always"]').text()).toBe('Always let Bob open')
+    await w.find('[data-test="ls-ask-always"]').trigger('click')
+    expect(w.emitted('answer')[1]).toEqual([{ key: 'open-g1-1', yes: true, always: true }])
     await w.setProps({ ask: { ...ask, key: 'open-g1-2', agentName: null, spec: { kind: 'terminal', project: 'ws-1' } } })
     expect(w.text()).toContain('Bob asks to open a terminal')
   })

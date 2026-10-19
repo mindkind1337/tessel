@@ -37,7 +37,9 @@ export const SETTINGS_TOOLS = {
     row('activity', () => t('app.cmd.activity', 'Activity of the agents'), () => t('app.cmd.activityHint', 'Messages, approvals, limits and working time'), open),
     row('notes', () => t('app.cmd.notes', 'Project notes'), () => t('app.cmd.notesHint', 'Read or edit the notes the agents of this workspace share'), open),
     row('conversations', () => t('conversations.title', 'Conversations'), () => t('conversations.cmd.hint', 'What the agents of a team said to each other and to you'), show),
-    row('liveShare', () => t('liveShare.toolbar.label', 'Live Share'), () => t('settings.tools.liveShareHint', "Let others watch the projects you share, live, or join someone else's with an invite code."), open)
+    row('liveShare', () => t('liveShare.toolbar.label', 'Live Share'), () => t('settings.tools.liveShareHint', "Let others watch the projects you share, live, or join someone else's with an invite code."), open),
+    // Live Share's own settings live in its dialog (kept by main, per share).
+    row('liveShareSettings', () => t('settings.tools.liveShareSettings', 'Live Share settings'), () => t('settings.tools.liveShareSettingsHint', 'What guests see, finding you again after a restart (ntfy.sh), and the agents guests may use.'), open)
   ],
   terminal: [
     row('floating', () => t('app.toolbar.floating', 'Floating terminal'), () => t('app.cmd.floatingHint', "A terminal over the workspace, in the project's folder; it keeps running when hidden"), show),

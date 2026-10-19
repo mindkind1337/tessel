@@ -33,6 +33,7 @@ const EXPECTED_ACTION = {
   notes: 'openNotesView(currentWs.value.id)',
   conversations: "showSideTab('conversations')",
   liveShare: 'openLiveShare()',
+  liveShareSettings: "openLiveShare('settings')",
   files: "showSideTab('files')",
   ports: 'bar.openPorts()',
   resources: 'bar.openResources()',

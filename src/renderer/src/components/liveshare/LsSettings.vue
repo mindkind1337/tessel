@@ -3,10 +3,12 @@
 // before you share). Hide what git ignores and what looks like a secret from
 // guests (a change counts for every request from now on); find me again
 // after a restart through the ntfy.sh relay (on unless turned off); and the
-// fact that a share comes back after a restart until you stop it; and the
+// fact that a share comes back after a restart until you stop it (and,
+// while sharing, when its address was last said on the relay); and the
 // agents guests may use, for whoever has no rule of its own (null: all).
 import { computed, inject } from 'vue'
 import LsAgents from './LsAgents.vue'
+import { agoText } from '../../liveShareTime'
 import { t } from '../../i18n'
 
 const ctx = inject('lsDialog')
@@ -14,6 +16,13 @@ const settings = computed(() => (ctx.host.value && ctx.host.value.settings) || {
 const hideIgnored = computed(() => settings.value.hideIgnored !== false)
 const rendezvous = computed(() => settings.value.rendezvous !== false)
 const agentRule = computed(() => settings.value.agents || null)
+// While sharing with the relay on: when the address was last published.
+const relayStatus = computed(() => {
+  const h = ctx.host.value || {}
+  if (h.state !== 'sharing' || !rendezvous.value) return ''
+  const ago = agoText(h.relayAt, ctx.now ? ctx.now.value : Date.now())
+  return ago ? t('liveShare.setting.relayPublished', 'Your address was last published {{ago}}.', { ago }) : t('liveShare.setting.relayNotYet', 'Your address is not published yet.')
+})
 function setAgentRule(rule) {
   ctx.run('setting:agents', async () => {
     const r = await ctx.api.setSettings({ agents: rule })
@@ -72,6 +81,7 @@ function set(key, event) {
           <span class="set-label">
             {{ t('liveShare.setting.rendezvous', 'Find me again after a restart (uses ntfy.sh)') }}
             <span class="set-hint">{{ t('liveShare.setting.rendezvousShort', 'Your new address goes, encrypted, to the free ntfy.sh relay so guests find you.') }}</span>
+            <span v-if="relayStatus" class="set-hint ls-relay-status" data-test="ls-relay-status">{{ relayStatus }}</span>
             <details class="set-more" @click.stop>
               <summary>{{ t('settings.common.learnMore', 'Learn more') }}</summary>
               <p>{{ t('liveShare.setting.rendezvousHint', 'When your address changes, Tessel leaves it, encrypted, on the free ntfy.sh relay so your guests find you (and looks there for a host’s when you are a guest). Off: nothing is sent there, and codes stop working when your address changes.') }}</p>
@@ -93,6 +103,9 @@ function set(key, event) {
 }
 .ls-set-agents .set-hint {
   margin: 6px 0 0;
+}
+.ls-relay-status {
+  color: var(--text);
 }
 .ls-set-group:last-child {
   margin-bottom: 0;

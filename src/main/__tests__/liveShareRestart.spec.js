@@ -482,15 +482,37 @@ describe('a share kept across restarts', () => {
     expect(JSON.parse(fs.readFileSync(hostFile(plain), 'utf8')).sealed).toMatch(/^P/)
   })
 
-  it('a share back after a restart is said once to the window (its toast)', async () => {
+  it('a share back after a restart is said to the window (its status), with when it first started', async () => {
     const host = fakeMain()
+    const t0 = Date.now()
     await host.handle['liveShare:start'](null, { name: 'Ada', projects: ['ws-1'] })
-    expect(host.last('liveShare:host').resumed).toBe(null)
+    const first = host.last('liveShare:host')
+    expect(first.resumed).toBe(null)
+    expect(first.since).toBeGreaterThanOrEqual(t0)
     host.api.stopAll()
     const next = fakeMain({ dataDir: host.dataDir, resume: true })
     await next.api.resumed
-    expect(next.last('liveShare:host').resumed).toBeGreaterThan(0)
+    const back = next.last('liveShare:host')
+    expect(back.resumed).toBeGreaterThan(0)
+    // Since when: the first start, not the restart.
+    expect(back.since).toBe(first.since)
   })
+
+  it('the relay’s last publish is in the status while sharing (none with the relay off); a guest reconnecting shows its tries', async () => {
+    const relay = fakeRelay()
+    const { host, guest } = await shareAndJoin(relay)
+    await until(() => host.last('liveShare:host').relayAt > 0)
+    expect(host.last('liveShare:host').relayAt).toBeLessThanOrEqual(Date.now())
+    host.api.stopAll()
+    await until(() => guest.last('liveShare:guest').state === 'reconnecting')
+    const r = await until(() => guest.last('liveShare:guest').retry)
+    expect(r.tries).toBeGreaterThanOrEqual(1)
+    expect(typeof r.lookup).toBe('boolean')
+    const off = fakeMain()
+    await off.handle['liveShare:setSettings'](null, { rendezvous: false })
+    await off.handle['liveShare:start'](null, { name: 'Ada', projects: ['ws-1'] })
+    expect(off.last('liveShare:host').relayAt).toBe(null)
+  }, 20000)
 
   it('the projects last shared are kept in the data folder: after Stop sharing and a restart, the dialog gets them to tick', async () => {
     const host = fakeMain()

@@ -90,15 +90,9 @@ describe('LiveSharePill: host', () => {
     await open()
     await w.find('[data-test="live-pill-remove-ws-2"]').trigger('click')
     expect(w.emitted('share').at(-1)).toEqual(['ws-2', false])
-    for (const [test, section] of [
-      ['live-pill-invites', 'invites'],
-      ['live-pill-people', 'people'],
-      ['live-pill-manage', 'overview']
-    ]) {
-      await open()
-      await w.find(`[data-test="${test}"]`).trigger('click')
-      expect(w.emitted('open').at(-1)).toEqual([section])
-    }
+    await open()
+    await w.find('[data-test="live-pill-manage"]').trigger('click')
+    expect(w.emitted('open').at(-1)).toEqual(['overview'])
     await open()
     await w.find('[data-test="live-pill-stop"]').trigger('click')
     expect(w.emitted('stop')).toHaveLength(1)
@@ -110,6 +104,52 @@ describe('LiveSharePill: host', () => {
     expect(w.find('[data-test="live-pill-remove-ws-1"]').exists()).toBe(false)
     expect(w.find('[data-test="live-pill-unshare-here"]').exists()).toBe(false)
     expect(w.find('[data-test="live-pill-nobody"]').text()).toContain('Nobody yet')
+  })
+
+  it('people waiting: an amber badge on the pill, and their row with the code and Let in', async () => {
+    const pill = hostPill({ guests: [{ id: 'g1', name: 'Simpa', via: '', rights: { type: true }, watching: [], typing: [] }], waiting: 1, waitingList: [{ id: 'g3', name: 'Eve', code: '482 913' }] })
+    const w = mount(LiveSharePill, { props: { pill } })
+    expect(w.find('[data-test="live-pill"]').text()).toBe('Live · 11')
+    expect(w.find('[data-test="live-pill-badge"]').text()).toBe('1')
+    expect(w.find('[data-test="live-pill"]').attributes('aria-label')).toContain('1 waiting for your answer')
+    await w.find('[data-test="live-pill"]').trigger('click')
+    expect(w.find('[data-test="live-pill-wait-g3"]').text()).toContain('Code 482 913')
+    // The people in now: their rights in one chip (red: they can type).
+    expect(w.find('[data-test="live-pill-guest-g1"] [data-test="ls-rights-chip"]').classes()).toContain('tag-danger')
+    await w.find('[data-test="live-pill-letin-g3"]').trigger('click')
+    expect(w.emitted('review')).toEqual([['g3']])
+    expect(w.find('[data-test="live-pill-popover"]').exists()).toBe(false)
+  })
+
+  it('the status header (since, Permanent, Relay on|off) and Copy invite code', async () => {
+    const since = new Date(2026, 9, 19, 14, 2).getTime()
+    const w = mount(LiveSharePill, { props: { pill: hostPill({ since, relay: false, invite: { id: 'iv-1', label: 'First invite code', code: 'TS2.abc.def' } }) } })
+    await w.find('[data-test="live-pill"]').trigger('click')
+    expect(w.find('[data-test="live-pill-since"]').text()).toMatch(/^Since 14:02|^Since 02:02/)
+    expect(w.find('[data-test="live-pill-permanent"]').text()).toBe('Permanent')
+    expect(w.find('[data-test="live-pill-relay"]').text()).toBe('Relay off')
+    await w.find('[data-test="live-pill-copy-invite"]').trigger('click')
+    expect(w.emitted('copy-invite')).toEqual([[{ id: 'iv-1', label: 'First invite code', code: 'TS2.abc.def' }]])
+    expect(w.find('[data-test="live-pill-copy-invite"]').text()).toBe('Copied')
+  })
+
+  it('a share starting again: "Restarting…", then "Retrying in 30 s" once it could not yet', async () => {
+    vi.useFakeTimers()
+    try {
+      const w = mount(LiveSharePill, { props: { pill: hostPill({ starting: true, restarting: true }) } })
+      expect(w.find('[data-test="live-pill"]').text()).toBe('Restarting…')
+      await w.setProps({ pill: hostPill({ starting: true, restarting: true, retryAt: Date.now() + 30000 }) })
+      expect(w.find('[data-test="live-pill"]').text()).toBe('Retrying in 30 s')
+      vi.advanceTimersByTime(10000)
+      await nextTick()
+      expect(w.find('[data-test="live-pill"]').text()).toBe('Retrying in 20 s')
+      vi.advanceTimersByTime(21000)
+      await nextTick()
+      expect(w.find('[data-test="live-pill"]').text()).toBe('Restarting…')
+      w.unmount()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('Escape closes the popover and gives the keyboard back to the pill; a click outside closes it', async () => {
@@ -145,10 +185,30 @@ describe('LiveSharePill: guest', () => {
     expect(w.emitted('open')).toEqual([['join']])
   })
 
-  it('reconnecting: says so, with a grey pulsing dot', () => {
-    const w = mount(LiveSharePill, { props: { pill: guestPill({ reconnecting: true }) } })
+  it('reconnecting: says so, with a grey pulsing dot, the tries and the relay', async () => {
+    const w = mount(LiveSharePill, { props: { pill: guestPill({ reconnecting: true, retry: { tries: 3, lookup: true } }) } })
     expect(w.find('[data-test="live-pill"]').text()).toBe('Reconnecting to jeanc…')
     expect(w.find('[data-test="live-pill-dot"]').classes()).toContain('pulse')
+    await w.find('[data-test="live-pill"]').trigger('click')
+    expect(w.find('[data-test="live-pill-reconnect"]').text()).toBe('Try 3 · Looking up the host’s new address via ntfy.sh')
+  })
+
+  it('the follow switch: on follows the host again, off stops following; the rights chip', async () => {
+    const w = mount(LiveSharePill, { props: { pill: guestPill({ grant: { open: true }, follow: { on: true, copy: null } }) } })
+    await w.find('[data-test="live-pill"]').trigger('click')
+    expect(w.find('[data-test="live-pill-rights-box"] [data-test="ls-rights-chip"]').exists()).toBe(true)
+    const sw = w.find('[data-test="live-pill-follow-switch"] input')
+    expect(sw.element.checked).toBe(true)
+    sw.element.checked = false
+    await sw.trigger('change')
+    expect(w.emitted('unfollow')).toHaveLength(1)
+    // It shows main's state until the pill says otherwise.
+    expect(sw.element.checked).toBe(true)
+    await w.setProps({ pill: guestPill({ follow: { on: false, copy: null } }) })
+    const off = w.find('[data-test="live-pill-follow-switch"] input')
+    off.element.checked = true
+    await off.trigger('change')
+    expect(w.emitted('follow')).toHaveLength(1)
   })
 })
 

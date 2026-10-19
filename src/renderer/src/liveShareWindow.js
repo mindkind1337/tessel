@@ -397,14 +397,10 @@ export function createLiveShareWindow(deps) {
     return t('liveShare.toast.joinedProjects', '{{name}} joined {{project}} and {{count}} more.', { name, project: names[0], count: names.length - 1 })
   }
 
-  // A share that came back by itself after a restart: said once.
-  let resumedShown = null
+  // (A share that came back by itself after a restart is said by Live
+  // Share's status, not a toast.)
   function onHost(s) {
     if (!s) return
-    if (s.resumed && s.resumed !== resumedShown) {
-      resumedShown = s.resumed
-      deps.showToast(t('liveShare.toast.resumed', 'Your Live Share started again: your guests reconnect by themselves.'), { timeout: 6000 })
-    }
     const before = new Map(state.host.guests.map((g) => [g.id, g]))
     const wasOn = hostSharing() || hostStarting()
     const lastShared = sharedIds()
@@ -536,8 +532,10 @@ export function createLiveShareWindow(deps) {
 
   // Your answer to one ask (its key): a guest's join (with the shared
   // projects and the rights it gets, none when not said, and whether it is
-  // trusted from now on), a close request, or a request to open.
-  function answerAsk({ key, yes, projects, rights, trust } = {}) {
+  // trusted from now on), a close request, or a request to open (always:
+  // open it, and give that guest the right to open from now on; main
+  // records the right and keeps checking it on every request).
+  function answerAsk({ key, yes, projects, rights, trust, always } = {}) {
     const i = state.asks.findIndex((a) => a.key === key)
     if (i < 0) return
     const a = dropAsk(i)
@@ -564,7 +562,10 @@ export function createLiveShareWindow(deps) {
         })
         .catch(() => {})
     } else if (a.kind === 'close' && yes && closeStands(a)) closeForGuest(a.paneId, a.name)
-    else if (a.kind === 'open' && yes && openStands(a)) openForGuest(a.spec, a.name)
+    else if (a.kind === 'open' && yes && openStands(a)) {
+      openForGuest(a.spec, a.name)
+      if (always && a.guestId) Promise.resolve(api()?.access?.({ subject: a.guestId, right: 'open', on: true })).catch(() => {})
+    }
   }
 
   // People's "Let in…" for a guest waiting for your answer: their ask comes
@@ -1777,6 +1778,15 @@ export function createLiveShareWindow(deps) {
     if (p) applyLayout(ws, p)
     return true
   }
+  // Your screen in one of the host's projects stops following the host's
+  // (the pill's follow switch turned off), as your own pick would.
+  function stopFollowing(ws = deps.currentWs()) {
+    if (!isGuestWs(ws) || ws.liveShare.session !== state.guest.session) return false
+    const fs = state.follow[ws.liveShare.project]
+    if (!fs || !fs.on) return false
+    fs.on = false
+    return true
+  }
   // What the pill says of a host's project on screen: { on (following), copy
   // (the task copy the host looks at, its branch, or null) }, or null.
   function followInfo(ws = deps.currentWs()) {
@@ -2029,6 +2039,7 @@ export function createLiveShareWindow(deps) {
     quietFocus,
     // Following the host (guest).
     followHost,
+    stopFollowing,
     followInfo,
     hideHostTab,
     isHostTab,

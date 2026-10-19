@@ -40,7 +40,8 @@ function setup() {
     leave: vi.fn(),
     setAgents: vi.fn(),
     focus: vi.fn(),
-    requestDone: vi.fn()
+    requestDone: vi.fn(),
+    access: vi.fn(async () => ({ ok: true }))
   }
   for (const name of ['onHost', 'onGuest', 'onAsk', 'onHostRequest', 'onNotice', 'onPresence', 'onInviteBlocked']) {
     api[name] = (cb) => {
@@ -374,11 +375,11 @@ describe('Live Share in the window, as the host', () => {
     expect(t.ls.chosenIds()).toEqual(['ws-2'])
   })
 
-  it('a share back after a restart says so once (a toast)', async () => {
+  it('a share back after a restart is said by the status, not a toast', async () => {
     twoProjects()
     sharingNow(['ws-1'], { resumed: 1234 })
-    sharingNow(['ws-1'], { resumed: 1234 })
-    expect(t.toasts.filter((x) => /started again/.test(x))).toHaveLength(1)
+    expect(t.toasts.filter((x) => /started again/.test(x))).toHaveLength(0)
+    expect(t.ls.state.host.resumed).toBe(1234)
   })
 
   it('picks the projects before you start: several, at least one', async () => {
@@ -569,6 +570,11 @@ describe('Live Share in the window, as the host', () => {
     expect(t.ls.state.asks).toHaveLength(3)
     t.ls.answerAsk({ key: t.ls.state.asks[0].key, yes: false })
     expect(t.deps.launch).toHaveBeenCalledTimes(1)
+    expect(t.api.access).not.toHaveBeenCalled()
+    // Always let Alex open: it opens, and main gives Alex the right.
+    t.ls.answerAsk({ key: t.ls.state.asks[0].key, yes: true, always: true })
+    expect(t.deps.launch).toHaveBeenCalledTimes(2)
+    expect(t.api.access).toHaveBeenCalledWith({ subject: 'g1', right: 'open', on: true })
   })
 
   it('main calls a request off: its prompt goes and nothing opens; one opened with the right is done with', async () => {

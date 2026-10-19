@@ -9,7 +9,8 @@
 // is here, the dialog asks first (stop).
 import { computed } from 'vue'
 import { Loader2 } from 'lucide-vue-next'
-import { t, intlLocale } from '../../i18n'
+import { agoText, clockText } from '../../liveShareTime'
+import { t } from '../../i18n'
 
 const props = defineProps({
   host: { type: Object, required: true },
@@ -18,7 +19,9 @@ const props = defineProps({
   // Getting ready: what it does now (LiveShareDialog's progress line).
   progress: { type: String, default: '' },
   // The stop confirm is open: its own Stop sharing is the only one.
-  confirming: { type: Boolean, default: false }
+  confirming: { type: Boolean, default: false },
+  // The time now (the dialog's clock), for "published 2 min ago".
+  now: { type: Number, default: 0 }
 })
 // stop: Stop sharing (asked first by the dialog); cancel: while getting ready.
 const emit = defineEmits(['stop', 'cancel'])
@@ -28,9 +31,12 @@ const settings = computed(() => props.host.settings || {})
 const relayOn = computed(() => settings.value.rendezvous !== false)
 const hidden = computed(() => settings.value.hideIgnored !== false)
 // Since when (main's start time, when it gives one), in the interface's language.
-const sinceAt = computed(() => {
-  const at = props.host.since || props.host.startedAt
-  return Number.isFinite(at) ? new Intl.DateTimeFormat(intlLocale(), { hour: '2-digit', minute: '2-digit' }).format(at) : ''
+const sinceAt = computed(() => clockText(props.host.since || props.host.startedAt))
+// When the relay last had the share's address (its tag's tooltip).
+const relayTitle = computed(() => {
+  if (!relayOn.value) return t('liveShare.status.relayOffHint', 'Guests can’t find your share again if its address changes.')
+  const ago = agoText(props.host.relayAt, props.now || Date.now())
+  return ago ? t('liveShare.setting.relayPublished', 'Your address was last published {{ago}}.', { ago }) : t('liveShare.setting.relayNotYet', 'Your address is not published yet.')
 })
 const title = computed(() => {
   const n = props.projects
@@ -48,7 +54,7 @@ const title = computed(() => {
         <div class="lss-title" data-test="ls-status-title">{{ title }}</div>
         <div class="lss-tags">
           <span class="tag tag-scope" :title="t('liveShare.status.permanentHint', 'Until you stop it, the share starts again by itself when Tessel restarts, with its invitations and people.')" data-test="ls-status-permanent">{{ t('liveShare.status.permanent', 'Comes back after restarts') }}</span>
-          <span class="tag" :class="relayOn ? 'tag-ok' : 'tag-off'" data-test="ls-status-relay">{{ relayOn ? t('liveShare.status.relayOn', 'Relay on') : t('liveShare.status.relayOff', 'Relay off') }}</span>
+          <span class="tag" :class="relayOn ? 'tag-ok' : 'tag-off'" :title="relayTitle" data-test="ls-status-relay">{{ relayOn ? t('liveShare.status.relayOn', 'Relay on') : t('liveShare.status.relayOff', 'Relay off') }}</span>
           <span v-if="hidden" class="tag" data-test="ls-status-hidden">{{ t('liveShare.status.hidden', 'Secret files hidden') }}</span>
           <span v-if="host.resumed" class="tag tag-info" data-test="ls-status-resumed">{{ t('liveShare.status.resumed', 'Came back after a restart') }}</span>
         </div>
