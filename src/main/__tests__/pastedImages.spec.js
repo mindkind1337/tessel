@@ -42,10 +42,41 @@ describe('[Image #N] in a Claude Code conversation', () => {
     fs.mkdirSync(dir, { recursive: true })
     fs.writeFileSync(join(dir, `${SID}.jsonl`), lines.join('\n') + '\n')
     const f = await claudeImageFile({ sessionId: SID, n: 8 }, home, out)
-    expect(f).toMatch(/claude-6da350a1-image-8\.png$/)
+    expect(f).toMatch(/claude-[0-9a-f]{16}-image-8-[0-9a-f]{16}\.png$/)
     expect(fs.readFileSync(f, 'utf8')).toBe('second image')
+    // Asked again: the same copy.
+    expect(await claudeImageFile({ sessionId: SID, n: 8 }, home, out)).toBe(f)
     expect(await claudeImageFile({ sessionId: SID, n: 9 }, home, out)).toBe(null)
     expect(await claudeImageFile({ sessionId: 'not-a-session', n: 7 }, home, out)).toBe(null)
+  })
+
+  it('never answers with a copy saved for another session or another image of that number', async () => {
+    const other = '6da350a1-0000-4000-8000-000000000000' // the same first 8 characters
+    const dir = join(home, '.claude', 'projects', 'C--x')
+    fs.mkdirSync(dir, { recursive: true })
+    const entry = (data) => JSON.stringify({ type: 'user', imagePasteIds: [3], message: { content: [{ type: 'text', text: '[Image #3]' }, img(data)] } })
+    fs.writeFileSync(join(dir, `${SID}.jsonl`), entry(PNG_A) + '\n')
+    fs.writeFileSync(join(dir, `${other}.jsonl`), entry(PNG_B) + '\n')
+    const mine = await claudeImageFile({ sessionId: SID, n: 3 }, home, out)
+    const theirs = await claudeImageFile({ sessionId: other, n: 3 }, home, out)
+    expect(theirs).not.toBe(mine)
+    expect(fs.readFileSync(mine, 'utf8')).toBe('first image')
+    expect(fs.readFileSync(theirs, 'utf8')).toBe('second image')
+    // The session resumed and #3 reused for another image: the newest one.
+    fs.appendFileSync(join(dir, `${SID}.jsonl`), entry(PNG_B) + '\n')
+    const again = await claudeImageFile({ sessionId: SID, n: 3 }, home, out)
+    expect(again).not.toBe(mine)
+    expect(fs.readFileSync(again, 'utf8')).toBe('second image')
+  })
+
+  it('the pasted file gone from %TEMP%: the transcript bytes are saved again', async () => {
+    const dir = join(home, '.claude', 'projects', 'C--x')
+    fs.mkdirSync(dir, { recursive: true })
+    fs.writeFileSync(join(dir, `${SID}.jsonl`), JSON.stringify({ type: 'user', imagePasteIds: [1], message: { content: [img(PNG_A)] } }) + '\n')
+    const f = await claudeImageFile({ sessionId: SID, n: 1 }, home, out)
+    fs.rmSync(f)
+    expect(await claudeImageFile({ sessionId: SID, n: 1 }, home, out)).toBe(f)
+    expect(fs.readFileSync(f, 'utf8')).toBe('first image')
   })
 
   it('only files Tessel saved itself are opened directly', () => {

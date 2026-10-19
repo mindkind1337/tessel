@@ -18,8 +18,10 @@ import { createQuestionRequests, normalizeQuestions, providerAnswers } from './q
 import { EventEmitter } from 'events'
 import { spawn as nodeSpawn } from 'child_process'
 import { randomUUID } from 'crypto'
+import { fileURLToPath } from 'url'
 import { killClaudeTree } from './claudeChat'
-import { clipText, toolResultText, TOOL_OUTPUT_MAX_BYTES } from './claudeFrames'
+import { clipText, toolResultImages, toolResultText, TOOL_OUTPUT_MAX_BYTES } from './claudeFrames'
+import { liveImages } from './historyAttachments.js'
 import { createSubagentTracker, subagentTokens } from './subagents.js'
 import { observeCodexSubagents } from './codexSubagents.js'
 
@@ -159,9 +161,11 @@ export function isCodexAuthError(err) {
 // ---- pure frame normalization -------------------------------------------------
 
 // The state the normalizer keeps between notifications of one process.
-export function createCodexState({ threadId = null, model = null, permissionMode = 'default', now = Date.now } = {}) {
+// remote: the Codex runs on an SSH host (a path it names is the host's).
+export function createCodexState({ threadId = null, model = null, permissionMode = 'default', now = Date.now, remote = false } = {}) {
   return {
     threadId,
+    remote: remote === true,
     subagents: createSubagentTracker(now),
     model,
     permissionMode,
@@ -231,8 +235,50 @@ function toolUseOf(item, state) {
       const a = obj(item.action)
       return { name: 'WebSearch', input: { query: str(item.query) || str(a.query) || (Array.isArray(a.queries) ? a.queries.join(' | ') : '') || str(a.url) } }
     }
+    case 'imageView':
+      return { name: 'ViewImage', input: { path: str(item.path) } }
+    case 'imageGeneration':
+      return { name: 'ImageGeneration', input: { prompt: str(item.revisedPrompt) } }
     default:
       return null
+  }
+}
+
+// A local path from a path or a file: URL (Codex reports both).
+function itemPath(v) {
+  const s = str(v)
+  if (!/^file:/i.test(s)) return s
+  try {
+    return fileURLToPath(s)
+  } catch {
+    return ''
+  }
+}
+
+// A finished tool item's images (historyAttachments.js liveImages): an MCP
+// tool's image blocks, a dynamic tool's inputImage items, view_image's file
+// (listed by path: the window fetches it, from the SSH host for a remote
+// Codex), a generated image's bytes (else its saved file).
+// -> { images?, imagesMore? }
+function toolImagesOf(item, state) {
+  switch (item.type) {
+    case 'mcpToolCall':
+      return toolResultImages(obj(item.result).content)
+    case 'dynamicToolCall': {
+      const items = (Array.isArray(item.contentItems) ? item.contentItems : []).filter((c) => c && c.type === 'inputImage').map((c) => ({ dataUrl: str(c.imageUrl) }))
+      return items.length ? liveImages(items) : {}
+    }
+    case 'imageView': {
+      const path = itemPath(item.path)
+      return path ? liveImages([{ path, remote: state.remote }]) : {}
+    }
+    case 'imageGeneration': {
+      if (str(item.result)) return liveImages([{ base64: item.result, name: str(item.savedPath).split(/[\\/]/).pop() || undefined }])
+      const path = itemPath(item.savedPath)
+      return path ? liveImages([{ path, remote: state.remote }]) : {}
+    }
+    default:
+      return {}
   }
 }
 
@@ -257,15 +303,19 @@ function toolResultOf(item) {
     case 'mcpToolCall': {
       if (item.error && typeof item.error === 'object') return { isError: true, text: str(item.error.message) }
       const r = obj(item.result)
-      let text = toolResultText(Array.isArray(r.content) ? r.content : [])
+      let text = toolResultText(Array.isArray(r.content) ? r.content : [], { images: false })
       if (!text && r.structuredContent != null) text = JSON.stringify(r.structuredContent)
       return { isError: status === 'failed', text }
     }
     case 'dynamicToolCall': {
-      const items = Array.isArray(item.contentItems) ? item.contentItems : []
+      const items = (Array.isArray(item.contentItems) ? item.contentItems : []).filter((c) => !(c && c.type === 'inputImage'))
       const text = items.map((c) => (c && c.type === 'inputText' ? str(c.text) : `[${str(c && c.type) || 'content'}]`)).join('\n')
       return { isError: item.success === false || status === 'failed', text }
     }
+    case 'imageView':
+      return { isError: status === 'failed', text: '' }
+    case 'imageGeneration':
+      return { isError: status === 'failed', text: str(item.revisedPrompt) }
     case 'webSearch': {
       const n = Array.isArray(item.results) ? item.results.length : null
       return { isError: false, text: n == null ? str(item.query) : `${str(item.query)} (${n} results)` }
@@ -481,7 +531,7 @@ export function normalizeCodexNotification(method, params, state) {
       }
       if (method === 'item/completed') {
         const r = toolResultOf(item)
-        if (r) out.push({ type: 'toolResult', toolUseId: id, isError: r.isError, text: clipText(r.text, TOOL_OUTPUT_MAX_BYTES), parentToolUseId: null })
+        if (r) out.push({ type: 'toolResult', toolUseId: id, isError: r.isError, text: clipText(r.text, TOOL_OUTPUT_MAX_BYTES), ...toolImagesOf(item, state), parentToolUseId: null })
       }
       break
     }
@@ -568,7 +618,7 @@ function normalizeCodexChild(method, p, state) {
         const result = completed ? toolResultOf(item) : null
         const status = result ? result.isError ? 'failed' : 'completed' : 'running'
         state.subagents.progress(entry.id, { id, name: use.name, status }, out)
-        if (result && previous !== status) out.push({ type: 'toolResult', toolUseId: id, isError: result.isError, text: clipText(result.text), ...provenance })
+        if (result && previous !== status) out.push({ type: 'toolResult', toolUseId: id, isError: result.isError, text: clipText(result.text), ...toolImagesOf(item, state), ...provenance })
       }
     }
   }
@@ -694,7 +744,7 @@ export function createCodexChat(opts) {
   let effort = opts.effort || null
   let permissions = opts.permissions === 'yolo' ? 'yolo' : 'manual'
   const chat = new EventEmitter()
-  const state = createCodexState({ threadId: null, model, permissionMode: permissions === 'yolo' ? 'bypassPermissions' : 'default', now })
+  const state = createCodexState({ threadId: null, model, permissionMode: permissions === 'yolo' ? 'bypassPermissions' : 'default', now, remote: remote === true })
 
   let child = null
   let startPromise = null

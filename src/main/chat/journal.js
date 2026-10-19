@@ -15,6 +15,9 @@ import { join } from 'path'
 import { readJsonSafe, writeJsonSafe } from '../safeJson.js'
 
 export const CLIP_BYTES = 8 * 1024
+// A tool result's images kept with it (their data: URLs, all together); past
+// that, each image keeps its name and type, marked missing (not kept).
+export const IMAGE_KEEP_BYTES = 1024 * 1024
 export const ROTATE_BYTES = 20 * 1024 * 1024
 export const READ_LAST = 2000
 const TAIL_CHUNK = 64 * 1024
@@ -43,6 +46,25 @@ export function clipDeep(value, depth = 0) {
   const out = {}
   for (const [k, v] of Object.entries(value).slice(0, 200)) out[k] = clipDeep(v, depth + 1)
   return out
+}
+
+// An entry's images as kept: the shape historyAttachments.js describes, the
+// data: URLs only while they fit IMAGE_KEEP_BYTES (never clipped: a cut data:
+// URL is no image).
+const IMAGE_FIELDS = ['key', 'name', 'source', 'mime', 'mediaType', 'bytes', 'path', 'missing', 'remote']
+export function keptImages(images) {
+  let room = IMAGE_KEEP_BYTES
+  return images.slice(0, 16).flatMap((img) => {
+    if (!img || typeof img !== 'object') return []
+    const out = {}
+    for (const k of IMAGE_FIELDS) if (img[k] !== undefined && (typeof img[k] !== 'string' || img[k].length <= 4096)) out[k] = img[k]
+    const data = typeof img.dataUrl === 'string' ? img.dataUrl : ''
+    if (data && data.length <= room) {
+      room -= data.length
+      out.dataUrl = data
+    } else if (data) out.missing = true
+    return [out]
+  })
 }
 
 export function createChatJournal({ dir, paneId, rotateBytes = ROTATE_BYTES, now = Date.now, log = null }) {
@@ -78,6 +100,7 @@ export function createChatJournal({ dir, paneId, rotateBytes = ROTATE_BYTES, now
     // (the 'subagents' snapshots and start/end), not every tool it ran.
     if (event.type === 'subagent' && event.phase === 'progress' && event.tool) return false
     let stored = CLIPPED.has(event.type) ? clipDeep(event) : event
+    if (CLIPPED.has(event.type) && Array.isArray(event.images)) stored = { ...stored, images: keptImages(event.images) }
     // An approval's preview is already bounded, and its hidden count is
     // counted from it: kept whole.
     if (event.type === 'approval' && typeof event.detail === 'string') stored = { ...stored, detail: event.detail }
