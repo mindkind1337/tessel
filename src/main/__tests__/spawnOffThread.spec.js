@@ -139,3 +139,20 @@ describe('spawnOff', () => {
     }
   })
 })
+
+describe('the worker and the process lifetime', () => {
+  it('holds the process only while a run is in flight (like a child started here), never when idle', async () => {
+    const { EventEmitter } = await import('node:events')
+    const w = new EventEmitter()
+    w.ref = vi.fn()
+    w.unref = vi.fn()
+    w.terminate = vi.fn()
+    w.postMessage = (m) => setTimeout(() => w.emit('message', { id: m.id, t: 'done', err: null, stdout: 'ok', stderr: '' }), 5)
+    spawner = createSpawner({ createWorker: () => w })
+    const p = exec(spawner, 'x', [], {})
+    expect(w.ref).toHaveBeenCalledTimes(1)
+    const unrefsBefore = w.unref.mock.calls.length
+    expect((await p).stdout).toBe('ok')
+    expect(w.unref.mock.calls.length).toBe(unrefsBefore + 1)
+  })
+})

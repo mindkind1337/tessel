@@ -18,8 +18,8 @@
 //     stdout / stderr ('data', setEncoding), stdin (write, end), kill(), and
 //     its 'spawn', 'error', 'exit' and 'close' events
 // When the worker cannot start (or dies), the program is started here as
-// before: never a lost run. The worker is started on the first use and does
-// not keep the app running.
+// before: never a lost run. The worker is started on the first use and keeps
+// the process running only while a program it started runs.
 import { execFile as nodeExecFile, spawn as nodeSpawn } from 'child_process'
 import { EventEmitter } from 'events'
 import { StringDecoder } from 'string_decoder'
@@ -108,6 +108,16 @@ export function createSpawner({ createWorker = defaultWorker, execFile = nodeExe
   let failed = false
   let nextId = 0
   const pending = new Map() // id -> handler(msg)
+  // The worker keeps the process running only while a run is in flight, as
+  // a child started here would (an idle worker never holds a quit back).
+  function hold(id, handler) {
+    pending.set(id, handler)
+    if (pending.size === 1 && worker && typeof worker.ref === 'function') worker.ref()
+  }
+  function release(id) {
+    if (!pending.delete(id)) return
+    if (!pending.size && worker && typeof worker.unref === 'function') worker.unref()
+  }
 
   function ensure() {
     if (worker || failed) return worker
@@ -146,8 +156,8 @@ export function createSpawner({ createWorker = defaultWorker, execFile = nodeExe
     const w = plain && ensure()
     if (!w) return execFile(file, args, opts, callback)
     const id = ++nextId
-    pending.set(id, (msg) => {
-      pending.delete(id)
+    hold(id, (msg) => {
+      release(id)
       if (msg.t === 'lost') {
         callback(Object.assign(new Error('the process starter stopped'), { code: 'ESPAWNWORKER' }), '', '') // i18n-ignore internal
         return
@@ -157,7 +167,7 @@ export function createSpawner({ createWorker = defaultWorker, execFile = nodeExe
     try {
       w.postMessage({ id, op: 'exec', file, args: args || [], opts: { ...plain, ...(plain.env ? { env: { ...plain.env } } : {}) } })
     } catch {
-      pending.delete(id)
+      release(id)
       return execFile(file, args, opts, callback)
     }
     return undefined
@@ -214,7 +224,7 @@ export function createSpawner({ createWorker = defaultWorker, execFile = nodeExe
       return true
     }
     let closed = false
-    pending.set(id, (msg) => {
+    hold(id, (msg) => {
       switch (msg.t) {
         case 'spawn':
           child.pid = msg.pid
@@ -238,12 +248,12 @@ export function createSpawner({ createWorker = defaultWorker, execFile = nodeExe
           break
         case 'close':
           closed = true
-          pending.delete(id)
+          release(id)
           child.emit('close', msg.code, msg.signal)
           break
         case 'thrown':
           // spawn() threw there (bad arguments): an 'error' here, a tick later.
-          pending.delete(id)
+          release(id)
           child.emit('error', rebuildError(msg.err))
           break
         case 'lost':
@@ -257,7 +267,7 @@ export function createSpawner({ createWorker = defaultWorker, execFile = nodeExe
     try {
       w.postMessage({ id, op: 'spawn', file, args: args || [], opts: { ...plain, ...(plain.env ? { env: { ...plain.env } } : {}) } })
     } catch {
-      pending.delete(id)
+      release(id)
       return spawn(file, args, opts)
     }
     return child
