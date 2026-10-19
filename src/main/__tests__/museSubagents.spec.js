@@ -69,6 +69,9 @@ describe('Muse Code sub-agents', () => {
     // Not a session id: nothing noted.
     await runHook('SubagentStart', { session_id: top, child_session_id: '../../x' }, env)
     expect(fs.readdirSync(join(sessions, 'muse-children', top))).toEqual([`${explorer}.json`])
+    // Its background observers (announced the same way, nearly every turn): never noted.
+    await runHook('SubagentStart', { session_id: top, turn_id: 't2', subagent_id: 'skill-reminder', child_session_id: observer }, env)
+    expect(fs.readdirSync(join(sessions, 'muse-children', top))).toEqual([`${explorer}.json`])
   })
 
   it('listed from their own logs: task, model, effort, tokens, done or running; an observer’s log never', () => {
@@ -85,6 +88,8 @@ describe('Muse Code sub-agents', () => {
     fs.mkdirSync(reg, { recursive: true })
     fs.writeFileSync(join(reg, `${explorer}.json`), JSON.stringify({ startedAt: t0 + 60000, name: 'explorer', stoppedAt: t0 + 100000 }))
     fs.writeFileSync(join(reg, `${nested}.json`), JSON.stringify({ startedAt: t0 + 90000 }))
+    // An observer noted by an older hook script: still not a sub-agent.
+    fs.writeFileSync(join(reg, `${observer}.json`), JSON.stringify({ startedAt: t0 + 61000, name: 'goal-reminder' }))
     const now = Date.parse('2026-10-15T14:02:00Z')
     const rows = museSubagents(top, { sessionsDir: sessions, home, now })
     expect(rows.map((r) => r.id)).toEqual([nested, explorer])

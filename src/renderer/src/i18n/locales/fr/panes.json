@@ -468,6 +468,7 @@
       "fromCommand": "d'après sa commande",
       "fromPicked": "le dernier modèle choisi dans l'agent",
       "fromScreen": "lu à l'écran (barre d'état ou bannière)",
+      "fromSaved": "ce qu'il affichait avant le redémarrage de Tessel (relu dans un instant)",
       "fromRunning": "le seul modèle qu'Ollama fait tourner",
       "fromSettings": "d'après ses paramètres (un changement fait dans l'agent peut ne pas apparaître)",
       "titleEffort": "Modèle : {{model}} (raisonnement {{effort}})",

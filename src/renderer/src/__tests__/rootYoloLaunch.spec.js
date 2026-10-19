@@ -9,6 +9,7 @@ import fs from 'fs'
 import vm from 'vm'
 import { join } from 'path'
 import { reactive } from 'vue'
+import { savedPaneModel } from '../paneLastModel'
 import { HOST_ACCOUNT_AGENTS, validHostAccount, hostAccountChoice, defaultHostAccount } from '../hostAccounts'
 import { settings as appSettings } from '../settings'
 import {
@@ -68,6 +69,7 @@ function load({ username = 'root', status = { hostId: HOST, claude: '/usr/local/
     exitOf: () => null,
     performance,
     validPaneSessionOptions: () => null,
+    savedPaneModel,
     launchSessionValues: () => null,
     modelsFor: () => null,
     effectiveAgent,

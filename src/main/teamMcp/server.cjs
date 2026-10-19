@@ -1969,6 +1969,9 @@ function reportMuseChild(data) {
   const top = (str(process.env.MUSE_SESSION_ID) || str(data.session_id)).toLowerCase()
   const child = str(data.child_session_id).toLowerCase()
   if (!MUSE_ID.test(top) || !MUSE_ID.test(child) || child === top) return
+  // Its background observers (skill-, goal-, verify-reminder) are announced
+  // the same way, nearly every turn: never sub-agents.
+  if (/-reminder$/i.test(str(data.subagent_id))) return
   const dir = path.join(process.env.TESSEL_SESSIONS_DIR || path.join(__dirname, 'sessions'), 'muse-children', top)
   const file = path.join(dir, `${child}.json`)
   try {

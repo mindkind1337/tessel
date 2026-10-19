@@ -1546,6 +1546,12 @@ export function summarizeMuseTail(text) {
   return { last, tokens, model: m ? m.model : null, effort: m ? m.effort : null }
 }
 
+// Muse's background observers, by the name its hooks give them
+// ("skill-reminder", "goal-reminder", "verify-reminder"; Muse 1.4.10).
+export function isMuseObserver(name) {
+  return typeof name === 'string' && /-reminder$/i.test(name)
+}
+
 // sessionsDir: where the hooks note the children (Tessel's sessions folder).
 export function museSubagents(sessionId, { sessionsDir = null, home = os.homedir(), now = Date.now() } = {}) {
   if (!ID.test(String(sessionId)) || typeof sessionsDir !== 'string' || !isAbsolute(sessionsDir)) return []
@@ -1558,7 +1564,8 @@ export function museSubagents(sessionId, { sessionsDir = null, home = os.homedir
   } catch {
     return []
   }
-  for (const n of names.slice(0, 200)) {
+  // The newest first (Muse's ids start with their time).
+  for (const n of names.sort().reverse().slice(0, 400)) {
     const id = n.slice(0, -5).toLowerCase()
     if (!ID.test(id)) continue
     let entry
@@ -1567,6 +1574,9 @@ export function museSubagents(sessionId, { sessionsDir = null, home = os.homedir
     } catch {
       entry = {}
     }
+    // Its hooks announce its observers too (skill-, goal-, verify-reminder:
+    // one after nearly every turn, 145 in one afternoon): not sub-agents.
+    if (isMuseObserver(entry.name)) continue
     noted.set(id, entry)
   }
   if (!noted.size) return []

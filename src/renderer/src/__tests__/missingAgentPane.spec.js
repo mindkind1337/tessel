@@ -8,6 +8,7 @@ import fs from 'fs'
 import vm from 'vm'
 import { join } from 'path'
 import { reactive } from 'vue'
+import { savedPaneModel } from '../paneLastModel'
 import { HOST_ACCOUNT_AGENTS, validHostAccount, hostAccountChoice, defaultHostAccount } from '../hostAccounts'
 import { needsRemoteAgentCheck, remoteAgentLine, hasClaudeYoloFlag, rootSafeClaudeArgs } from '../remoteAgentLaunch'
 import { remoteInstallLine, remoteInstallPlan } from '../remoteAgentInstalls'
@@ -67,6 +68,7 @@ function load({ shared = true, status = null, tree = null } = {}) {
     exitOf: () => null,
     performance,
     validPaneSessionOptions: (o) => (o && o.model ? o : null),
+    savedPaneModel,
     validSavedFiles: () => [],
     launchSessionValues: () => null,
     modelsFor: () => null,

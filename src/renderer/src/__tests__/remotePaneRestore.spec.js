@@ -8,6 +8,7 @@ import fs from 'fs'
 import vm from 'vm'
 import { join } from 'path'
 import { reactive } from 'vue'
+import { savedPaneModel } from '../paneLastModel'
 import { HOST_ACCOUNT_AGENTS, validHostAccount, hostAccountChoice, defaultHostAccount } from '../hostAccounts'
 
 const source = fs.readFileSync(join(process.cwd(), 'src/renderer/src/App.vue'), 'utf8')
@@ -53,6 +54,7 @@ function load({ shared = false, tree = null } = {}) {
     exitOf: () => null,
     performance,
     validPaneSessionOptions: (o) => (o && o.model ? o : null),
+    savedPaneModel,
     validSavedFiles: () => [],
     launchPermissions: () => 'manual',
     hostShared: (id) => !!(states[id] && states[id].shared),
