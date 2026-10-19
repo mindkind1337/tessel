@@ -30,6 +30,7 @@ import { claudeTranscriptIn, codexRolloutIn } from '../agentModel.js'
 import { realInside } from '../agentChildren.js'
 import { allowedCodexHome } from '../codexTurnEnd.js'
 import { clipDeep, clipString } from './journal.js'
+import { structuredPatchLine, validCwd } from './editLine.js'
 import { toolName as opencodeToolName, toolInput as opencodeToolInput } from './opencodeFrames.js'
 import {
   ATTACHMENT_LIMITS,
@@ -235,7 +236,9 @@ export function createBuilder(limits) {
       messages.set(k, push({ type: kind, messageId: `hist-${key}`, text: text(body) }, ts)) // i18n-ignore id
     },
     // summary: the call's own one-line label, when its file gives one.
-    tool(id, name, input, ts, summary) {
+    // cwd: the folder the agent worked in for this call (a Codex patch names
+    // its files relative to it; the chat links them there).
+    tool(id, name, input, ts, summary, cwd = null) {
       b.work(ts)
       let value = input
       if (typeof value === 'string') {
@@ -248,7 +251,8 @@ export function createBuilder(limits) {
       openTools.add(id)
       seenTools.add(id)
       lastToolId = id
-      toolEvents.set(id, push({ type: 'tool', id, name: String(name || ''), summary: typeof summary === 'string' && summary.trim() ? oneLineSummary(summary) : toolSummary(value), input: clipDeep(value ?? {}), status: 'running' }, ts))
+      const folder = validCwd(cwd)
+      toolEvents.set(id, push({ type: 'tool', id, name: String(name || ''), summary: typeof summary === 'string' && summary.trim() ? oneLineSummary(summary) : toolSummary(value), input: clipDeep(value ?? {}), status: 'running', ...(folder ? { cwd: folder } : {}) }, ts))
     },
     hasTool: (id) => seenTools.has(id),
     lastTool: () => lastToolId,
@@ -270,11 +274,12 @@ export function createBuilder(limits) {
       openTools.clear()
     },
     // images: what the result held (candidates), resolved with the page.
-    toolResult(id, output, isError, ts, images = []) {
+    // editLine: the file's first changed line, when the agent recorded it.
+    toolResult(id, output, isError, ts, images = [], editLine = null) {
       if (!seenTools.has(id)) return
       b.work(ts)
       openTools.delete(id)
-      const e = push({ type: 'toolResult', id, isError: isError === true, text: clipString(resultText(output)) }, ts)
+      const e = push({ type: 'toolResult', id, isError: isError === true, text: clipString(resultText(output)), ...(Number.isSafeInteger(editLine) && editLine > 0 ? { editLine } : {}) }, ts)
       resultEvents.set(id, e)
       if (limits.attachments) {
         noteAttachments(e, [...(Array.isArray(images) ? images : []), ...(toolPictures.get(id) || [])])
@@ -367,7 +372,7 @@ export function claudeHistoryEvents(lines, limits = HISTORY_LIMITS) {
         const o = obj(blk)
         if (!o) continue
         // toolUseResult describes the line's one tool result.
-        if (o.type === 'tool_result' && str(o.tool_use_id)) b.toolResult(o.tool_use_id, o.content, o.is_error, ts, limits.attachments ? claudeToolImages(o.content, results === 1 ? r.toolUseResult : null) : [])
+        if (o.type === 'tool_result' && str(o.tool_use_id)) b.toolResult(o.tool_use_id, o.content, o.is_error, ts, limits.attachments ? claudeToolImages(o.content, results === 1 ? r.toolUseResult : null) : [], results === 1 ? structuredPatchLine(r.toolUseResult) : null)
         else if (o.type === 'text' && str(o.text) && !meta) texts.push(o.text)
         else if (o.type === 'image' && !meta) attachments.push(claudeImage(o, pasted ? 'pasted' : 'user'))
         else if (o.type === 'document' && !meta && limits.attachments) attachments.push(claudeDocument(o))
@@ -391,7 +396,7 @@ export function claudeHistoryEvents(lines, limits = HISTORY_LIMITS) {
       if (!o) continue
       if (o.type === 'text' && str(o.text)) b.message('assistant', key, o.text, ts, '\n\n')
       else if (o.type === 'thinking' && str(o.thinking)) b.message('thinking', key, o.thinking, ts, '\n')
-      else if (o.type === 'tool_use' && str(o.id)) b.tool(o.id, o.name, o.input, ts)
+      else if (o.type === 'tool_use' && str(o.id)) b.tool(o.id, o.name, o.input, ts, undefined, r.cwd)
     }
   }
   return b.finish()
@@ -557,6 +562,10 @@ export function codexHistoryEvents(lines, threadId, limits = HISTORY_LIMITS) {
     if (turnId && urls.some(Boolean)) turnImages.set(turnId, urls)
   }
   let lastSentImages = [] // the newest response user message's, for the event lines
+  // The folder the turn runs in (session_meta, then each turn_context): an
+  // apply_patch names its files relative to it, and a turn may run in a
+  // worktree copy rather than the project folder.
+  let turnCwd = null
   const b = createBuilder(limits)
   const responseItem = (p, ts) => {
     const type = p.type
@@ -575,7 +584,7 @@ export function codexHistoryEvents(lines, threadId, limits = HISTORY_LIMITS) {
     }
     if (type === 'function_call' || type === 'custom_tool_call' || type === 'local_shell_call') {
       const id = str(p.call_id) || str(p.id) || b.nextId('t')
-      b.tool(id, str(p.name) || (type === 'local_shell_call' ? 'shell' : 'tool'), p.arguments ?? p.input ?? p.action ?? null, ts) // i18n-ignore tool name
+      b.tool(id, str(p.name) || (type === 'local_shell_call' ? 'shell' : 'tool'), p.arguments ?? p.input ?? p.action ?? null, ts, undefined, turnCwd) // i18n-ignore tool name
       return
     }
     if (type === 'function_call_output' || type === 'custom_tool_call_output') {
@@ -591,6 +600,10 @@ export function codexHistoryEvents(lines, threadId, limits = HISTORY_LIMITS) {
     if (!p) {
       // The oldest rollouts: response items without an envelope.
       if (typeof r.type === 'string') responseItem(r, ts)
+      continue
+    }
+    if (r.type === 'turn_context' || r.type === 'session_meta') {
+      turnCwd = validCwd(p.cwd) || turnCwd
       continue
     }
     if (r.type === 'response_item') {

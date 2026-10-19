@@ -152,6 +152,7 @@ const api = {
   // File references in a terminal: { cwd, paths } -> { path: absolute | null };
   // { file, line, col } opens it (VS Code at the line, else its default app).
   resolveFiles: (q) => ipcRenderer.invoke('files:resolve', q),
+  wslDistro: () => ipcRenderer.invoke('files:wslDistro'),
   openFile: (q) => ipcRenderer.invoke('files:open', q),
   viewFile: (file) => ipcRenderer.invoke('files:view', file),
   // Paths named in the native chat: [paths] -> { path: 'file' | 'dir' | null }

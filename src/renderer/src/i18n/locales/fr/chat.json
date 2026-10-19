@@ -797,5 +797,15 @@
   "chat.orca.queued.editGone": "Déjà envoyé : votre texte modifié est dans la zone de saisie.",
   "chat.orca.queued.gone": "Ce message est déjà en cours d'envoi.",
   "chat.orca.queued.typeNowHint": "Le taper dans le terminal maintenant, sans attendre la fin du tour",
-  "chat.orca.queued.untilTurnEnd": "Tapé à la fin du tour"
+  "chat.orca.queued.untilTurnEnd": "Tapé à la fin du tour",
+  "chat.agentEdits.cannotOpen": "Ce fichier ne peut pas être ouvert d'ici : {{path}}",
+  "chat.agentEdits.noDiff": "Aucun diff à afficher pour {{path}}",
+  "chat.agentEdits.openAtLine": "Ouvrir {{path}} à la ligne {{line}}",
+  "chat.agentEdits.open": "Ouvrir {{path}}",
+  "chat.agentEdits.openAtChange": "Ouvrir {{path}} à sa première modification",
+  "chat.agentEdits.openDiff": "Ouvrir le diff",
+  "chat.agentEdits.changedOne": "1 fichier modifié",
+  "chat.agentEdits.changedMany": "{{count}} fichiers modifiés",
+  "chat.agentEdits.reviewAll": "Tout examiner",
+  "chat.agentEdits.reviewAllHint": "Examiner les modifications de ce panneau (la revue de sa tâche, ou le contrôle de code source)"
 }

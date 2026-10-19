@@ -2996,6 +2996,37 @@ function openScmDiff({ root, rel, oldRel = null, area, status = null, file, prev
   )
   return leaf
 }
+// An agent's edit from the chat (its tool card, the turn's changed files): its
+// before and after in their own diff tab ("name (agent edit)"), read-only.
+// original / modified: the file's whole text before and now, or the edit's
+// own snippets (snippet: true) when the file no longer holds what it wrote.
+function openAgentDiff({ file, original = '', modified = '', snippet = false, key = '', line = null } = {}) {
+  if (typeof file !== 'string' || !file || typeof original !== 'string' || typeof modified !== 'string') return null
+  const path = diffTabPath(file, 'agent', /^[a-z0-9]{1,16}$/.test(String(key)) ? key : 'edit')
+  const leaf = openInTesselEditor({ file: path, line: Number.isInteger(line) && line > 0 ? line : null, preview: true })
+  if (!leaf) return null
+  leaf.files = leaf.files.map((f) =>
+    samePath(f.path, path) ? { ...f, mode: f.mode === 'rich' ? 'rich' : 'diff', diff: { root: null, rel: null, area: 'agent', full: file, original, modified, snippet: !!snippet } } : f
+  )
+  return leaf
+}
+// "Review all" under an agent's turn: its task's Review when it works in a
+// worktree copy, else Source Control on its folder (the pane made active, so
+// the Changes tab shows that pane's copy).
+function reviewPaneChanges(paneId) {
+  const leaf = paneId ? findLeaf(paneId) : null
+  if (!leaf) return false
+  const task = taskOfPane(paneId) || boardTasks.find((t) => t.paneId === paneId && t.worktree && t.column !== 'done')
+  if (task && task.worktree) {
+    openReview(task.id)
+    return true
+  }
+  const ws = wsOfLeaf(paneId)
+  if (ws && ws.id !== currentWsId.value) selectWorkspace(ws.id)
+  setActive(paneId)
+  showSideTab('changes')
+  return true
+}
 // "Create PR" from Source Control: GitHub's pull request form for that folder.
 function openCreatePr({ cwd, taskId = null } = {}) {
   const task = taskId ? boardTasks.find((t) => t.id === taskId) : null
@@ -3105,6 +3136,7 @@ function diffTabLabel(f) {
   if (f.diff.area === 'commit') return t('editor.tab.commitDiff', '{{name}} ({{commit}})', { name, commit: String(f.diff.commit || '').slice(0, 7) })
   if (f.diff.area === 'staged') return t('editor.tab.stagedDiff', '{{name}} (staged diff)', { name })
   if (f.diff.area === 'local') return localDiffLabel(name, f.diff.localTime)
+  if (f.diff.area === 'agent') return t('editor.tab.agentDiff', '{{name}} (agent edit)', { name })
   return t('editor.tab.diff', '{{name}} (diff)', { name })
 }
 const openEditors = computed(() => {
@@ -3455,6 +3487,9 @@ provide('panelCtx', {
   openGuestUrl: (url, opts) => openGuestUrl(url, opts),
   // A file:line link into Tessel's editor ({ file, line, col }).
   openInEditor: (q) => openInTesselEditor(q),
+  // An agent's edit in an editor diff tab, and a pane's changes reviewed (the chat's file cards).
+  openAgentDiff: (q) => openAgentDiff(q),
+  reviewPaneChanges: (id) => reviewPaneChanges(id),
   // Any link (a file, folder, image, PDF, web page, mail address): the one
   // router, so it opens the same way from every surface (links/openTarget.js).
   openTarget: (target, opts) => linkRouter.open(target, opts),
@@ -7975,6 +8010,13 @@ const reviewActions = {
     const task = reviewTask.value
     reviewTaskId.value = null
     if (task && task.paneId) focusPane(task.paneId)
+  },
+  // A changed file of the task's copy, in Tessel's editor (at its first
+  // change); the review closes so the editor is in view.
+  openInEditor({ file, line = null } = {}) {
+    if (typeof file !== 'string' || !file) return false
+    reviewTaskId.value = null
+    return !!openInTesselEditor({ file, line: Number.isInteger(line) && line > 0 ? line : null, preview: false })
   },
   // A task done in the project folder: its changes are the project's, shown
   // in the Changes tab (list, diffs, review notes) like Orca's review.

@@ -443,8 +443,10 @@ const fileLinkContext = computed(() => {
   // On an SSH host: the host's files, opened over the remote file system.
   const hostRoot = n && n.remoteHostId ? remoteRoot(n.remoteHostId, n.remotePath || '~') : null
   if (hostRoot) return { worktreeId: n.id, worktreePath: hostRoot, roots: [hostRoot], runtimeEnvironmentId: null, remote: true, remoteRoot: hostRoot }
-  const folder = n && (n.startDir || n.cwd || n.projectDir)
-  return folder ? { worktreeId: n.id, worktreePath: folder, roots: [folder, n.projectDir].filter(Boolean) } : null
+  // A pane working in a worktree copy reads its relative paths there (the
+  // agent's "src/a.js" is the copy's, not the project checkout's).
+  const folder = n && ((n.worktree && n.worktree.path) || n.startDir || n.cwd || n.projectDir)
+  return folder ? { worktreeId: n.id, worktreePath: folder, roots: [...new Set([folder, n.startDir, n.projectDir].filter(Boolean))] } : null
 })
 // A Live Share host's conversation (a guest's window): its web links are
 // filtered and open in the Live Share browser (App.vue openGuestUrl), never

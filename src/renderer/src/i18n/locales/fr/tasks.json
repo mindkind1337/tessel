@@ -250,7 +250,9 @@
     "feedbackHint": "Envoyer vos remarques à l'agent",
     "agentWasClosed": "L'agent a été fermé",
     "requestChanges": "Demander des modifications…",
-    "markDone": "Marquer comme terminée"
+    "markDone": "Marquer comme terminée",
+    "openInEditor": "Ouvrir dans l'éditeur",
+    "openInEditorHint": "Ouvrir {{path}} dans l'éditeur"
   },
   "activity": {
     "period": {
