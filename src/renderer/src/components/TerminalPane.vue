@@ -93,6 +93,7 @@ import { readText as readScreenText, createShellIntegration, createTerminalAdapt
 import { terminalControl, terminalLog } from '../agentTerminal/agentTerminalState'
 import { nativeChatSessionChoiceLabel } from '../chat/orca/native-chat-session-option-labels'
 import { liveShareFit, liveShareOffset, LS_TEXT_SIZES } from '../liveShareFit'
+import { pasteFailText } from '../liveSharePaste'
 import { layoutDragging } from '../layoutDrag'
 import { claimWebgl, releaseWebgl, noteWebglShown } from '../terminalWebgl'
 
@@ -2120,6 +2121,8 @@ function onDrop(e) {
   const toPath = window.shellApi.pathForFile || (() => '')
   const paths = files.map((f) => toPath(f)).filter(Boolean)
   if (!paths.length) return
+  if (props.node.backend === 'liveshare') return dropOnHostPane(paths)
+  if (props.node.remoteHostId && window.shellApi.sendImageFileToHost && paths.some(isImagePath)) return dropOnSshPane(paths)
   window.shellApi.writePty(props.node.id, paths.map(quotePath).join(' ') + ' ')
   focusTerm()
 }
@@ -2190,9 +2193,12 @@ async function pasteClipboard(how = 'menu') {
 // themselves on Ctrl+V (Codex does it quickly). An agent on an SSH host would
 // read the server's clipboard (a server has none: "X11 ... unreachable"):
 // the image is sent to the host and its path there pasted (Claude Code and
-// Codex attach a pasted image path).
+// Codex attach a pasted image path). Any pane on an SSH host, not only an
+// agent pane: an agent started by hand in a shell there (codex typed at its
+// prompt) read the server's clipboard on the Ctrl+V key it was sent.
 async function pasteImage(how = 'Ctrl+V') {
-  if (props.node.remoteHostId && isAgent.value && window.shellApi.sendClipboardImageToHost) {
+  if (props.node.backend === 'liveshare') return pasteImageOnHost(how)
+  if (props.node.remoteHostId && window.shellApi.sendClipboardImageToHost) {
     let res = null
     try {
       res = await window.shellApi.sendClipboardImageToHost(props.node.remoteHostId)
@@ -2234,6 +2240,91 @@ async function pasteImage(how = 'Ctrl+V') {
     logPaste(`${how}: image, Ctrl+V sent to the agent`) // i18n-ignore
   }
   if (term) termFocus()
+}
+
+// A Live Share pane (a host's): a path here means nothing on the host's
+// computer, so the image itself is sent there (main/liveShare/sharePaste.js),
+// saved by the host's Tessel, and its path pasted there as the host's own
+// paste would (pasteImageFile below, on the host's side). Only with the
+// right to type in it; one image at a time.
+async function pasteImageOnHost(how, from = {}) {
+  const host = (props.node.liveShare && props.node.liveShare.host) || ''
+  const fail = (code) => {
+    logPaste(`${how}: image not pasted on the Live Share host (${code})`) // i18n-ignore
+    if (ctx.toast) ctx.toast(pasteFailText(code, host), { kind: 'error', timeout: 6000 })
+  }
+  if (liveShareViewOnly()) fail('forbidden')
+  else if (!window.shellApi.liveShare || !window.shellApi.liveShare.pasteImage) fail('outdated')
+  else {
+    let res = null
+    try {
+      res = await window.shellApi.liveShare.pasteImage(props.node.id, from)
+    } catch {
+      res = null
+    }
+    if (res && res.ok) logPaste(`${how}: image sent to the Live Share host, its path pasted there`) // i18n-ignore
+    else fail((res && res.code) || 'failed')
+  }
+  if (term) termFocus()
+}
+// Files dropped on a host's pane: images are sent like a pasted one (one
+// after the other); other files are not (their paths are of this computer).
+const isImagePath = (p) => /\.(png|jpe?g|gif|webp|bmp)$/i.test(p)
+async function dropOnHostPane(paths) {
+  const images = paths.filter(isImagePath)
+  if (images.length < paths.length && ctx.toast) ctx.toast(t('liveShare.paste.dropImagesOnly', 'Only images can be dropped on a host’s pane.'), { timeout: 5000 })
+  for (const file of images.slice(0, 5)) await pasteImageOnHost('drop', { file })
+}
+// Files dropped on a pane on an SSH host: a path of this computer means
+// nothing there, so each image is sent to the host (as a pasted one) and its
+// path there pasted; the other files' paths are typed as before. An image
+// not sent: said, and nothing of it typed.
+async function dropOnSshPane(paths) {
+  const out = []
+  for (const p of paths.slice(0, 20)) {
+    if (!isImagePath(p)) {
+      out.push(quotePath(p))
+      continue
+    }
+    let res = null
+    try {
+      res = await window.shellApi.sendImageFileToHost(props.node.remoteHostId, p)
+    } catch {
+      res = null
+    }
+    if (res && res.ok) out.push(res.path)
+    else {
+      logPaste('drop: image not sent to the host') // i18n-ignore
+      if (ctx.toast) ctx.toast(t('pane.image.hostFailed', 'The image could not be sent to the host: {{error}}', { error: (res && res.error) || t('pane.image.hostUnknown', 'unknown error') }), { kind: 'error', timeout: 8000 })
+    }
+  }
+  if (out.length && term) {
+    term.paste(out.join(' ') + ' ')
+    logPaste(`drop: ${out.length} path${out.length === 1 ? '' : 's'} pasted on the SSH host's side`) // i18n-ignore
+  }
+  focusTerm()
+}
+// Host: an image a Live Share guest pasted, saved here by main: its path
+// pasted as an image pasted here would be (an SSH host gets its own copy).
+async function pasteImageFile(file) {
+  if (!term || exited.value || typeof file !== 'string' || !file) return { ok: false, code: 'unavailable' }
+  let path = file
+  if (props.node.remoteHostId) {
+    let res = null
+    try {
+      res = window.shellApi.sendImageFileToHost ? await window.shellApi.sendImageFileToHost(props.node.remoteHostId, file) : null
+    } catch {
+      res = null
+    }
+    if (!res || !res.ok || !term) return { ok: false, code: 'failed' }
+    path = res.path
+  }
+  const claude = props.node.agentId === 'claude' && !props.node.remoteHostId
+  const before = claude ? Math.max(0, ...imageNumbersOnScreen()) : 0
+  term.paste(path)
+  if (claude) rememberPastedImage(path, before)
+  logPaste('Live Share guest: image saved, its path pasted') // i18n-ignore
+  return { ok: true }
 }
 
 // The agents whose input shows a pasted image path as "[Image #N]"
@@ -3343,6 +3434,8 @@ onMounted(() => {
 
   paneApi = {
     paste: pasteText,
+    // A Live Share guest's image, saved here: its path pasted (liveSharePaste.js).
+    pasteImageFile,
     // Did the program ask for bracketed paste? Without it, each line of a
     // multi-line paste runs as its own command (null: no terminal yet).
     bracketedPaste: () => (term && term.modes ? !!term.modes.bracketedPasteMode : null),

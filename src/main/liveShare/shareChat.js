@@ -36,11 +36,12 @@
 // the right) and 'history' (the task history, a file's Local History, a task
 // branch's changes; with phase 2c, its past agent conversations, its terminal
 // agents' and its activity: shareHistory.js, shareActivity.js); phase 2c's
-// 'pages' (its browser pages: sharePageFeed.js).
+// 'pages' (its browser pages: sharePageFeed.js); 'paste' (an image a guest
+// pastes into a pane it may type in: sharePaste.js).
 
 import { KNOWN_HARNESS_TAG_NAMES } from '../../shared/harnessInjectedTurns.js'
 
-export const SHARE_FEATURES = Object.freeze(['chat', 'agents', 'presence', 'files', 'scm', 'tasks', 'panes2', 'usage', 'history', 'pages'])
+export const SHARE_FEATURES = Object.freeze(['chat', 'agents', 'presence', 'files', 'scm', 'tasks', 'panes2', 'usage', 'history', 'pages', 'paste'])
 export const cleanFeatures = (list) => (Array.isArray(list) ? [...new Set(list.filter((f) => typeof f === 'string' && SHARE_FEATURES.includes(f)))] : [])
 
 export const CHAT_LIMITS = Object.freeze({

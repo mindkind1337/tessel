@@ -371,7 +371,8 @@ export function stripTerminalReplies(data) {
 //                             news go out with push(topic, project, key, data)
 //   offers(feature)        -> optional (with request): true for each of phase
 //                             2b's features the host offers ('panes2',
-//                             'usage', 'history'); without it, none
+//                             'usage', 'history', and 'paste'); without it,
+//                             none
 //   watchGuest(topic, project, key, stream, on) -> optional (without it, no
 //                             guest gets 'pages'): a guest's subscription to a
 //                             perGuest topic started or ended; stream: { guest
@@ -431,9 +432,10 @@ export function createShareHost({ secret = null, hostName, callbacks, log = () =
   const serves = callbacks.opInfo && callbacks.request
   // Phase 2b's features: only those the host says it offers (callbacks.offers:
   // its usage needs the readings it has, say). Phase 2c's 'history' requests
-  // go through the same feature; its 'pages' needs callbacks.watchGuest.
+  // go through the same feature; its 'pages' needs callbacks.watchGuest; its
+  // 'paste' (images pasted into a pane) is offered like phase 2b's.
   const offered = (f) => (serves && typeof callbacks.offers === 'function' && callbacks.offers(f) === true ? serves : null)
-  const FEATURE_NEEDS = { chat: callbacks.chatWatch, agents: callbacks.agents, presence: callbacks.onPresence, files: serves, scm: serves, tasks: serves, panes2: offered('panes2'), usage: offered('usage'), history: offered('history'), pages: callbacks.watchGuest }
+  const FEATURE_NEEDS = { chat: callbacks.chatWatch, agents: callbacks.agents, presence: callbacks.onPresence, files: serves, scm: serves, tasks: serves, panes2: offered('panes2'), usage: offered('usage'), history: offered('history'), pages: callbacks.watchGuest, paste: offered('paste') }
   const hostFeatures = SHARE_FEATURES.filter((f) => typeof FEATURE_NEEDS[f] === 'function')
   // Conversations watched: pane id -> Set of guest ids; the last one read
   // (sent at once to a guest that starts watching), and when one last went out.

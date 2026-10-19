@@ -497,6 +497,8 @@ const api = {
   saveClipboardImage: () => ipcRenderer.invoke('clipboard:saveImage'),
   // The clipboard's image sent to an SSH host, for an agent there. -> { ok, path } | { ok: false, error }
   sendClipboardImageToHost: (hostId) => ipcRenderer.invoke('clipboard:sendImageToHost', hostId),
+  // An image a Live Share guest pasted (saved here) sent to an SSH host. -> { ok, path } | { ok: false, error }
+  sendImageFileToHost: (hostId, file) => ipcRenderer.invoke('clipboard:sendImageFileToHost', hostId, file),
   writeClipboard: (text) => ipcRenderer.send('clipboard:write', text),
 
   // Workspace layout persistence.
@@ -779,6 +781,10 @@ const api = {
     taskCheck: (request) => ipcRenderer.invoke('liveShare:taskCheck', typeof request === 'string' ? request : ''),
     subscribe: ({ topic, project, on } = {}) => ipcRenderer.invoke('liveShare:subscribe', { topic, project, on: !!on }),
     task: ({ op, project, args } = {}) => ipcRenderer.invoke('liveShare:task', { op, project, args }),
+    // Guest: an image pasted (or a file dropped: { file }) into a host's
+    // pane, sent to the host. Host: its window pasted one ({ request, ok, code }).
+    pasteImage: (id, from = {}) => ipcRenderer.invoke('liveShare:pasteImage', id, from && typeof from.file === 'string' ? { file: from.file } : {}),
+    pasteDone: ({ request, ok, code } = {}) => ipcRenderer.send('liveShare:pasteDone', { request, ok: ok === true, code }),
     // Phase 2b. Host: the shared projects' panes as their headers show them,
     // and their finished tasks. Guest: a panel's request to the host (a
     // pane's sub-agents, the task history, a task branch's review).

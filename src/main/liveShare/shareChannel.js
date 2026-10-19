@@ -35,8 +35,9 @@ import { cleanRel } from '../../shared/liveSharePath'
 // agents.* (panes2: a pane's sub-agents), history.* (history: the task
 // history, a file's Local History) and review.* (history: a task branch's
 // changes); phase 2c's sessions.* (history: a project's past agent
-// conversations and its terminal agents', shareHistory.js).
-export const OP_AREAS = Object.freeze({ fs: 'files', notes: 'files', scm: 'scm', tasks: 'tasks', agents: 'panes2', history: 'history', review: 'history', sessions: 'history' })
+// conversations and its terminal agents', shareHistory.js); paste.* (paste:
+// an image pasted into a pane, sharePaste.js).
+export const OP_AREAS = Object.freeze({ fs: 'files', notes: 'files', scm: 'scm', tasks: 'tasks', agents: 'panes2', history: 'history', review: 'history', sessions: 'history', paste: 'paste' })
 
 // Topics a guest subscribes to:
 // - feature: what both sides must speak;

@@ -84,6 +84,7 @@ import { setLshareAccess, endLshareSession, forgetLshareAccess } from './liveSha
 import { COLUMNS } from '../../shared/taskModel'
 import { createLiveShareFeeds } from './liveShareWindowFeeds'
 import { plainBridge } from './liveShareBridge'
+import { pasteForGuest } from './liveSharePaste'
 
 // Typing shown on a pane is main's (typed in the last 3 s, said again every
 // 4 s while it goes on and when it ends); one main never said the end of (a
@@ -166,6 +167,8 @@ export function actionText(a) {
       return a.from ? t('liveShare.action.taskRenamed', '{{name}} renamed the task “{{from}}” to “{{title}}”', { name, from: a.from, title }) : t('liveShare.action.taskEdit', '{{name}} renamed a task: {{title}}', { name, title })
     case 'taskRemove':
       return t('liveShare.action.taskRemove', '{{name}} deleted the task “{{title}}”', { name, title })
+    case 'pasteImage':
+      return t('liveShare.action.pasteImage', '{{name}} pasted an image in {{pane}}', { name, pane: title || t('liveShare.action.aPane', 'a pane') })
     case 'taskAnswer':
       return a.answer ? t('liveShare.action.taskAnswered', '{{name}} answered “{{answer}}” on “{{title}}”', { name, answer: a.answer, title }) : t('liveShare.action.taskAnswer', '{{name}} answered the question on “{{title}}”', { name, title })
     default:
@@ -613,6 +616,12 @@ export function createLiveShareWindow(deps) {
     }
     const request = typeof req.request === 'string' ? req.request : null
     if (req.action === 'task') return applyTask(req)
+    // An image a guest pasted (main saved it): pasted into your pane while the
+    // guest still may type there (liveSharePaste.js).
+    if (req.action === 'pasteImage') {
+      const guestId = (req.guest && req.guest.id) || null
+      return pasteForGuest(req, { stands: () => hostSharing() && guestMay(guestId, 'type') && guestSees(guestId, req.project) && projectOfPane(req.id) === req.project, answer: (ok, code) => api()?.pasteDone?.({ request: request || '', ok, code }) })
+    }
     if (!hostSharing()) return requestDone(request)
     const who = (req.guest && req.guest.name) || t('liveShare.guest', 'A guest')
     const guestId = (req.guest && req.guest.id) || null

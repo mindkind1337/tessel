@@ -713,6 +713,7 @@
     },
     "remoteFs": {
       "noImage": "Le presse-papiers ne contient pas d'image.",
+      "noImageFile": "Ce fichier n'est pas une image.",
       "imageTooBig": "L'image est trop grande pour être envoyée (plus de 20 Mo).",
       "pasteFailed": "L'image n'a pas pu être écrite sur l'hôte.",
       "connectFailed": "Impossible de se connecter à {{host}} : {{error}}",

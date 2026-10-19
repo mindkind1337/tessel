@@ -107,6 +107,7 @@ import { watchLoopLag } from './loopLag'
 import { createIpcTiming } from './ipcTiming'
 import { PANE_HISTORY_CHARS } from '../shared/paneHistory'
 import { registerLiveShare } from './liveShare'
+import { createPasteImages, isImageFile } from './liveShare/sharePaste.js'
 import { listProcesses, treeOf, waitForExit, killPids, listProcessNames, runningWork, stopProcessSnapshots, pidRunning } from './processTree'
 import { pipeName, trimBuffer } from './ptyProtocol'
 import { createUpdater } from './updater'
@@ -3662,6 +3663,19 @@ ipcMain.handle('clipboard:sendImageToHost', async (event, hostId) => {
   if (img.isEmpty()) return { ok: false, error: t('main.remoteFs.noImage', 'The clipboard has no image.') }
   return remoteFs.pasteImage(typeof hostId === 'string' ? hostId : '', img.toPNG())
 })
+// An image file for a terminal on an SSH host: one a Live Share guest
+// pasted (saved here with the pasted images, sent as it is), or an image
+// file dropped on the pane (made a PNG first). Sent there, its path on the
+// host given back. -> { ok, path } | { ok: false, error }
+ipcMain.handle('clipboard:sendImageFileToHost', async (event, hostId, file) => {
+  if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents) return { ok: false, error: 'not allowed' } // i18n-ignore internal
+  const host = typeof hostId === 'string' ? hostId : ''
+  if (isPastedImage(file) && fs.existsSync(file)) return remoteFs.pasteImage(host, fs.readFileSync(file))
+  if (!isImageFile(file) || !fs.existsSync(file)) return { ok: false, error: t('main.remoteFs.noImageFile', 'That file is not an image.') }
+  const img = nativeImage.createFromPath(file)
+  if (img.isEmpty()) return { ok: false, error: t('main.remoteFs.noImageFile', 'That file is not an image.') }
+  return remoteFs.pasteImage(host, img.toPNG())
+})
 // [Image #N] clicked in a Claude Code pane: the image Tessel pasted, or the
 // one in the pane's conversation, for Tessel's own viewer. -> { ok, file, src }
 const IMAGE_MIME = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp' }
@@ -4151,6 +4165,9 @@ liveShare = registerLiveShare({
   agentChildren: (q) => agentChildrenOf(q),
   cardCosts: (ids) => jobCost.forCards(ids),
   localHistory,
+  // An image a guest pastes into a host's pane: read as a PNG on the guest's
+  // side, checked and saved with the other pasted images on the host's.
+  images: createPasteImages({ nativeImage, clipboard, dir: PASTE_DIR }),
   // Taken back once this is the only Tessel running (below).
   resume: false,
   // A kept share says its address on a public relay (ntfy.sh) each time it

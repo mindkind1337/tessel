@@ -516,7 +516,9 @@
       "taskRemove": "{{name}} a supprimé la tâche « {{title}} »",
       "taskAnswer": "{{name}} a répondu à la question de « {{title}} »",
       "taskRenamed": "{{name}} a renommé la tâche « {{from}} » en « {{title}} »",
-      "taskAnswered": "{{name}} a répondu « {{answer}} » sur « {{title}} »"
+      "taskAnswered": "{{name}} a répondu « {{answer}} » sur « {{title}} »",
+      "pasteImage": "{{name}} a collé une image dans {{pane}}",
+      "aPane": "un panneau"
     },
     "taskFail": {
       "rights": "vous ne pouvez plus gérer ses tâches.",
@@ -540,6 +542,17 @@
       "none": "Aucun invité n'a encore rien modifié.",
       "flaggedHint": "Ce fichier dit aux agents quoi faire : vérifiez la modification.",
       "flagged": "Instructions d'agent"
+    },
+    "paste": {
+      "forbidden": "{{host}} ne vous a pas donné le droit de taper dans ce panneau : l'image n'a pas été collée.",
+      "tooLarge": "L'image est trop grande pour être envoyée (10 Mo et 8000 × 8000 pixels au maximum).",
+      "notImage": "Ce n'est pas une image que Tessel peut lire.",
+      "noImage": "Le presse-papiers ne contient pas d'image.",
+      "busy": "Les images sont envoyées trop vite : réessayez dans un instant.",
+      "outdated": "Le Tessel de {{host}} ne peut pas encore recevoir d'images collées (il doit être mis à jour).",
+      "notFound": "Ce panneau n'est plus partagé avec vous.",
+      "failed": "L'image n'a pas pu être collée du côté de {{host}}.",
+      "dropImagesOnly": "Seules des images peuvent être déposées sur un panneau de l'hôte."
     }
   }
 }
