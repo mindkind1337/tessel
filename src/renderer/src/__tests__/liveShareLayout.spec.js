@@ -203,18 +203,37 @@ describe('Live Share conversations: the host’s agent panes, a guest’s chat p
       ])
     }
     expect(hostChatsFromWorkspace(ws)).toEqual([
-      { id: 'pane-1', agentId: 'claude', sessionId: UUID, accountId: 'acct-1', terminal: true, title: '', roots: ['C:\\work\\site\\app', 'C:\\work\\site'] },
+      { id: 'pane-1', agentId: 'claude', sessionId: UUID, accountId: 'acct-1', terminal: true, title: '', roots: ['C:\\work\\site', 'C:\\work\\site\\app'] },
       { id: 'pane-2', agentId: 'codex', sessionId: UUID, terminal: false, title: 'Codex chat', roots: ['C:\\work\\site'] },
       // No conversation yet; an agent Tessel does not read: listed with why.
       { id: 'pane-3', agentId: 'claude', terminal: true, title: '', reason: 'none' },
       { id: 'pane-4', agentId: 'aider', terminal: true, title: '', reason: 'agent' },
       // On an SSH host: Claude Code and Codex are read there (the roots are the host's);
       // another agent, or one only detected in a shell, is listed as one that cannot be read (a guest is not told it is SSH).
-      { id: 'pane-5', agentId: 'claude', sessionId: UUID, hostId: 'ssh-h1', terminal: true, title: '', roots: ['/home/x/app', '/home/x'] },
+      // A local project has no folder on that host: none of its paths readable.
+      { id: 'pane-5', agentId: 'claude', sessionId: UUID, hostId: 'ssh-h1', terminal: true, title: '', roots: [] },
       { id: 'pane-6', agentId: 'antigravity', terminal: true, title: '', reason: 'agent' },
       { id: 'pane-7', agentId: 'codex', terminal: true, title: '', reason: 'agent' }
     ])
     expect(hostChatsFromWorkspace(null)).toEqual([])
+  })
+
+  it('only the project’s folder and the pane’s folders inside it go to main (never the home folder a pane was opened in)', () => {
+    const local = {
+      name: 'site',
+      cwd: 'C:\\work\\site',
+      tree: split('row', [50, 50], [
+        leaf('pane-1', { kind: 'agent', agentId: 'claude', sessionId: UUID, startDir: 'C:\\Users\\ada', cwd: 'c:/WORK/site/lib', projectDir: 'C:\\copies\\site-task' }),
+        leaf('pane-2', { kind: 'agent', agentId: 'claude', sessionId: UUID, startDir: 'C:\\work\\site-other' })
+      ])
+    }
+    expect(hostChatsFromWorkspace(local).map((c) => c.roots)).toEqual([['C:\\work\\site', 'c:/WORK/site/lib'], ['C:\\work\\site']])
+    const remote = {
+      name: 'app',
+      remote: { hostId: 'ssh-h1', path: '/home/x/app' },
+      tree: leaf('pane-1', { kind: 'agent', agentId: 'claude', sessionId: UUID, remoteHostId: 'ssh-h1', cwd: 'ssh://ssh-h1/home/x/app/src', remotePath: '/home/x' })
+    }
+    expect(hostChatsFromWorkspace(remote)[0].roots).toEqual(['/home/x/app', '/home/x/app/src'])
   })
 
   it('a pane the host has in chat mode is kept in the guest’s tree when the guest’s window has a leaf for it', () => {

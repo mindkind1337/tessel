@@ -1,5 +1,12 @@
 {
   "main": {
+    "filesOpen": {
+      "executable": "Tessel n’ouvre jamais de programmes, de scripts ni de raccourcis.",
+      "folder": "Les dossiers s’ouvrent dans le panneau Fichiers, pas avec un autre programme.",
+      "network": "Les chemins réseau et de périphérique ne sont jamais ouverts.",
+      "editor": "Tessel ne confie à un autre programme que les documents et les médias : ouvrez plutôt ce fichier dans l’éditeur de Tessel.",
+      "invalid": "Ce chemin n’est pas valide."
+    },
     "ssh": {
       "notConnected": "Pas connecté à {{host}} : ce que vous tapez n’est pas envoyé avant le démarrage du nouveau shell.",
       "hostKeyChangedPinned": "ATTENTION : {{host}} a présenté une autre clé d’hôte ({{keyType}} {{fingerprint}}) qu’à la première connexion de cette session, et StrictHostKeyChecking ne la vérifie pas : quelqu’un pourrait se faire passer pour cet hôte. Tessel a refusé de se connecter.",

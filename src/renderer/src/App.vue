@@ -85,7 +85,8 @@ import NotificationsMenu from './components/NotificationsMenu.vue'
 import FileFinder from './components/FileFinder.vue'
 import UsageMenu from './components/UsageMenu.vue'
 import { acquirePassthrough, trackPointerDrag } from './browser/webviewPassthrough'
-import { pageOf, pageGuests } from './browser/pageHost'
+import { pageOf, pageGuests, viewPartition } from './browser/pageHost'
+import { guestUrlTarget } from './liveShareGuestLinks'
 import { paneDropZone, placeLeaf, sidePageFromLeaf, leafFromSidePage, saveSideBrowsers, restoreSideBrowsers, newSidePageId } from './browser/pageMove'
 import { createAgentBrowserTargets, addPageNear } from './browser/agentBrowserTargets'
 import { inheritsAgentSession, inheritsGuestSession } from './browser/agentSession'
@@ -337,6 +338,8 @@ async function viewFile({ file, label = '', line = null, preview = true }) {
 async function openExternally({ file, line, col }) {
   if (isLsharePath(file)) return showToast(localOnlyText())
   const res = await window.shellApi.openFile({ file, line: line || undefined, col: col || undefined }).catch(() => null)
+  // Not a document or media and no VS Code: never another program, Tessel's editor.
+  if (res && res.reason === 'editor' && openInTesselEditor({ file, line: line || null, col: col || null, preview: false })) return
   if (!res || !res.ok) showToast(res && res.error ? t('app.file.openFailedWhy', 'Could not open {{file}}: {{error}}', { file, error: res.error }) : t('app.file.openFailed', 'Could not open {{file}}', { file }), { kind: 'error', timeout: 5000 })
 }
 
@@ -473,6 +476,24 @@ function openExternalUrl(url) {
       if (!ok) showToast(t('app.port.browserFailed', 'Failed to open browser'), { kind: 'error' })
     })
     .catch(() => showToast(t('app.port.browserFailed', 'Failed to open browser'), { kind: 'error' }))
+}
+// A link in a Live Share host's terminal or conversation (liveShareGuestLinks.js):
+// filtered as the host's pages are (secrets out, only the origin when one
+// shows), opened in that Live Share session's own browser session, never in
+// your signed-in one; "Open in my browser" (the toast's button) is your
+// choice, with the same filtered address.
+function openGuestUrl(raw, { fromId = null, session = null } = {}) {
+  const link = guestUrlTarget(raw)
+  if (!link) return showToast(t('liveShare.link.notWeb', 'Only web addresses open from a shared pane.'), { timeout: 4000 })
+  if (link.local) return showToast(t('liveShare.link.localOnly', 'This address only works on the host’s computer or network: {{url}}', { url: link.url }), { timeout: 6000 })
+  const ws = (fromId && wsOfLeaf(fromId)) || currentWs.value
+  // No Live Share session known: the browser's guest session (none of your logins).
+  const leaf = openInBrowser({ url: link.url, ws, newPane: true, activate: true, guestSession: !session })
+  if (leaf && session) leaf.viewPartition = viewPartition(session)
+  const text = link.trimmed
+    ? t('liveShare.link.openedTrimmed', 'Opened in the Live Share browser (none of your logins), without the parts of the address that looked private.')
+    : t('liveShare.link.opened', 'Opened in the Live Share browser (none of your logins).')
+  showToast(text, { timeout: 6000, action: { label: t('liveShare.link.openMine', 'Open in my browser'), run: () => openExternalUrl(link.url) } })
 }
 // --- Chat agents (ChatPane.vue, src/main/chat) -----------------------------------------
 // A Claude agent without a terminal: the main process runs claude in its
@@ -3368,6 +3389,8 @@ provide('panelCtx', {
   toast: (text, opts) => showToast(text, opts),
   showImage: (img) => (imageView.value = img),
   viewFile: (f) => viewFile(f),
+  // A link in a Live Share host's pane (a guest's window): filtered, in the Live Share browser.
+  openGuestUrl: (url, opts) => openGuestUrl(url, opts),
   // A file:line link into Tessel's editor ({ file, line, col }).
   openInEditor: (q) => openInTesselEditor(q),
   // The built-in browser: the active ports, a page in the system browser.

@@ -52,7 +52,7 @@
 // here. readOnlyNote, backLabel: the bar's words instead of the usual ones.
 // Emits: close (back to the terminal).
 // Exposed: focus() (the composer).
-import { computed, onBeforeUnmount, onMounted, provide, ref, shallowRef, watch } from 'vue'
+import { computed, inject, onBeforeUnmount, onMounted, provide, ref, shallowRef, watch } from 'vue'
 import { MessageCircleQuestion, MessagesSquare, ShieldQuestion, SquareTerminal } from 'lucide-vue-next'
 import './orca-tokens.css'
 import NativeChatComposer from './NativeChatComposer.vue'
@@ -446,7 +446,19 @@ const fileLinkContext = computed(() => {
   const folder = n && (n.startDir || n.cwd || n.projectDir)
   return folder ? { worktreeId: n.id, worktreePath: folder, roots: [folder, n.projectDir].filter(Boolean) } : null
 })
-const { onLinkClick: openLink } = useNativeChatLinkActions(fileLinkContext, rootRef, () => ({ isVisible: props.isVisible }))
+// A Live Share host's conversation (a guest's window): its web links are
+// filtered and open in the Live Share browser (App.vue openGuestUrl), never
+// straight in your signed-in system browser.
+const panelCtx = inject('panelCtx', null)
+const guestOpenWeb = computed(() => {
+  const n = props.node
+  if (!props.source || !n || n.backend !== 'liveshare') return null
+  return (url) => {
+    if (panelCtx && panelCtx.openGuestUrl) panelCtx.openGuestUrl(url, { fromId: n.id, session: n.liveShare ? n.liveShare.session : null })
+    return true
+  }
+})
+const { onLinkClick: openLink } = useNativeChatLinkActions(fileLinkContext, rootRef, () => ({ isVisible: props.isVisible }), () => ({ openWeb: guestOpenWeb.value }))
 // A conversation from elsewhere names files of another computer: none opens
 // here (web links still do).
 const onLinkClick = computed(() =>
