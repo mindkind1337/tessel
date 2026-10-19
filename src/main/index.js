@@ -3,7 +3,7 @@ import { holdClaudeDefaultModel } from './claudeDefaultModel'
 import { join, isAbsolute, dirname, basename, resolve as resolvePath, sep } from 'path'
 import os from 'os'
 import fs from 'fs'
-import { spawn, execFile } from 'child_process'
+import { spawn } from 'child_process'
 import { readDefaultPolicy, relaxShell } from './psPolicy'
 import { loadTasks, loadBoard, saveTasks } from './taskBoardPersistence'
 import { createAutomations } from './automations'
@@ -21,10 +21,10 @@ import { createProviderAccounts } from './providerAccounts'
 import { createAccountUsage } from './providerAccountUsage'
 import { registerProviderUsage } from './providerUsageIpc'
 import { createProviderCredentials } from './providerCredentials'
-import { createAccountSessions } from './providerAccountSessions'
+import { createAccountSessions, readChildrenHere } from './providerAccountSessions'
 import { createCommandLookup } from './commandLookup'
 import { createSessionLister } from './sessionListClient'
-import { listSessions } from './agentSessions'
+import { listSessions, findCodexSession } from './agentSessions'
 import { postToInbox } from './agentInbox'
 import { hooksStatus } from './teamHooksStatus'
 import { createAgentStateStore } from './agentStateStore'
@@ -63,7 +63,7 @@ import { resolveFiles, codeGotoArg, listProjectFiles, defaultWslDistro } from '.
 import { statChatPaths, openChatPath, revealChatPath } from './chatFileOpen'
 import { titleBarColors } from '../shared/themePalettes'
 import { createThemedDialog } from './themedDialog'
-import { geminiSessionExists, qwenSessionExists, resumeTarget } from './agentResume'
+import { geminiSessionExists, qwenSessionExists, resumeTarget, findAgentSession } from './agentResume'
 import { paneEnv } from './paneEnv'
 import { readForView, readImageForView, openPdfWindow } from './fileView'
 import { readForEdit, statForEdit, writeForEdit, headContent, createFileWatcher } from './editorFiles'
@@ -108,7 +108,7 @@ import { watchLoopLag } from './loopLag'
 import { createIpcTiming } from './ipcTiming'
 import { PANE_HISTORY_CHARS } from '../shared/paneHistory'
 import { registerLiveShare } from './liveShare'
-import { createPasteImages, isImageFile, PASTE_LIMITS } from './liveShare/sharePaste.js'
+import { createPasteImages, isImageFile, PASTE_LIMITS, pngSize } from './liveShare/sharePaste.js'
 import { listProcesses, treeOf, waitForExit, killPids, listProcessNames, runningWork, stopProcessSnapshots, pidRunning } from './processTree'
 import { pipeName, trimBuffer } from './ptyProtocol'
 import { createUpdater } from './updater'
@@ -160,6 +160,10 @@ import { createLeftoverStore } from './worktreeLeftover'
 import * as scm from './sourceControl'
 import { createLocalHistory } from './localHistory'
 import { runHeadless, cancelHeadless, resolveProgram } from './agentHeadless'
+// Every execFile of this file starts its program from a worker thread
+// (spawnOffThread.js): a start blocks the thread that makes it, seconds on a
+// busy PC.
+import { execFileOff as execFile, spawnOff } from './spawnOffThread'
 import { createCommitMessageGeneration } from './commitMessageGeneration'
 import { createModelLister } from './agentModelList'
 import { takeTeamAcks } from './teamAcks'
@@ -1027,19 +1031,98 @@ ipcMain.handle('activity:load', async (_evt, opts) => {
 })
 // events: the list, or the window's JSON text of it (already checked and
 // trimmed there, see activityStore.js): written as is.
-ipcMain.handle('activity:save', (_evt, events) => {
+// Written without blocking (several MB: written synchronously it held the
+// main process for 1.6 s): one write at a time (two never share the temp
+// file), and only the newest text waits behind it (the saves in between are
+// answered by that write: nothing piles up).
+// Quitting: the newest text is written synchronously at will-quit; a rename
+// of an older one that lands after it is followed by that newest text again,
+// and a save arriving after will-quit is written synchronously.
+let activityNext = null // the newest text waiting to be written
+let activityWriting = null // the text being written now
+let activityWaiters = [] // the saves the next write answers
+let activityPumping = false
+let activityQuitting = false
+let activityQuitBody = null // the text will-quit wrote
+function writeActivityNow(body) {
+  const tmp = activityFile() + '.quit.tmp'
+  fs.writeFileSync(tmp, body, 'utf8')
+  fs.renameSync(tmp, activityFile())
+}
+app.on('will-quit', () => {
+  activityQuitting = true
+  const newest = activityNext !== null ? activityNext : activityWriting
+  if (newest === null) return
   try {
-    const text = typeof events === 'string' ? events : null
-    if (text !== null && !isActivityText(text)) return { ok: false, error: 'not a list' } // i18n-ignore internal: the renderer's own data, never shown
-    if (text === null && !Array.isArray(events)) return { ok: false, error: 'not a list' } // i18n-ignore internal: the renderer's own data, never shown
-    const tmp = activityFile() + '.tmp'
-    fs.writeFileSync(tmp, text !== null ? text : JSON.stringify(trimEvents(events.filter(isEvent))), 'utf8')
-    fs.renameSync(tmp, activityFile())
-    return { ok: true }
+    writeActivityNow(newest)
+    activityQuitBody = newest
+  } catch (err) {
+    log.warn('activity', `save failed: ${err.message}`)
+  }
+})
+async function pumpActivity() {
+  activityPumping = true
+  while (activityNext !== null && !activityQuitting) {
+    const body = activityNext
+    const waiters = activityWaiters
+    activityNext = null
+    activityWaiters = []
+    activityWriting = body
+    let res
+    try {
+      const tmp = activityFile() + '.tmp'
+      await fs.promises.writeFile(tmp, body, 'utf8')
+      if (!activityQuitting) await fs.promises.rename(tmp, activityFile())
+      res = { ok: true }
+    } catch (err) {
+      log.warn('activity', `save failed: ${err.message}`)
+      res = { ok: false, error: err.message }
+    }
+    activityWriting = null
+    // will-quit ran meanwhile: its newest text stays the file's, even if this
+    // older rename landed after it.
+    if (activityQuitting && activityQuitBody !== null) {
+      try {
+        writeActivityNow(activityQuitBody)
+      } catch {
+        /* will-quit's own write stands */
+      }
+    }
+    for (const done of waiters) done(res)
+  }
+  activityPumping = false
+  // Saves left when quitting: written by will-quit (or not, then said so).
+  const left = activityWaiters
+  activityWaiters = []
+  const res = activityQuitBody !== null ? { ok: true } : { ok: false, error: 'quitting' } // i18n-ignore internal
+  for (const done of left) done(res)
+}
+ipcMain.handle('activity:save', (_evt, events) => {
+  const text = typeof events === 'string' ? events : null
+  if (text !== null && !isActivityText(text)) return { ok: false, error: 'not a list' } // i18n-ignore internal: the renderer's own data, never shown
+  if (text === null && !Array.isArray(events)) return { ok: false, error: 'not a list' } // i18n-ignore internal: the renderer's own data, never shown
+  let body
+  try {
+    body = text !== null ? text : JSON.stringify(trimEvents(events.filter(isEvent)))
   } catch (err) {
     log.warn('activity', `save failed: ${err.message}`)
     return { ok: false, error: err.message }
   }
+  if (activityQuitting) {
+    try {
+      writeActivityNow(body)
+      activityQuitBody = body
+      return { ok: true }
+    } catch (err) {
+      log.warn('activity', `save failed: ${err.message}`)
+      return { ok: false, error: err.message }
+    }
+  }
+  activityNext = body
+  return new Promise((resolve) => {
+    activityWaiters.push(resolve)
+    if (!activityPumping) void pumpActivity()
+  })
 })
 
 // The notes view in Tessel: load (created from the template if missing) and
@@ -1629,18 +1712,22 @@ function prepareStatus(provider, env = process.env, optIn = {}) {
   return prepareAgentStateHooks({ provider, env, optIn: hookOptIn(optIn), source: teamServerSource, sharedDir: join(app.getPath('appData'), 'tessel-team') })
 }
 ipcMain.handle('agents:prepareStatus', (_evt, provider, optIn) => prepareStatus(provider, process.env, optIn))
-ipcMain.handle('sessions:reported', () => {
+// Read without blocking: one file per agent pane, asked often, and once
+// read synchronously it held the main process for half a second.
+ipcMain.handle('sessions:reported', async () => {
   const dir = sessionsDir()
   const out = {}
   let names = []
   try {
-    names = fs.readdirSync(dir).filter((n) => n.endsWith('.json'))
+    names = (await fs.promises.readdir(dir)).filter((n) => n.endsWith('.json'))
   } catch {
     return out
   }
-  for (const n of names) {
+  const texts = await Promise.all(names.map((n) => fs.promises.readFile(join(dir, n), 'utf8').catch(() => null)))
+  names.forEach((n, i) => {
     try {
-      const r = JSON.parse(fs.readFileSync(join(dir, n), 'utf8'))
+      if (texts[i] === null) return // being written: next time
+      const r = JSON.parse(texts[i])
       if (r && typeof r.sessionId === 'string') {
         // The inbox key stays in this process (agents:inbox), and so does the
         // session file's path (transcriptView.js reads it here).
@@ -1650,7 +1737,7 @@ ipcMain.handle('sessions:reported', () => {
     } catch {
       /* being written: next time */
     }
-  }
+  })
   return out
 })
 // A message into a Claude Code session's own inbox (agentInbox.js), only
@@ -1730,7 +1817,9 @@ ipcMain.handle('agents:model', async (_evt, q = {}) => {
       if (!roots || !roots.codex) return { keep: true }
       query.codexDir = roots.codex
     }
-    return await agentModelLive(query)
+    // Read in the session list's process (sessionListWorker.js): every pane
+    // asking at a start held the main process for 3.5 s.
+    return await agentModelLive(query, os.homedir(), globalThis.fetch, (mq, home) => sessionLister.call('agentModel', mq, home))
   } catch {
     return null
   }
@@ -1757,7 +1846,9 @@ function agentChildrenOf(q = {}) {
 // The models each agent's CLI listed (Settings > Agents > Refresh models):
 // the kept lists, and a probe run only when asked (agentModelList.js).
 let modelLister = null
-const getModelLister = () => (modelLister ||= createModelLister(app.getPath('userData'), { resolve: resolveProgram }))
+// The CLIs are started from a worker thread (spawnOffThread.js): Muse's binary
+// held the main process for 7.1 s on its start.
+const getModelLister = () => (modelLister ||= createModelLister(app.getPath('userData'), { resolve: resolveProgram, spawn: spawnOff }))
 ipcMain.handle('agents:modelLists', () => {
   try {
     return getModelLister().list()
@@ -1784,6 +1875,8 @@ ipcMain.handle('app:inputLanguages', () => {
   return new Promise((resolve) => {
     const script =
       '[Console]::OutputEncoding = [Text.Encoding]::UTF8; $list = Get-WinUserLanguageList; ConvertTo-Json -Compress -InputObject @(foreach ($l in $list) { [pscustomobject]@{ tag = $l.LanguageTag; name = $l.LocalizedName; tip = @($l.InputMethodTips)[0] } })'
+    // Started from a worker thread (execFile here is spawnOffThread.js's):
+    // starting PowerShell on the main thread once held it for 2.8 s.
     execFile(
       'powershell.exe',
       ['-NoProfile', '-NonInteractive', '-Command', script],
@@ -2411,10 +2504,24 @@ ipcMain.handle('accounts:launchEnv', safe((query) => typeof query === 'string'
 const sessionLister = createSessionLister({
   fork: () => utilityProcess.fork(join(__dirname, 'sessionListWorker.js'), [], { serviceName: 'Tessel session list' }),
   fallback: listSessions,
+  // The other agent file readings done there (sessionListWorker.js METHODS),
+  // read here as before when that process cannot answer.
+  fallbacks: {
+    agentModel: (q, home) => agentModel(q, home),
+    children: (name, ...args) => readChildrenHere(name, ...args),
+    findAgentSession: (q, home) => findAgentSession(q, home),
+    findCodexSession: (q, home, now, root) => findCodexSession(q, home, now, root)
+  },
   log
 })
 app.on('will-quit', () => sessionLister.close())
-const accountSessions = createAccountSessions({ accounts, listSessions: sessionLister.list, sessionsDir })
+const accountSessions = createAccountSessions({
+  accounts,
+  listSessions: sessionLister.list,
+  readChildren: (name, ...args) => sessionLister.call('children', name, ...args),
+  readFind: (name, ...args) => sessionLister.call(name, ...args),
+  sessionsDir
+})
 const accountUsage = createAccountUsage({ accounts, userData: app.getPath('userData') })
 // Tokens, time and estimated cost of each job (task card) and pane session,
 // from the agents' session files in every account's folder (jobCost.js).
@@ -3697,15 +3804,41 @@ const HOST_IMAGE_BYTES = 20 * 1024 * 1024
 ipcMain.handle('clipboard:sendImageFileToHost', async (event, hostId, file) => {
   if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents) return { ok: false, error: 'not allowed' } // i18n-ignore internal
   const notImage = { ok: false, error: t('main.remoteFs.noImageFile', 'That file is not an image.') }
-  if (!isSavedPaste(file) && !isImageFile(file)) return notImage
+  const saved = isSavedPaste(file)
+  if (!saved && !isImageFile(file)) return notImage
   let st
   try {
-    st = fs.lstatSync(file)
+    st = await fs.promises.lstat(file)
   } catch {
     return notImage
   }
   if (!st.isFile()) return notImage
   if (st.size > HOST_IMAGE_BYTES) return { ok: false, error: t('main.remoteFs.imageTooBig', 'The image is too large to send (over 20 MB).') }
+  if (saved) {
+    // A PNG Tessel made itself (a paste saved from a decoded image, a guest's
+    // checked and made again): sent as it is, its size read from its header.
+    // Decoding and encoding it again here held the main process ~600 ms at
+    // each paste.
+    // One handle for the checks and the read (never a link followed where
+    // the system can refuse it): what was checked is what is sent.
+    let png
+    let fh = null
+    try {
+      fh = await fs.promises.open(file, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0))
+      const hs = await fh.stat()
+      if (!hs.isFile()) return notImage
+      if (hs.size > HOST_IMAGE_BYTES) return { ok: false, error: t('main.remoteFs.imageTooBig', 'The image is too large to send (over 20 MB).') }
+      png = await fh.readFile()
+    } catch {
+      return notImage
+    } finally {
+      if (fh) await fh.close().catch(() => {})
+    }
+    const size = pngSize(png)
+    if (!size) return notImage
+    if (size.width * size.height > PASTE_LIMITS.pixels) return { ok: false, error: t('main.remoteFs.imageTooManyPixels', 'The image is too large to send (over 25 megapixels).') }
+    return remoteFs.pasteImage(typeof hostId === 'string' ? hostId : '', png)
+  }
   const img = nativeImage.createFromPath(file)
   if (img.isEmpty()) return notImage
   const size = img.getSize()

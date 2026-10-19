@@ -1,7 +1,9 @@
 // Which agent CLI runs inside a shell pane (started by hand: `claude` typed in
 // PowerShell, say), from the processes under the pane's shell. One process
 // list per call, read with CIM (Windows) or ps (elsewhere).
-import { execFile } from 'child_process'
+// Programs are started from a worker thread (spawnOffThread.js): a start
+// blocks the thread that makes it, seconds on a busy PC.
+import { execFileOff as execFile } from './spawnOffThread'
 import { t } from './i18n'
 
 // Executable names and runtime entrypoints are separate: an agent name in a

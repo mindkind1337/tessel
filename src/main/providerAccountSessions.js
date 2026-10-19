@@ -5,28 +5,26 @@ import { join } from 'path'
 import { claudeSessionExists, findCodexSession, listSessions } from './agentSessions'
 import { findAgentSession } from './agentResume'
 import { claudeSessionTitle, codexSessionTitle } from './sessionTitle'
-import {
-  claudeSubagents,
-  codexSubagents,
-  opencodeSubagents,
-  clineSubagents,
-  antigravitySubagents,
-  geminiSubagents,
-  copilotSubagents,
-  kimiSubagents,
-  cursorSubagents,
-  museSubagents
-} from './agentChildren'
+import { SUBAGENT_READERS } from './agentChildren'
 import { clineDataDir } from './jsonAgents'
 import { deleteSession, revealSessionFile, sessionDetails } from './sessionDetails'
 
+// The sub-agents' readers run here (readChildren's default).
+export const readChildrenHere = async (name, ...args) => SUBAGENT_READERS[name](...args)
+
 // listSessions: the list reader (index.js gives one that reads in its own
 // process, sessionListClient.js); by default agentSessions' own, here.
+// readChildren(name, ...args), readFind(name, ...args): the sub-agents'
+// readers (agentChildren.js SUBAGENT_READERS) and the resume lookups (findAgentSession,
+// findCodexSession), the same way: index.js has them read in that process
+// too (they held the main process for seconds), here by default.
 export function createAccountSessions({
   accounts,
   home = os.homedir(),
   env = process.env,
   listSessions: readList = async (...args) => listSessions(...args),
+  readChildren = readChildrenHere,
+  readFind = async (name, ...args) => (name === 'findCodexSession' ? findCodexSession(...args) : findAgentSession(...args)),
   // Where the agents' hooks note what they report (Muse's sub-agents).
   sessionsDir = () => null
 }) {
@@ -35,9 +33,9 @@ export function createAccountSessions({
       ? result.env?.CODEX_HOME || env.CODEX_HOME || join(home, '.codex')
       : result.env?.CLAUDE_CONFIG_DIR || env.CLAUDE_CONFIG_DIR || join(home, '.claude')
   async function find(q = {}) {
-    if (q.agent !== 'codex') return findAgentSession(q, home)
+    if (q.agent !== 'codex') return readFind('findAgentSession', q, home)
     const scope = await accounts.sessionEnv('codex', q.accountId)
-    return scope.ok ? findCodexSession(q, home, Date.now(), root('codex', scope)) : null
+    return scope.ok ? readFind('findCodexSession', q, home, Date.now(), root('codex', scope)) : null
   }
   // The folders a conversation's transcript is in (sessionDetails.js): the
   // account's for Claude Code and Codex, or null when that account is gone.
@@ -67,20 +65,20 @@ export function createAccountSessions({
     // home it came from (a Codex pane's account CODEX_HOME).
     async children({ agent, sessionId, accountId } = {}) {
       // The others: one data folder each (no managed logins).
-      if (agent === 'opencode') return opencodeSubagents(sessionId, env.XDG_DATA_HOME || join(home, '.local', 'share'))
-      if (agent === 'cline') return clineSubagents(sessionId, clineDataDir(home))
-      if (agent === 'antigravity') return antigravitySubagents(sessionId, join(home, '.gemini'))
-      if (agent === 'gemini') return geminiSubagents(sessionId, join(env.GEMINI_CLI_HOME || home, '.gemini'))
-      if (agent === 'copilot') return copilotSubagents(sessionId, env.COPILOT_HOME || join(home, '.copilot'))
-      if (agent === 'kimi') return kimiSubagents(sessionId, env.KIMI_CODE_HOME || join(home, '.kimi-code'))
-      if (agent === 'cursor') return cursorSubagents(sessionId, join(home, '.cursor'))
-      if (agent === 'muse') return museSubagents(sessionId, { sessionsDir: sessionsDir(), home })
+      if (agent === 'opencode') return readChildren('opencode', sessionId, env.XDG_DATA_HOME || join(home, '.local', 'share'))
+      if (agent === 'cline') return readChildren('cline', sessionId, clineDataDir(home))
+      if (agent === 'antigravity') return readChildren('antigravity', sessionId, join(home, '.gemini'))
+      if (agent === 'gemini') return readChildren('gemini', sessionId, join(env.GEMINI_CLI_HOME || home, '.gemini'))
+      if (agent === 'copilot') return readChildren('copilot', sessionId, env.COPILOT_HOME || join(home, '.copilot'))
+      if (agent === 'kimi') return readChildren('kimi', sessionId, env.KIMI_CODE_HOME || join(home, '.kimi-code'))
+      if (agent === 'cursor') return readChildren('cursor', sessionId, join(home, '.cursor'))
+      if (agent === 'muse') return readChildren('muse', sessionId, { sessionsDir: sessionsDir(), home })
       if (agent !== 'claude' && agent !== 'codex') return []
       const scope = await accounts.sessionEnv(agent, accountId)
       if (!scope.ok) return []
       return agent === 'claude'
-        ? claudeSubagents(sessionId, root('claude', scope))
-        : codexSubagents(sessionId, root('codex', scope))
+        ? readChildren('claude', sessionId, root('claude', scope))
+        : readChildren('codex', sessionId, root('codex', scope))
     },
     // The conversation's own title, read in the home it came from.
     async title({ agent, sessionId, accountId } = {}) {

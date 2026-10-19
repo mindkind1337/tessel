@@ -4,7 +4,9 @@
 import fs from 'fs'
 import os from 'os'
 import { isAbsolute, resolve, join, relative } from 'path'
-import { execFile } from 'child_process'
+// Programs are started from a worker thread (spawnOffThread.js): a start
+// blocks the thread that makes it, seconds on a busy PC.
+import { execFileOff as execFile } from './spawnOffThread'
 import { t } from './i18n'
 import { isRemotePath } from '../shared/remotePath'
 

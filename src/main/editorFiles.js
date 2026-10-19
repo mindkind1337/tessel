@@ -7,7 +7,9 @@
 // folder, then a rename over the file.
 import fs from 'fs'
 import { isAbsolute, dirname, basename, join, resolve, relative, sep } from 'path'
-import { execFile } from 'child_process'
+// Programs are started from a worker thread (spawnOffThread.js): a start
+// blocks the thread that makes it, seconds on a busy PC.
+import { execFileOff as execFile } from './spawnOffThread'
 import crypto from 'crypto'
 import { t } from './i18n'
 

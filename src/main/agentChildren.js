@@ -1644,3 +1644,18 @@ export function _clearChildCachesForTest() {
   logCache.clear()
   cursorMetaCache.clear()
 }
+
+// Each agent's reader, by name: index.js has them run in the session list's
+// own process (sessionListWorker.js), providerAccountSessions.js picks one.
+export const SUBAGENT_READERS = {
+  claude: claudeSubagents,
+  codex: codexSubagents,
+  opencode: opencodeSubagents,
+  cline: clineSubagents,
+  antigravity: antigravitySubagents,
+  gemini: geminiSubagents,
+  copilot: copilotSubagents,
+  kimi: kimiSubagents,
+  cursor: cursorSubagents,
+  muse: museSubagents
+}

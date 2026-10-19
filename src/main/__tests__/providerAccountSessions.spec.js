@@ -141,3 +141,22 @@ describe('account-aware session paths', () => {
     expect((await api.list()).find((row) => row.id === C)).toMatchObject({ accountId: 'claude-id' })
   })
 })
+
+describe('the readers given by index.js (read in the session list process)', () => {
+  it("sub-agents and resume lookups go through readChildren / readFind with the account's folder", async () => {
+    const readChildren = vi.fn(async (name, ...args) => [{ name, args }])
+    const readFind = vi.fn(async (name, ...args) => ({ name, args }))
+    const remote = createAccountSessions({ accounts, home, env: {}, readChildren, readFind })
+    expect(await remote.children({ agent: 'codex', sessionId: A, accountId: null })).toEqual([{ name: 'codex', args: [A, system] }])
+    expect(await remote.children({ agent: 'claude', sessionId: B })).toEqual([{ name: 'claude', args: [B, claude] }])
+    expect(await remote.children({ agent: 'cursor', sessionId: C })).toEqual([{ name: 'cursor', args: [C, join(home, '.cursor')] }])
+    expect(await remote.children({ agent: 'unknown', sessionId: C })).toEqual([])
+    expect(await remote.children({ agent: 'codex', sessionId: A, accountId: 'missing' })).toEqual([])
+    expect(await remote.find({ agent: 'claude', sessionId: B })).toEqual({ name: 'findAgentSession', args: [{ agent: 'claude', sessionId: B }, home] })
+    const codexFind = await remote.find({ agent: 'codex', accountId: null })
+    expect(codexFind.name).toBe('findCodexSession')
+    expect(codexFind.args[3]).toBe(system)
+    expect(readChildren).toHaveBeenCalledTimes(3)
+  })
+})
+
