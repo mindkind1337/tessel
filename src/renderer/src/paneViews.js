@@ -102,9 +102,11 @@ export function writeViewSizes(node) {
 // --- Tabs above the grid ----------------------------------------------------------
 // An editor or a browser pane: a tab of its own. It stays in the workspace's
 // tree (saved, listed and closed as before); where it sits there changes
-// nothing on screen.
+// nothing on screen. A Live Share host's browser page on a guest's screen
+// (liveShareWindowFeeds.js pageLeaf) is a tab too, as it is on the host's.
+export const isLiveSharePage = (leaf) => !!leaf && leaf.backend === 'liveshare' && !!leaf.liveShare && leaf.liveShare.page === true
 export function isTabLeaf(leaf) {
-  return !!leaf && leaf.type === 'leaf' && (leaf.kind === 'editor' || leaf.kind === 'browser')
+  return !!leaf && leaf.type === 'leaf' && (leaf.kind === 'editor' || leaf.kind === 'browser' || isLiveSharePage(leaf))
 }
 
 // The tab a view shows ({ ids, grid, tabs }): 'terminal' (its grid) or the id

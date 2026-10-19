@@ -143,8 +143,10 @@ export function createLiveShareFeeds(deps, core) {
       pid: null,
       startDir: null,
       sessionId: null,
-      // No terminal: the host's page, as frames (LiveSharePageView.vue).
-      liveShare: { session, project, cols: 0, rows: 0, kind: 'shell', agentId: null, canType: false, host, terminal: false, page: true, chat: null, view: 'page' },
+      // No terminal: the host's page, as frames (LiveSharePageView.vue), in
+      // a tab of its own as on the host's screen (paneViews.js isTabLeaf);
+      // pageTitle and pageUrl: what its last frame said (its tab's name).
+      liveShare: { session, project, cols: 0, rows: 0, kind: 'shell', agentId: null, canType: false, host, terminal: false, page: true, chat: null, view: 'page', pageTitle: '', pageUrl: '' },
       gen: 0,
       launchedAt: Date.now(),
       exitedAtStart: false,

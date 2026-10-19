@@ -532,6 +532,21 @@ export function createAccess({ now = Date.now, trust = null, isOnline = () => fa
     c.invites = [...c.invites, inv.id].slice(-MAX_INVITES)
     return used(inv)
   }
+  // A trusted identity joining with an invitation it never used: the shared
+  // projects that invitation offers become its trusted entry's too (kept:
+  // trust is standing access). Without this, a trusted person whose entry
+  // still listed only a project of an earlier share saw nothing of a new
+  // share, whatever the code it was sent offered (2026-10-19). Its rights
+  // stay the trusted entry's (the host set them for that person), and a
+  // project the host takes away later does not come back with the same
+  // invitation (only its first use adds). Called before usedBy notes it.
+  function trustedInviteProjects(inv, fp) {
+    const e = trust && trust.get(fp)
+    if (!e || !inv || trustCounters(fp).invites.includes(inv.id)) return false
+    const add = inv.grant.projects.filter((x) => shared.has(x) && !e.grant.projects.includes(x))
+    if (!add.length) return false
+    return trust.setGrant(fp, { projects: [...e.grant.projects, ...add] })
+  }
   const personByHash = (hash) => people.get(hash) || null
   const personById = (id) => [...people.values()].find((p) => personId(p.hash) === id) || null
   function removePerson(hash) {
@@ -745,6 +760,7 @@ export function createAccess({ now = Date.now, trust = null, isOnline = () => fa
     trustCounters,
     countersOf,
     usedBy,
+    trustedInviteProjects,
     person: personByHash,
     personById,
     people: () => [...people.values()],

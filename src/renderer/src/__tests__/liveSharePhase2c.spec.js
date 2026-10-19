@@ -14,6 +14,7 @@ import { reactive, ref, nextTick } from 'vue'
 import { mount, flushPromises, config } from '@vue/test-utils'
 import { createLiveShareWindow } from '../liveShareWindow'
 import { buildGuestTree } from '../liveShareLayout'
+import { workspaceViews } from '../paneViews'
 import { pageGuests, notePageGuest, claimPage, destroyPage, createWebview, GUEST_PARTITION, MAIN_PARTITION, AGENT_PARTITION } from '../browser/pageHost'
 import { NO_RIGHTS } from '../../../shared/liveShareRights'
 import { sidePageFromLeaf, leafFromSidePage, saveSideBrowsers, restoreSideBrowsers } from '../browser/pageMove'
@@ -285,6 +286,25 @@ describe('Live Share phase 2c in the window, as a guest', () => {
     expect(leaves(lsWs().tree).some((l) => l.id === 'pane-ls1-web')).toBe(false)
   })
 
+  // 2026-10-19: the host's page showed inside the guest's grid, beside the
+  // terminals ("about:blank" pane), where the host has it as a tab.
+  it('the host browser page is a tab of its own, as on the host, never a pane of the grid', async () => {
+    t.listeners.onGuest(joined({ pagesView: true }))
+    await flush()
+    const [view] = workspaceViews(lsWs())
+    expect(view.tabs.map((l) => l.id)).toEqual(['pane-ls1-web'])
+    // (No terminal attached in this test: the grid holds none of the pages.)
+    expect(leaves(view.grid).map((l) => l.id)).not.toContain('pane-ls1-web')
+    expect(view.shown).toBe('terminal')
+    // The host on its page: that tab comes up here too (the host's active pane
+    // is taken once, when there is one).
+    t.listeners.onGuest(joined({ pagesView: true }, { projects: [{ id: 'ws-1', layout: { ...layout, activeId: 'pane-ls1-web' } }] }))
+    await flush()
+    const ws = lsWs()
+    expect(ws.activeId).toBe('pane-ls1-web')
+    expect(workspaceViews(ws)[0].shown).toBe('pane-ls1-web')
+  })
+
   it('reads the host past conversations and follows its activity while shown', async () => {
     t.listeners.onGuest(joined())
     await flush()
@@ -341,9 +361,12 @@ describe('LiveSharePageView.vue', () => {
   afterEach(() => {
     wrapper?.unmount()
     wrapper = null
+    node = null
   })
+  let node = null
+  const wrapperNode = () => node
   const mountView = async () => {
-    const node = reactive({ type: 'leaf', id: 'pane-ls1-web', backend: 'liveshare', liveShare: { page: true, host: 'Cedric', project: 'ws-1' } })
+    node = node || reactive({ type: 'leaf', id: 'pane-ls1-web', backend: 'liveshare', liveShare: { page: true, host: 'Cedric', project: 'ws-1' } })
     wrapper = mount(LiveSharePageView, { props: { node }, attachTo: document.body, global: { provide: { panelCtx: ctx, askConfirm: (q) => askConfirm(q) } } })
     await flushPromises()
   }
@@ -380,6 +403,24 @@ describe('LiveSharePageView.vue', () => {
     wrapper.unmount()
     wrapper = null
     expect(src.watch).toHaveBeenLastCalledWith(false)
+  })
+
+  it('as a tab: its header is the line of tabs (Terminal, then the page by its title, which only the host closes); the address goes under it', async () => {
+    ctx.paneTabs = (id) => (id === 'pane-ls1-web' ? { leaves: [wrapperNode()], shown: 'pane-ls1-web' } : null)
+    ctx.selectViewTab = vi.fn()
+    await mountView()
+    const tabs = () => wrapper.findAll('[data-test="view-tab"]')
+    expect(tabs().map((x) => x.text())).toEqual(['Terminal', 'Browser page'])
+    expect(wrapper.find('[data-test="pane-title"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="view-tab-close"]').exists()).toBe(false)
+    expect(wrapper.find('[aria-label="Maximize pane"]').exists()).toBe(false)
+    frame(1)
+    await nextTick()
+    expect(tabs().map((x) => x.text())).toEqual(['Terminal', 'Inbox'])
+    expect(wrapperNode().liveShare).toMatchObject({ pageTitle: 'Inbox', pageUrl: 'https://mail.example/inbox?…' })
+    expect(wrapper.find('[data-test="liveshare-page-mode"] [data-test="liveshare-page-url"]').text()).toBe('https://mail.example/inbox?…')
+    await tabs()[0].trigger('click')
+    expect(ctx.selectViewTab).toHaveBeenCalledWith('pane-ls1-web', 'terminal', null)
   })
 
   it('sends clicks and keys only with "use"; opens the address in your browser unless it is the host network', async () => {
