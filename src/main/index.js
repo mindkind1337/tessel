@@ -11,6 +11,7 @@ import { createRemotePromptWriter } from './automationRemotePrompt'
 import { trimEvents, isEvent, isActivityText } from '../shared/activity'
 import { agentModel, agentModelLive, watchModelFiles } from './agentModel'
 import { createRemoteModelReader, remoteAgentModel } from './remoteAgentModel'
+import { createRemoteChildren } from './remoteAgentChildren'
 import { createCodexAccounts } from './codexAccounts'
 import { createClaudeAccounts } from './claudeAccounts'
 import { oldClaudeSessions as findOldClaudeSessions } from './claudeSwitchSessions'
@@ -1208,7 +1209,7 @@ ipcMain.handle('logs:diagnostics', () => {
 // The sub-agents an agent pane's conversation started (title, time, tokens).
 ipcMain.handle('agents:children', async (_evt, q = {}) => {
   try {
-    return await accountSessions.children(q)
+    return await agentChildrenOf(q)
   } catch (err) {
     log.warn('sessions', `children: ${err.message}`)
     return []
@@ -1724,6 +1725,24 @@ ipcMain.handle('agents:model', async (_evt, q = {}) => {
     return null
   }
 })
+
+// The sub-agents of a terminal agent on an SSH host (Claude Code, Codex): its
+// conversation's files there, read over the connection, throttled and only
+// what they added (remoteAgentChildren.js). Asked by its pane header while
+// the pane is on screen, its sidebar row and a Live Share guest's header.
+const onHost = (fn) => (hostId, q) => (remoteHosts.get(hostId) ? fn(hostId, q) : { ok: false, error: 'unknown host' }) // i18n-ignore
+const remoteChildren = createRemoteChildren({
+  listSubagentFiles: onHost((h, q) => remoteFs.listSubagentFiles(h, q)),
+  readSubagentMetas: onHost((h, q) => remoteFs.readSubagentMetas(h, q)),
+  readAgentFile: onHost((h, q) => remoteFs.readAgentFile(h, q)),
+  listCodexChildren: onHost((h, q) => remoteFs.listCodexChildren(h, q))
+})
+// A pane's sub-agents: on its SSH host when it runs there (remoteHostId),
+// else in this PC's files (in the home its conversation came from).
+function agentChildrenOf(q = {}) {
+  if (q && q.remoteHostId != null) return remoteChildren.children({ hostId: q.remoteHostId, agent: q.agent, sessionId: q.sessionId })
+  return accountSessions.children(q)
+}
 
 // The models each agent's CLI listed (Settings > Agents > Refresh models):
 // the kept lists, and a probe run only when asked (agentModelList.js).
@@ -4128,7 +4147,7 @@ liveShare = registerLiveShare({
   // Phase 2b: the host's usage (with the right), a pane's sub-agents, a
   // finished task's figures, the editor's Local History, for guests.
   usage: shareUsage,
-  agentChildren: (q) => accountSessions.children(q),
+  agentChildren: (q) => agentChildrenOf(q),
   cardCosts: (ids) => jobCost.forCards(ids),
   localHistory,
   // Taken back once this is the only Tessel running (below).
@@ -4145,11 +4164,18 @@ liveShare = registerLiveShare({
     createTranscriptViews({
       send: sendView,
       log,
+      // Up to 10 guests with 8 conversations each share these (two guests on
+      // one pane share one view); past it the oldest is let go (liveShare.js
+      // reopens it, within its limits).
+      maxViews: 32,
       homes: async (agent, accountId) => {
         const r = await accountSessions.roots({ agent, accountId })
         return (r && r[agent]) || null
       },
       sessionsDir: () => sessionsDir(),
+      // An agent on an SSH host: its file there, over the host's connection
+      // (the host's own chat view reads it the same way).
+      readAgentFile: (hostId, q) => (remoteHosts.get(hostId) ? remoteFs.readAgentFile(hostId, q) : { ok: false, error: 'unknown host' }), // i18n-ignore
       limits: { bytes: 2 * 1024 * 1024, events: 1000, text: 32 * 1024 }
     })
 })

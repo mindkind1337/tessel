@@ -6263,7 +6263,7 @@ function liveSharePaneRows(wsId) {
         reset: x.reset || '',
         team: team ? { name: team.name || '', lead: !!x.lead } : null,
         copy: x.copyPath ? { branch: x.copyBranch || '' } : null,
-        children: x.kind === 'agent' && x.sessionId && listsChildren(x.agentId) ? { agent: x.agentId, sessionId: x.sessionId, ...(x.accountId !== undefined ? { accountId: x.accountId } : {}) } : null
+        children: x.kind === 'agent' && x.sessionId && listsChildren(x.agentId) ? { agent: x.agentId, sessionId: x.sessionId, ...(x.accountId !== undefined ? { accountId: x.accountId } : {}), ...(x.remoteHostId ? { remoteHostId: x.remoteHostId } : {}) } : null
       }
     })
 }

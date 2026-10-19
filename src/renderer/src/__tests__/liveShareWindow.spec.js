@@ -1015,6 +1015,21 @@ describe('Live Share, as a guest: your own view of a host’s agent pane', () =>
     expect(reachedHost()).toBe(false)
   })
 
+  it('an agent pane the host cannot send a conversation for has the button off, with the reason; it never opens', async () => {
+    t.listeners.onGuest({ state: 'joined', host: 'Ada', session: 1, panes: [agent('pane-ls1-a', { agentId: 'antigravity' }), pane('pane-ls1-ps')], layout: layoutOf(leaf('pane-ls1-a'), leaf('pane-ls1-ps')), chat: true, chats: [{ ...chatOf('pane-ls1-a'), agentId: 'antigravity', reason: 'agent' }] })
+    await flush()
+    expect(leafOf('pane-ls1-a').liveShare).toMatchObject({ chat: 'unavailable', chatWhy: 'agent', view: 'terminal' })
+    expect(leafOf('pane-ls1-ps').liveShare).toMatchObject({ chat: null, chatWhy: null })
+    expect(t.ls.setGuestView('pane-ls1-a', 'chat')).toBe(false)
+    expect(leafOf('pane-ls1-a').liveShare.view).toBe('terminal')
+    expect(t.api.chatWatch).not.toHaveBeenCalled()
+    expect(reachedHost()).toBe(false)
+    // The host later has a conversation for it: the button turns on.
+    t.listeners.onGuest({ state: 'joined', host: 'Ada', session: 1, panes: [agent('pane-ls1-a', { agentId: 'antigravity' })], layout: layoutOf(leaf('pane-ls1-a')), chat: true, chats: [chatOf('pane-ls1-a')] })
+    await flush()
+    expect(leafOf('pane-ls1-a').liveShare).toMatchObject({ chat: 'shared', chatWhy: null })
+  })
+
   it('the chat view reads the host’s conversation through main, read only, for its own pane', async () => {
     t.listeners.onGuest({ state: 'joined', host: 'Ada', session: 1, panes: [agent('pane-ls1-a')], layout: layoutOf(leaf('pane-ls1-a')), chat: true, chats: [chatOf('pane-ls1-a')] })
     await flush()

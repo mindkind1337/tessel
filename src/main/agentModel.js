@@ -113,7 +113,11 @@ function claudeCommandLine(o, after) {
   if (stdout) {
     const m = /^\s*Set model to\s+`?([^`\n]{1,80})/.exec(stdout[1])
     if (m) return { result: { kind: 'model', family: (CLAUDE_FAMILIES.exec(m[1].trim()) || [])[1] } }
-    return { result: /^\s*Set effort level to\s+(low|medium|high|xhigh|max)\b/i.test(stdout[1]) ? { kind: 'effort' } : null }
+    // "Set effort level to medium (saved as your default…)": the level it says
+    // is the one in force, whether the command line had it as an argument or
+    // came from the /effort picker (no argument: only this line names it).
+    const level = /^\s*Set effort level to\s+(low|medium|high|xhigh|max)\b/i.exec(stdout[1])
+    return level ? { result: { kind: 'effort' }, effort: level[1].toLowerCase(), at } : { result: null }
   }
   const name = (/<command-name>\/?([\w:.-]{1,40})<\/command-name>/.exec(body) || [])[1]
   const args = ((/<command-args>([^<]{0,100})<\/command-args>/.exec(body) || [])[1] || '').trim()

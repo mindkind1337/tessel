@@ -405,6 +405,11 @@ describe("Claude Code's model and effort from its latest answer", () => {
       stdout('Set effort level to medium (saved as your default for new sessions): Balanced approach', T3)
     ]
     expect(claudeTurnFromText(sonnet.join('\n'))).toEqual({ model: 'sonnet', effort: 'medium', at: Date.parse(T3) })
+    // A bare /effort (its picker, no argument): only the line it printed names the level.
+    const effortPicked = [...base, caveat(T2), command('effort', '', T2), stdout('Set effort level to medium (saved as your default for new sessions): Balanced approach with standard implementation and testing', T2)]
+    expect(claudeTurnFromText(effortPicked.join('\n'))).toEqual({ model: 'claude-opus-5-5', effort: 'medium', at: Date.parse(T2) })
+    // The same picked level without its command line in the tail read.
+    expect(claudeTurnFromText([base[0], stdout('Set effort level to low', T2)].join('\n'))).toMatchObject({ effort: 'low' })
     // A bare /model (its picker): the family it printed.
     const picked = [...base, command('model', '', T2), stdout('Set model to `Sonnet 5.5`', T2)]
     expect(claudeTurnFromText(picked.join('\n'))).toMatchObject({ model: 'sonnet', effort: 'xhigh' })

@@ -12,9 +12,9 @@ const feeds = new Map() // key -> feed
 import { listsChildren, childShownState } from './agentChildrenView'
 export { CHILD_AGENTS, listsChildren } from './agentChildrenView'
 
-export function childrenKey({ agent, sessionId, accountId } = {}) {
+export function childrenKey({ agent, sessionId, accountId, remoteHostId } = {}) {
   if (!listsChildren(agent) || !sessionId) return null
-  return JSON.stringify([agent, sessionId, accountId === undefined ? null : accountId])
+  return JSON.stringify([agent, sessionId, accountId === undefined ? null : accountId, remoteHostId || null])
 }
 
 function makeFeed(key, args, api, doc) {
@@ -35,7 +35,9 @@ function makeFeed(key, args, api, doc) {
       const res = await api.agentChildren({
         agent: args.agent,
         sessionId: args.sessionId,
-        ...(args.accountId !== undefined ? { accountId: args.accountId } : {})
+        ...(args.accountId !== undefined ? { accountId: args.accountId } : {}),
+        // A pane on an SSH host: read there (main: remoteAgentChildren.js).
+        ...(args.remoteHostId ? { remoteHostId: args.remoteHostId } : {})
       })
       if (feed.disposed || my !== feed.seq) return
       feed.state.list = Array.isArray(res) ? res : []

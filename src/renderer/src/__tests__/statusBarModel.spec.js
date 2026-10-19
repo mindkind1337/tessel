@@ -222,6 +222,17 @@ describe('sub-agents feed', () => {
     codex.release()
   })
 
+  it('a pane on an SSH host: its own feed, read there (remoteHostId)', () => {
+    const agentChildren = vi.fn(() => new Promise(() => {}))
+    const doc = { visibilityState: 'visible' }
+    const local = acquireChildren({ agent: 'claude', sessionId: 'S1' }, { api: { agentChildren }, doc })
+    const remote = acquireChildren({ agent: 'claude', sessionId: 'S1', remoteHostId: 'h1' }, { api: { agentChildren }, doc })
+    expect(local.state).not.toBe(remote.state)
+    expect(agentChildren).toHaveBeenLastCalledWith({ agent: 'claude', sessionId: 'S1', remoteHostId: 'h1' })
+    local.release()
+    remote.release()
+  })
+
   it('shows only the active children; every finished one folds under "N more"', () => {
     const now = 10_000_000
     const { shown, older } = splitChildren(

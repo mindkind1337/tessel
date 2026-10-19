@@ -875,7 +875,7 @@ export function reportedTranscript(sessionsDir, paneId, agent, sessionId) {
 // readAgentFile(hostId, q) (remoteFs.js): a terminal agent on an SSH host has
 // its file there; its view reads it over the connection (a remote tail,
 // polled every remotePollMs), never a path on this PC.
-export function createTranscriptViews({ send, roots = transcriptViewRoots, homes = async () => null, sessionsDir = () => null, watch = fs.watch, debounceMs = 300, pollMs = 2000, remotePollMs = 3000, log = null, limits = VIEW_LIMITS, isRemote = null, readAgentFile = null } = {}) {
+export function createTranscriptViews({ send, roots = transcriptViewRoots, homes = async () => null, sessionsDir = () => null, watch = fs.watch, debounceMs = 300, pollMs = 2000, remotePollMs = 3000, maxViews = MAX_VIEWS, log = null, limits = VIEW_LIMITS, isRemote = null, readAgentFile = null } = {}) {
   const views = new Map() // viewId -> { agent, sessionId, file, tail, watcher, timer, poll, stamp, eventCap, images, sent, queue }
   let nextId = 0
   let drives = null
@@ -1016,7 +1016,7 @@ export function createTranscriptViews({ send, roots = transcriptViewRoots, homes
     if (!opened.ok) return opened
     // The oldest view gives way: a view nobody closed (a crashed window) cannot pile up.
     // The oldest gives way, and its window is told (it opens again later).
-    while (views.size >= MAX_VIEWS) {
+    while (views.size >= maxViews) {
       const oldest = views.keys().next().value
       close(oldest)
       send('transcriptView:event', { viewId: oldest, ok: false, code: 'closed' })
@@ -1046,7 +1046,7 @@ export function createTranscriptViews({ send, roots = transcriptViewRoots, homes
     return { ok: true, viewId, events: res.events, truncated: res.truncated, more: res.more, background: res.background }
   }
   function makeRoom() {
-    while (views.size >= MAX_VIEWS) {
+    while (views.size >= maxViews) {
       const oldest = views.keys().next().value
       close(oldest)
       send('transcriptView:event', { viewId: oldest, ok: false, code: 'closed' })

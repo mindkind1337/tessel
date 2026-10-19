@@ -83,7 +83,7 @@ describe('what a guest gets of the host\u2019s panes (sharePanels.js)', () => {
           attention: true,
           team: { name: 'Team 2', lead: true },
           copy: { branch: 'agent/fix', path: 'C:\\Users\\ada\\site.worktrees\\fix' },
-          children: { agent: 'claude', sessionId: 'sess-secret-1', accountId: 'acct-secret' },
+          children: { agent: 'claude', sessionId: 'sess-secret-1', accountId: 'acct-secret', remoteHostId: 'host-secret-7' },
           pid: 4242,
           env: { TOKEN: 'nope' }
         },
@@ -118,9 +118,10 @@ describe('what a guest gets of the host\u2019s panes (sharePanels.js)', () => {
     // A shell has no model, state or task to show.
     expect(panes[1]).toMatchObject({ kind: 'shell', model: '', state: null, task: '', reset: '', children: false })
     expect(panes[2]).toMatchObject({ state: 'limited', reset: 'in 2 h' })
-    expect(children.get('pane-1')).toEqual({ agent: 'claude', sessionId: 'sess-secret-1', accountId: 'acct-secret' })
+    // An SSH pane's host stays on the host's side too (its sub-agents are read there).
+    expect(children.get('pane-1')).toEqual({ agent: 'claude', sessionId: 'sess-secret-1', accountId: 'acct-secret', remoteHostId: 'host-secret-7' })
     const said = JSON.stringify(panes)
-    for (const s of ['sess-secret-1', 'acct-secret', 'worktrees', 'TOKEN', '4242', 'not shared']) expect(said).not.toContain(s)
+    for (const s of ['sess-secret-1', 'acct-secret', 'host-secret-7', 'worktrees', 'TOKEN', '4242', 'not shared']) expect(said).not.toContain(s)
     // At most PANE_LIMITS.panes of a project.
     expect(guestPanes(Array.from({ length: 80 }, (_, i) => ({ id: `pane-${i}`, kind: 'agent' }))).panes).toHaveLength(PANE_LIMITS.panes)
   })
