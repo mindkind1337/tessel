@@ -811,5 +811,15 @@
   "chat.orca.imageLightbox.saved": "Image enregistrée",
   "chat.orca.imageLightbox.saveFailed": "L’image n’a pas pu être enregistrée.",
   "chat.orca.imageLightbox.openInTab": "Ouvrir dans un onglet",
-  "chat.orca.imageLightbox.openFailed": "L’image n’a pas pu être ouverte dans un onglet."
+  "chat.orca.imageLightbox.openFailed": "L’image n’a pas pu être ouverte dans un onglet.",
+  "chat.agentEdits.cannotOpen": "Ce fichier ne peut pas être ouvert d'ici : {{path}}",
+  "chat.agentEdits.noDiff": "Aucun diff à afficher pour {{path}}",
+  "chat.agentEdits.openAtLine": "Ouvrir {{path}} à la ligne {{line}}",
+  "chat.agentEdits.open": "Ouvrir {{path}}",
+  "chat.agentEdits.openAtChange": "Ouvrir {{path}} à sa première modification",
+  "chat.agentEdits.openDiff": "Ouvrir le diff",
+  "chat.agentEdits.changedOne": "1 fichier modifié",
+  "chat.agentEdits.changedMany": "{{count}} fichiers modifiés",
+  "chat.agentEdits.reviewAll": "Tout examiner",
+  "chat.agentEdits.reviewAllHint": "Examiner les modifications de ce panneau (la revue de sa tâche, ou le contrôle de code source)"
 }

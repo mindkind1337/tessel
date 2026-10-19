@@ -92,6 +92,17 @@ function relativeToolInput(input, cwd) {
   return out
 }
 
+// The folders a tool's paths are read against (renderer/src/chat/agentEdits.js):
+// cwd, where the agent said it worked for this call (a transcript line's,
+// Codex's turn_context: its patches name files relative to it); folder, the
+// chat's own, which the paths of its input were made relative to above.
+function toolFolders(ev, folder) {
+  const out = {}
+  if (typeof ev.cwd === 'string' && ev.cwd && ev.cwd.length <= 4096 && !/[\u0000-\u001f\u007f]/.test(ev.cwd)) out.cwd = ev.cwd
+  if (folder) out.folder = folder
+  return out
+}
+
 function parseInput(input) {
   if (typeof input !== 'string') return input ?? null
   try {
@@ -398,7 +409,7 @@ export function createJournalAdapter({ now = Date.now, epoch = 'tessel', fence =
         }
         const linkage = childLinkage(ev)
         if (!isChild(ev)) openTurnFor(lastUserItemId, at)
-        put(itemId, { kind: 'tool-call', name: String(ev.name ?? ''), input: relativeToolInput(parseInput(ev.input), folder()), callId: String(ev.id), state, ...(prior && prior.body.output ? { output: prior.body.output } : {}), ...(prior && prior.body.images ? { images: prior.body.images, imagesMore: prior.body.imagesMore } : {}) }, linkage, at)
+        put(itemId, { kind: 'tool-call', name: String(ev.name ?? ''), input: relativeToolInput(parseInput(ev.input), folder()), callId: String(ev.id), state, ...toolFolders(ev, folder()), ...(prior && prior.body.output ? { output: prior.body.output } : {}), ...(prior && prior.body.editLine ? { editLine: prior.body.editLine } : {}), ...(prior && prior.body.images ? { images: prior.body.images, imagesMore: prior.body.imagesMore } : {}) }, linkage, at)
         break
       }
       case 'toolResult': {
@@ -407,8 +418,9 @@ export function createJournalAdapter({ now = Date.now, epoch = 'tessel', fence =
         if (!items.has(itemId)) put(itemId, { kind: 'tool-call', name: '', input: null, callId: String(ev.id), state: 'running' }, childLinkage(ev), at)
         // Tessel: the images it got back (a screenshot, an image file read),
         // shown on its card; the "[image]" lines of its text then go.
+        // editLine: where the edit landed in its file, when the agent said (main's editLine.js).
         const pictures = toolResultImages(ev)
-        revise(itemId, { state: ev.isError ? 'failed' : 'completed', output: bounded(pictures ? withoutImagePlaceholders(ev.text) : ev.text), ...(pictures ? pictures : {}) })
+        revise(itemId, { state: ev.isError ? 'failed' : 'completed', output: bounded(pictures ? withoutImagePlaceholders(ev.text) : ev.text), ...(Number.isSafeInteger(ev.editLine) && ev.editLine > 0 ? { editLine: ev.editLine } : {}), ...(pictures ? pictures : {}) })
         break
       }
       case 'approval': {

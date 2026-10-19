@@ -9,6 +9,7 @@
 import { createClaudeSubagents, observeClaudeSubagents } from './claudeSubagents.js'
 import { createClaudeBackground, observeClaudeBackground } from './claudeBackgroundTasks.js'
 import { liveImages } from './historyAttachments.js'
+import { structuredPatchLine } from './editLine.js'
 export const TOOL_OUTPUT_MAX_BYTES = 8 * 1024
 
 // The state the normalizer keeps between frames of one process.
@@ -326,6 +327,9 @@ function normalizeClaudeFrame(m, state) {
       }
       const content = m.message && m.message.content
       if (!Array.isArray(content)) break // "<local-command-stdout>…" after set_model
+      // tool_use_result describes the message's one tool result: an edit's
+      // structuredPatch says where in the file it landed.
+      const editLine = content.filter((b) => b && b.type === 'tool_result').length === 1 ? structuredPatchLine(m.tool_use_result) : null
       for (const b of content) {
         if (b && b.type === 'tool_result') {
           out.push({
@@ -334,6 +338,7 @@ function normalizeClaudeFrame(m, state) {
             isError: b.is_error === true,
             text: clipText(toolResultText(b.content, { images: false })),
             ...toolResultImages(b.content),
+            ...(editLine ? { editLine } : {}),
             parentToolUseId
           })
         }

@@ -2,7 +2,7 @@
 // After Orca's NativeChatTranscriptRow.tsx (MIT, Copyright (c) 2026 Lovecast Inc.)
 /**
  * One transcript row: the message (or the receipt standing in for it), the turn
- * status under it, and the turn's diff rollup.
+ * status under it, and the turn's diff rollup (Tessel: and the files it changed).
  *
  * These three were siblings in the transcript column and took their spacing from
  * it. Windowing needs one element per row to position and measure, so the
@@ -20,6 +20,7 @@ import NativeChatMessageRow from './NativeChatMessageRow.vue'
 import NativeChatResolutionReceipt from './NativeChatResolutionReceipt.vue'
 import NativeChatWorkingStatus from './NativeChatWorkingStatus.vue'
 import NativeChatTurnDiffRollup from './NativeChatTurnDiffRollup.vue'
+import NativeChatChangedFiles from './NativeChatChangedFiles.vue'
 
 const props = defineProps({
   slot: { type: Object, required: true },
@@ -92,6 +93,8 @@ const onToggleExpanded = computed(() => {
       :diff="slot.turnDiff"
       @reveal="context.onRevealDiff"
     />
+    <!-- Tessel: the files the turn changed (open, diff, review). -->
+    <NativeChatChangedFiles v-if="slot.changedFiles" :changes="slot.changedFiles" />
   </div>
 </template>
 

@@ -9,21 +9,28 @@
  * Props: file (a NativeChatEditFile), revealSignal (a request id: opens the card
  *   and reports it), onReveal(element), initiallyExpanded (false),
  *   disclosureKey (where the open state is remembered while unmounted).
+ * Tessel: call (the tool call that made the edit) and resultText (its output):
+ *   the path opens the file at its first change, and "Open diff" shows the
+ *   edit in an editor diff tab (use-agent-edit-actions.js).
  */
 import { computed, onMounted, ref, watch } from 'vue'
-import { ChevronRight, FileMinus2, FilePen, FilePlus2 } from 'lucide-vue-next'
+import { ChevronRight, FileMinus2, FilePen, FilePlus2, GitCompareArrows } from 'lucide-vue-next'
 import { t } from '../../../i18n'
 import { unifiedLineNumber } from '../../../chat/orca/shared/native-chat-edit-model.js'
 import { useNativeChatDisclosure } from '../../../chat/orca/composables/native-chat-disclosure-store.js'
 import { DiffLineCounts } from '../../../chat/orca/lib/diff-line-counts.js'
 import NativeChatCopyButton from './NativeChatCopyButton.vue'
+import { useAgentEditActions } from '../../../chat/orca/composables/use-agent-edit-actions.js'
+import { firstChangedLine } from '../../../chat/agentEdits.js'
 
 const props = defineProps({
   file: { type: Object, required: true },
   revealSignal: { type: Number, default: undefined },
   onReveal: { type: Function, default: undefined },
   initiallyExpanded: { type: Boolean, default: false },
-  disclosureKey: { type: String, default: undefined }
+  disclosureKey: { type: String, default: undefined },
+  call: { type: Object, default: undefined },
+  resultText: { type: String, default: '' }
 })
 
 const { open: expanded, setOpen: setExpanded } = useNativeChatDisclosure(
@@ -98,6 +105,28 @@ const copyLabel = computed(() => t('chat.orca.tool.copyDiff', 'Copy diff'))
 function toggle() {
   if (hasBody.value) setExpanded(!expanded.value)
 }
+
+// Tessel: the file, opened at its first change; the edit, as a diff tab. A
+// deleted file has nothing left to open, only its diff.
+const actions = useAgentEditActions()
+const cardEdits = computed(() => (props.call ? [{ block: props.call, file: props.file, resultText: props.resultText }] : []))
+const openable = computed(
+  () => !!props.call && props.file.changeKind !== 'deleted' && actions.canOpen.value && !!actions.pathOf(props.call, props.file.path)
+)
+const diffable = computed(() => !!props.call && actions.canDiff.value && !!actions.pathOf(props.call, props.file.path))
+const knownLine = computed(() => firstChangedLine(props.file))
+const openTitle = computed(() =>
+  knownLine.value
+    ? t('chat.agentEdits.openAtLine', 'Open {{path}} at line {{line}}', { path: props.file.path, line: knownLine.value })
+    : t('chat.agentEdits.openAtChange', 'Open {{path}} at its first change', { path: props.file.path })
+)
+const diffLabel = computed(() => t('chat.agentEdits.openDiff', 'Open diff'))
+function openFile(event) {
+  void actions.openAt({ path: props.file.path, edits: cardEdits.value }, event)
+}
+function openDiff() {
+  void actions.openDiff({ path: props.file.path, edits: cardEdits.value })
+}
 </script>
 
 <template>
@@ -120,12 +149,31 @@ function toggle() {
         <span class="nc-diff-card__old-path">{{ baseName(file.oldPath) }}</span>
         <span class="nc-diff-card__arrow">→</span>
       </template>
-      <span class="nc-diff-card__path" :title="file.path">{{ baseName(file.path) }}</span>
+      <button
+        v-if="openable"
+        type="button"
+        class="nc-diff-card__path nc-diff-card__path--link"
+        :title="openTitle"
+        data-test="diff-card-path"
+        @click="openFile"
+      >{{ baseName(file.path) }}</button>
+      <span v-else class="nc-diff-card__path" :title="file.path">{{ baseName(file.path) }}</span>
       <DiffLineCounts :added="file.added" :removed="file.removed" />
       <!-- Beside the counts rather than under the rows: a collapsed card, and
            one clipped down to no rows at all, would otherwise say nothing. -->
       <span v-if="file.truncated" class="nc-diff-card__truncated">{{ truncatedLabel }}</span>
-      <NativeChatCopyButton :text="copyText" :label="copyLabel" class="nc-diff-card__copy" />
+      <button
+        v-if="diffable"
+        type="button"
+        class="nc-diff-card__action"
+        :title="diffLabel"
+        :aria-label="diffLabel"
+        data-test="diff-card-open-diff"
+        @click="openDiff"
+      >
+        <GitCompareArrows aria-hidden="true" />
+      </button>
+      <NativeChatCopyButton :text="copyText" :label="copyLabel" :class="['nc-diff-card__copy', { 'nc-diff-card__copy--after': diffable }]" />
     </div>
     <!-- Focusable so the rows can be scrolled from the keyboard. -->
     <div v-if="hasBody && expanded" tabindex="0" class="nc-diff-card__rows nc-scrollbar-sleek">
@@ -241,6 +289,51 @@ function toggle() {
 .nc-diff-card__copy {
   margin-left: auto;
   flex-shrink: 0;
+}
+/* Tessel: the path as a link, and "Open diff" before the copy button. */
+.nc-diff-card__path--link {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+}
+.nc-diff-card__path--link:hover {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.nc-diff-card__path--link:focus-visible,
+.nc-diff-card__action:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--nc-ring) 70%, transparent);
+  border-radius: 3px;
+}
+.nc-diff-card__action {
+  display: inline-flex;
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  margin: 0 0 0 auto;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--nc-muted-foreground);
+  cursor: pointer;
+}
+.nc-diff-card__action:hover {
+  background: var(--nc-accent);
+  color: var(--nc-foreground);
+}
+.nc-diff-card__action svg {
+  width: 13px;
+  height: 13px;
+}
+.nc-diff-card__copy--after {
+  margin-left: 0;
 }
 /* max-h-72 overflow-auto font-mono text-[11px] leading-relaxed */
 .nc-diff-card__rows {

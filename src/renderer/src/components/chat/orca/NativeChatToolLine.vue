@@ -12,12 +12,15 @@
  *   initiallyExpanded (true), disclosureKey, onLinkClick(event, url).
  * Tessel: the preview and the input detail are cut from an input masked with
  *   maskSecrets first; a call the agent's stop cut short says "Stopped".
+ *   A file tool's path (Read, Edit, Write…, every agent's: chat/agentEdits.js)
+ *   opens its file at the line it read or first changed; an edit also opens
+ *   its diff in an editor tab (use-agent-edit-actions.js).
  *   The images its result carries (a screenshot, an image file it read:
  *   the result block's images / imagesMore) show under its output as
  *   thumbnails, one viewer for them all (NativeChatImageAttachments).
  */
 import { computed } from 'vue'
-import { ChevronRight } from 'lucide-vue-next'
+import { ChevronRight, ExternalLink, GitCompareArrows } from 'lucide-vue-next'
 import { t } from '../../../i18n'
 import { isToolCallBlock, isToolResultBlock } from '../../../chat/orca/shared/native-chat-types.js'
 import { diffFromText, diffFromToolCall } from '../../../chat/orca/native-chat-diff.js'
@@ -25,6 +28,8 @@ import { createToolInputDisplay, truncateToolDetail } from '../../../chat/orca/n
 import { useNativeChatDisclosure } from '../../../chat/orca/composables/native-chat-disclosure-store.js'
 import { maskToolInput } from '../../../chat/orca/lib/native-chat-tool-secrets.js'
 import { isStoppedToolCall } from '../../../chat/orca/lib/native-chat-tool-stopped.js'
+import { editSteps, toolFileTarget } from '../../../chat/agentEdits.js'
+import { useAgentEditActions } from '../../../chat/orca/composables/use-agent-edit-actions.js'
 import NativeChatToolIcon from './NativeChatToolIcon.vue'
 import NativeChatToolName from './NativeChatToolName.vue'
 import NativeChatCommandMetadata from './NativeChatCommandMetadata.vue'
@@ -86,10 +91,46 @@ const stoppedText = computed(() => t('chat.orca.tool.stopped', 'Stopped'))
 function toggle() {
   if (hasDetail.value) setExpanded(!expanded.value)
 }
+
+// Tessel: the file this call names, as a link (header actions; the body below
+// is the call's detail and images).
+const edits = useAgentEditActions()
+const fileTarget = computed(() => (isCall.value ? toolFileTarget(props.block) : null))
+const openablePath = computed(() =>
+  fileTarget.value && edits.canOpen.value ? edits.pathOf(props.block, fileTarget.value.path) : null
+)
+const fileEdits = computed(() => [{ block: props.block, resultText: props.result?.output || '' }])
+const diffable = computed(
+  () =>
+    !!openablePath.value &&
+    fileTarget.value.edit &&
+    edits.canDiff.value &&
+    !props.result?.isError &&
+    !!editSteps(props.block, null, props.result?.output || '')
+)
+const openTitle = computed(() =>
+  fileTarget.value?.line
+    ? t('chat.agentEdits.openAtLine', 'Open {{path}} at line {{line}}', { path: fileTarget.value.path, line: fileTarget.value.line })
+    : t('chat.agentEdits.open', 'Open {{path}}', { path: fileTarget.value?.path || '' })
+)
+const diffTitle = computed(() => t('chat.agentEdits.openDiff', 'Open diff'))
+function openFile(event) {
+  void edits.openAt({ path: fileTarget.value.path, edits: fileEdits.value, line: fileTarget.value.line }, event)
+}
+function openDiff() {
+  void edits.openDiff({ path: fileTarget.value.path, edits: fileEdits.value })
+}
+// A click on the path opens the file rather than folding the row.
+function onPreviewClick(event) {
+  if (!openablePath.value) return
+  event.stopPropagation()
+  openFile(event)
+}
 </script>
 
 <template>
   <div v-if="isCall || isResult">
+    <div class="nc-tool-line__row">
     <button
       type="button"
       :class="['nc-tool-line', hasDetail ? 'nc-tool-line--toggle' : 'nc-tool-line--static']"
@@ -106,7 +147,13 @@ function toggle() {
           :name="name"
           :mcp-identity="block.mcpIdentity"
         /><template v-else>{{ name }}</template></code>
-      <span v-if="preview" class="nc-tool-line__preview" :title="preview">{{ preview }}</span>
+      <span
+        v-if="preview"
+        :class="['nc-tool-line__preview', openablePath ? 'nc-tool-line__preview--link' : null]"
+        :title="openablePath ? openTitle : preview"
+        :data-test="openablePath ? 'tool-path-link' : undefined"
+        @click="onPreviewClick"
+      >{{ preview }}</span>
       <NativeChatCommandMetadata v-if="isCall" :block="block" />
       <span v-if="stopped" class="nc-tool-line__stopped" data-native-chat-tool-state="stopped">{{ stoppedText }}</span>
       <!-- Revealed on hover of this row alone, never of the message around it. -->
@@ -115,6 +162,17 @@ function toggle() {
         :class="['nc-tool-line__chevron', expanded ? 'nc-tool-line__chevron--open' : 'nc-tool-line__chevron--hover-reveal']"
       />
     </button>
+    <!-- Tessel: the file's own actions, beside the row (never inside its
+         toggle), revealed on hover or keyboard focus. -->
+    <span v-if="openablePath" class="nc-tool-line__actions">
+      <button type="button" class="nc-tool-line__action" :title="openTitle" :aria-label="openTitle" data-test="tool-open-file" @click="openFile">
+        <ExternalLink aria-hidden="true" />
+      </button>
+      <button v-if="diffable" type="button" class="nc-tool-line__action" :title="diffTitle" :aria-label="diffTitle" data-test="tool-open-diff" @click="openDiff">
+        <GitCompareArrows aria-hidden="true" />
+      </button>
+    </span>
+    </div>
     <div v-if="hasDetail && expanded" class="nc-tool-line__detail">
       <NativeChatSearchResults v-if="isCall && hasResults" :results="block.webSearchResults" :on-link-click="onLinkClick" />
       <NativeChatDiffView v-if="diff" :lines="diff" />
@@ -193,6 +251,62 @@ function toggle() {
 }
 .nc-tool-line:hover .nc-tool-line__preview {
   color: color-mix(in srgb, var(--nc-foreground) 70%, transparent);
+}
+/* Tessel: the row and the file's actions beside its toggle. */
+.nc-tool-line__row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.nc-tool-line__row > .nc-tool-line {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+.nc-tool-line__preview--link {
+  cursor: pointer;
+  text-decoration: underline dotted color-mix(in srgb, var(--nc-muted-foreground) 60%, transparent);
+  text-underline-offset: 2px;
+}
+.nc-tool-line__preview--link:hover {
+  color: var(--nc-foreground);
+  text-decoration-style: solid;
+}
+.nc-tool-line__actions {
+  display: inline-flex;
+  flex-shrink: 0;
+  gap: 2px;
+  opacity: 0;
+  transition: opacity 150ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+.nc-tool-line__row:hover .nc-tool-line__actions,
+.nc-tool-line__actions:focus-within {
+  opacity: 1;
+}
+.nc-tool-line__action {
+  display: inline-flex;
+  width: 20px;
+  height: 20px;
+  align-items: center;
+  justify-content: center;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--nc-muted-foreground);
+  cursor: pointer;
+}
+.nc-tool-line__action:hover {
+  background: var(--nc-accent);
+  color: var(--nc-foreground);
+}
+.nc-tool-line__action:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--nc-ring) 70%, transparent);
+}
+.nc-tool-line__action svg {
+  width: 13px;
+  height: 13px;
 }
 /* Tessel: same quiet type as the command metadata. */
 .nc-tool-line__stopped {
