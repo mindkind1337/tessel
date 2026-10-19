@@ -17,7 +17,8 @@
  * Tessel: a teammate's message (sentAs 'team', from) is set apart with its
  * sender; a message that was not delivered says "Not sent" — a teammate's says
  * it will be sent again (not an error). Agent text reaches the page only
- * through ChatMarkdown.
+ * through ChatMarkdown. A pasted image's "[Image #N]" in a user message whose
+ * images show is a chip that opens that image (NativeChatImageAttachments).
  */
 import { computed, shallowRef } from 'vue'
 import { Clock, Goal, Users } from 'lucide-vue-next'
@@ -32,6 +33,7 @@ import NativeChatMessageTimestamp from './NativeChatMessageTimestamp.vue'
 import NativeChatAgentControls from './NativeChatAgentControls.vue'
 import NativeChatImageAttachments from './NativeChatImageAttachments.vue'
 import ProviderFrameRow from './ProviderFrameRow.vue'
+import { hasImagePromptMarker } from '../../../chat/orca/shared/native-chat-image-transcript-markers.js'
 import { senderSummary, senderDetails } from '../../../senderIdentity'
 
 const props = defineProps({
@@ -56,6 +58,7 @@ const props = defineProps({
 })
 
 const rowRef = shallowRef(null)
+const userImagesRef = shallowRef(null)
 
 // One pass per block set, shared with the list that decides whether this row
 // occupies a slot — so "draws nothing" means the same thing to both.
@@ -99,6 +102,12 @@ const showControls = computed(
   () => !isReasoning.value && !isSystem.value && content.value.markdown.length > 0
 )
 const imagePreview = computed(() => props.runtimeContext !== undefined)
+// Tessel: "[Image #N]" opens the N-th image, when the message shows its images.
+const openImageMarker = computed(() =>
+  isUser.value && content.value.prose.some((b) => b.type === 'image-ref' && !b.more) && hasImagePromptMarker(props.message)
+    ? (n) => userImagesRef.value?.openImage(n)
+    : undefined
+)
 
 // Tessel: a teammate's message.
 const isTeam = computed(() => props.message.sentAs === 'team')
@@ -162,6 +171,7 @@ function scrollToTop() {
            the prompt reads apart from the assistant's body copy. -->
       <div class="nc-user-bubble">
         <NativeChatImageAttachments
+          ref="userImagesRef"
           :blocks="content.prose"
           :runtime-context="runtimeContext"
           :enable-preview="imagePreview"
@@ -175,6 +185,7 @@ function scrollToTop() {
           :on-link-click="onLinkClick"
           :allow-file-uri-links="allowFileUriLinks"
           :linkify-existing-paths="onLinkClick !== undefined"
+          :on-image-marker="openImageMarker"
         />
       </div>
       <div v-if="message.sentAs === 'goal'" class="nc-user-goal">

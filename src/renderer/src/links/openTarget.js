@@ -55,7 +55,8 @@ function pathTarget(path, { kind = null, line = null, col = null } = {}) {
   if (typeof path !== 'string' || !path || path.length > MAX_TARGET || CONTROL.test(path)) return null
   // A network share or a device path (\\server\share, \\?\, //server) never
   // opens from a link: reading it could hand your Windows sign-in to a server.
-  if (/^[\\/]{2}/.test(path)) return null
+  // WSL's own share (\\wsl.localhost\<distro>\…, \\wsl$\…) is this PC's.
+  if (/^[\\/]{2}/.test(path) && !/^[\\/]{2}wsl(?:\$|\.localhost)[\\/][\w.-]+(?:[\\/]|$)/i.test(path)) return null
   const remote = isRemotePath(path) ? (parseRemotePath(path) || {}).hostId || null : null
   // An ssh:// path that does not parse is never treated as a local one.
   if (isRemotePath(path) && !remote) return null

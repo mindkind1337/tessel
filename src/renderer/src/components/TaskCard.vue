@@ -16,6 +16,8 @@ import { cardsOf, canOf } from '../taskBoardSource'
 import { COLUMNS } from '../../../shared/taskModel'
 import BrandIcon from './BrandIcon.vue'
 import JobCostLine from './JobCostLine.vue'
+import RichMessage from './RichMessage.vue'
+import { useMessageLinks } from '../links/useMessageLinks'
 import { formatDuration, formatWhen } from '../timeFormat'
 import { t, intlLocale } from '../i18n'
 import { hasUsage } from '../jobCost'
@@ -203,6 +205,19 @@ const reportLabel = computed(() => {
   if (!n) return head
   return `${head} · ${t('tasks.card.files', n > 1 ? '{{count}} files' : '{{count}} file', { count: n })}`
 })
+// The report reads as the chat shows it; its paths (and the files it lists)
+// are the card's worktree copy's when it has one, else its agent pane's
+// folder. Another board's (a Live Share host's): no path is a link.
+const links = useMessageLinks()
+const reportContext = computed(() => {
+  if (props.source) return null
+  const copy = props.task.worktree && props.task.worktree.path
+  if (copy) return links.contextFor(null, { folder: copy })
+  return props.task.paneId ? links.contextFor(props.task.paneId) : null
+})
+function openReportFile(f, event) {
+  if (!props.source) links.openPath({ path: f }, reportContext.value, event)
+}
 function onTaskText(onTask) {
   return t('tasks.card.onThisTask', ' · on this task {{time}}', { time: onTask })
 }
@@ -355,9 +370,12 @@ function paneLabel(pane) {
         {{ reportLabel }}
       </button>
       <div v-if="reportOpen" class="task-report-body">
-        <p>{{ task.report.summary }}</p>
+        <RichMessage class="task-report-text" :text="task.report.summary || ''" :context="reportContext" :guest="!!source" data-test="task-report-text" />
         <ul v-if="task.report.files && task.report.files.length">
-          <li v-for="f in task.report.files" :key="f">{{ f }}</li>
+          <li v-for="f in task.report.files" :key="f">
+            <button v-if="!source && reportContext" type="button" class="task-report-file" :title="f" data-test="task-report-file" @click.stop="openReportFile(f, $event)">{{ f }}</button>
+            <template v-else>{{ f }}</template>
+          </li>
         </ul>
       </div>
     </div>
@@ -398,3 +416,26 @@ function paneLabel(pane) {
     </div>
   </div>
 </template>
+
+<style scoped>
+/* A file the report lists: a link to it in the card's copy. */
+.task-report-file {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, currentColor 40%, transparent);
+  text-underline-offset: 2px;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+.task-report-file:hover {
+  text-decoration-color: currentColor;
+}
+.task-report-text {
+  margin: 0 0 4px;
+}
+</style>

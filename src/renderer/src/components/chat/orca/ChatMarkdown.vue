@@ -24,6 +24,10 @@
  *     { language } and the <code> as its default slot (e.g. NativeChatCodeBlock)
  *   fileLinkContext (Object | null, Tessel): the worktree context of the
  *     fallback link actions (useNativeChatFileLinkContext's value)
+ *   onImageMarker ((n, event) => void, Tessel): "[Image #n]" in the text
+ *     becomes a chip that calls it (the message's n-th image)
+ * Tessel: a picture named by its path shows inline once read
+ * (NativeChatMarkdownLocalImage).
  * Class and attributes go to the root <div>.
  *
  * Clicking a link never navigates the window: the default action is always
@@ -45,6 +49,7 @@ import {
   isTrustedCompactImageSrc,
   linkifyFilePaths as linkifyFilePathsInDom,
   linkifyGitHubReferences,
+  linkImageMarkers,
   parseSanitizedHtml,
   protectLocalMarkdownLinks,
   renderMarkdownFragment
@@ -66,7 +71,8 @@ export default defineComponent({
     linkifyExistingPaths: { type: Boolean, default: false },
     expandImages: { type: Boolean, default: false },
     renderCodeBlock: { type: [Object, Function], default: undefined },
-    fileLinkContext: { type: Object, default: null }
+    fileLinkContext: { type: Object, default: null },
+    onImageMarker: { type: Function, default: undefined }
   },
   setup(props) {
     const root = shallowRef(null)
@@ -87,7 +93,8 @@ export default defineComponent({
     // The sanitized document, transformed; re-made only when the text or the
     // transforms change (not on every re-render).
     const baseFragment = computed(() => {
-      const parsed = parseSanitizedHtml(renderMarkdown(protectLocalMarkdownLinks(props.content)))
+      const source = props.onImageMarker ? linkImageMarkers(props.content) : props.content
+      const parsed = parseSanitizedHtml(renderMarkdown(protectLocalMarkdownLinks(source)))
       if (props.linkifyFilePaths) linkifyFilePathsInDom(parsed)
       else if (props.linkifyExistingPaths) markGatedLinks(parsed, linkifyFilePathsInDom)
       if (props.githubRepo) linkifyGitHubReferences(parsed, props.githubRepo)
@@ -127,7 +134,8 @@ export default defineComponent({
         renderers: isDocument ? documentRenderers : compactRenderers,
         renderCodeBlock: props.renderCodeBlock,
         expandImages: props.expandImages,
-        onAnchorClick
+        onAnchorClick,
+        onImageMarker: props.onImageMarker
       }
       return h(
         'div',
@@ -170,6 +178,30 @@ export default defineComponent({
   border-radius: 0;
   background: transparent;
   font-size: inherit;
+}
+
+/* Tessel: "[Image #N]" of a message whose images show: a chip that opens it. */
+.chat-md .cm-image-marker {
+  display: inline-flex;
+  align-items: center;
+  margin: 0 1px;
+  padding: 0 6px;
+  border: 1px solid var(--nc-border);
+  border-radius: 9999px;
+  background: var(--nc-accent);
+  color: inherit;
+  font: inherit;
+  font-size: 0.86em;
+  line-height: 1.5;
+  vertical-align: baseline;
+  cursor: zoom-in;
+}
+.chat-md .cm-image-marker:hover {
+  border-color: var(--nc-ring);
+}
+.chat-md .cm-image-marker:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--nc-ring);
 }
 
 /* --- compact ------------------------------------------------------------- */

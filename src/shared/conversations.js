@@ -29,7 +29,8 @@
 //           text, preview, status, readCount?, replyKind?, taskTitle?, outcome?,
 //           wsId, teamId, sender? (who sent it, as Tessel recorded it:
 //           senderIdentity.js), via?: 'terminal', run?: { model, modelId,
-//           effort } (a terminal line: the model it ran with) }
+//           effort } (a terminal line: the model it ran with), images?,
+//           imagesMore?, files? (a terminal line's: see terminalLines) }
 //   who: { kind: 'you' | 'agent' | 'tessel', label, paneId: string | null,
 //          agentId: string | null (the agent program: claude, codex, ..., for its logo) }
 // A thread: { key, kind: 'team' | 'user', teamId, paneId, wsId, title,
@@ -186,8 +187,10 @@ export const recipients = (line) => (line.toAll && line.toAll.length ? line.toAl
 // --- What was said in an agent's terminal ---------------------------------------------
 // entries: [{ paneId, group?, wsId, title, agentId, agentName?, sessionId?,
 //   host?: 'local' | 'ssh', hostLabel?, items: [{ role: 'user' | 'agent', t,
-//   text, model?, effort? }] }] (group: one conversation of the pane, its
-//   pane's id by default: a pane's earlier conversation has its own)
+//   text, model?, effort?, images?, imagesMore?, files? }] }] (group: one
+//   conversation of the pane, its pane's id by default: a pane's earlier
+//   conversation has its own; images, files: terminalConversations.js
+//   attachImages', carried to the line as they are)
 // opts.effortLabel(effort) -> its name in the interface ("High"); opts.t.
 // A prompt goes from you to the agent, an answer from the agent to you; an
 // answer carries the agent as its sender, with the model it ran with (shown
@@ -201,7 +204,11 @@ export function terminalLines(entries, opts = {}) {
     const seen = new Map()
     const group = typeof entry.group === 'string' && entry.group ? entry.group : entry.paneId
     for (const it of entry.items) {
-      if (!it || !Number.isFinite(it.t) || typeof it.text !== 'string' || !it.text.trim()) continue
+      if (!it || !Number.isFinite(it.t) || typeof it.text !== 'string') continue
+      // A prompt that was only an image (or a file) has no text: kept for them.
+      const images = Array.isArray(it.images) && it.images.length ? it.images : null
+      const files = Array.isArray(it.files) && it.files.length ? it.files : null
+      if (!it.text.trim() && !images && !files) continue
       const agent = agentWho(entry.title, entry.paneId, t, entry.agentId || null)
       const mine = it.role === 'user'
       const modelId = typeof it.model === 'string' ? it.model : ''
@@ -243,7 +250,10 @@ export function terminalLines(entries, opts = {}) {
         group,
         ...(entry.host === 'ssh' ? { remote: true } : {}),
         ...(run ? { run } : {}),
-        ...(sender ? { sender } : {})
+        ...(sender ? { sender } : {}),
+        ...(images ? { images } : {}),
+        ...(Number.isInteger(it.imagesMore) && it.imagesMore > 0 ? { imagesMore: it.imagesMore } : {}),
+        ...(files ? { files } : {})
       })
     }
   }

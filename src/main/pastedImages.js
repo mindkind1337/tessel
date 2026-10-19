@@ -75,6 +75,62 @@ export async function claudeImageFile({ sessionId, n }, home = os.homedir(), out
   return path
 }
 
+// "[Image #N]" in a Codex pane: Codex records each pasted image in its user
+// message as <image name=[Image #N] path="…"> followed by the image itself
+// (an input_image data: URL), in the session's rollout file:
+//   { type: 'response_item', payload: { role: 'user', content: [
+//       { type: 'input_text', text: '<image name=[Image #1] path="…">' },
+//       { type: 'input_image', image_url: 'data:image/png;base64,…' }, … ] } }
+// One rollout line -> the image for number n ({ mediaType, data }), or null.
+export function codexImageInEntry(o, n) {
+  const p = o && o.type === 'response_item' && o.payload && typeof o.payload === 'object' ? o.payload : null
+  if (!p || p.role !== 'user' || !Array.isArray(p.content)) return null
+  const tag = `<image name=[Image #${n}]`
+  for (let i = 0; i < p.content.length; i++) {
+    const b = p.content[i]
+    if (!b || b.type !== 'input_text' || typeof b.text !== 'string' || !b.text.includes(tag)) continue
+    const img = p.content[i + 1]
+    const m = img && img.type === 'input_image' && typeof img.image_url === 'string' ? /^data:(image\/(?:png|jpeg|gif|webp));base64,(.+)$/s.exec(img.image_url) : null
+    if (m) return { mediaType: m[1], data: m[2] }
+  }
+  return null
+}
+
+// rollout: the session's file (found by the caller) -> the image's file, or
+// null. Like claudeImageFile: read line by line, the latest image with this
+// number, saved once under a name made of the session and the image's bytes.
+export async function codexImageFile({ rollout, sessionId, n }, outDir = PASTE_DIR) {
+  if (!Number.isInteger(n) || n < 1 || typeof rollout !== 'string' || !rollout) return null
+  const needle = `<image name=[Image #${n}]`
+  let found = null
+  const rl = readline.createInterface({ input: fs.createReadStream(rollout, { encoding: 'utf8' }), crlfDelay: Infinity })
+  try {
+    for await (const line of rl) {
+      if (!line.includes(needle)) continue
+      try {
+        const img = codexImageInEntry(JSON.parse(line), n)
+        if (img) found = img
+      } catch {
+        /* a broken line */
+      }
+    }
+  } catch {
+    return null
+  } finally {
+    rl.close()
+  }
+  if (!found) return null
+  const bytes = Buffer.from(found.data, 'base64')
+  if (!bytes.length) return null
+  const session = createHash('sha256').update(String(sessionId)).digest('hex').slice(0, 16)
+  const image = createHash('sha256').update(bytes).digest('hex').slice(0, 16)
+  const path = join(outDir, `codex-${session}-image-${n}-${image}.${EXT[found.mediaType] || 'png'}`)
+  if (fs.existsSync(path)) return path
+  fs.mkdirSync(outDir, { recursive: true })
+  fs.writeFileSync(path, bytes)
+  return path
+}
+
 // A file Tessel may open for a pane: one it saved itself (pasted images,
 // screenshots), inside its folder once resolved (not a folder whose name
 // only starts the same, like tessel-paste-other).
