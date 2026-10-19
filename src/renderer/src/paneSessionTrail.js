@@ -3,8 +3,10 @@
 // an agent said in an earlier conversation of its pane (before /clear, a new
 // session) or in a pane closed since stays in your thread with it. Tessel
 // keeps no history of a pane's conversations (its layout saves the current
-// one only): after a restart, only the current ones are known. Bounded: the
-// last 3 conversations of a pane, the last 12 panes closed.
+// one only): this trail is kept in the window's storage, so a pane's earlier
+// conversations (before an account switch, a restart into a new session)
+// are still read after Tessel restarts. Bounded: the last 3 conversations of
+// a pane, the last 12 panes closed.
 // A conversation the pane did not really run (an id reported first, then
 // corrected) is not kept as an earlier one: an id replaced is kept only when
 // its file was read (confirmSession) or it stayed SETTLE_MS at least. A pane
@@ -19,6 +21,45 @@ export const SETTLE_MS = 2 * 60 * 1000
 // paneId -> { paneId, wsId, title, agentId, accountId?, hostId, chat,
 //   sessions: [{ id, since, confirmed }] (oldest first), closedAt }
 export const paneSessionTrail = reactive({})
+
+// Kept across restarts (ids, times and pane names only, no conversation).
+const STORE = 'tessel.conversations.paneTrail' // i18n-ignore
+const storage = () => {
+  try {
+    return globalThis.localStorage || null
+  } catch {
+    return null
+  }
+}
+const validRow = (row) =>
+  !!row && typeof row === 'object' && typeof row.paneId === 'string' && typeof row.agentId === 'string' && Array.isArray(row.sessions) && row.sessions.every((x) => x && typeof x.id === 'string' && Number.isFinite(x.since))
+function restore() {
+  try {
+    const raw = storage() && storage().getItem(STORE)
+    const rows = raw ? JSON.parse(raw) : null
+    if (!rows || typeof rows !== 'object') return
+    for (const row of Object.values(rows)) if (validRow(row)) paneSessionTrail[row.paneId] = { ...row, sessions: row.sessions.slice(-MAX_SESSIONS) }
+  } catch {
+    // nothing kept
+  }
+}
+restore()
+let saveTimer = 0
+let saved = ''
+function save(trail) {
+  if (trail !== paneSessionTrail) return
+  clearTimeout(saveTimer)
+  saveTimer = setTimeout(() => {
+    try {
+      const s = storage()
+      const text = JSON.stringify(paneSessionTrail)
+      if (s && text !== saved) s.setItem(STORE, text)
+      saved = text
+    } catch {
+      // kept for this run only
+    }
+  }, 1000)
+}
 
 // projects: App's sidebarProjects (each project's panes). A terminal agent in
 // a conversation is noted; a pane no longer there, closed.
@@ -70,13 +111,17 @@ export function notePanes(projects, now = Date.now(), trail = paneSessionTrail) 
     .filter((row) => row.closedAt)
     .sort((a, b) => b.closedAt - a.closedAt)
   for (const row of closed.slice(MAX_CLOSED)) delete trail[row.paneId]
+  save(trail)
 }
 
 // The pane's conversation was read from its file: it really ran.
 export function confirmSession(paneId, id, trail = paneSessionTrail) {
   const row = trail[paneId]
   const s = row && row.sessions.find((x) => x.id === id)
-  if (s && !s.confirmed) s.confirmed = true
+  if (s && !s.confirmed) {
+    s.confirmed = true
+    save(trail)
+  }
 }
 
 // The ids of a pane's conversations, oldest first.
@@ -86,4 +131,15 @@ export const sessionIds = (row) =>
 // Everything forgotten (tests).
 export function clearPaneSessionTrail(trail = paneSessionTrail) {
   for (const id of Object.keys(trail)) delete trail[id]
+  if (trail !== paneSessionTrail) return
+  clearTimeout(saveTimer)
+  try {
+    const s = storage()
+    if (s) s.removeItem(STORE)
+  } catch {
+    // nothing kept
+  }
 }
+
+// What was kept is read again (tests: a restart).
+export const restorePaneSessionTrail = restore

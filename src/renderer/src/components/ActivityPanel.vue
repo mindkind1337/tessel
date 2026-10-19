@@ -6,6 +6,8 @@ import ThemedSelect from './ui/ThemedSelect.vue'
 // and review work, they do not rank agents.
 import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import BrandIcon from './BrandIcon.vue'
+import RichMessage from './RichMessage.vue'
+import { useMessageLinks } from '../links/useMessageLinks'
 import { summarize, cardsFor, parseJournal } from '../../../shared/activity'
 import { formatDuration } from '../timeFormat'
 import { t, intlLocale } from '../i18n'
@@ -67,6 +69,15 @@ function stateText(state) {
       closed: t('activity.state.closed', 'Closed')
     }[state] || state
   )
+}
+
+// A row's whole text reads as the chat shows it; its paths are read against
+// the folder of the pane that wrote it (an answer's speaker, a teammate's
+// sender, the agent you wrote to), while that pane is open.
+const links = useMessageLinks()
+function rowContext(x) {
+  const paneId = x.type === 'reply' ? x.paneId : (x.sender && x.sender.paneId) || x.fromPaneId || x.paneId
+  return paneId ? links.contextFor(paneId) : null
 }
 
 const period = ref('7d')
@@ -564,7 +575,9 @@ const messagesSub = computed(() =>
               <span v-if="describe(x).note" class="act-dim"> · {{ describe(x).note }}</span>
               <span v-if="senderOf(x)" class="act-sender" data-test="act-sender" :title="senderOf(x).details">{{ senderOf(x).line }}</span>
             </span>
-            <span v-if="openRows.has(rowKey(x))" class="act-full">{{ x.text || x.preview }}</span>
+            <div v-if="openRows.has(rowKey(x))" class="act-full" data-test="act-full" @click.stop @keydown.enter.stop>
+              <RichMessage :text="x.text || x.preview" :context="rowContext(x)" />
+            </div>
           </li>
         </ol>
         <p v-else class="act-none">
@@ -574,3 +587,10 @@ const messagesSub = computed(() =>
     </div>
   </div>
 </template>
+
+<style scoped>
+/* A row's whole text is Markdown now: its own line breaks. */
+.act-full {
+  white-space: normal;
+}
+</style>

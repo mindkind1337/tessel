@@ -15,15 +15,27 @@
 // agent filter, a search box, and a switch to show Tessel's own notices. A
 // thread can be copied as text, and an agent's name goes to its pane while
 // it is open.
+// A message reads as the chat shows it (RichMessage.vue: its Markdown, its
+// links, its paths read against the folder of the pane that wrote it, the
+// images a terminal line holds as thumbnails). Type chips (Links, Images,
+// Videos, Files, Folders, Code: messageMedia.js, each with its count of
+// messages) keep only the messages that share one of them, together with the
+// search, the agent and the period; the Media view lists everything the
+// conversations shown share, and goes back to a message.
 // In a Live Share project (source): the host's activity of that project and
 // what its terminal agents said, from the host (masked there), followed
-// while the tab is shown; "You" is the host there.
+// while the tab is shown; "You" is the host there. No image comes from the
+// host, no path is a link there, a web link goes through the host's filter.
 import { senderDetails } from '../senderIdentity'
-import { computed, onBeforeUnmount, reactive, ref, shallowRef, watch } from 'vue'
-import { Check, ChevronRight, Copy, LocateFixed, MessagesSquare, Search, SquareTerminal, Users, X } from 'lucide-vue-next'
+import { computed, nextTick, onBeforeUnmount, reactive, ref, shallowRef, watch } from 'vue'
+import { Check, ChevronRight, Code2, Copy, FileText, Film, Folder, ImageIcon, LayoutGrid, Link2, LocateFixed, MessagesSquare, Search, SquareTerminal, Users, X } from 'lucide-vue-next'
 import BrandIcon from './BrandIcon.vue'
+import RichMessage from './RichMessage.vue'
+import ConversationMedia from './ConversationMedia.vue'
 import ThemedSelect from './ui/ThemedSelect.vue'
 import { buildThreads, filterThreads, lineCount, modelOf, participantsOf, recipients, replyText, statusText, threadText } from '../../../shared/conversations'
+import { MEDIA_TYPES, filterByTypes, mediaItems, typeCounts } from '../links/messageMedia'
+import { useMessageLinks } from '../links/useMessageLinks'
 import { nativeChatSessionChoiceLabel } from '../chat/orca/native-chat-session-option-labels'
 import { confirmSession, notePanes, paneSessionTrail, sessionIds } from '../paneSessionTrail'
 import { formatWhen } from '../timeFormat'
@@ -78,6 +90,20 @@ const paneAlive = (id) => !!id && !!panes.value[id]
 // the key it gave), and nothing is rebuilt when nothing did.
 const MAX_ASKS = 32
 const terminal = shallowRef({}) // ask -> { key, items, paneId, wsId, title, agentId, sessionId, host, hostLabel }
+// Agents on a host not read yet: [{ title, host, state: 'offline' | 'reading' }].
+const waiting = shallowRef([])
+const waitingText = computed(() => {
+  const off = waiting.value.filter((w) => w.state === 'offline')
+  const reading = waiting.value.filter((w) => w.state === 'reading')
+  const names = (list) => [...new Set(list.map((w) => w.title).filter(Boolean))].join(', ')
+  const hosts = [...new Set(off.map((w) => w.host).filter(Boolean))].join(', ')
+  return [
+    off.length ? t('conversations.waiting.offline', 'Not read: {{names}} (their host {{hosts}} is not connected)', { names: names(off), hosts }) : '',
+    reading.length ? t('conversations.waiting.reading', 'Reading from their host: {{names}}', { names: names(reading) }) : ''
+  ]
+    .filter(Boolean)
+    .join(' · ')
+})
 // A Live Share host's project: its log and its teams, from the host.
 const logEvents = computed(() => (props.source ? props.source.events || [] : props.events))
 const logTeams = computed(() => (props.source ? props.source.teams || [] : props.teams))
@@ -185,6 +211,10 @@ async function askTerminal() {
         }))
       })
       if (!res || !res.ok || !res.panes || typeof res.panes !== 'object') continue
+      // The agents on a host whose conversation is not read yet (said under
+      // the counts: never a silent gap).
+      const wait = res.waiting && typeof res.waiting === 'object' ? res.waiting : {}
+      waiting.value = asks.filter((a) => wait[a.ask] === 'offline' || wait[a.ask] === 'reading').map((a) => ({ title: a.title || '', host: a.hostLabel || '', state: wait[a.ask] }))
       const next = {}
       for (const a of asks) {
         const r = res.panes[a.ask]
@@ -253,12 +283,74 @@ const threads = computed(() => {
   return cache.value
 })
 const participants = computed(() => participantsOf(threads.value))
-const shown = computed(() => filterThreads(threads.value, { query: query.value, participant: participant.value }))
+const matching = computed(() => filterThreads(threads.value, { query: query.value, participant: participant.value }))
+
+// --- What the messages share: type chips and the Media view -------------------------------
+// The chips' counts: the messages the other filters keep that share each type.
+const types = ref([])
+const view = ref('messages')
+const counts = computed(() => typeCounts(matching.value))
+const shown = computed(() => filterByTypes(matching.value, types.value))
+const media = computed(() => (view.value === 'media' ? mediaItems(shown.value, types.value) : []))
+const toggleType = (type) => (types.value = types.value.includes(type) ? types.value.filter((x) => x !== type) : [...types.value, type])
+const TYPE_ICONS = { link: Link2, image: ImageIcon, video: Film, file: FileText, folder: Folder, code: Code2 }
+const typeLabel = (type) =>
+  ({
+    link: t('conversations.type.links', 'Links'),
+    image: t('conversations.type.images', 'Images'),
+    video: t('conversations.type.videos', 'Videos'),
+    file: t('conversations.type.files', 'Files'),
+    folder: t('conversations.type.folders', 'Folders'),
+    code: t('conversations.type.code', 'Code')
+  })[type]
+const typeHint = (type) => t('conversations.type.hint', 'Only the messages with: {{type}} ({{count}})', { type: typeLabel(type), count: counts.value[type] })
+
 const total = computed(() => lineCount(shown.value))
-const countText = computed(
-  () =>
-    `${t('conversations.threads', '{{count}} conversations', { count: shown.value.length })} · ${t('conversations.count', '{{count}} messages', { count: total.value })}`
+const countText = computed(() =>
+  view.value === 'media'
+    ? t('conversations.media.count', '{{count}} shared items', { count: media.value.length })
+    : `${t('conversations.threads', '{{count}} conversations', { count: shown.value.length })} · ${t('conversations.count', '{{count}} messages', { count: total.value })}`
 )
+
+// A line's paths are read against the folder of the pane that wrote it (an
+// agent's own; yours, the agent's you wrote to): its pane open now, else its
+// project's folder; none on a host's project (Live Share) or an SSH one.
+const guest = computed(() => !!props.source)
+const links = useMessageLinks()
+function lineContext(line) {
+  if (guest.value || !line) return null
+  const paneId = line.from && line.from.kind === 'agent' ? line.from.paneId : line.to && line.to.paneId
+  const project = (props.projects || []).find((p) => p.id === line.wsId) || null
+  return links.contextFor(paneId, { folder: project ? project.cwd : null, remote: !!(project && project.remote) })
+}
+// A terminal line's image, asked for once its thumbnail is in view; an image
+// file a message names, read as the image viewer reads it (Media view).
+function loadImage(img) {
+  const api = window.shellApi
+  if (guest.value || !api || !img) return null
+  if (img.key && api.conversations && typeof api.conversations.image === 'function') return api.conversations.image(img.key)
+  if (img.local && img.path && typeof api.viewImage === 'function') return api.viewImage(img.path)
+  return null
+}
+const mediaContext = (item) => lineContext(item.line)
+// "Show in conversation": the messages again, its thread open and whole,
+// the message scrolled to and marked a moment.
+const flash = ref('')
+let flashTimer = 0
+async function jumpTo(item) {
+  const thread = item.thread
+  const line = item.line
+  view.value = 'messages'
+  folded[thread.key] = false
+  whole[thread.key] = true
+  await nextTick()
+  const el = [...document.querySelectorAll('[data-line-key]')].find((x) => x.getAttribute('data-line-key') === line.key)
+  if (el && typeof el.scrollIntoView === 'function') el.scrollIntoView({ block: 'center' })
+  flash.value = line.key
+  clearTimeout(flashTimer)
+  flashTimer = setTimeout(() => (flash.value = ''), 1800)
+}
+onBeforeUnmount(() => clearTimeout(flashTimer))
 
 // --- Threads open or folded, lines shown ----------------------------------------------------
 const folded = reactive({}) // thread key -> true when folded
@@ -273,7 +365,7 @@ const hiddenCount = (thread) => (whole[thread.key] ? 0 : Math.max(0, thread.line
 // A long text is clamped; a click on it shows it whole.
 const LONG = 280
 const expanded = reactive({}) // line key -> true
-const isLong = (line) => line.text.length > LONG || line.text.split('\n').length > 4
+const isLong = (line) => line.text.length > LONG || line.text.split('\n').length > 4 || /```|~~~/.test(line.text)
 const toggleLine = (line) => {
   if (isLong(line)) expanded[line.key] = !expanded[line.key]
 }
@@ -443,9 +535,56 @@ const terminalHint = (line) => (line.from.kind === 'you' ? t('conversations.term
       </label>
     </div>
 
+    <div class="cv-types" role="group" :aria-label="t('conversations.type.aria', 'Messages that share')" data-test="cv-types">
+      <button
+        v-for="type in MEDIA_TYPES"
+        :key="type"
+        type="button"
+        class="cv-chip cv-type"
+        :class="{ on: types.includes(type) }"
+        :disabled="!counts[type] && !types.includes(type)"
+        :aria-pressed="types.includes(type) ? 'true' : 'false'"
+        :title="typeHint(type)"
+        :data-test="'cv-type-' + type"
+        @click="toggleType(type)"
+      >
+        <component :is="TYPE_ICONS[type]" :size="11" aria-hidden="true" />
+        {{ typeLabel(type) }}
+        <span class="cv-type-count">{{ counts[type] }}</span>
+      </button>
+    </div>
+
     <div class="sh-bar cv-bar" data-test="cv-count">
       <span class="sh-bar-label">{{ countText }}</span>
+      <div class="cv-views" role="group" :aria-label="t('conversations.view.aria', 'Show')">
+        <button
+          type="button"
+          class="cv-view"
+          :class="{ on: view === 'messages' }"
+          :aria-pressed="view === 'messages' ? 'true' : 'false'"
+          :title="t('conversations.view.messages', 'Messages')"
+          :aria-label="t('conversations.view.messages', 'Messages')"
+          data-test="cv-view-messages"
+          @click="view = 'messages'"
+        >
+          <MessagesSquare :size="13" aria-hidden="true" />
+        </button>
+        <button
+          type="button"
+          class="cv-view"
+          :class="{ on: view === 'media' }"
+          :aria-pressed="view === 'media' ? 'true' : 'false'"
+          :title="t('conversations.view.media', 'Media: everything shared')"
+          :aria-label="t('conversations.view.media', 'Media: everything shared')"
+          data-test="cv-view-media"
+          @click="view = 'media'"
+        >
+          <LayoutGrid :size="13" aria-hidden="true" />
+        </button>
+      </div>
     </div>
+
+    <div v-if="waitingText && !guest" class="cv-waiting" data-test="cv-waiting">{{ waitingText }}</div>
 
     <div class="sh-list cv-list" role="list" data-test="cv-list">
       <div v-if="!threads.length" class="sh-empty" data-test="cv-empty">
@@ -455,6 +594,13 @@ const terminalHint = (line) => (line.from.kind === 'you' ? t('conversations.term
       <div v-else-if="!shown.length" class="sh-empty" data-test="cv-none">
         <p>{{ t('conversations.noMatch', 'No message matches.') }}</p>
       </div>
+      <template v-else-if="view === 'media'">
+        <div v-if="!media.length" class="sh-empty" data-test="cv-media-empty">
+          <p>{{ t('conversations.media.empty', 'Nothing shared in these conversations: no link, image, video, file, folder or code.') }}</p>
+        </div>
+        <ConversationMedia v-else :items="media" :context-of="mediaContext" :guest="guest" :load-image="loadImage" :now="now" @jump="jumpTo" />
+      </template>
+      <template v-else>
       <section v-for="thread in shown" :key="thread.key" class="cv-thread" :class="{ folded: folded[thread.key] }" role="listitem" :data-test="'cv-thread-' + thread.key">
         <div class="sh-group cv-group">
           <button type="button" class="cv-group-main" :aria-expanded="!folded[thread.key]" :data-test="'cv-toggle-' + thread.key" @click="toggleThread(thread.key)">
@@ -484,7 +630,8 @@ const terminalHint = (line) => (line.from.kind === 'you' ? t('conversations.term
           <div v-if="row.stamp" class="cv-stamp" data-test="cv-stamp">{{ when(row.line.t) }}</div>
           <article
             class="cv-line"
-            :class="['from-' + row.line.from.kind, 'kind-' + row.line.kind, 'shape-' + row.shape, { long: isLong(row.line), open: expanded[row.line.key], unsent: ['held', 'skipped', 'failed'].includes(row.line.status) }]"
+            :class="['from-' + row.line.from.kind, 'kind-' + row.line.kind, 'shape-' + row.shape, { long: isLong(row.line), open: expanded[row.line.key], unsent: ['held', 'skipped', 'failed'].includes(row.line.status), flash: flash === row.line.key }]"
+            :data-line-key="row.line.key"
             data-test="cv-line"
           >
             <!-- A Tessel notice: a line in the middle, like a system message. -->
@@ -547,7 +694,18 @@ const terminalHint = (line) => (line.from.kind === 'you' ? t('conversations.term
                   </template>
                 </div>
                 <div class="cv-bubble" :style="row.line.from.kind === 'agent' ? tint(row.line.from) : null" :title="when(row.line.t)">
-                  <div class="cv-text" :class="{ clamp4: isLong(row.line) && !expanded[row.line.key] }" data-test="cv-text" @click="toggleLine(row.line)">{{ row.line.text }}<span v-if="row.line.via === 'terminal'" class="cv-via" :title="terminalHint(row.line)" :aria-label="terminalHint(row.line)" data-test="cv-via"><SquareTerminal :size="11" aria-hidden="true" /></span></div>
+                  <div class="cv-text" :class="{ clamp4: isLong(row.line) && !expanded[row.line.key] }" data-test="cv-text" @click="toggleLine(row.line)">
+                    <span v-if="row.line.via === 'terminal'" class="cv-via" :title="terminalHint(row.line)" :aria-label="terminalHint(row.line)" data-test="cv-via"><SquareTerminal :size="11" aria-hidden="true" /></span>
+                    <RichMessage
+                      :text="row.line.text"
+                      :images="row.line.images || []"
+                      :images-more="row.line.imagesMore || 0"
+                      :files="row.line.files || []"
+                      :context="lineContext(row.line)"
+                      :guest="guest"
+                      :load-image="loadImage"
+                    />
+                  </div>
                   <button v-if="isLong(row.line)" type="button" class="cv-more" @click="toggleLine(row.line)">
                     {{ expanded[row.line.key] ? t('conversations.showLess', 'Show less') : t('conversations.showMore', 'Show all') }}
                   </button>
@@ -567,6 +725,7 @@ const terminalHint = (line) => (line.from.kind === 'you' ? t('conversations.term
           </button>
         </div>
       </section>
+      </template>
     </div>
   </div>
 </template>
@@ -629,6 +788,65 @@ const terminalHint = (line) => (line.from.kind === 'you' ? t('conversations.term
 .cv-search {
   flex: 1 1 100%;
   margin: 0;
+}
+/* What the messages share: one chip per type, its count of messages. */
+.cv-types {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+}
+.cv-type:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.cv-type:disabled:hover {
+  color: var(--text-dim);
+}
+.cv-type-count {
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+/* Agents on a host not read yet: said, never a silent gap. */
+.cv-waiting {
+  flex: 0 0 auto;
+  padding: 4px 10px;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-dim);
+  font-size: 11px;
+  line-height: 15px;
+}
+.cv-views {
+  display: inline-flex;
+  gap: 2px;
+  margin-left: auto;
+}
+.cv-view {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.cv-view:hover {
+  color: var(--text-strong);
+}
+.cv-view.on {
+  background: var(--surface-3);
+  color: var(--text-strong);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+.cv-view:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
 }
 .cv-bar {
   flex: 0 0 auto;
@@ -839,8 +1057,17 @@ const terminalHint = (line) => (line.from.kind === 'you' ? t('conversations.term
   font-size: 13px;
   line-height: 18.5px;
   letter-spacing: 0.005em;
-  white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+/* A long message shows its first lines until opened. */
+.cv-text.clamp4 {
+  max-height: calc(18.5px * 4 + 4px);
+  overflow: hidden;
+  -webkit-mask-image: linear-gradient(to bottom, #000 70%, transparent);
+  mask-image: linear-gradient(to bottom, #000 70%, transparent);
+}
+.cv-line.flash .cv-bubble {
+  box-shadow: 0 0 0 2px var(--accent);
 }
 .cv-line.long .cv-text {
   cursor: pointer;
@@ -907,11 +1134,11 @@ const terminalHint = (line) => (line.from.kind === 'you' ? t('conversations.term
   margin-left: auto;
   white-space: nowrap;
 }
-/* Said in the agent's terminal: a small mark after the text. */
+/* Said in the agent's terminal: a small mark at the top right of the text. */
 .cv-via {
   display: inline-flex;
-  margin-left: 6px;
-  vertical-align: -1px;
+  float: right;
+  margin: 3px 0 0 6px;
   opacity: 0.55;
 }
 

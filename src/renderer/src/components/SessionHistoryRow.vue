@@ -8,12 +8,17 @@
 // AiVaultSessionActionMenuItems.tsx, AiVaultSessionDetails.tsx,
 // ai-vault-first-prompt-card.tsx, AiVaultSessionSubagents.tsx and
 // AiVaultSearchEvidence.tsx (MIT, Copyright (c) 2026 Lovecast Inc.).
+// Its prompt and turns read as the chat shows them (RichMessage.vue: Markdown,
+// links, its paths read against its working directory), and its latest
+// images (sessionDetails.js) as thumbnails.
 // A Live Share host's conversation (source): its details from the host,
-// read only (no resume, log, folder, id or delete).
+// read only (no resume, log, folder, id or delete; no path is a link).
 import { computed, inject, onBeforeUnmount, ref, watch } from 'vue'
-import { Bot, Check, ChevronDown, Copy, Cpu, FileJson, Folder, FolderOpen, LoaderCircle, LocateFixed, MessageSquare, MoreHorizontal, Play, SquareTerminal, TextCursorInput, Trash2 } from 'lucide-vue-next'
+import { Bot, Check, ChevronDown, Copy, Cpu, FileJson, Folder, FolderOpen, ImageIcon, LoaderCircle, LocateFixed, MessageSquare, MoreHorizontal, Play, SquareTerminal, TextCursorInput, Trash2 } from 'lucide-vue-next'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from './chat/orca/ui/index.js'
 import BrandIcon from './BrandIcon.vue'
+import RichMessage from './RichMessage.vue'
+import { useMessageLinks } from '../links/useMessageLinks'
 import { maskSecrets } from '../chat/chatModel'
 import { nativeChatSessionChoiceLabel } from '../chat/orca/native-chat-session-option-labels'
 import { modelLabel } from '../../../shared/modelLabel'
@@ -69,6 +74,8 @@ const deleteReason = computed(() =>
   onHost.value ? t('sessionHistory.row.onHost', 'This conversation is stored on the SSH host.') : deleteBlockedReason(s.value, props.paneId ? { [s.value.id]: props.paneId } : {})
 )
 const logActions = computed(() => !guest.value && hasLog(s.value.agent) && !onHost.value)
+// Its first prompt and latest turns without a log file: OpenCode's database.
+const dbDetails = computed(() => !guest.value && !onHost.value && s.value.agent === 'opencode')
 // Its first prompt and latest turns: Claude Code's and Codex's files on the
 // host are read over the connection (src/main/chat/remoteTranscripts.js).
 const hostDetails = computed(() => onHost.value && (s.value.agent === 'claude' || s.value.agent === 'codex'))
@@ -81,7 +88,7 @@ function loadDetails() {
   if (detailsPromise) return detailsPromise
   const a = api()
   const fromHost = guest.value
-  if (!fromHost && (!(logActions.value || hostDetails.value) || !a || !a.sessionDetails)) return Promise.resolve(null)
+  if (!fromHost && (!(logActions.value || hostDetails.value || dbDetails.value) || !a || !a.sessionDetails)) return Promise.resolve(null)
   detailsLoading.value = true
   const query = hostDetails.value
     ? { agent: s.value.agent, id: s.value.id, hostId: s.value.host }
@@ -113,6 +120,12 @@ const modelText = computed(() => {
   return effort ? `${modelLabel(d.model)} · ${effort}` : modelLabel(d.model)
 })
 const turns = computed(() => (details.value && details.value.ok ? details.value.turns.map((x) => ({ ...x, text: maskSecrets(x.text || '') })) : []))
+// Its latest images (this computer's conversations only: none from a host).
+const images = computed(() => (!guest.value && details.value && details.value.ok && Array.isArray(details.value.images) ? details.value.images : []))
+const imagesLabel = computed(() => t('sessionHistory.details.latestImages', 'Latest images ({{count}})', { count: images.value.length }))
+// Its paths are read against its working directory (this computer's).
+const links = useMessageLinks()
+const linkContext = computed(() => (guest.value || onHost.value || !s.value.cwd ? null : links.contextFor(null, { folder: s.value.cwd })))
 const copied = ref(false)
 let copiedTimer = 0
 function copyPrompt() {
@@ -306,21 +319,25 @@ function onRowClick(event) {
                 {{ copied ? t('sessionHistory.details.copied', 'Copied') : t('sessionHistory.details.copy', 'Copy') }}
               </button>
             </div>
-            <p v-if="promptText" class="sh-card-text" data-test="details-prompt">{{ promptText }}</p>
+            <RichMessage v-if="promptText" class="sh-card-text sh-card-rich" :text="promptText" :context="linkContext" :guest="guest" data-test="details-prompt" />
             <p v-else-if="detailsLoading" class="sh-card-empty">{{ t('sessionHistory.details.loadingFirstPrompt', 'Loading first prompt…') }}</p>
             <p v-else class="sh-card-empty">{{ t('sessionHistory.details.noFirstPrompt', 'No first prompt available') }}</p>
           </div>
         </section>
-        <section v-if="logActions || hostDetails || guest" class="sh-section">
+        <section v-if="logActions || hostDetails || dbDetails || guest" class="sh-section">
           <div class="sh-section-head"><MessageSquare :size="12" aria-hidden="true" /><span>{{ t('sessionHistory.details.latestTurns', 'Latest turns') }}</span></div>
           <div v-if="turns.length" class="sh-turns" data-test="details-turns">
             <div v-for="(turn, i) in turns" :key="i" class="sh-card" :class="turn.role === 'user' ? 'sh-card-user' : 'sh-card-agent'">
               <div class="sh-card-role">{{ roleLabel(turn.role) }}</div>
-              <p class="sh-card-text clamp4">{{ turn.text }}</p>
+              <RichMessage class="sh-card-text sh-card-rich sh-clamp" :text="turn.text" :context="linkContext" :guest="guest" />
             </div>
           </div>
           <div v-else-if="detailsLoading" class="sh-empty-box">{{ t('app.sessions.loading', 'Loading…') }}</div>
           <div v-else class="sh-empty-box">{{ t('sessionHistory.details.noPreview', 'No conversation preview available') }}</div>
+        </section>
+        <section v-if="images.length" class="sh-section" data-test="details-images">
+          <div class="sh-section-head"><ImageIcon :size="12" aria-hidden="true" /><span>{{ imagesLabel }}</span></div>
+          <RichMessage :images="images" :thumb-size="72" />
         </section>
         <section v-if="modelText" class="sh-section" data-test="details-model">
           <div class="sh-section-head"><Cpu :size="12" aria-hidden="true" /><span>{{ t('sessionHistory.details.model', 'Model') }}</span></div>
@@ -351,3 +368,16 @@ function onRowClick(event) {
     </div>
   </div>
 </template>
+
+<style scoped>
+/* Markdown in a details card: the card's own size, no extra margins. */
+.sh-card-rich {
+  white-space: normal;
+}
+.sh-clamp {
+  max-height: calc(1.45em * 4);
+  overflow: hidden;
+  -webkit-mask-image: linear-gradient(to bottom, #000 70%, transparent);
+  mask-image: linear-gradient(to bottom, #000 70%, transparent);
+}
+</style>

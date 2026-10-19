@@ -6,7 +6,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import fs from 'fs'
 import os from 'os'
 import { join, relative, resolve, sep } from 'path'
-import { DELETABLE_AGENTS, HEAD_BYTES, deleteSession, deleteTargets, findSessionFile, revealSessionFile, sessionDetails } from '../sessionDetails'
+import { DELETABLE_AGENTS, HEAD_BYTES, deleteSession, deleteTargets, findSessionFile, latestImages, revealSessionFile, sessionDetails } from '../sessionDetails'
 
 const ID = '11111111-2222-4333-8444-555555555555'
 const OTHER = '22222222-2222-4333-8444-555555555555'
@@ -141,5 +141,27 @@ describe('reveal and delete', () => {
       throw new Error('locked')
     })
     expect(await deleteSession({ agent: 'claude', id: ID }, home, {}, failing)).toEqual({ ok: false, error: 'failed' })
+  })
+})
+
+describe('its latest images', () => {
+  const PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=='
+  const shot = (i) => ({ type: 'user', uuid: `u${i}`, timestamp: new Date(1_700_000_000_000 + i * 1000).toISOString(), cwd: 'C:\proj', message: { role: 'user', content: [{ type: 'text', text: `look ${i}` }, { type: 'image', source: { type: 'base64', media_type: 'image/png', data: PNG } }] } })
+
+  it('decodes the newest images of the lines read (with their data), for Claude Code and Codex only', () => {
+    put(claudeFile(), [user('Start', 1), assistant('ok', 2), shot(3), assistant('seen', 4)])
+    const d = sessionDetails({ agent: 'claude', id: ID }, home)
+    expect(d.ok).toBe(true)
+    expect(d.images).toHaveLength(1)
+    expect(d.images[0]).toMatchObject({ mime: 'image/png', source: 'user', dataUrl: `data:image/png;base64,${PNG}` })
+    expect(d.images[0].at).toBe(1_700_000_000_000 + 3000)
+    const lines = [shot(1), shot(2), shot(3)].map((r) => JSON.stringify(r))
+    expect(latestImages('claude', ID, lines, { images: 4, imageBytes: 1 << 20, pageImages: 2, pageBytes: 1 << 20, files: 0, name: 120 })).toHaveLength(2)
+    expect(latestImages('grok', ID, lines)).toEqual([])
+  })
+
+  it('a conversation without images has none', () => {
+    put(claudeFile(), [user('Start', 1), assistant('ok', 2)])
+    expect(sessionDetails({ agent: 'claude', id: ID }, home).images).toBeUndefined()
   })
 })
