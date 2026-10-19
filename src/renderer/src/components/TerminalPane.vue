@@ -69,6 +69,7 @@ import { cursorContextOnScreen, cursorModelOnScreen, cursorPickerFilter, cursorP
 import { antigravityListed, antigravityModelOnScreen } from '../../../shared/antigravityModels'
 import { codexModelOnScreen } from '../../../shared/codexScreen'
 import { paneModels, paneModelIds } from '../paneModels'
+import { savedPaneModel, paneModelToSave, samePaneModel } from '../paneLastModel'
 import { modelsFor, refreshIfStale } from '../agentModels'
 import { afterStartup, isStartupFinished } from '../startupIdle'
 import { CLAUDE_PRICING } from '../../../shared/claudePricing'
@@ -294,7 +295,10 @@ watch(
 // model chosen for it (Tessel added the flag, or /model was applied) shows
 // until its conversation answers with another model. Checked every 20 s, each
 // time it finishes working, and when one of those files changes.
-const agentModel = ref(null) // { model, effort, source } | null
+// A pane still running after Tessel restarted: the model its header showed
+// before (paneLastModel.js) until its files or its screen are read again.
+const savedAtStart = props.node.kind === 'agent' ? savedPaneModel(props.node.lastModel) : null
+const agentModel = ref(savedAtStart ? { ...savedAtStart, source: 'saved' } : null) // { model, effort, source } | null
 // Cursor: the context its status line shows ({ usedTokens, windowTokens }), for the chat view's ring.
 const screenContext = ref(null)
 // Claude Code: the next message it suggests, greyed in its empty prompt (the
@@ -329,6 +333,11 @@ watch(
   { immediate: true }
 )
 onBeforeUnmount(() => delete paneModels[props.node.id])
+// Kept with the layout for the next start (a change only).
+watch(agentModel, (m) => {
+  const keep = paneModelToSave(m)
+  if (keep && !samePaneModel(keep, props.node.lastModel)) props.node.lastModel = keep
+})
 const modelTitle = computed(() => {
   const m = agentModel.value
   if (!m) return ''
@@ -343,6 +352,8 @@ const modelTitle = computed(() => {
             ? t('pane.model.fromChosen', 'chosen in Tessel (pane menu > Model, or Settings > Agents)')
             : m.source === 'screen'
               ? t('pane.model.fromScreen', 'read from its screen (status bar or banner)')
+            : m.source === 'saved'
+              ? t('pane.model.fromSaved', 'what it showed before Tessel restarted (read again in a moment)')
               : m.source === 'running'
                 ? t('pane.model.fromRunning', 'the only model Ollama has running')
               : t('pane.model.fromSettings', 'from its settings (a change inside the agent may not show)')
@@ -526,8 +537,13 @@ async function refreshModel() {
       }
     }
     let res = await window.shellApi.agentModel(modelQuery(n))
-    // Its account could not be read (removed meanwhile): what it showed stays.
-    if (res && res.keep) return
+    // Its files could not be read now (its account removed meanwhile, or no
+    // answer in time while Tessel starts): what it shows stays; showing
+    // nothing, its screen may still say it (below).
+    if (res && res.keep) {
+      if (agentModel.value && agentModel.value.model) return
+      res = null
+    }
     // What its own files say (never its screen), kept for a Live Share host.
     sessionModel.value = res && res.model && res.source !== 'screen' ? String(res.model) : null
     // Antigravity CLI: the id or label it reports, as its model list names it
@@ -539,7 +555,9 @@ async function refreshModel() {
     // The other agents: the name their model list gives the id they report
     // (Kimi's "kimi-code/kimi-for-coding" -> Kimi K2.6), when it has none.
     if (res && res.model && !res.name && !OWN_MODEL_NAMES.includes(n.agentId)) {
-      const row = modelsFor(n.agentId).find((m) => m && m.id === res.model && typeof m.label === 'string' && m.label.trim())
+      // A label that only repeats the id (Muse lists "muse-wonder-1.0"): the
+      // product name modelLabel gives it, as when its footer says it.
+      const row = modelsFor(n.agentId).find((m) => m && m.id === res.model && typeof m.label === 'string' && m.label.trim() && m.label.trim() !== res.model)
       if (row) res = { ...res, name: row.label.trim() }
     }
     // Muse Code: its files first (its log, its settings' per-model effort);
@@ -936,6 +954,18 @@ watch(
   },
   { immediate: true }
 )
+// Its screen just came back (replayed, or its first output since it was
+// mounted, a re-attach after a restart): the agents whose header reads their
+// footer (Antigravity, Codex, Cursor, Muse) show it then, not at the next
+// check 20 s later. Once, and only while it shows nothing read yet.
+let screenModelRead = false
+function readModelOnScreenBack() {
+  if (screenModelRead || !isAgent.value) return
+  const m = agentModel.value
+  if (m && m.model && m.source !== 'saved') return
+  screenModelRead = true
+  afterStartup(() => setTimeout(() => mounted && refreshModel(), 300))
+}
 function readModelAtMount() {
   if (!firstModelRead) return
   firstModelRead = false
@@ -3588,6 +3618,7 @@ onMounted(() => {
     replaying = true
     term.write(history, () => {
       replaying = false
+      readModelOnScreenBack()
     })
   }
 
@@ -3698,6 +3729,7 @@ onMounted(() => {
       outputTerm.write(data, () => {
         pendingScreenWrites = Math.max(0, pendingScreenWrites - 1)
         if (mounted && term === outputTerm) {
+          if (!hasLiveScreen) readModelOnScreenBack()
           hasLiveScreen = true
           markActivity()
           scheduleApprovalScreen()

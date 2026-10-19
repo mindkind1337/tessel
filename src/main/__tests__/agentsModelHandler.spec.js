@@ -10,7 +10,7 @@ const main = fs.readFileSync(join(__dirname, '..', 'index.js'), 'utf8').replace(
 const start = main.indexOf("ipcMain.handle('agents:model',")
 const handlerSource = main.slice(start, main.indexOf('\n})\n', start) + 4)
 
-function harness(roots) {
+function harness(roots, { workerCall = null, live = null } = {}) {
   const reads = []
   const calls = []
   const handlers = {}
@@ -21,13 +21,15 @@ function harness(roots) {
     remoteAgentModel: async () => null,
     accountSessions: { roots },
     os: { homedir: () => '/home/me' },
-    sessionLister: { call: async (...args) => (calls.push(args), { model: 'from-worker', effort: null, source: 'session' }) },
-    agentModelLive: async (q, home, fetchImpl, read) => {
-      reads.push(q)
-      // The files are read through the session list's process (read).
-      const viaWorker = await read(q, home)
-      return { model: q.codexDir ? 'gpt-account' : 'gpt-system', effort: 'low', source: 'session', viaWorker }
-    }
+    sessionLister: { call: async (...args) => (calls.push(args), workerCall ? workerCall(...args) : { model: 'from-worker', effort: null, source: 'session' }) },
+    agentModelLive:
+      live ||
+      (async (q, home, fetchImpl, read) => {
+        reads.push(q)
+        // The files are read through the session list's process (read).
+        const viaWorker = await read(q, home)
+        return { model: q.codexDir ? 'gpt-account' : 'gpt-system', effort: 'low', source: 'session', viaWorker }
+      })
   })
   return { call: (q) => handlers['agents:model']({}, q), reads, calls }
 }
@@ -60,5 +62,14 @@ describe('agents:model handler', () => {
     const res = await h.call({ agentId: 'claude', sessionId: 's1' })
     expect(h.calls).toEqual([['agentModel', { agentId: 'claude', sessionId: 's1' }, '/home/me']])
     expect(res.viaWorker).toMatchObject({ model: 'from-worker' })
+  })
+
+  it('that process not answering in time is not "no model": the pane keeps what it shows', async () => {
+    const live = async (q, home, fetchImpl, read) => read(q, home)
+    const late = harness(async () => null, { live, workerCall: async () => Promise.reject(new Error('no answer in time')) })
+    expect(await late.call({ agentId: 'antigravity', sessionId: 's1' })).toEqual({ keep: true })
+    // Read, and nothing found: no model (the header may read its screen).
+    const none = harness(async () => null, { live, workerCall: async () => null })
+    expect(await none.call({ agentId: 'antigravity', sessionId: 's1' })).toBeNull()
   })
 })

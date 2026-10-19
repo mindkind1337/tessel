@@ -135,6 +135,7 @@ import { taskHistory, setTaskHistory, backfillHistory, setHistoryDescriber } fro
 import { restoredSideTab } from './sideTabs'
 import { runSettingsTool } from './settingsTools'
 import { paneModels, paneModelIds } from './paneModels'
+import { savedPaneModel } from './paneLastModel'
 import { buildSenderSnapshot, paneRemote, cleanSender } from './senderIdentity'
 import { sleepBlocker } from '../../shared/agentSleep'
 import { updateBlocker, planUpdate, autoUpdateMoment } from '../../shared/agentUpdatePlan'
@@ -1985,6 +1986,9 @@ function serializeNode(node) {
       permissions: node.detected ? undefined : node.permissions || undefined,
       permissionMode: node.detected ? undefined : node.permissionMode || undefined,
       launchSig: node.detected ? undefined : node.launchSig || undefined,
+      // The model its header showed (paneLastModel.js): shown at once after a
+      // restart of Tessel while it still runs.
+      lastModel: node.detected || node.kind !== 'agent' ? undefined : savedPaneModel(node.lastModel) || undefined,
       launchYolo: node.detected ? undefined : node.launchYolo || undefined,
       // Claude Code on a root host: started in Accept edits, not Yolo.
       rootNoYolo: node.detected ? undefined : node.rootNoYolo || undefined,
@@ -2169,6 +2173,9 @@ async function deserializeNode(snap, cwd = null, attaching = null) {
     if (snap.teamTools) leaf.teamTools = true
     if (typeof snap.toolsVersion === 'string') leaf.toolsVersion = snap.toolsVersion
     // Still running since before: it keeps how it was launched.
+    // Still running since before: its header shows the model it showed until
+    // it is read again.
+    if (leaf.attached && leaf.kind === 'agent' && savedPaneModel(snap.lastModel)) leaf.lastModel = savedPaneModel(snap.lastModel)
     if (leaf.attached && typeof snap.launchSig === 'string') {
       leaf.launchSig = snap.launchSig.slice(0, 20000)
       leaf.launchYolo = snap.launchYolo === true

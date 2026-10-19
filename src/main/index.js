@@ -1819,8 +1819,18 @@ ipcMain.handle('agents:model', async (_evt, q = {}) => {
       query.codexDir = roots.codex
     }
     // Read in the session list's process (sessionListWorker.js): every pane
-    // asking at a start held the main process for 3.5 s.
-    return await agentModelLive(query, os.homedir(), globalThis.fetch, (mq, home) => sessionLister.call('agentModel', mq, home))
+    // asking at a start held the main process for 3.5 s. Not read there (no
+    // answer in time while it lists every conversation at a start, or an
+    // error): not "no model", so the pane keeps what it shows (its saved
+    // model, its screen) instead of an empty header.
+    let unread = false
+    const read = (mq, home) =>
+      sessionLister.call('agentModel', mq, home).catch(() => {
+        unread = true
+        return null
+      })
+    const found = await agentModelLive(query, os.homedir(), globalThis.fetch, read)
+    return !found && unread ? { keep: true } : found
   } catch {
     return null
   }
