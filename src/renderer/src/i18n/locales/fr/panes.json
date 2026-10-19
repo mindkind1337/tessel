@@ -500,7 +500,8 @@
     "limit": {
       "resetsIn": "Cet agent a atteint sa limite d'utilisation. Elle se réinitialise {{reset}}.",
       "resetsAt": "Cet agent a atteint sa limite d'utilisation. Elle se réinitialise à {{reset}}.",
-      "hit": "Cet agent a atteint sa limite d'utilisation."
+      "hit": "Cet agent a atteint sa limite d'utilisation.",
+      "meanwhile": "D'ici là, les messages qui lui sont adressés attendent ; ses cartes en cours peuvent être confiées à un autre agent (tableau des tâches)."
     },
     "cache": {
       "expired": "Cache de prompt expiré : le prochain message renvoie toute la conversation sans cache",
@@ -601,7 +602,9 @@
       "unknown": "inconnu",
       "needs": "vous attend",
       "question": "question ?",
-      "questionHint": "Cet agent vous pose une question"
+      "questionHint": "Cet agent vous pose une question",
+      "limitResets": "Limite atteinte · réinitialisation {{when}}",
+      "limitReached": "Limite atteinte"
     },
     "sleep": {
       "overlay": "En veille depuis {{time}} : son terminal a été arrêté pour libérer de la mémoire. Sa conversation est conservée.",

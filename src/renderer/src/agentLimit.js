@@ -11,20 +11,28 @@
 // of src/shared/agentStateRules/common.json, maybe fixed by the user's
 // override file (agentStateRules.js).
 import { rulesFor } from './agentStateRules'
+import { parseLimitReset, resetZone } from '../../shared/limitReset'
 
 // -> null, or { reset: '8:47 PM' | 'in 2 days 3 hours' | '' }
 // provider: the pane's agent id (its own rules apply too), or none.
-export function detectLimit(text, provider) {
+// at: read at that moment: the result also has resetAt, the reset as a
+// moment (limitReset.js; in the time zone the screen names right after it,
+// "resets 3pm (America/Toronto)"), or null when none is said.
+export function detectLimit(text, provider, { at = null } = {}) {
   const s = String(text || '')
   const rules = rulesFor(provider)
   if (!rules.test('limit', s)) return null
   const found = rules.exec('limit-reset', s)
+  const withAt = (hit, timeZone = null) =>
+    Number.isFinite(at) ? { ...hit, resetAt: hit.reset ? parseLimitReset(hit.reset, { now: at, timeZone }) : null } : hit
   if (found) {
     const when = String(found.match[1] ?? '').replace(/\s+/g, ' ').replace(/[\s,]+$/, '').trim()
+    const end = (found.match.index || 0) + found.match[0].length
+    const after = s.slice(end, end + 48)
     // Preserve the CLI's English reset phrase in the shared agent-state protocol.
-    return { reset: found.rule.prefix + when } // i18n-ignore
+    return withAt({ reset: found.rule.prefix + when }, /^\s*\(/.test(after) ? resetZone(after) : null) // i18n-ignore
   }
-  return { reset: '' }
+  return withAt({ reset: '' })
 }
 
 // What agent CLIs show while they wait for the user to approve something

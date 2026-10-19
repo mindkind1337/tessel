@@ -125,6 +125,39 @@ describe('Codex turn end from its rollout', () => {
     expect(state).toMatchObject({ state: 'idle', reason: 'ready', source: 'rollout', turnCompletedAt: prompt + 18000 })
   })
 
+  // Codex's usage limit as its rollout records it (anonymised from a real one).
+  const LIMIT_ERROR = {
+    message:
+      'You’ve hit your usage limit. Upgrade to Pro (https://chatgpt.com/explore/pro), visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 8:47 PM.',
+    codex_error_info: 'usage_limit_exceeded'
+  }
+  const rateLimits = (at, primary, secondary = null) =>
+    line('event_msg', { type: 'token_count', info: null, rate_limits: { limit_id: 'codex', primary, secondary, credits: { has_credits: false }, plan_type: 'plus', rate_limit_reached_type: null } }, at)
+
+  it('reads a turn that ended on the usage limit, with the full window’s resets_at', () => {
+    const t = tick - 1000
+    const resets = Math.floor((tick + 3 * 3600000) / 1000)
+    expect(
+      lastTurnEvent([
+        started(t - 10),
+        rateLimits(t - 5, { used_percent: 100.0, window_minutes: 300, resets_at: resets }, { used_percent: 41.0, window_minutes: 10080, resets_at: resets + 99999 }),
+        complete(t, { last_agent_message: null, error: LIMIT_ERROR })
+      ])
+    ).toEqual({ kind: 'limit', at: t, turnId: TURN, reset: '8:47 PM', resetAt: resets * 1000 })
+    // No rate_limits read: the message's time only; no time said: none.
+    expect(lastTurnEvent([complete(t, { error: { message: "You've hit your usage limit. Try again in 2 days 3 hours." } })])).toMatchObject({ kind: 'limit', reset: 'in 2 days 3 hours', resetAt: null })
+    expect(lastTurnEvent([complete(t, { error: { message: 'x', codex_error_info: 'usage_limit_exceeded' } })])).toMatchObject({ kind: 'limit', reset: null })
+  })
+
+  it('a turn ended on the usage limit leaves the pane limited until its reset', async () => {
+    const prompt = tick - 5 * 60000
+    const store = await working(prompt)
+    const resets = Math.floor((tick + 3600000) / 1000)
+    rollout([started(prompt), rateLimits(prompt + 100, { used_percent: 100, window_minutes: 300, resets_at: resets }), complete(prompt + 200, { error: LIMIT_ERROR })])
+    expect(await check(store)).toBe(1)
+    expect(store.snapshot()[paneId]).toMatchObject({ state: 'limited', reason: 'quota', reset: '8:47 PM', resetAt: resets * 1000 })
+  })
+
   it('shows an errored turn like StopFailure and an aborted one like Interrupt', async () => {
     const prompt = tick - 5 * 60000
     let store = await working(prompt)

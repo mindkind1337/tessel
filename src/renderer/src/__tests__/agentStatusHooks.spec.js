@@ -322,9 +322,16 @@ describe('terminal activity and authoritative agent events', () => {
     hook('Stop')
     screen = { ...screen, ready: true, approval: true, limit: { reset: 'in 1 minute' } }
     monitor.output()
-    await vi.advanceTimersByTimeAsync(61000)
+    await vi.advanceTimersByTimeAsync(30000)
     expect(agentStates[node.id].state).toBe('limited')
     expect(limits[node.id].reset).toBe('in 1 minute')
+    // Its reset time passed: no longer limited (the same message still on
+    // screen does not bring it back), and still no completed turn.
+    await vi.advanceTimersByTimeAsync(31000)
+    monitor.output()
+    await vi.advanceTimersByTimeAsync(1400)
+    expect(agentStates[node.id].state).not.toBe('limited')
+    expect(limits[node.id]).toBeUndefined()
     expect(callbacks.onCompleted).not.toHaveBeenCalled()
   })
 

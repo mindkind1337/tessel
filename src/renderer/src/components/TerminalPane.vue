@@ -98,6 +98,7 @@ import PaneHoverDetails from './PaneHoverDetails.vue'
 import { useHoverCard } from './hover/useHoverCard'
 import { agentStateLabel } from '../sidebarModel'
 import { t, intlLocale } from '../i18n'
+import { limitClock } from '../limitFlow'
 import { remoteHostsState } from '../remoteHosts'
 import { readText as readScreenText, createShellIntegration, createTerminalAdapter } from '../agentTerminal/screenRead'
 import { terminalControl, terminalLog } from '../agentTerminal/agentTerminalState'
@@ -1148,11 +1149,10 @@ const activityMonitor = createAgentActivityMonitor({
   onStatus: (status) => { agentStatus.value = status },
   onWorking: () => { cacheStartedAt.value = 0 },
   onApproval: (on) => setApproval(props.node.id, on),
+  // A new limit is told by App (whatever said so: this screen, the hooks).
   onLimit: (hit) => {
-    const isNew = !limits[props.node.id]
     setApproval(props.node.id, false)
     setLimit(props.node.id, hit)
-    if (isNew) ctx.notifyAgentLimit(props.node, hit)
   },
   onCompleted: ({ at, screen }) => {
     clearLimit(props.node.id)
@@ -1623,15 +1623,22 @@ const stuck = computed(
   () => isAgent.value && !subRunning.value && !!track.value && (track.value.level === 'warn' || track.value.level === 'alert') && !asksApproval.value && !limit.value
 )
 const unsent = computed(() => isAgent.value && !!(ctx.unsent && ctx.unsent[props.node.id]))
-const limitTitle = computed(() =>
-  !limit.value
-    ? ''
-    : limit.value.reset
-      ? /^in /.test(limit.value.reset)
-        ? t('pane.limit.resetsIn', 'This agent hit its usage limit. It resets {{reset}}.', { reset: limit.value.reset })
-        : t('pane.limit.resetsAt', 'This agent hit its usage limit. It resets at {{reset}}.', { reset: limit.value.reset })
-      : t('pane.limit.hit', 'This agent hit its usage limit.')
+// Its reset as a short local time ("15:00"), else as the agent said it.
+const limitWhen = computed(() => limitClock(limit.value))
+// The header badge: "Limit reached · resets 15:00".
+const limitBadge = computed(() =>
+  limitWhen.value ? t('pane.badge.limitResets', 'Limit reached · resets {{when}}', { when: limitWhen.value }) : t('pane.badge.limitReached', 'Limit reached')
 )
+const limitTitle = computed(() => {
+  if (!limit.value) return ''
+  const when = limitWhen.value
+  const head = !when
+    ? t('pane.limit.hit', 'This agent hit its usage limit.')
+    : !Number.isFinite(limit.value.resetAt) && /^in /.test(when)
+      ? t('pane.limit.resetsIn', 'This agent hit its usage limit. It resets {{reset}}.', { reset: when })
+      : t('pane.limit.resetsAt', 'This agent hit its usage limit. It resets at {{reset}}.', { reset: when })
+  return `${head}\n${t('pane.limit.meanwhile', 'Messages to it wait until then; its cards under way can go to another agent (task board).')}`
+})
 const cacheTitle = computed(() =>
   !cache.value
     ? ''
@@ -2967,8 +2974,8 @@ function findCount() {
     : t('pane.find.none', 'No results')
 }
 function limitState() {
-  return limit.value && limit.value.reset
-    ? t('pane.state.limitResets', 'usage limit · resets {{reset}}', { reset: limit.value.reset })
+  return limit.value && limitWhen.value
+    ? t('pane.state.limitResets', 'usage limit · resets {{reset}}', { reset: limitWhen.value })
     : t('pane.state.limit', 'usage limit')
 }
 function cacheLeft() {
@@ -4135,7 +4142,7 @@ const paneMenuBindings = computed(() => ({
         <span v-else-if="badge === 'exited'" class="exit-tag" data-test="pane-badge">{{ t('pane.badge.exited', 'exited') }}</span>
         <span v-else-if="badge === 'approval'" class="pane-approval" data-test="pane-badge" :title="t('pane.badge.approvalHint', 'This agent is asking you to approve something')">{{ t('pane.badge.approval', 'approve?') }}</span>
         <span v-else-if="badge === 'question'" class="pane-approval" data-test="pane-badge" :title="t('pane.badge.questionHint', 'This agent asks you a question')">{{ t('pane.badge.question', 'question?') }}</span>
-        <span v-else-if="badge === 'limit'" class="pane-limit" data-test="pane-badge" :title="limitTitle">{{ t('pane.badge.limit', 'limit') }}{{ limit.reset ? ` · ${limit.reset}` : '' }}</span>
+        <span v-else-if="badge === 'limit'" class="pane-limit" data-test="pane-badge" :title="limitTitle">{{ limitBadge }}</span>
         <button
           v-else-if="badge === 'unsent'"
           class="pane-unsent"

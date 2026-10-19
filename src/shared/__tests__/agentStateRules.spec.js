@@ -27,11 +27,16 @@ const OLD = {
     /\busage limit reached\b/i,
     /\b(?:5-hour|five-hour|weekly|session|opus|sonnet) limit reached\b/i,
     /you['’]ve reached your (?:usage|weekly|session|5-hour) limit/i,
+    // Added since: Claude Code's newer wording, Muse Code's quota failure.
+    /you['’]ve hit your (?:(?:weekly|session|daily|monthly|5-hour|opus|sonnet|fable) )?limit\b/i,
+    /\bsubscription quota exhausted\b/i,
     /\bquota exceeded\b/i,
     /you have exhausted your (?:daily )?quota/i,
     /\bRESOURCE_EXHAUSTED\b/
   ],
   reset: [
+    // Added since: Muse Code's ISO reset time.
+    /(?:try again at|resets? at)\s+([0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}(?::[0-9]{2})?(?:\.[0-9]+)?Z)/i,
     /(?:try again at|resets? at|resets|reset at)\s+([0-9]{1,2}(?::[0-9]{2})?\s*(?:[ap]m|[ap]\.m\.))/i,
     /(?:try again|resets?) in\s+((?:\d+\s*(?:days?|hours?|hrs?|minutes?|mins?)\s*,?\s*(?:and\s*)?)+)/i,
     /(?:try again on|resets? on|resets)\s+([A-Z][a-z]{2,8}\.? \d{1,2}(?:,? \d{1,2}(?::\d{2})?\s*[ap]m)?)/
@@ -64,7 +69,7 @@ describe('built-in rules reproduce the former hardcoded patterns', () => {
     expect(reset).toHaveLength(OLD.reset.length)
     reset.forEach((r, i) => same(r, OLD.reset[i]))
     // Only the "in 2 hours" form was shown with "in ".
-    expect(reset.map((r) => r.prefix || '')).toEqual(['', 'in ', ''])
+    expect(reset.map((r) => r.prefix || '')).toEqual(['', '', 'in ', ''])
   })
 
   it('the approval alternation, split one alternative per rule', () => {

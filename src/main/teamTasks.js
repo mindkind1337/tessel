@@ -289,6 +289,14 @@ export function writeRoster({ dir, teamId, members } = {}) {
       model: typeof m.model === 'string' ? m.model.slice(0, 60) : null,
       state: ROSTER_STATES.includes(m.state) ? m.state : null
     }
+    // At its usage limit: until when (a moment, and the words the team tools
+    // say: "until 15:00"), for team_send, team_ask and team_members.
+    const until = m.until && typeof m.until === 'object' ? m.until : null
+    if (clean[id].state === 'limited' && until) {
+      const at = Number.isSafeInteger(until.at) && until.at > 0 ? until.at : null
+      const text = typeof until.text === 'string' ? until.text.replace(/[\u0000-\u001f\u007f]/g, ' ').trim().slice(0, 80) : ''
+      if (at || text) clean[id].until = { at, text }
+    }
   }
   const file = join(root, 'roster.json')
   let old = null

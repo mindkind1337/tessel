@@ -3,8 +3,10 @@
 //   agentStatus[id]  -> 'busy' | 'idle' | 'unknown'
 //   attention[id]    -> true when an agent finished a stretch of work while you
 //                       were looking elsewhere, i.e. it is waiting on you.
-//   limits[id]       -> { reset } when the agent has hit its usage limit
-//                       (see agentLimit.js); reset is its reset time or ''.
+//   limits[id]       -> { reset, resetAt } when the agent has hit its usage
+//                       limit (see agentLimit.js): reset is its reset time as
+//                       the agent said it or '', resetAt that time as a moment
+//                       (limitReset.js) or null. It goes by itself at resetAt.
 //   approvals[id]    -> true while the agent shows an approval prompt
 //                       ("Would you like to run...", see agentLimit.js).
 //   monitoring[id]   -> the number of background tasks (shells, sub-agents,
@@ -82,7 +84,10 @@ export function applyAgentStates(snapshot) {
     agentStatus[id] = displayStatus(state)
     setMonitoring(id, state.monitoring === true && Number.isInteger(state.backgroundTasks) ? state.backgroundTasks : 0)
     setApproval(id, state.state === 'approval')
-    if (state.state === 'limited') setLimit(id, { reset: state.reset })
+    // Working again by its own hooks (a new prompt): any limit message still
+    // on its screen is an old one.
+    if (state.state === 'working' && state.source === 'hook') forgetSpentLimit(id)
+    if (state.state === 'limited' && !limitSpent(id, state)) setLimit(id, { reset: state.reset, resetAt: state.resetAt })
     else if (!state.stale && state.confirmed !== false) clearLimit(id)
   }
 }
@@ -205,7 +210,7 @@ export function agentScreenObservation(term, provider, screen) {
   }
   const rules = rulesFor(provider)
   const approval = detectApproval(screen, provider)
-  const limit = detectLimit(screen, provider)
+  const limit = detectLimit(screen, provider, { at: Date.now() })
   const footer = String(screen || '')
     .split(/\r?\n/)
     .slice(-8)
@@ -289,7 +294,7 @@ function freebuffObservation(term, screen) {
   return {
     screen,
     approval: waiting,
-    limit: detectLimit(screen, 'freebuff'),
+    limit: detectLimit(screen, 'freebuff', { at: Date.now() }),
     busy: state === 'working',
     running: state === 'working',
     ready: state === 'ready',
@@ -397,11 +402,19 @@ export function createAgentActivityMonitor({
   function screenCheck() {
     if (disposed) return
     const node = getNode()
-    const observation = readScreen()
+    let observation = readScreen()
     const managed = managedAgentStatus(node)
+    // A limit message whose reset time has passed (still on the screen) is
+    // read as no limit; one no longer shown is forgotten.
+    if (!observation.limit) forgetSpentLimit(node.id)
+    else if (limitSpent(node.id, observation.limit)) observation = { ...observation, limit: null }
     if (observation.limit) {
       onLimit(observation.limit)
-      if (managed) send('ScreenLimit', { reset: observation.limit.reset })
+      if (managed)
+        send('ScreenLimit', {
+          reset: observation.limit.reset,
+          ...(Number.isFinite(observation.limit.resetAt) ? { resetAt: observation.limit.resetAt } : {})
+        })
       return observation
     }
     if (observation.approval) {
@@ -482,7 +495,7 @@ export function createAgentActivityMonitor({
         lastRecheck = now()
         const observation = readScreen()
         if (!observation.approval) onApproval(false)
-        if (!observation.limit) clearLimit(node.id)
+        if (!observation.limit || limitSpent(node.id, observation.limit)) clearLimit(node.id)
       }
       if (localStatus !== 'busy') {
         busySince = now()
@@ -546,14 +559,60 @@ export function setMonitoring(id, count) {
   } else if (monitoring[id]) delete monitoring[id]
 }
 
-export function setLimit(id, info) {
-  // Keep a reset time already known when this read of the screen shows none.
-  const reset = (info && info.reset) || (limits[id] && limits[id].reset) || ''
-  limits[id] = { reset }
+export function setLimit(id, info, now = Date.now()) {
+  const old = limits[id]
+  // Keep a reset time already known when this read of the screen shows none,
+  // and its moment while the agent says the same time ("3pm" read again
+  // after 3pm would be tomorrow's).
+  const reset = (info && info.reset) || (old && old.reset) || ''
+  const given = info && Number.isFinite(info.resetAt) ? info.resetAt : null
+  const resetAt = old && old.reset === reset && Number.isFinite(old.resetAt) ? old.resetAt : given
+  // Already over: nothing to show.
+  if (Number.isFinite(resetAt) && resetAt <= now) {
+    spentLimits[id] = reset
+    clearLimit(id)
+    return
+  }
+  if (!old || old.reset !== reset || old.resetAt !== resetAt) limits[id] = { reset, resetAt }
+  scheduleLimitSweep()
 }
 
 export function clearLimit(id) {
   if (limits[id]) delete limits[id]
+}
+
+// The limits whose reset time has passed (by pane id -> the reset as the
+// agent said it): the agent's old message can stay on its screen, and its
+// state in main can say "limited" until its own check, but neither brings
+// the limit back. Forgotten once the screen no longer shows a limit, or the
+// agent works again by its hooks.
+const spentLimits = {}
+export function limitSpent(id, info) {
+  return Object.hasOwn(spentLimits, id) && spentLimits[id] === ((info && info.reset) || '')
+}
+export function forgetSpentLimit(id) {
+  delete spentLimits[id]
+}
+
+// Each limit goes at its reset time: one timer for the next one due.
+let sweepTimer = null
+export function sweepLimits(now = Date.now()) {
+  for (const id of Object.keys(limits)) {
+    const at = limits[id].resetAt
+    if (Number.isFinite(at) && at <= now) {
+      spentLimits[id] = limits[id].reset
+      delete limits[id]
+    }
+  }
+  scheduleLimitSweep(now)
+}
+function scheduleLimitSweep(now = Date.now()) {
+  if (sweepTimer) clearTimeout(sweepTimer)
+  sweepTimer = null
+  const next = Math.min(...Object.values(limits).map((l) => (Number.isFinite(l.resetAt) ? l.resetAt : Infinity)))
+  if (!Number.isFinite(next) || typeof setTimeout !== 'function') return
+  // At most an hour at a time: a computer asleep meanwhile is caught up.
+  sweepTimer = setTimeout(() => sweepLimits(), Math.min(Math.max(next - now, 0) + 500, 60 * 60 * 1000))
 }
 
 export function setAgentStatus(id, status, launchToken) {
@@ -574,6 +633,7 @@ export function clearAgentStatus(id) {
   delete agentStatus[id]
   delete attention[id]
   delete limits[id]
+  delete spentLimits[id]
   delete approvals[id]
   delete monitoring[id]
   delete agentStates[id]

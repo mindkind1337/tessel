@@ -54,7 +54,11 @@
       "showAgentHint": "Aller à l'agent qui fait cette tâche",
       "showAgent": "Voir l'agent",
       "reviewHint": "Voir les modifications, puis fusionner, demander des modifications ou abandonner",
-      "review": "Examiner"
+      "review": "Examiner",
+      "limitBlockedUntil": "Bloquée : limite d'utilisation · réinitialisation {{when}}",
+      "limitBlocked": "Bloquée : limite d'utilisation",
+      "giveToAnother": "Confier à un autre agent",
+      "giveToAnotherHint": "Confier cette carte à un agent de ce projet libre maintenant, avec ce qu'il doit reprendre"
     },
     "new": {
       "busyOn": "Occupé : {{task}}",

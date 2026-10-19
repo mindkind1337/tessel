@@ -1,5 +1,7 @@
 // Status evidence only: this model never makes permission decisions or infers
 // completion from silence. Keep its serializable state free of CLI content.
+import { parseLimitReset } from './limitReset'
+
 export const AGENT_STATE_STALE_MS = 30 * 60 * 1000
 // After the agent's Stop hook, the pane's screen confirms it is ready. A pane
 // nobody is looking at (another workspace) may never report its screen: with
@@ -100,9 +102,10 @@ const SCREEN_EVENTS = new Set([
   'ScreenClearApproval'
 ])
 // 'rollout': the end of a turn read from Codex's own session file, for a turn
-// whose Stop hook never ran (codexTurnEnd.js).
+// whose Stop hook never ran (codexTurnEnd.js). 'limit': it ended on Codex's
+// usage limit (its usage_limit_exceeded error).
 const SOURCES = ['hook', 'screen', 'lifecycle', 'rollout']
-const ROLLOUT_ENDS = ['complete', 'error', 'aborted']
+const ROLLOUT_ENDS = ['complete', 'error', 'aborted', 'limit']
 const isObject = (value) => !!value && typeof value === 'object' && !Array.isArray(value)
 const isId = (value) => typeof value === 'string' && value.length > 0 && value.length <= MAX_ID
 const isTime = (value) => Number.isFinite(value) && value >= 0
@@ -385,6 +388,42 @@ function endTurn(target, event, reason) {
   if (target.state !== 'limited') transition(target, 'idle', reason, event)
 }
 
+// The agent hit its usage limit: reset is its reset time as it said it
+// ("3pm", "in 2 hours"), resetAt that time as a moment when the event knows
+// it (Codex's resets_at, the screen's reading), else read from reset here.
+// A screen read again with the same words keeps the moment first read ("3pm"
+// read after 3pm would be tomorrow's). -> false when it is a limit already
+// over (its old message still in view): nothing changes. fresh: a new limit
+// (a hook, the rollout), never an old message read again.
+function applyLimit(target, event, fresh = false) {
+  const reset =
+    typeof event.reset === 'string'
+      ? event.reset
+          .replace(/[\u0000-\u001f\u007f]/g, '')
+          .trim()
+          .slice(0, MAX_RESET) || null
+      : null
+  const given = isTime(event.resetAt) ? event.resetAt : isTime(event.reset) ? event.reset : null
+  const same = !fresh && target.reset === reset && isTime(target.limitedResetAt)
+  const at = same ? target.limitedResetAt : (given ?? (reset ? parseLimitReset(reset, { now: event.at }) : null))
+  if (isTime(at) && at <= event.at) return false
+  target.limitedResetAt = isTime(at) ? at : null
+  target.reset = reset
+  transition(target, 'limited', 'quota', event)
+  return true
+}
+
+// Its reset time has passed: no longer limited. Its reset stays noted (an
+// idle state does not show it) so the same old message, still on screen,
+// does not bring the limit back (applyLimit); new work clears it.
+const limitOver = (target, at) => target.state === 'limited' && isTime(target.limitedResetAt) && at >= target.limitedResetAt
+function endLimit(target, event) {
+  clearPending(target)
+  cancelCandidate(target)
+  target.readyReason = 'ready'
+  transition(target, 'idle', 'ready', { ...event, at: target.limitedResetAt })
+}
+
 function applyHook(target, event, alone = false) {
   if (alone && ['UserPromptSubmit', 'PreToolUse', 'PostToolUse', 'PostToolUseFailure', 'Stop'].includes(event.event))
     dropUnmatched(target)
@@ -483,6 +522,14 @@ function applyHook(target, event, alone = false) {
       return
     case 'StopFailure':
     case 'Interrupt':
+      // The turn failed on the usage limit (Claude Code's rate_limit error,
+      // teamMcp/server.cjs): limited until its reset, a ready prompt or not.
+      if (event.event === 'StopFailure' && event.limit === true && !event.agentId) {
+        clearPending(target)
+        cancelCandidate(target)
+        applyLimit(target, event, true)
+        return
+      }
       if (alone) return endTurn(target, event, event.event === 'StopFailure' ? 'error' : 'interrupted')
       clearPending(target)
       cancelCandidate(target)
@@ -503,7 +550,8 @@ function applyHook(target, event, alone = false) {
 function applyRollout(target, event) {
   clearPending(target)
   cancelCandidate(target)
-  if (event.ended === 'complete') {
+  if (event.ended === 'limit') applyLimit(target, event, true)
+  else if (event.ended === 'complete') {
     target.readyReason = 'ready'
     target.turnCompletedAt = event.at
     if (target.state !== 'limited') transition(target, 'idle', 'ready', event)
@@ -525,16 +573,7 @@ const screenWork = (value) =>
 function applyScreen(target, event, alone = false) {
   switch (event.event) {
     case 'ScreenLimit':
-      target.limitedResetAt = isTime(event.reset) ? event.reset : null
-      target.reset =
-        typeof event.reset === 'string'
-          ? event.reset
-              .replace(/[\u0000-\u001f\u007f]/g, '')
-              .trim()
-              .slice(0, MAX_RESET) || null
-          : null
-      transition(target, 'limited', 'quota', event)
-      return true
+      return applyLimit(target, event)
     case 'ScreenApproval':
       if (target.stopCandidateAt === null) target.readyReason = null
       addPending(target, 'approval', event)
@@ -743,6 +782,8 @@ export function reduceAgentState(state, event, now = Date.now()) {
     next.sessionId = event.sessionId
   }
   if (!changedSession && settledAt(target, event.at)) settle(target)
+  // A limit whose reset time came before this event is over.
+  if (!changedSession && limitOver(target, event.at)) endLimit(target, event)
   // Its state before this event (a settled turn already ended).
   const prior = { state: target.state, since: target.since }
 
@@ -862,19 +903,24 @@ function publicScope(value, now) {
   // Screen-only work whose running footer has not been seen for a while.
   const screenOver =
     !unconfirmed && !stale && screenWork(value) && now - (value.lastEventAt ?? 0) > SCREEN_WORK_MS
-  const done = settled || screenOver
+  // A usage limit whose reset time has come: over, before any event says so.
+  const limitDone = !unconfirmed && !stale && limitOver(value, now)
+  const done = settled || screenOver || limitDone
   return {
     state: unconfirmed || stale ? 'unknown' : done ? 'idle' : value.state,
     reason: unconfirmed ? 'unconfirmed' : stale ? 'stale' : done ? 'ready' : value.reason,
     source: value.source,
     // Idle since its turn ended, not since the work began.
-    since: settled ? value.stopCandidateAt : screenOver ? value.lastEventAt : value.since,
+    since: settled ? value.stopCandidateAt : screenOver ? value.lastEventAt : limitDone ? value.limitedResetAt : value.since,
     observedAt: value.observedAt,
     hookSeen: value.hookSeen,
     confirmed: value.confirmed,
     stale,
-    ...(value.state === 'limited' && !unconfirmed && !stale && value.reset
+    ...(value.state === 'limited' && !unconfirmed && !stale && !limitDone && value.reset
       ? { reset: value.reset }
+      : {}),
+    ...(value.state === 'limited' && !unconfirmed && !stale && !limitDone && isTime(value.limitedResetAt)
+      ? { resetAt: value.limitedResetAt }
       : {}),
     ...(value.turnCompletedAt !== null && !unconfirmed && !stale
       ? { turnCompletedAt: value.turnCompletedAt }

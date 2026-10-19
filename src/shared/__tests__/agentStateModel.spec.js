@@ -341,18 +341,60 @@ describe('permissions and screen evidence', () => {
     expect(f.state.turnCompletedAt).toBeNull()
   })
 
-  it('does not clear quota on a reset timer, redraw, or tool completion', () => {
+  it('does not clear quota on a redraw or tool completion, only at its reset time', () => {
     const f = fixture()
     f.send('UserPromptSubmit', 101)
-    f.send('ScreenLimit', 102, { reset: 105 })
+    f.send('ScreenLimit', 102, { reset: 150 })
     expect(f.send('ScreenBusy', 106).state).toBe('limited')
     expect(f.send('PostToolUse', 107).state).toBe('limited')
-    expect(publicAgentState(f.state, 200)).toMatchObject({
+    expect(publicAgentState(f.state, 140)).toMatchObject({ state: 'limited', reason: 'quota', since: 102, resetAt: 150 })
+    // Its reset time came: idle since then, before any event says so.
+    expect(publicAgentState(f.state, 200)).toMatchObject({ state: 'idle', reason: 'ready', since: 150 })
+    expect(publicAgentState(f.state, 200)).not.toHaveProperty('resetAt')
+    expect(f.send('UserPromptSubmit', 201).state).toBe('working')
+  })
+
+  it('a limit from Claude Code’s StopFailure (rate_limit) holds until its reset, then a ready prompt is idle', () => {
+    const f = fixture('claude')
+    const reset = Date.UTC(2026, 9, 19, 19, 0)
+    // 14:40 in Toronto, 20 minutes before (its screen not seen since: no stale state).
+    const at = Date.UTC(2026, 9, 19, 18, 40)
+    f.state = createAgentState({ ...identity, provider: 'claude', startedAt: at - 1000 })
+    f.send('UserPromptSubmit', at)
+    expect(f.send('StopFailure', at + 10, { limit: true, reset: '3pm (America/Toronto)' })).toMatchObject({
       state: 'limited',
       reason: 'quota',
-      since: 102
+      reset: '3pm (America/Toronto)',
+      resetAt: reset
     })
-    expect(f.send('UserPromptSubmit', 201).state).toBe('working')
+    // Its ready prompt under the limit message does not end the limit.
+    expect(f.send('ScreenReady', at + 20).state).toBe('limited')
+    expect(publicAgentState(f.state, reset + 1).state).toBe('idle')
+    // The old message read again after the reset brings nothing back.
+    expect(f.send('ScreenLimit', reset + 5000, { reset: '3pm (America/Toronto)' }).state).toBe('idle')
+    // A new limit, by its hook, counts even with the same words.
+    expect(f.send('UserPromptSubmit', reset + 6000).state).toBe('working')
+    expect(f.send('StopFailure', reset + 7000, { limit: true, reset: '9pm', resetAt: reset + 6 * 3600 * 1000 })).toMatchObject({
+      state: 'limited',
+      resetAt: reset + 6 * 3600 * 1000
+    })
+  })
+
+  it('a StopFailure that is no limit, and a sub-agent’s limit, do not limit the pane', () => {
+    const f = fixture('claude')
+    f.send('UserPromptSubmit', 101)
+    expect(f.send('StopFailure', 102).state).not.toBe('limited')
+    f.send('UserPromptSubmit', 103)
+    expect(f.send('StopFailure', 104, { limit: true, agentId: 'child-1' }).state).not.toBe('limited')
+  })
+
+  it('a Codex turn that ended on its usage limit (its rollout) is limited until resets_at', () => {
+    const f = fixture('codex')
+    f.send('UserPromptSubmit', 101)
+    const end = { ...f.event('RolloutTurnEnd', 110), source: 'rollout', ended: 'limit', reset: '8:47 PM', resetAt: 5000 }
+    f.state = reduceAgentState(f.state, end, 120)
+    expect(publicAgentState(f.state, 200)).toMatchObject({ state: 'limited', reset: '8:47 PM', resetAt: 5000 })
+    expect(publicAgentState(f.state, 5000).state).toBe('idle')
   })
 
   it('preserves bounded reset display text without interpreting it as a timer', () => {

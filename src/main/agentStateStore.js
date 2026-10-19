@@ -84,9 +84,16 @@ const FIELDS = new Set([
   // The question an agent asks you (agentAsk.js): its structure only.
   'ask',
   // The lead's permission mode (agentPermissionMode.js): the enum value only.
-  'permissionMode'
+  'permissionMode',
+  // A StopFailure on the usage limit (Claude Code's rate_limit error): its
+  // reset time as the agent said it ("3pm"), and as a moment when it gave one.
+  'limit',
+  'reset',
+  'resetAt'
 ])
 const clone = (value) => JSON.parse(JSON.stringify(value))
+// A reset time as an agent says it: short plain text.
+const validReset = (value) => typeof value === 'string' && value.length <= 160 && !/[\u0000-\u001f\u007f]/.test(value)
 const record = (value) => value && typeof value === 'object' && !Array.isArray(value)
 const provider = (value) => STATUS_PROVIDERS.includes(value)
 const validId = (value) => typeof value === 'string' && ID.test(value) && !value.includes('..')
@@ -200,6 +207,9 @@ function hookEvent(value, now) {
     )
       return null
   if (value.continuing !== undefined && typeof value.continuing !== 'boolean') return null
+  if (value.limit !== undefined && (value.limit !== true || value.event !== 'StopFailure')) return null
+  if (value.reset !== undefined && (value.limit !== true || !validReset(value.reset))) return null
+  if (value.resetAt !== undefined && (value.limit !== true || !Number.isSafeInteger(value.resetAt) || value.resetAt < 0)) return null
   if (
     value.background !== undefined &&
     (value.event !== 'Stop' ||
@@ -641,6 +651,9 @@ export function createAgentStateStore({ dir, now = Date.now, onChange = () => {}
             (Number.isFinite(screenEvent?.reset) && screenEvent.reset >= 0))
         )
           event.reset = screenEvent.reset
+        // The moment the screen's reset time stands for (the window read it).
+        if (eventName === 'ScreenLimit' && Number.isSafeInteger(screenEvent?.resetAt) && screenEvent.resetAt >= 0)
+          event.resetAt = screenEvent.resetAt
         const next = reduceAgentState(current.state, event, clock())
         if (JSON.stringify(next) !== JSON.stringify(current.state)) {
           current.state = next
@@ -682,7 +695,7 @@ export function createAgentStateStore({ dir, now = Date.now, onChange = () => {}
           !current.state.sessionId ||
           end.sessionId !== current.state.sessionId ||
           !Number.isSafeInteger(end.at) ||
-          !['complete', 'error', 'aborted'].includes(end.ended)
+          !['complete', 'error', 'aborted', 'limit'].includes(end.ended)
         )
           return publish()
         const event = {
@@ -698,6 +711,11 @@ export function createAgentStateStore({ dir, now = Date.now, onChange = () => {}
           ended: end.ended
         }
         if (validId(end.turnId)) event.turnId = end.turnId
+        // Codex's usage limit: its reset time as it said it, and its moment.
+        if (end.ended === 'limit') {
+          if (validReset(end.reset)) event.reset = end.reset
+          if (Number.isSafeInteger(end.resetAt) && end.resetAt >= 0) event.resetAt = end.resetAt
+        }
         const next = reduceAgentState(current.state, event, clock())
         if (JSON.stringify(next) !== JSON.stringify(current.state)) {
           current.state = next

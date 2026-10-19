@@ -39,8 +39,58 @@ export function allowedCodexHome(home, { systemHome, accountsBase } = {}) {
   return !eqPath(base, target) && (process.platform === 'win32' ? within(base.toLowerCase(), target.toLowerCase()) : within(base, target))
 }
 
+// Codex's usage limit, as its rollout records it (anonymised):
+//   task_complete { error: { message: "You’ve hit your usage limit. Upgrade
+//     to Pro (...) or try again at 8:47 PM.", codex_error_info:
+//     "usage_limit_exceeded" } }
+// and, on its token_count events, rate_limits { primary: { used_percent:
+// 100.0, window_minutes: 300, resets_at: <epoch seconds> }, secondary }.
+const LIMIT_INFO = new Set(['usage_limit_exceeded', 'usage_limit_reached'])
+const LIMIT_RESETS = [
+  { re: /try again at\s+([0-9]{1,2}(?::[0-9]{2})?\s*(?:[ap]m|[ap]\.m\.))/i, prefix: '' },
+  { re: /try again in\s+((?:\d+\s*(?:days?|hours?|hrs?|minutes?|mins?)\s*,?\s*(?:and\s*)?)+)/i, prefix: 'in ' },
+  { re: /try again on\s+([A-Z][a-z]{2,8}\.? \d{1,2}(?:,? \d{1,2}(?::\d{2})?\s*[ap]m)?)/, prefix: '' }
+]
+function limitError(error) {
+  if (!error || typeof error !== 'object') return null
+  const info = typeof error.codex_error_info === 'string' ? error.codex_error_info : ''
+  const message = typeof error.message === 'string' ? error.message.slice(0, 2000) : ''
+  if (!LIMIT_INFO.has(info) && !/you['’]ve hit your usage limit/i.test(message)) return null
+  for (const { re, prefix } of LIMIT_RESETS) {
+    const m = re.exec(message)
+    if (m) return { reset: `${prefix}${m[1].replace(/\s+/g, ' ').replace(/[\s,]+$/, '').trim()}` }
+  }
+  return { reset: null }
+}
+// The latest reset of a window at 100% in the rate_limits before line i
+// (ms), or null. Both full: the later one (the agent waits for both).
+function fullWindowReset(lines, i) {
+  for (let j = i - 1; j >= Math.max(0, i - 400); j--) {
+    const line = lines[j]
+    if (!line.includes('"rate_limits"')) continue
+    let o
+    try {
+      o = JSON.parse(line)
+    } catch {
+      continue
+    }
+    const limits = o && o.payload && o.payload.rate_limits
+    if (!limits || typeof limits !== 'object') continue
+    let at = null
+    for (const w of [limits.primary, limits.secondary]) {
+      if (!w || typeof w !== 'object' || !(Number(w.used_percent) >= 100)) continue
+      const reset = Number(w.resets_at)
+      if (Number.isSafeInteger(reset) && reset > 0 && (at === null || reset * 1000 > at)) at = reset * 1000
+    }
+    return at
+  }
+  return null
+}
+
 // The last turn event at the end of a rollout: { kind: 'started' | 'complete'
-// | 'error' | 'aborted', at, turnId } or null when none is in these lines.
+// | 'error' | 'aborted' | 'limit', at, turnId } or null when none is in these
+// lines. 'limit' (the turn ended on the usage limit) also has reset (the
+// time its message says, or null) and resetAt (from rate_limits, or null).
 export function lastTurnEvent(lines) {
   for (let i = lines.length - 1; i >= 0; i--) {
     const line = lines[i]
@@ -55,6 +105,8 @@ export function lastTurnEvent(lines) {
     if (!p || !['task_started', 'task_complete', 'turn_aborted'].includes(p.type)) continue
     const at = typeof o.timestamp === 'string' ? Date.parse(o.timestamp) : NaN
     const turnId = typeof p.turn_id === 'string' && TURN.test(p.turn_id) ? p.turn_id : null
+    const limit = p.type === 'task_complete' ? limitError(p.error) : null
+    if (limit) return { kind: 'limit', at: Number.isFinite(at) ? at : null, turnId, reset: limit.reset, resetAt: fullWindowReset(lines, i) }
     const kind =
       p.type === 'task_started' ? 'started' : p.type === 'turn_aborted' ? 'aborted' : p.error ? 'error' : 'complete'
     return { kind, at: Number.isFinite(at) ? at : null, turnId }
@@ -179,7 +231,8 @@ export function createCodexTurnEnd({ store, homeFor, reader = createRolloutReade
             sessionId: c.sessionId,
             at: end.at,
             turnId: end.turnId,
-            ended: end.kind
+            ended: end.kind,
+            ...(end.kind === 'limit' ? { reset: end.reset, resetAt: end.resetAt } : {})
           })
           sent++
         } catch {

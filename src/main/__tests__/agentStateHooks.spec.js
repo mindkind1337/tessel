@@ -120,6 +120,19 @@ describe('status hooks observe without consuming team messages', () => {
       expect(JSON.stringify(reports())).not.toMatch(/PRIVATE|tool_input|"prompt":/)
     }
   )
+  it("a StopFailure on Claude Code's usage limit carries the limit and its reset time only", async () => {
+    // As Claude Code's transcripts record the error (anonymised): error
+    // "rate_limit", and the message it shows.
+    await hook('StopFailure', {
+      data: {
+        error: 'rate_limit',
+        last_assistant_message: "You've hit your weekly limit · resets Oct 17, 11pm (America/Toronto)\nPRIVATE-TAIL"
+      }
+    })
+    expect(reports()).toHaveLength(1)
+    expect(reports()[0]).toMatchObject({ event: 'StopFailure', limit: true, reset: 'Oct 17, 11pm (America/Toronto)' })
+    expect(JSON.stringify(reports())).not.toMatch(/PRIVATE|weekly/)
+  })
   it('records a continuing Stop after team delivery, not a completed response', async () => {
     queued()
     const result = await hook('Stop', { provider: 'codex', data: { stop_hook_active: false } })

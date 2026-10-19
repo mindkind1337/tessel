@@ -662,7 +662,12 @@
       "takeOver": "{{names}} peut prendre le relais.",
       "hit": "{{name}} a atteint sa limite d'utilisation",
       "hitWhen": "{{name}} a atteint sa limite d'utilisation{{when}}.",
-      "workspace": "Espace de travail : {{name}}."
+      "workspace": "Espace de travail : {{name}}.",
+      "giveTo": "Confier sa carte à {{name}}",
+      "restartOn": "Redémarrer sur {{account}}",
+      "noneFree": "Aucun autre agent de ce projet n'est libre pour l'instant. Ouvrez-en un, ou attendez la fin de la limite.",
+      "handedOver": "« {{title}} » est maintenant confiée à {{name}}.",
+      "over": "{{name}} peut de nouveau travailler"
     },
     "status": {
       "paneOne": "1 panneau",

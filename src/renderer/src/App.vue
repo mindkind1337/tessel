@@ -29,6 +29,7 @@ import { notePanes } from './paneSessionTrail'
 import { notePaneHosts } from './paneHosts'
 import LaunchMenu from './components/LaunchMenu.vue'
 import { accountChoices, refreshAccountChoices, setOpenPanesSource } from './accountChoices'
+import { limitClock, limitWhen as limitWhenOf, limitUntilEn, pickReplacement, leadLimitText, leadFreeText, handOverText, otherAccounts } from './limitFlow'
 import { HOST_ACCOUNT_AGENTS, checkHostAccountsNow, defaultHostAccount, hostAccountChoice, hostAccountsOf, hostEntry, hostPaneFolder, refreshHostAccounts, setDefaultHostAccount, validHostAccount } from './hostAccounts'
 import SettingsDialog from './components/SettingsDialog.vue'
 import UpdateDialog from './components/UpdateDialog.vue'
@@ -1015,15 +1016,15 @@ const toasts = ref([])
 let toastSeq = 0
 function showToast(text, opts = {}) {
   const id = ++toastSeq
-  toasts.value.push({ id, text, kind: opts.kind || 'info', action: opts.action || null })
+  toasts.value.push({ id, text, kind: opts.kind || 'info', action: opts.action || null, actions: Array.isArray(opts.actions) ? opts.actions : [] })
   setTimeout(() => dismissToast(id), opts.timeout || 5000)
 }
 function dismissToast(id) {
   toasts.value = toasts.value.filter((t) => t.id !== id)
 }
-function runToastAction(t) {
+function runToastAction(t, action = t.action) {
   dismissToast(t.id)
-  if (t.action) t.action.run()
+  if (action) action.run()
 }
 const sidebarEl = ref(null)
 
@@ -2993,7 +2994,10 @@ const agentPanes = computed(() => {
         title: leaf.paneName || leaf.title,
         agentId: leaf.agentId,
         accent: leaf.accent,
-        track: trackOf(leaf.id)
+        track: trackOf(leaf.id),
+        // At its usage limit: { reset, resetAt, when } (its cards in Doing say
+        // so, and offer to give them to another agent).
+        limit: limits[leaf.id] ? { ...limits[leaf.id], when: limitClock(limits[leaf.id]) } : null
       })
     }
   })
@@ -6574,7 +6578,7 @@ const sidebarProjects = computed(() =>
         sleeping: chat ? (chatStatus[leaf.id] || leaf.liveStatus) === 'asleep' : !!leaf.sleeping,
         ...(chat ? { chatStatus: chatStatus[leaf.id] || leaf.liveStatus || null, model: leaf.model || null, effort: leaf.effort || leaf.shownEffort || null, headerModel: leaf.headerModel || null } : {}),
         attention: !!attention[leaf.id],
-        reset: limits[leaf.id] ? limits[leaf.id].reset : '',
+        reset: limits[leaf.id] ? limitClock(limits[leaf.id]) : '',
         held: !!pendingMessages[leaf.id],
         typingHold: !!pendingMessages[leaf.id] && !!userDraft[leaf.id],
         teamUnread: teamUnread[leaf.id] || 0,
@@ -6897,7 +6901,7 @@ function addAgentState(out, leaf, wsId) {
     ...(observed ? { source: observed.source, confirmed: observed.confirmed, since: observed.since } : {}),
     title: leaf.paneName || leaf.title || t('app.pane.agent', 'Agent'),
     agentId: leaf.agentId || null,
-    reset: limits[leaf.id] ? limits[leaf.id].reset : '',
+    reset: limits[leaf.id] ? limitClock(limits[leaf.id]) : '',
     wsId,
     teamId: leaf.team || null
   }
@@ -7650,7 +7654,7 @@ const taskOpenAgents = computed(() =>
     agentId: l.agentId || null,
     accent: l.accent || null,
     state: paneState(l),
-    reset: limits[l.id] ? limits[l.id].reset : '',
+    reset: limits[l.id] ? limitClock(limits[l.id]) : '',
     task: taskOfPane(l.id)?.title || null
   }))
 )
@@ -11608,6 +11612,9 @@ function writeTeamRoster(team, dir, members) {
   for (const m of members) {
     const st = agentStates.value[m.id]
     out[m.id] = { agent: m.agentId || null, model: paneModels[m.id] || null, state: st ? st.state : null }
+    // At its usage limit: until when (what team_send and team_ask tell the
+    // sender, teamMcp/server.cjs), as a moment and in words.
+    if (limits[m.id]) out[m.id].until = { at: Number.isFinite(limits[m.id].resetAt) ? limits[m.id].resetAt : null, text: limitUntilEn(limits[m.id]).trim() }
   }
   const key = `${dir}|${team.id}`
   const sig = JSON.stringify(out)
@@ -12501,36 +12508,134 @@ function messageAgents(list, text, where, meta = {}) {
   })
 }
 
-// " (resets 8:47 PM)" for an agent at its usage limit, else ''.
+// " (resets at 15:00)" for an agent at its usage limit, else ''.
 function limitWhen(leafId) {
-  const reset = limits[leafId] && limits[leafId].reset
-  if (!reset) return ''
-  return ' ' + (/^in /.test(reset) ? t('app.limit.resets', '(resets {{when}})', { when: reset }) : t('app.limit.resetsAt', '(resets at {{when}})', { when: reset }))
+  return limitWhenOf(limits[leafId])
 }
 
-// An agent just stopped because it hit its usage limit.
-function notifyAgentLimit(node, hit) {
+// An agent just stopped because it hit its usage limit: you are told (a
+// toast, the inbox, a desktop notice), with what can be done at once: give
+// its card under way to an agent free now, restart it on another account of
+// its agent, or go to it. hit: unused (the limit is in limits[]).
+function notifyAgentLimit(node) {
   const ws = wsOfLeaf(node.id)
-  const when = limitWhen(node.id) || (hit && hit.reset ? ' ' + t('app.limit.resets', '(resets {{when}})', { when: hit.reset }) : '')
+  const when = limitWhen(node.id)
   const others = ws ? wsAgents(ws.id).filter((l) => l.id !== node.id && !limits[l.id]) : []
   const handOver = others.length
     ? ' ' + t('app.limit.takeOver', '{{names}} can take over.', { names: others.map((l) => l.paneName || l.title).join(', ') })
     : ''
-  const hitTitle = t('app.limit.hit', '{{name}} hit its usage limit', { name: node.title })
-  const text = t('app.limit.hitWhen', '{{name}} hit its usage limit{{when}}.', { name: node.title, when }) + handOver
+  const name = node.paneName || node.title
+  const hitTitle = t('app.limit.hit', '{{name}} hit its usage limit', { name })
+  const text = t('app.limit.hitWhen', '{{name}} hit its usage limit{{when}}.', { name, when }) + handOver
   inboxNote('limit', hitTitle, `${when.trim()}${handOver}`.trim(), node.id)
-  if (document.hasFocus())
-    showToast(text, {
-      kind: 'attention',
-      timeout: 10000,
-      action: { label: t('app.common.show', 'Show'), run: () => focusPane(node.id) }
-    })
+  if (document.hasFocus()) {
+    const actions = []
+    const card = boardTasks.find((x) => x.paneId === node.id && x.column === 'doing')
+    const next = card ? replacementFor(card) : null
+    if (card && next)
+      actions.push({ label: t('app.limit.giveTo', 'Give its card to {{name}}', { name: next.paneName || next.title }), run: () => giveTaskToAnother(card.id, next.id) })
+    const swap = accountSwapFor(node)
+    if (swap) actions.push({ label: t('app.limit.restartOn', 'Restart on {{account}}', { account: swap.name }), run: () => restartOnAccount(node.id, swap.id) })
+    actions.push({ label: t('app.common.show', 'Show'), run: () => focusPane(node.id) })
+    showToast(text, { kind: 'attention', timeout: actions.length > 1 ? 15000 : 10000, action: actions[0], actions: actions.slice(1) })
+  }
   nativeNotify({
     title: hitTitle,
     body: `${when.trim()}${ws ? ' ' + t('app.limit.workspace', 'Workspace: {{name}}.', { name: ws.name }) : ''}${handOver}`.trim(),
     paneId: node.id
   })
 }
+
+// Another account of its agent a pane at its limit could restart on (the
+// pane menu's Restart on <account>): a Claude Code pane Tessel started on
+// this computer, an account signed in that no other pane is at its limit on
+// (its quota of the others is not known here). -> { id, name } or null.
+function accountSwapFor(node) {
+  if (!node || node.kind !== 'agent' || node.agentId !== 'claude' || node.remoteHostId || node.detected || !node.agentCommand) return null
+  const ws = wsOfLeaf(node.id)
+  if (ws && (ws.remote || liveShare.isGuestWs(ws))) return null
+  const limitedOn = []
+  forEachWsLeaf((l) => {
+    if (l.id !== node.id && l.agentId === 'claude' && !l.remoteHostId && limits[l.id]) limitedOn.push(l.accountId == null ? null : l.accountId)
+  })
+  return otherAccounts(node.accountId, accountChoices('claude'), limitedOn)[0] || null
+}
+
+// Who can take a card over now: an agent of its project free now (busyReason),
+// its own team's first (limitFlow.js pickReplacement). -> a leaf or null.
+function replacementFor(task) {
+  const from = task.paneId ? findLeaf(task.paneId) : null
+  const ws = (task.wsId && wsById(task.wsId)) || (from && wsOfLeaf(from.id))
+  if (!ws) return null
+  const candidates = wsAgents(ws.id).map((l) => ({ id: l.id, agentId: l.agentId || null, team: l.team || null, wsId: ws.id, free: !busyReason(l) && !l.sleeping }))
+  const pick = pickReplacement({ id: from ? from.id : null, agentId: from ? from.agentId : null, team: from ? from.team : null, wsId: ws.id }, candidates)
+  return pick ? findLeaf(pick.id) : null
+}
+
+// A card whose agent is at its usage limit, given to another agent (the
+// card's "Give to another agent", the limit toast): the card is its now, and
+// it is told what to pick up. toId: that agent, else the one free now.
+function giveTaskToAnother(taskId, toId = null) {
+  const task = boardTasks.find((x) => x.id === taskId)
+  if (!task) return false
+  const from = task.paneId ? findLeaf(task.paneId) : null
+  const to = toId ? findLeaf(toId) : replacementFor(task)
+  if (!to || !isAgentLeaf(to) || (from && to.id === from.id)) {
+    showToast(t('app.limit.noneFree', 'No other agent of this project is free now. Open one, or wait until the limit is over.'), { kind: 'attention', timeout: 8000 })
+    return false
+  }
+  updateTask(task.id, { paneId: to.id })
+  deliverToAgent(to.id, handOverText({ card: task, from: from ? paneLabel(from) : 'its agent' }), { source: 'tessel', scope: 'task', teamId: to.team || null }) // i18n-ignore
+  recordActivity({ type: 'task', action: 'added', taskId: task.id, paneId: to.id, agent: agentInfo(to), title: task.title, wsId: task.wsId, by: 'Tessel' }) // i18n-ignore
+  showToast(t('app.limit.handedOver', '"{{title}}" is now {{name}}\'s.', { title: task.title, name: to.paneName || to.title }), { timeout: 5000 })
+  return true
+}
+provide('giveTaskToAnother', giveTaskToAnother)
+
+// Every agent pane that hits its usage limit, whatever said so (its screen,
+// its hooks, its session file: agentStatus.js limits), is handled once here:
+// you are told, and its team lead with the cards it had under way, so the
+// project goes on without it. Once the limit is over, the lead hears that too.
+const limitsSeen = new Set()
+const limitsToldLead = new Map() // pane id -> the lead told
+function onAgentLimited(id) {
+  const leaf = findLeaf(id)
+  if (!leaf || !isAgentLeaf(leaf)) return
+  notifyAgentLimit(leaf)
+  const team = leaf.team ? teamById(leaf.team) : null
+  const lead = team ? teamLead(team.id) : null
+  if (!lead || lead.id === id || limits[lead.id]) return
+  const cards = boardTasks.filter((x) => x.paneId === id && x.column === 'doing').map((x) => ({ id: x.id, title: x.title }))
+  const free = teamMembers(team.id)
+    .filter((l) => l.id !== id && l.id !== lead.id && isAgentLeaf(l) && !busyReason(l))
+    .map(paneLabel)
+  tellAgents([lead], leadLimitText({ name: paneLabel(leaf), until: limitUntilEn(limits[id]), cards, free }), team.id)
+  limitsToldLead.set(id, lead.id)
+}
+function onAgentFreed(id) {
+  const leadId = limitsToldLead.get(id)
+  limitsToldLead.delete(id)
+  const leaf = findLeaf(id)
+  if (!leaf) return
+  inboxNote('limit', t('app.limit.over', '{{name}} can work again', { name: leaf.paneName || leaf.title }), '', id)
+  const lead = leadId ? findLeaf(leadId) : null
+  if (lead && leaf.team && lead.team === leaf.team && !limits[lead.id]) tellAgents([lead], leadFreeText(paneLabel(leaf)), leaf.team)
+}
+watch(
+  () => Object.keys(limits).join(','),
+  () => {
+    for (const id of Object.keys(limits))
+      if (!limitsSeen.has(id)) {
+        limitsSeen.add(id)
+        onAgentLimited(id)
+      }
+    for (const id of [...limitsSeen])
+      if (!limits[id]) {
+        limitsSeen.delete(id)
+        onAgentFreed(id)
+      }
+  }
+)
 
 function slugify(name) {
   return String(name || '')
@@ -14179,6 +14284,9 @@ onBeforeUnmount(() => {
         <span class="toast-text">{{ toast.text }}</span>
         <button v-if="toast.action" class="toast-action" @click="runToastAction(toast)">
           {{ toast.action.label }}
+        </button>
+        <button v-for="(a, i) in toast.actions" :key="i" class="toast-action" @click="runToastAction(toast, a)">
+          {{ a.label }}
         </button>
         <button class="toast-close" :title="t('app.toast.dismiss', 'Dismiss')" @click="dismissToast(toast.id)">
           <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true">

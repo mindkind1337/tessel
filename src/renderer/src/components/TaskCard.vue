@@ -141,6 +141,15 @@ const canAssign = computed(() => !props.source && (props.task.column === 'todo' 
 // Review: this computer's cards in Review; a source's (a Live Share host's)
 // only with its own copy, read only, when the source offers it.
 const canReview = computed(() => props.task.column === 'review' && (!props.source || (typeof props.source.review === 'function' && !!props.task.worktree)))
+// Its agent hit its usage limit while the card is under way: the card says
+// it is blocked (until when), and can go to an agent free now (App's
+// giveTaskToAnother: the card is its, and it is told what to pick up).
+const giveTaskToAnother = inject('giveTaskToAnother', null)
+const limitBlocked = computed(() => !props.source && props.task.column === 'doing' && !!(assignedPane.value && assignedPane.value.limit))
+const limitText = computed(() => {
+  const when = limitBlocked.value ? assignedPane.value.limit.when : ''
+  return when ? t('tasks.card.limitBlockedUntil', 'Blocked: usage limit · resets {{when}}', { when }) : t('tasks.card.limitBlocked', 'Blocked: usage limit')
+})
 // "Show agent": while it works on it or waits for review.
 const canShowAgent = computed(
   () => !!assignedPane.value && (props.task.column === 'doing' || props.task.column === 'review')
@@ -344,7 +353,19 @@ function paneLabel(pane) {
       >
     </div>
 
-    <div v-if="assignedPane && assignedPane.track && task.column === 'doing'" class="task-track" :class="'track-' + assignedPane.track.level">
+    <div v-if="limitBlocked" class="task-limit" data-test="task-limit">
+      <span class="task-limit-text">{{ limitText }}</span>
+      <button
+        v-if="giveTaskToAnother"
+        class="task-btn"
+        :title="t('tasks.card.giveToAnotherHint', 'Give this card to an agent of this project free now, with what to pick up')"
+        data-test="give-task"
+        @click="giveTaskToAnother(task.id)"
+      >
+        {{ t('tasks.card.giveToAnother', 'Give to another agent') }}
+      </button>
+    </div>
+    <div v-else-if="assignedPane && assignedPane.track && task.column === 'doing'" class="task-track" :class="'track-' + assignedPane.track.level">
       <span>{{ assignedPane.track.text }}<template v-if="assignedPane.track.onTask">{{ onTaskText(assignedPane.track.onTask) }}</template></span>
       <span v-if="assignedPane.track.reason" class="task-track-reason">{{ assignedPane.track.reason }}</span>
     </div>
@@ -423,6 +444,23 @@ function paneLabel(pane) {
 </template>
 
 <style scoped>
+/* Its agent at its usage limit: blocked, with a way out. */
+.task-limit {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  margin-top: 6px;
+  padding: 5px 8px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--warn) 16%, transparent);
+  font-size: 11.5px;
+}
+.task-limit-text {
+  color: var(--warn);
+  font-weight: 600;
+}
 /* A file the report lists: a link to it in the card's copy. */
 .task-report-file {
   padding: 0;

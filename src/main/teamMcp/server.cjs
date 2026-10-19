@@ -43,7 +43,7 @@ const path = require('path')
 const crypto = require('crypto')
 const { randomUUID } = crypto
 
-const VERSION = '1.11.8'
+const VERSION = '1.11.9'
 const MAX_TEXT = 6000
 
 // --- An agent on an SSH host --------------------------------------------------
@@ -326,11 +326,13 @@ function send(ctx, to, text, replyTo, extra = null) {
   if (/^@[a-z0-9-]{1,30}$/.test(target)) {
     const targets = groupTargets(ctx, target)
     if (targets.error) return targets
+    const limited = []
     for (const t of targets) {
       const r = send(ctx, t, text, replyTo, extra)
       if (r.error) return r
+      limited.push(...(r.limited || []))
     }
-    return { ok: true, to: targets.map((t) => addressMember(ctx, t).name || 'Agent') }
+    return { ok: true, to: targets.map((t) => addressMember(ctx, t).name || 'Agent'), limited }
   }
   if (target !== 'team') {
     const resolved = addressMember(ctx, target)
@@ -347,7 +349,30 @@ function send(ctx, to, text, replyTo, extra = null) {
   if (replyTo) payload.reply_to = String(replyTo).slice(0, 80)
   fs.writeFileSync(path.join(box, `${name}.tmp`), JSON.stringify(payload))
   fs.renameSync(path.join(box, `${name}.tmp`), path.join(box, `${name}.json`))
-  return { ok: true, recipient: target === 'team' ? 'team' : addressMember(ctx, target).name }
+  const recipient = target === 'team' ? null : addressMember(ctx, target)
+  // Kept for later when it is at its usage limit: the sender is told so.
+  const limited = recipient && !recipient.error ? limitOf(ctx, recipient.id) : null
+  return { ok: true, recipient: recipient ? recipient.name : 'team', limited: limited ? [{ name: recipient.name, ...limited }] : [] }
+}
+
+// --- Teammates at their usage limit --------------------------------------------------
+// roster.json says which teammate is at its usage limit, and until when
+// (until: { at, text: "until 15:00" }). A message to it waits on disk until
+// the limit is over; its sender is told at once instead of waiting for an
+// answer that cannot come. -> { until: 'until 15:00' | '' } or null.
+function limitOf(ctx, id) {
+  const r = roster(ctx)
+  const who = r && r[id]
+  if (!who || who.state !== 'limited') return null
+  const until = who.until && typeof who.until === 'object' ? who.until : {}
+  // Its reset time passed (Tessel has not rewritten the roster yet): free.
+  if (Number.isFinite(until.at) && until.at <= Date.now()) return null
+  return { until: typeof until.text === 'string' ? until.text.slice(0, 80) : '' }
+}
+function limitedText(list) {
+  return list
+    .map((l) => `${l.name} is at its usage limit${l.until ? ` ${l.until}` : ''}: your message waits and reaches it once the limit is over. For urgent work, ask a teammate who is free (team_members) or tell the user.`)
+    .join(' ')
 }
 
 // --- Task board ------------------------------------------------------------------
@@ -579,7 +604,11 @@ function membersList(ctx, r, tasks) {
     .filter(([, m]) => m.active)
     .map(([id, m]) => {
       const who = r[id] || {}
-      const about = [who.agent, who.model, who.state].filter((x) => typeof x === 'string' && x).join(', ')
+      // At its usage limit: until when ("limited until 15:00"); over by now:
+      // not said (Tessel rewrites the roster soon).
+      const limited = who.state === 'limited' ? limitOf(ctx, id) : null
+      const state = who.state === 'limited' ? (limited ? `limited by its usage limit${limited.until ? ` ${limited.until}` : ''}, messages wait` : '') : who.state
+      const about = [who.agent, who.model, state].filter((x) => typeof x === 'string' && x).join(', ')
       const cards = tasks.filter((t) => (t.assignee === memberName(m) || t.assignee === `#${m.num}`) && t.column !== 'done').map((t) => t.id)
       return `${memberName(m)} (${m.title})${id === ctx.meId ? ' (you)' : ''}${about ? ` [${about}]` : ''}${cards.length ? `, cards: ${cards.join(', ')}` : ''}`
     })
@@ -639,6 +668,18 @@ async function ask(ctx, args, signal = null) {
       return { ok: true, text: `Answer from ${senderLabel(ctx, r.answer)} (message ${r.answer.id}): ${r.answer.text}` }
     }
     if (r.refused) return { error: `The question was not sent: ${r.refused.text}` }
+    // Asked of a teammate at its usage limit: no answer can come before its
+    // reset, so no waiting until the timeout.
+    const askedOf = r.state && Array.isArray(r.state.messages) ? r.state.messages.find((m) => m.fromId === ctx.meId && m.askId === qid) : null
+    const asked = askedOf ? askedOf.toId : to ? (addressMember(ctx, to).id || null) : null
+    const limited = asked ? limitOf(ctx, asked) : null
+    if (limited) {
+      const name = label(ctx, asked)
+      return {
+        ok: true,
+        text: `${name} is at its usage limit${limited.until ? ` ${limited.until}` : ''}: it cannot answer before then. The question stays open (${qid}): the answer arrives in team_inbox once it can work, or wait for it later with team_ask {"resume":"${qid}"}. If you cannot wait, ask a teammate who is free (team_members) or tell the user.`
+      }
+    }
     if (Date.now() >= until) break
     await sleep(1000)
   }
@@ -1593,7 +1634,8 @@ function callTool(name, args = {}, signal = null) {
   if (name === 'team_send') {
     const r = send(ctx, args.to, args.text, args.reply_to)
     if (r.error) return { text: r.error, isError: true }
-    return { text: `Sent to ${r.to ? r.to.join(', ') : r.recipient || args.to}. Tessel delivers it in the background.` }
+    const waiting = (r.limited || []).length ? ` ${limitedText(r.limited)}` : ''
+    return { text: `Sent to ${r.to ? r.to.join(', ') : r.recipient || args.to}. Tessel delivers it in the background.${waiting}` }
   }
   if (name === 'team_ask') {
     // Only in a team: someone must be there to answer.
@@ -2050,6 +2092,48 @@ function writeBackgroundDiag(root, paneId, list) {
     /* diagnosis only */
   }
 }
+// A StopFailure on the agent's usage limit -> { limit: true, reset?, resetAt? }
+// or null. Claude Code (and OpenClaude) name the failure: error "rate_limit",
+// with the message it shows ("You've hit your limit · resets 3pm", "You've
+// hit your weekly limit · resets Oct 17, 11pm (America/Toronto)", its older
+// "Claude AI usage limit reached|1760000000"). Muse Code's reason ends with
+// "(rate_limit_error)" ("Subscription quota exhausted. Your usage window
+// resets at 2026-10-19T15:13:21Z."). Only the reset time leaves the message
+// (the same phrasings as src/shared/agentStateRules/common.json's
+// limit-reset rules); the main process reads it (limitReset.js).
+const LIMIT_RESETS = [
+  { re: /(?:try again at|resets? at)\s+([0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}(?::[0-9]{2})?(?:\.[0-9]+)?Z)/i, prefix: '' },
+  { re: /(?:try again at|resets? at|resets|reset at)\s+([0-9]{1,2}(?::[0-9]{2})?\s*(?:[ap]m|[ap]\.m\.))/i, prefix: '' },
+  { re: /(?:try again|resets?) in\s+((?:\d+\s*(?:days?|hours?|hrs?|minutes?|mins?)\s*,?\s*(?:and\s*)?)+)/i, prefix: 'in ' },
+  { re: /(?:try again on|resets? on|resets)\s+([A-Z][a-z]{2,8}\.? \d{1,2}(?:,? \d{1,2}(?::\d{2})?\s*[ap]m)?)/, prefix: '' }
+]
+function usageLimitOf(provider, data) {
+  const errorName = (v) => (v && typeof v === 'object' ? str(v.type) || str(v.name) : str(v)).toLowerCase()
+  let message = ''
+  if (provider === 'claude' || provider === 'openclaude') {
+    if (errorName(data.error) !== 'rate_limit') return null
+    message = firstStr(data, ['last_assistant_message', 'error_details', 'error_message', 'message'])
+  } else if (provider === 'muse') {
+    const reason = firstStr(data, ['reason', 'error', 'error_message', 'message'])
+    if (!/rate_limit_error/.test(reason) || !/quota|usage/i.test(reason)) return null
+    message = reason
+  } else return null
+  const text = message.slice(0, 2000)
+  const out = { limit: true }
+  const epoch = /usage limit reached\|(\d{10})\b/i.exec(text)
+  if (epoch) out.resetAt = Number(epoch[1]) * 1000
+  for (const { re, prefix } of LIMIT_RESETS) {
+    const m = re.exec(text)
+    if (!m) continue
+    // The time zone written right after it ("(America/Toronto)").
+    const zone = /^\s*\(([A-Za-z_]+(?:\/[A-Za-z0-9_+-]+){1,2})\)/.exec(text.slice(m.index + m[0].length, m.index + m[0].length + 48))
+    const reset = `${prefix}${m[1].replace(/\s+/g, ' ').replace(/[\s,]+$/, '').trim()}${zone ? ` (${zone[1]})` : ''}`
+    if (reset.length <= 160) out.reset = reset
+    break
+  }
+  return out
+}
+
 function reportAgentState(data, provider, continuing = false) {
   const paneId = process.env.TESSEL_PANE_ID || ''
   const launchToken = process.env.TESSEL_AGENT_LAUNCH || ''
@@ -2119,6 +2203,8 @@ function reportAgentState(data, provider, continuing = false) {
     // The lead's permission mode: the enum value only (a sub-agent's may differ).
     if (!event.agentId && MODE_PROVIDERS.includes(provider) && PERMISSION_MODES.includes(data.permission_mode))
       event.permissionMode = data.permission_mode
+    // A turn that failed on the usage limit: that, and its reset time only.
+    if (status.event === 'StopFailure' && !event.agentId) Object.assign(event, usageLimitOf(provider, data) || {})
     const file = path.join(dir, `${event.at}-${event.id}.json`)
     tmp = file + '.tmp'
     fs.writeFileSync(tmp, JSON.stringify(event), { flag: 'wx', mode: 0o600 })
@@ -2449,4 +2535,4 @@ if (require.main === module) {
   }
 }
 
-module.exports = { browserTool, browserRequest, browserRuntimes, BROWSER_TOOLS, terminalTool, terminalRequest, TERMINAL_TOOLS, TERMINAL_OPS, accountsTool, accountsRequest, ACCOUNT_TOOLS, ACCOUNT_OPS, teamMgmtTool, teamMgmtRequest, sanitizeAsk, ASK_LIMITS, PERMISSION_MODES, MODE_PROVIDERS, taskRequest, locate, readInbox, send, members, handle, candidateDirs, ackPath, markRead, unread, listTasks, addTask, moveTask, reportTask, gateTask, ask, groupTargets, listWorkers, listGates, TOOLS, VERSION, AGENT_STATUS_AGENTS, statusEvent }
+module.exports = { browserTool, browserRequest, browserRuntimes, BROWSER_TOOLS, terminalTool, terminalRequest, TERMINAL_TOOLS, TERMINAL_OPS, accountsTool, accountsRequest, ACCOUNT_TOOLS, ACCOUNT_OPS, teamMgmtTool, teamMgmtRequest, sanitizeAsk, ASK_LIMITS, PERMISSION_MODES, MODE_PROVIDERS, taskRequest, locate, readInbox, send, members, handle, candidateDirs, ackPath, markRead, unread, listTasks, addTask, moveTask, reportTask, gateTask, ask, groupTargets, listWorkers, listGates, TOOLS, VERSION, AGENT_STATUS_AGENTS, statusEvent, usageLimitOf }
