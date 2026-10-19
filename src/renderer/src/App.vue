@@ -26,6 +26,7 @@ import { createPortScanner, browserUrlForPort, addressForPort } from './portScan
 import { allowedBrowserUrl, BLANK_URL, displayUrl } from '../../shared/browserUrl'
 import { channelHead, leadHead, reviewRequest, teammateHead } from '../../shared/tesselDelivery'
 import { notePanes } from './paneSessionTrail'
+import { notePaneHosts } from './paneHosts'
 import LaunchMenu from './components/LaunchMenu.vue'
 import { accountChoices, refreshAccountChoices, setOpenPanesSource } from './accountChoices'
 import { HOST_ACCOUNT_AGENTS, checkHostAccountsNow, defaultHostAccount, hostAccountChoice, hostAccountsOf, hostEntry, hostPaneFolder, refreshHostAccounts, setDefaultHostAccount, validHostAccount } from './hostAccounts'
@@ -132,7 +133,7 @@ import { taskHistory, setTaskHistory, backfillHistory, setHistoryDescriber } fro
 import { restoredSideTab } from './sideTabs'
 import { runSettingsTool } from './settingsTools'
 import { paneModels, paneModelIds } from './paneModels'
-import { buildSenderSnapshot, paneRemote } from './senderIdentity'
+import { buildSenderSnapshot, paneRemote, cleanSender } from './senderIdentity'
 import { sleepBlocker } from '../../shared/agentSleep'
 import { updateBlocker, planUpdate, autoUpdateMoment } from '../../shared/agentUpdatePlan'
 import { describeWaitingText } from './agentUpdateWhy'
@@ -6523,6 +6524,23 @@ onMounted(() =>
     { immediate: true }
   )
 )
+// The SSH host each pane works on, kept after it closes (paneHosts.js): a
+// message's file links open on a host only when it is the one seen here.
+function allLeaves() {
+  const out = []
+  for (const ws of workspaces.value) forEachLeaf(ws.tree, (l) => out.push(l))
+  return out
+}
+onMounted(() =>
+  watch(
+    () =>
+      allLeaves()
+        .map((l) => (l.remoteHostId || isRemotePath(l.cwd) ? `${l.id}:${l.remoteHostId || ''}:${l.remotePath || ''}:${l.cwd || ''}` : ''))
+        .join('|'),
+    () => notePaneHosts(allLeaves()),
+    { immediate: true }
+  )
+)
 
 // Live ports of each workspace (Orca's scanner: every 30 s while visible).
 const portScanner = createPortScanner({ getProbes: () => portProbes(sidebarProjects.value) })
@@ -10355,7 +10373,7 @@ function logTeamMessages(team, res) {
       wsId: teamWsId(team.id),
       // Who sent it, as Tessel recorded it from the sending pane (none on
       // messages from before this record existed).
-      ...(m.sender && typeof m.sender === 'object' ? { sender: m.sender } : {}),
+      ...(cleanSender(m.sender) ? { sender: cleanSender(m.sender) } : {}),
       preview: m.text.replace(/\s+/g, ' ').slice(0, 160),
       text: m.text.slice(0, 8000)
     }
@@ -11799,7 +11817,7 @@ async function deliverChannel(team, members, round = teamRound) {
       scope: 'team',
       teamId: team.id,
       from: from ? from.paneName || from.title : null,
-      ...(d.sender && typeof d.sender === 'object' ? { sender: d.sender } : {}),
+      ...(cleanSender(d.sender) ? { sender: cleanSender(d.sender) } : {}),
       waitIdle: true,
       ...hooks(d, key)
     })
@@ -11846,7 +11864,7 @@ async function pushToChats(team, dir, res) {
       from: label,
       // Who sent it (recorded by Tessel): shown on the chat's message and,
       // shortened, in the line the agent reads.
-      ...(d.sender && typeof d.sender === 'object' ? { sender: d.sender } : {}),
+      ...(cleanSender(d.sender) ? { sender: cleanSender(d.sender) } : {}),
       text: `(message ${d.id}${d.replyTo ? `, reply to ${d.replyTo}` : ''}) ${d.text}` // i18n-ignore
     })
   }

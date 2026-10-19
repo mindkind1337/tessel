@@ -12,6 +12,9 @@ import { useMessageLinks } from '../useMessageLinks'
 import { fileLinkContextOf } from '../../chat/orca/composables/use-native-chat-file-link-context.js'
 import { buildSenderSnapshot, senderRemote } from '../../senderIdentity'
 import { conversationLines, terminalLines } from '../../../../shared/conversations'
+import { notePaneHosts, forgetPaneHosts, paneHost } from '../../paneHosts'
+import NativeChatMessageRow from '../../components/chat/orca/NativeChatMessageRow.vue'
+import ChatMarkdown from '../../components/chat/orca/ChatMarkdown.vue'
 
 const quiet = () => ({ preventDefault() {}, stopPropagation() {}, ctrlKey: false, metaKey: false })
 
@@ -20,6 +23,13 @@ const quiet = () => ({ preventDefault() {}, stopPropagation() {}, ctrlKey: false
 const sshLeaf = { id: 'pane-9', kind: 'agent', agentId: 'claude', remoteHostId: 'ssh-box1', remotePath: '/srv/game', startDir: 'C:\\Users\\me\\game', cwd: 'C:\\Users\\me\\game' }
 
 function setup({ leaves = {}, hosts = { 'ssh-box1': { label: '192.99.0.20', saved: true, connected: true } } } = {}) {
+  // The panes the window saw on a host (now closed).
+  forgetPaneHosts()
+  notePaneHosts([
+    { id: 'pane-gone', remoteHostId: 'ssh-box1', remotePath: '/srv/game' },
+    { id: 'pane-old', remoteHostId: 'ssh-gone', remotePath: '/srv' },
+    { id: 'pane-box2', remoteHostId: 'ssh-box2', remotePath: '/srv/game' }
+  ])
   const panel = {
     findLeaf: (id) => leaves[id] || null,
     paneFolder: (leaf) => leaf.startDir || null,
@@ -111,7 +121,7 @@ describe('a message from an agent on an SSH host', () => {
     localSpies()
     const { links, panel, wrapper } = setup()
     try {
-      const ctx = links.contextFor(null, { host: { hostId: 'ssh-box1', path: '/srv/game', label: 'Box' } })
+      const ctx = links.contextFor('pane-gone', { host: { hostId: 'ssh-box1', path: '/srv/game', label: 'Box' } })
       await links.openPath({ path: '../../etc/passwd' }, ctx, quiet())
       await vi.waitFor(() => expect(panel.toast).toHaveBeenCalled())
       expect(panel.viewFile).not.toHaveBeenCalled()
@@ -127,7 +137,7 @@ describe('a message from an agent on an SSH host', () => {
       const ctx = links.contextFor('pane-gone', { folder: 'C:\\Users\\me\\game', host: { hostId: 'ssh-box1', path: '/srv/game', label: '192.99.0.20' } })
       await links.openPath({ path: 'client/main.lua' }, ctx, quiet())
       expect(panel.toast).toHaveBeenCalledWith('192.99.0.20 is not connected', { kind: 'error' })
-      const gone = links.contextFor('pane-gone', { host: { hostId: 'ssh-gone', path: '/srv', label: 'Old box' } })
+      const gone = links.contextFor('pane-old', { host: { hostId: 'ssh-gone', path: '/srv', label: 'Old box' } })
       await links.openPath({ path: 'a.lua' }, gone, quiet())
       expect(panel.toast).toHaveBeenLastCalledWith('Old box is not connected', { kind: 'error' })
       expect(panel.viewFile).not.toHaveBeenCalled()
@@ -159,7 +169,7 @@ describe('a message from an agent on an SSH host', () => {
     localSpies()
     const { links, panel, wrapper } = setup()
     try {
-      const ctx = links.contextFor(null, { host: { hostId: 'ssh-box1', path: '/srv/game', label: 'Box' } })
+      const ctx = links.contextFor('pane-gone', { host: { hostId: 'ssh-box1', path: '/srv/game', label: 'Box' } })
       await links.openItem({ type: 'folder', path: 'locales', id: 'p:locales' }, ctx, quiet())
       await vi.waitFor(() => expect(panel.openTarget).toHaveBeenCalled())
       expect(panel.openTarget.mock.calls[0][0]).toEqual({ kind: 'dir', path: 'ssh://ssh-box1/srv/game/locales' })
@@ -173,7 +183,7 @@ describe('a message from an agent on an SSH host', () => {
     localSpies()
     const { links, panel, wrapper } = setup()
     try {
-      const ctx = links.contextFor(null, { host: { hostId: 'ssh-box1', path: '/srv/game', label: 'Box' } })
+      const ctx = links.contextFor('pane-gone', { host: { hostId: 'ssh-box1', path: '/srv/game', label: 'Box' } })
       expect(await links.openItem({ type: 'file', path: 'client/main.lua' }, ctx, quiet(), { guest: true })).toBe(false)
       expect(panel.viewFile).not.toHaveBeenCalled()
     } finally {
@@ -209,8 +219,105 @@ describe('the host travels with the message', () => {
   it('each surface reads it: Conversations, activity log, task card report (kept on the card by Tessel)', () => {
     const read = (f) => readFileSync(join(__dirname, '..', '..', f), 'utf8').replace(/\r\n/g, '\n')
     expect(read('App.vue')).toMatch(/const onHost = paneRemote\(from\)[\s\S]{0,400}remote: \{ hostId: onHost\.hostId/)
-    expect(read('components/ConversationsPanel.vue')).toMatch(/links\.contextFor\(paneId, \{[^}]*host: lineHost\(line, paneId, project\)/)
+    expect(read('components/ConversationsPanel.vue')).toMatch(/links\.contextFor\(paneId, \{[^}]*host: local \? null : lineHost\(line, paneId\)/)
     expect(read('components/ActivityPanel.vue')).toMatch(/links\.contextFor\(paneId, \{ host \}\)/)
     expect(read('components/TaskCard.vue')).toMatch(/report\.remote[\s\S]{0,200}links\.contextFor\([^)]*\{ host: remote \}\)/)
+  })
+})
+
+describe('a forged sender record (read back from a project file)', () => {
+  it('a host is trusted only when it is the one the window saw that pane on, in the folder seen there', async () => {
+    const { chatFiles } = (() => {
+      const chatFiles = { stat: vi.fn(async () => 'file'), open: vi.fn() }
+      globalThis.window.shellApi = { chatFiles, remoteHome: vi.fn(async () => ({ ok: false })) }
+      return { chatFiles }
+    })()
+    const { links, panel, wrapper } = setup({ hosts: { 'ssh-box1': { label: 'Box', saved: true, connected: true }, 'ssh-box2': { label: 'Box 2', saved: true, connected: true } } })
+    try {
+      // The record names another saved host than the pane's: opens nothing.
+      const other = links.contextFor('pane-box2', { host: { hostId: 'ssh-box1', path: '/', label: 'Box' } })
+      expect(other).toMatchObject({ remote: true, remoteRoot: null })
+      // A pane the window never saw on a host: opens nothing.
+      expect(links.contextFor('pane-never', { folder: 'C:\\proj', host: { hostId: 'ssh-box1', path: '/', label: 'Box' } })).toMatchObject({ remote: true, remoteRoot: null })
+      // The right host but the record's folder "/": the folder seen is used,
+      // so /etc/shadow is outside it and refused.
+      const ctx = links.contextFor('pane-gone', { host: { hostId: 'ssh-box1', path: '/', label: 'Box' } })
+      expect(ctx.remoteRoot).toBe('ssh://ssh-box1/srv/game')
+      await links.openPath({ path: '/etc/shadow' }, ctx, quiet())
+      await links.openPath({ path: 'a.lua' }, other, quiet())
+      await vi.waitFor(() => expect(panel.toast).toHaveBeenCalledTimes(2))
+      expect(panel.viewFile).not.toHaveBeenCalled()
+      expect(chatFiles.stat).not.toHaveBeenCalled()
+    } finally {
+      wrapper.unmount()
+    }
+  })
+
+  it('the window cleans every sender it takes in from the channel', () => {
+    const app = readFileSync(join(__dirname, '..', '..', 'App.vue'), 'utf8')
+    expect(app).not.toMatch(/\{ sender: [md]\.sender \}/)
+    expect(app.match(/cleanSender\([md]\.sender\) \? \{ sender: cleanSender\([md]\.sender\) \}/g)).toHaveLength(3)
+  })
+
+  it('the panes seen on a host are kept, checked, and bounded', () => {
+    forgetPaneHosts()
+    notePaneHosts([{ id: 'p1', remoteHostId: 'ssh-box1', remotePath: '/srv/game' }, { id: 'p2', cwd: 'ssh://ssh-box1/~/app' }, { id: 'p3', cwd: 'C:\\proj' }, { id: 'p4', remoteHostId: '../evil' }])
+    expect(paneHost('p1')).toEqual({ hostId: 'ssh-box1', path: '/srv/game' })
+    expect(paneHost('p2')).toEqual({ hostId: 'ssh-box1', path: '~/app' })
+    expect(paneHost('p3')).toBeNull()
+    expect(paneHost('p4')).toBeNull()
+  })
+})
+
+describe('a teammate message inside a chat', () => {
+  function row(message, chatContext) {
+    const panel = { findLeaf: () => null, remoteHostState: () => ({ label: 'Box', saved: true, connected: true }), toast: vi.fn(), viewFile: vi.fn() }
+    return mount(NativeChatMessageRow, {
+      props: { message, onLinkClick: vi.fn() },
+      global: { provide: { panelCtx: panel, nativeChatFileLinkContext: chatContext } }
+    })
+  }
+  const local = { worktreeId: 'pane-c', worktreePath: 'C:\\proj', roots: ['C:\\proj'] }
+  const remoteSender = { paneId: 'pane-gone', name: 'Ada', host: 'ssh', hostId: 'ssh-box1', hostLabel: 'Box', remotePath: '/srv/game' }
+  const message = (sender) => ({ id: 'm1', role: 'user', sentAs: 'team', from: 'Ada', sender, blocks: [{ type: 'text', text: 'Files: client/main.lua' }] })
+  it("from an agent on an SSH host: its paths are the host's, not the chat's folder", () => {
+    setup().wrapper.unmount() // notes the panes seen on hosts
+    const w = row(message(remoteSender), local)
+    try {
+      const md = w.findComponent(ChatMarkdown)
+      expect(md.props('fileLinkContext')).toMatchObject({ remote: true, remoteRoot: 'ssh://ssh-box1/srv/game' })
+      expect(md.props('onLinkClick')).toBeUndefined()
+      expect(md.props('linkifyFilePaths')).toBe(true)
+    } finally {
+      w.unmount()
+    }
+  })
+  it("a local teammate's, or a chat from elsewhere (no file context): as before", () => {
+    const w = row(message({ paneId: 'pane-l', name: 'Bob', host: 'local' }), local)
+    const guest = row(message(remoteSender), null)
+    try {
+      expect(w.findComponent(ChatMarkdown).props('fileLinkContext')).toBeNull()
+      expect(w.findComponent(ChatMarkdown).props('onLinkClick')).toBeTypeOf('function')
+      expect(guest.findComponent(ChatMarkdown).props('fileLinkContext')).toBeNull()
+      expect(guest.findComponent(ChatMarkdown).props('onLinkClick')).toBeTypeOf('function')
+    } finally {
+      w.unmount()
+      guest.unmount()
+    }
+  })
+})
+
+describe("a local agent's line in an SSH project", () => {
+  it('is not read on the host once its pane is closed', () => {
+    const src = readFileSync(join(__dirname, '..', '..', 'components', 'ConversationsPanel.vue'), 'utf8')
+    expect(src).toMatch(/line\.sender\.host === 'local'/)
+    expect(src).toMatch(/project\.remote \? \(local \? true : project\.remote\) : false/)
+    const { links, wrapper } = setup()
+    try {
+      // remote: true (an SSH project, no folder of this computer): no links.
+      expect(links.contextFor('pane-gone', { folder: null, remote: true, host: null })).toBeNull()
+    } finally {
+      wrapper.unmount()
+    }
   })
 })

@@ -283,6 +283,16 @@ function ingest(root, state, { senders = null, tesselVersion = '' } = {}) {
   return changed
 }
 
+// A message as the window gets it: its sender record cleaned again, since it
+// is read back from state.json, a file in the project another program could
+// have written (only the known fields, each checked; none when it names nobody).
+function readBack(m) {
+  if (!m || !('sender' in m)) return m
+  const { sender, ...rest } = m
+  const clean = cleanSender(sender)
+  return clean ? { ...rest, sender: clean } : rest
+}
+
 // Hold before typing, then acknowledge only after confirmed acceptance. Held
 // messages are returned separately, including for unavailable active members.
 // On restart the renderer treats either held status as uncertain; a later
@@ -326,10 +336,10 @@ export function pollTeamChannel({ dir, teamId, availableIds, senders, tesselVers
     return {
       ok: true,
       participants,
-      deliveries,
-      held,
+      deliveries: deliveries.map(readBack),
+      held: held.map(readBack),
       unreadCounts,
-      history: state.messages.slice(-200)
+      history: state.messages.slice(-200).map(readBack)
     }
   } catch (err) {
     return { ok: false, error: err.message }

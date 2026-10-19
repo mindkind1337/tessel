@@ -118,6 +118,31 @@ describe('team message sender snapshot', () => {
     expect(JSON.stringify(s)).not.toContain('ssh-evil')
   })
 
+  // state.json is a file in the project: a sender written there by another
+  // program is cleaned again before the window gets it.
+  it('a sender read back from state.json is cleaned before the window gets it', () => {
+    put(outboxes[A.id], 'f1', { to: 'Bob', text: 'Hello' })
+    pollTeamChannel({ dir, teamId, senders: { [A.id]: adaPane } })
+    const file = join(dir, '.tessel', 'team-channel', teamId, 'state.json')
+    const st = state()
+    const m = st.messages.find((x) => x.text === 'Hello')
+    m.sender = { ...m.sender, host: 'ssh', hostId: '../../etc', remotePath: '/', hostLabel: 'x'.repeat(500), evil: { a: 1 } }
+    fs.writeFileSync(file, JSON.stringify(st))
+    const res = pollTeamChannel({ dir, teamId, senders: { [A.id]: adaPane } })
+    const back = [...res.history, ...res.deliveries].filter((x) => x.text === 'Hello')
+    expect(back.length).toBeGreaterThan(0)
+    for (const x of back) {
+      expect(x.sender.hostId).toBeUndefined()
+      expect(x.sender.evil).toBeUndefined()
+      expect(x.sender.hostLabel.length).toBeLessThanOrEqual(80)
+    }
+    // A sender that names nobody is dropped.
+    const st2 = state()
+    st2.messages.find((x) => x.text === 'Hello').sender = 'nope'
+    fs.writeFileSync(file, JSON.stringify(st2))
+    expect(pollTeamChannel({ dir, teamId }).history.find((x) => x.text === 'Hello').sender).toBeUndefined()
+  })
+
   it('a host id is kept only for an SSH pane, and only in the saved-host shape', () => {
     expect(cleanSender({ paneId: 'p', host: 'local', hostId: 'ssh-box1' }).hostId).toBeUndefined()
     expect(cleanSender({ paneId: 'p', host: 'ssh', hostId: '../../etc' }).hostId).toBeUndefined()

@@ -20,7 +20,8 @@
  * through ChatMarkdown. A pasted image's "[Image #N]" in a user message whose
  * images show is a chip that opens that image (NativeChatImageAttachments).
  */
-import { computed, shallowRef } from 'vue'
+import { computed, inject, shallowRef, toValue } from 'vue'
+import { isLsharePath } from '../../../../../shared/liveSharePath.js'
 import { Clock, Goal, Users } from 'lucide-vue-next'
 import { t } from '../../../i18n'
 import { deriveNativeChatRowContent } from '../../../chat/orca/shared/native-chat-row-content.js'
@@ -34,7 +35,8 @@ import NativeChatAgentControls from './NativeChatAgentControls.vue'
 import NativeChatImageAttachments from './NativeChatImageAttachments.vue'
 import ProviderFrameRow from './ProviderFrameRow.vue'
 import { hasImagePromptMarker } from '../../../chat/orca/shared/native-chat-image-transcript-markers.js'
-import { senderSummary, senderDetails } from '../../../senderIdentity'
+import { senderSummary, senderDetails, senderRemote, cleanSender } from '../../../senderIdentity'
+import { useMessageLinks } from '../../../links/useMessageLinks'
 
 const props = defineProps({
   message: { type: Object, required: true },
@@ -126,6 +128,21 @@ const teamSender = computed(() => {
   const s = isTeam.value && props.message.sender && typeof props.message.sender === 'object' ? props.message.sender : null
   return s ? { line: senderSummary({ ...s, name: '' }), details: senderDetails(s) } : null
 })
+// A teammate on an SSH host: the paths in its message are that host's files
+// (useMessageLinks.js: only on the host seen for its pane, while connected),
+// never read against this chat's own folder.
+// Only in a chat that opens files here: a conversation from elsewhere (a Live
+// Share host's, another computer's) has no file context and stays as it is.
+const messageLinks = useMessageLinks()
+const chatLinkContext = inject('nativeChatFileLinkContext', null)
+const teamHostContext = computed(() => {
+  if (!isTeam.value || !props.message.sender || typeof props.message.sender !== 'object') return null
+  const own = toValue(chatLinkContext)
+  if (!own || !own.worktreePath || isLsharePath(own.worktreePath)) return null
+  const s = cleanSender(props.message.sender)
+  const host = senderRemote(s)
+  return host ? messageLinks.contextFor(s.paneId || null, { host }) : null
+})
 const queuedText = computed(() =>
   props.queuedReason ? props.queuedReason : isTeam.value ? t('chat.user.teamQueued', 'Waiting: delivered when the turn ends') : t('chat.user.queued', 'Queued: will send when the turn ends')
 )
@@ -182,9 +199,11 @@ function scrollToTop() {
           variant="document"
           class="nc-row-markdown"
           :render-code-block="NativeChatCodeBlock"
-          :on-link-click="onLinkClick"
+          :on-link-click="teamHostContext ? undefined : onLinkClick"
           :allow-file-uri-links="allowFileUriLinks"
-          :linkify-existing-paths="onLinkClick !== undefined"
+          :linkify-existing-paths="!teamHostContext && onLinkClick !== undefined"
+          :linkify-file-paths="!!teamHostContext"
+          :file-link-context="teamHostContext"
           :on-image-marker="openImageMarker"
         />
       </div>

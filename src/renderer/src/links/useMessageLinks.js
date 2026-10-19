@@ -20,6 +20,7 @@ import { createNativeChatFileHref } from '../chat/orca/shared/native-chat-href-r
 import { formatFileLinkLocation } from '../chat/orca/shared/file-link-location.js'
 import { t } from '../i18n/index.js'
 import { paneRemote } from '../senderIdentity.js'
+import { paneHost } from '../paneHosts.js'
 import { remoteRoot } from '../../../shared/remotePath.js'
 
 const quietEvent = () => ({ preventDefault() {}, stopPropagation() {}, ctrlKey: false, metaKey: false })
@@ -65,7 +66,14 @@ export function useMessageLinks() {
       const ctx = hostContext(leaf.id, { hostId: onHost.hostId, path: onHost.path })
       return stable(own && own.remoteRoot ? { ...own, remoteHost: ctx.remoteHost } : ctx)
     }
-    if (host && typeof host === 'object') return stable(hostContext(paneId, host))
+    // A record's host counts only when it is the one the window saw that
+    // pane on (paneHosts.js), and then in the folder seen there: a record
+    // read back from a project's files could name any host and folder.
+    if (host && typeof host === 'object') {
+      const seen = paneHost(paneId)
+      if (!seen || !host.hostId || seen.hostId !== host.hostId) return stable(hostContext(paneId, { hostId: null, label: host.label }))
+      return stable(hostContext(paneId, { hostId: seen.hostId, path: seen.path, label: host.label }))
+    }
     if (remote && typeof remote === 'object' && remote.hostId) return stable(hostContext(paneId, { hostId: remote.hostId, path: remote.path, label: remote.host }))
     if (remote || typeof folder !== 'string' || !folder) return null
     return stable(fileLinkContextOf({ id: paneId || folder, cwd: folder }, null))

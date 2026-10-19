@@ -331,23 +331,24 @@ const hostByPane = computed(() => {
     }
   return out
 })
-function lineHost(line, paneId, project) {
+// Which host a line names (its folder is the one the window saw its pane in:
+// useMessageLinks.js checks the host against it).
+function lineHost(line, paneId) {
   const own = line.from && line.from.kind === 'agent' ? senderRemote(line.sender) : null
   const known = paneId ? hostByPane.value.get(paneId) : null
-  const terminal = line.remoteHost || null
-  const host = (own && own.hostId && own) || (known && known.hostId && known) || own || known || null
-  if (!terminal) return host
-  // A terminal line names its host; its folder: the one the agent's records
-  // or its SSH project name on that host, else the host's home folder.
-  if (host && host.hostId === terminal.hostId) return host
-  const projectPath = project && project.remote && project.remote.hostId === terminal.hostId ? project.remote.path : ''
-  return { hostId: terminal.hostId, path: projectPath || '~', label: terminal.label || '' }
+  // A terminal line names its host (the window asked for its file there).
+  const terminal = line.remoteHost ? { hostId: line.remoteHost.hostId, path: '~', label: line.remoteHost.label || '' } : null
+  return (own && own.hostId && own) || (terminal && terminal.hostId && terminal) || (known && known.hostId && known) || own || terminal || known || null
 }
 function lineContext(line) {
   if (guest.value || !line) return null
   const paneId = line.from && line.from.kind === 'agent' ? line.from.paneId : line.to && line.to.paneId
   const project = (props.projects || []).find((p) => p.id === line.wsId) || null
-  return links.contextFor(paneId, { folder: project ? project.cwd : null, remote: project && project.remote ? project.remote : false, host: lineHost(line, paneId, project) })
+  // A local agent's line (its record says so) in an SSH project: not the
+  // host's files, and this computer's folder for it is not known: no links.
+  const local = !!(line.from && line.from.kind === 'agent' && line.sender && line.sender.host === 'local')
+  const remote = project && project.remote ? (local ? true : project.remote) : false
+  return links.contextFor(paneId, { folder: project ? project.cwd : null, remote, host: local ? null : lineHost(line, paneId) })
 }
 // A terminal line's image, asked for once its thumbnail is in view; an image
 // file a message names, read as the image viewer reads it (Media view).
