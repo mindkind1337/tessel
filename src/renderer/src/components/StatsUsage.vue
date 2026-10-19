@@ -46,7 +46,8 @@ const REPORTERS = {
   claude: 'claudeUsageReport',
   codex: 'codexUsageReport',
   opencode: 'opencodeUsageReport',
-  grok: 'grokUsageReport'
+  grok: 'grokUsageReport',
+  muse: 'museUsageReport'
 }
 const PREF_KEY = 'tessel:usage-analytics'
 function readPreferences() {

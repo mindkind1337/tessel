@@ -4,7 +4,7 @@
 // transcript watch, MIT, Copyright (c) 2026 Lovecast Inc.). The main process
 // reads the agent's session file (src/main/chat/transcriptView.js) and sends
 // it again while the agent writes; the chat's list shows it.
-// Read-only (Grok, OMP): typing stays in the terminal, no composer.
+// Read-only (Grok, OMP, Muse Code): typing stays in the terminal, no composer.
 // interactive (Claude Code, OpenClaude, Codex, Cursor, Antigravity: the pane's chat view): a
 // composer whose messages are typed into the terminal (sendMessage, Tessel's
 // delivery), Stop (Escape), and the card of what the agent waits for: its

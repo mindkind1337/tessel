@@ -4,9 +4,9 @@
 // totals from a page of conversations, or add cached/reasoning subsets twice.
 import { t } from './i18n'
 
-export const USAGE_REPORT_PROVIDERS = ['claude', 'codex', 'opencode', 'grok']
+export const USAGE_REPORT_PROVIDERS = ['claude', 'codex', 'opencode', 'grok', 'muse']
 const PROVIDERS = USAGE_REPORT_PROVIDERS
-const LABELS = { claude: 'Claude Code', codex: 'Codex', opencode: 'OpenCode', grok: 'Grok Build' } // product names // i18n-ignore
+const LABELS = { claude: 'Claude Code', codex: 'Codex', opencode: 'OpenCode', grok: 'Grok Build', muse: 'Muse Code' } // product names // i18n-ignore
 const object = (v) => v !== null && typeof v === 'object' && !Array.isArray(v)
 const count = (v) => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : 0)
 const optionalCount = (v) => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : null)
@@ -273,8 +273,9 @@ function openCodeMetrics(value) {
 }
 
 function normalizeMetrics(provider, value = {}) {
-  // Grok Build's report carries OpenCode's buckets (grokUsageReport.js).
-  if (provider === 'opencode' || provider === 'grok') return openCodeMetrics(value)
+  // Grok Build's and Muse Code's reports carry OpenCode's buckets
+  // (grokUsageReport.js, museUsageReport.js).
+  if (provider === 'opencode' || provider === 'grok' || provider === 'muse') return openCodeMetrics(value)
   const input = count(value.input)
   const output = count(value.output)
   const activity = count(value.turns)
@@ -443,6 +444,8 @@ export function normalizeUsageReport(provider, raw, options = {}) {
             ? t('usage.report.scopeOpenCode', 'OpenCode history on this computer')
             : provider === 'grok'
               ? t('usage.report.scopeGrok', 'Grok Build history on this computer')
+            : provider === 'muse'
+              ? t('usage.report.scopeMuse', 'Muse Code history on this computer')
             : t('usage.report.scopeCodex', 'Selected Codex account’s local history'),
     accountId:
       provider === 'codex' && (raw?.accountId === null || typeof raw?.accountId === 'string')
@@ -469,11 +472,13 @@ export function normalizeUsageReport(provider, raw, options = {}) {
         ? t('usage.report.opencodeTurns', 'Recorded usage rows: one per session where OpenCode keeps session totals, else one per reply.')
         : provider === 'grok'
           ? t('usage.report.grokTurns', 'Completed turns, one row per model a turn used.')
+        : provider === 'muse'
+          ? t('usage.report.museTurns', 'Model calls Muse Code recorded, its sub-agents and background helpers included.')
         : provider === 'codex'
           ? t('usage.report.codexTurns', 'Observed model usage events; not user prompts.')
           : t('usage.report.claudeTurns', 'Deduplicated assistant replies.')),
     tokenSemantics:
-      provider === 'codex' || provider === 'opencode' || provider === 'grok'
+      provider === 'codex' || provider === 'opencode' || provider === 'grok' || provider === 'muse'
         ? t('usage.report.codexTokens', 'Cached input and reasoning output are subsets, not additional tokens.'
           )
         : t('usage.report.claudeTokens', 'Cache reads and cache writes are additional to input; one-hour cache writes are a subset of all cache writes.'
@@ -536,6 +541,7 @@ export function buildUsageOverview(
         codexTokens: 0,
         opencodeTokens: 0,
         grokTokens: 0,
+        museTokens: 0,
         rows: []
       }
       current[`${provider.provider}Tokens`] += row.totalTokens // i18n-ignore
@@ -569,6 +575,7 @@ export function buildUsageOverview(
         codexTokens: 0,
         opencodeTokens: 0,
         grokTokens: 0,
+        museTokens: 0,
         ...combineMetrics([]),
         intensity: 0
       }

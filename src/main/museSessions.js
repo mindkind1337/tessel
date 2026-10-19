@@ -51,6 +51,13 @@ export function museConfigDir(home = os.homedir(), env = process.env) {
 export function museSettingsFile(home = os.homedir(), env = process.env) {
   return join(museConfigDir(home, env), 'settings.json')
 }
+// Its sign-in, where its launcher looks for it: MUSE_AUTH_PATH, else
+// auth.json next to its settings ({ schema_version, providers: { meta: {
+// access_token, api_key, api_base_url, subs_active, user_email, ... } } }).
+export function museAuthFile(home = os.homedir(), env = process.env) {
+  const own = envDir(env, 'MUSE_AUTH_PATH', home)
+  return own || join(museConfigDir(home, env), 'auth.json')
+}
 export function museDataDir(home = os.homedir(), env = process.env) {
   return join(envDir(env, 'XDG_DATA_HOME', home) || join(home, '.local', 'share'), 'muse')
 }

@@ -808,6 +808,15 @@
         "expiredShort": "Lancez grok sur cet ordinateur (terminez la connexion si on vous le demande), puis Actualiser l'usage.",
         "source": "Lu depuis la session de Grok CLI (~/.grok/auth.json)."
       },
+      "muse": {
+        "title": "Muse Code (Meta)",
+        "usageTitle": "Usage de l'abonnement",
+        "noUsage": "Muse Code n'a indiqué aucun usage pour ce compte.",
+        "account": "Abonnement Muse Code",
+        "signedOut": "Non connecté à Muse Code",
+        "signedOutShort": "Lancez muse dans un terminal et connectez-vous (/login), puis Actualiser l'usage.",
+        "source": "Lu depuis la connexion de Muse Code (~/.config/muse/auth.json). Son usage vient de l'appel que Muse fait lui-même à chaque démarrage."
+      },
       "gemini": {
         "label": "Utiliser les identifiants de Gemini CLI (expérimental)",
         "readsCli": "Lit la connexion de Gemini CLI",
@@ -1087,6 +1096,11 @@
       "sourceCli": "tel que Grok Build l'a enregistré",
       "apiKeyShort": "Clé API",
       "paneWarn": "Cette connexion Grok n'a pas d'abonnement SuperGrok ni X Premium+ : Grok Build peut refuser de fonctionner."
+    },
+    "musePlan": {
+      "apiKey": "Clé API Meta (facturée au jeton)",
+      "sourceLive": "selon Meta",
+      "paneWarn": "Ce compte Meta n'a pas d'abonnement Muse Code actif : Muse Code peut refuser de fonctionner."
     }
   },
   "signedIn": {

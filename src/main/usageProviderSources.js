@@ -10,6 +10,7 @@ import { DEFAULT_PROVIDER_SETTINGS } from './providerCredentials'
 import { createGeminiRefresher } from './geminiCliOAuth'
 import { miniMaxModels } from './usageProviderMapping'
 import { grokHome, grokPlanAttention, readGrokPlanLocal } from './grokAccount'
+import { museAuthFile } from './museSessions'
 
 // MiniMax's usage endpoint rejects non-browser clients (Orca's
 // minimax-request-context.ts): a real browser user agent, per platform.
@@ -115,6 +116,8 @@ export function createUsageProviderSources({
       )
     ],
     grok: [path.join(grokHome(home, env), 'auth.json')],
+    // Muse Code's sign-in (museSessions.js): its Meta login.
+    muse: [museAuthFile(home, env)],
     cursor: [
       path.join(cursor, 'auth.json'),
       path.join(desktop, 'User', 'globalStorage', 'state.vscdb')
@@ -278,6 +281,16 @@ export function createUsageProviderSources({
       if (!fresh(creds)) refuse('expired', t('main.usage.refreshGrok', 'Run Grok to refresh its login, then retry usage.'))
       headers['X-XAI-Token-Auth'] = 'xai-grok-cli'
       if (token(creds.user_id)) headers['x-userid'] = creds.user_id
+    } else if (provider === 'muse') {
+      // Its Meta login (a device-code or browser sign-in): the access token
+      // Muse sends to its key call at every start. An API key alone (Meta's
+      // Model API, billed per token) has no subscription to read.
+      const meta = (await json(paths.muse[0]))?.providers?.meta
+      if (!token(meta?.access_token)) {
+        if (token(meta?.api_key)) refuse('unsupported', t('main.usage.museApiKey', 'Muse Code is signed in with an API key: it is billed per token, with no subscription quota to show.'))
+        refuse('unavailable', t('main.usage.museSignedOut', 'Muse Code is not signed in: run muse, then /login.'))
+      }
+      headers = { ...bearer(meta.access_token), 'x-api-version': '1.0.0' }
     } else if (provider === 'cursor') {
       const cli = await json(paths.cursor[0])
       let session = cursorToken(cli?.accessToken)
@@ -479,6 +492,23 @@ export function createUsageProviderSources({
           email,
           tokenFresh: !!token(creds.access_token) && typeof creds.expiry_date === 'number' && creds.expiry_date > clock() + 5000,
           refreshable: !!token(creds.refresh_token)
+        }
+      }
+      // Muse Code (its auth.json): who signed in and whether a subscription
+      // was active at its last start, never a token. Its plan's name comes
+      // from the usage read (extraProviderUsage.js).
+      if (provider === 'muse') {
+        const meta = (await json(paths.muse[0]))?.providers?.meta
+        if (!meta || !(token(meta.access_token) || token(meta.api_key))) return out
+        const apiKey = !token(meta.access_token)
+        return {
+          ...out,
+          signedIn: true,
+          email: short(meta.user_email),
+          displayName: short(meta.user_full_name),
+          credentialSource: apiKey ? 'api-key' : 'cli',
+          tokenFresh: true,
+          ...(apiKey ? { plan: { kind: 'api-key' } } : typeof meta.subs_active === 'boolean' ? { subscribed: meta.subs_active } : {})
         }
       }
       if (provider !== 'cursor') return out

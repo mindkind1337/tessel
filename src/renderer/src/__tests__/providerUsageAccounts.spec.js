@@ -16,6 +16,7 @@ const status = (extra = {}) => ({
   },
   cursor: { signedIn: true, email: 'person@example.test', credentialSource: 'cli', tokenFresh: true, error: null },
   grok: { signedIn: false, email: null, tokenFresh: false, error: null },
+  muse: { signedIn: true, email: 'muse@example.test', displayName: 'Muse Person', credentialSource: 'cli', tokenFresh: true, subscribed: true, planType: 'Muse Code High Usage', plan: { label: 'Muse Code High Usage', subscribed: true, checkedAt: Date.now() }, error: null },
   ...extra
 })
 
@@ -24,7 +25,7 @@ describe('usage-only provider sections', () => {
   beforeEach(() => {
     previous = window.shellApi
     state = status()
-    agents = ['cursor', 'grok', 'gemini', 'opencode', 'claude']
+    agents = ['cursor', 'grok', 'gemini', 'opencode', 'claude', 'muse']
     api = {
       status: vi.fn(async () => structuredClone(state)),
       saveSecret: vi.fn(async (name) => {
@@ -42,7 +43,9 @@ describe('usage-only provider sections', () => {
       })
     }
     usageRead = vi.fn(async ({ provider }) =>
-      provider === 'cursor'
+      provider === 'muse'
+        ? { ok: true, provider, accountId: null, plan: 'Muse Code High Usage', windows: [{ label: '5-hour', usedPct: 16, resetsAt: Date.parse('2026-10-19T15:13:21Z') }, { label: 'Weekly', usedPct: 5, resetsAt: Date.parse('2026-10-26T00:00:00Z') }] }
+        : provider === 'cursor'
         ? { ok: true, provider, accountId: null, windows: [{ label: 'Monthly', usedPct: 42.4, resetsAt: Date.parse('2026-10-20T00:00:00Z') }, { label: 'Cursor models', usedPct: 10, resetsAt: null }] }
         : { ok: false, provider, accountId: null, code: 'unavailable', error: 'No usage.' }
     )
@@ -72,14 +75,16 @@ describe('usage-only provider sections', () => {
       'minimax',
       'zcode',
       'grok',
+      'muse',
       'cursor'
     ])
     wrapper.unmount()
     agents = ['claude']
     state.cursor.signedIn = false
+    state.muse.signedIn = false
     await mountIt()
     expect(wrapper.findAll('[data-provider]').map((s) => s.attributes('data-provider'))).toEqual(['minimax', 'zcode'])
-    expect(wrapper.get('[data-test="providers-not-installed"]').text()).toBe('Not installed: Gemini, OpenCode Go, Grok, Cursor')
+    expect(wrapper.get('[data-test="providers-not-installed"]').text()).toBe('Not installed: Gemini, OpenCode Go, Grok, Muse Code, Cursor')
     await wrapper.get('[data-test="reveal-grok"]').trigger('click')
     expect(wrapper.findAll('[data-provider]').map((s) => s.attributes('data-provider'))).toEqual(['minimax', 'zcode', 'grok'])
     expect(wrapper.get('[data-test="providers-not-installed"]').text()).not.toContain('Grok')
@@ -95,10 +100,29 @@ describe('usage-only provider sections', () => {
     expect(cursor.text()).toContain('Cursor models')
     await cursor.get('[data-test="usage-account-refresh"]').trigger('click')
     await flushPromises()
-    expect(usageRead).toHaveBeenCalledTimes(2)
+    expect(usageRead.mock.calls.filter(([q]) => q.provider === 'cursor')).toHaveLength(2)
     expect(api.status).toHaveBeenCalledTimes(2)
     await cursor.get('[data-test="usage-account-link"]').trigger('click')
     expect(window.shellApi.openExternal).toHaveBeenCalledWith('https://cursor.com/dashboard/spending')
+  })
+
+  it('Muse Code: who signed in, its plan, its 5-hour and weekly windows each with its reset, Refresh', async () => {
+    await mountIt()
+    const muse = wrapper.get('[data-provider="muse"]')
+    expect(muse.get('[data-test="provider-status"]').text()).toBe('Signed in as muse@example.test · 16% used')
+    expect(usageRead).toHaveBeenCalledWith({ provider: 'muse', accountId: null })
+    const usage = muse.get('[data-test="usage-account-usage"]').text()
+    expect(usage).toContain('Subscription usage')
+    expect(usage).toContain('16%')
+    expect(usage).toContain('5%')
+    expect(usage.match(/Resets/g)).toHaveLength(2)
+    expect(muse.text()).toContain('Muse Code High Usage')
+    expect(muse.text()).toContain('~/.config/muse/auth.json')
+    await muse.get('[data-test="usage-account-refresh"]').trigger('click')
+    await flushPromises()
+    expect(usageRead.mock.calls.filter(([q]) => q.provider === 'muse').length).toBeGreaterThanOrEqual(2)
+    await muse.get('[data-test="usage-account-link"]').trigger('click')
+    expect(window.shellApi.openExternal).toHaveBeenCalledWith('https://accountscenter.meta.com/muse_code/')
   })
 
   it('Grok: signed out says how to sign in, and reads no usage', async () => {

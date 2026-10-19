@@ -442,10 +442,11 @@ export function museEffortFromCommand(command) {
   return (m && museEffort(m[1])) || null
 }
 
-// Muse's model defaults in its settings.json. Their keys are not documented:
-// only the names its own flags and session records use (model / model_id,
-// reasoning_effort), at the top or under "model", and only a plain model id
-// or one of its eight tiers.
+// Muse's model defaults in its settings.json, as Muse Code 1.4.10 writes
+// them: "model" (its id) and "model_reasoning_efforts" ({ <model id>: tier },
+// each model's effort, saved by its model picker and /effort); an older
+// "reasoning_effort" for every model. Only a plain model id or one of its
+// eight tiers. efforts: the per-model map (effortFor(model) reads it).
 export function museSettingsModel(home = os.homedir()) {
   let o
   try {
@@ -456,9 +457,13 @@ export function museSettingsModel(home = os.homedir()) {
   if (!o || typeof o !== 'object') return null
   const nested = o.model && typeof o.model === 'object' ? o.model : {}
   const model = museModelId(o.model) || museModelId(o.model_id) || museModelId(o.default_model) || museModelId(nested.id) || museModelId(nested.model_id) || museModelId(nested.default)
-  if (!model) return null
-  const effort = museEffort(o.reasoning_effort) || museEffort(nested.reasoning_effort) || museEffort(nested.effort)
-  return { model, effort: effort || null }
+  const map = o.model_reasoning_efforts && typeof o.model_reasoning_efforts === 'object' && !Array.isArray(o.model_reasoning_efforts) ? o.model_reasoning_efforts : {}
+  const efforts = {}
+  for (const [id, tier] of Object.entries(map).slice(0, 100)) if (museModelId(id) && museEffort(tier)) efforts[museModelId(id)] = museEffort(tier)
+  const all = museEffort(o.reasoning_effort) || museEffort(nested.reasoning_effort) || museEffort(nested.effort) || null
+  const effortFor = (id) => (id && Object.hasOwn(efforts, id) ? efforts[id] : all)
+  if (!model) return Object.keys(efforts).length || all ? { model: null, effort: null, effortFor } : null
+  return { model, effort: effortFor(model), effortFor }
 }
 
 // Cline 3 lists its sessions in <data>/db/sessions.db (SQLite), each with
@@ -748,11 +753,14 @@ function agentModelFound({ agentId, sessionId, command, cwd, launchedAt = 0, cod
     // of a flag or the settings fills in a log that names none.
     const flagEffort = museEffortFromCommand(command)
     const saved = museSettingsModel(home)
+    const savedFor = (id) => (saved ? saved.effortFor(id) : null)
     const session = isUuid(sessionId) ? museSession(sessionId, home) : null
-    if (session) return { ...session, effort: session.effort || flagEffort || (saved && saved.model === session.model ? saved.effort : null), source: 'session' }
+    // A /effort shows in the log; else its flag, else the effort its settings
+    // keep for that model (what its footer shows: "muse-wonder-1.0 · medium").
+    if (session) return { ...session, effort: session.effort || flagEffort || savedFor(session.model), source: 'session' }
     const flag = modelFromCommand(command)
-    if (flag) return { model: flag, effort: flagEffort || (saved && saved.model === flag ? saved.effort : null), source: 'command' }
-    return saved ? { model: saved.model, effort: flagEffort || saved.effort, source: 'settings' } : null
+    if (flag) return { model: flag, effort: flagEffort || savedFor(flag), source: 'command' }
+    return saved && saved.model ? { model: saved.model, effort: flagEffort || saved.effort, source: 'settings' } : null
   }
   if (isUuid(sessionId)) {
     if (agentId === 'claude') {

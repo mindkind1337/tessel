@@ -106,7 +106,7 @@ export function hostTabsFromWorkspace(ws) {
 // The agents whose conversation file Tessel reads (src/main/chat/
 // transcriptView.js TRANSCRIPT_VIEW_AGENTS): their panes' conversations can
 // be shown to guests.
-export const GUEST_CHAT_AGENTS = ['claude', 'openclaude', 'codex', 'cursor', 'antigravity', 'grok', 'omp']
+export const GUEST_CHAT_AGENTS = ['claude', 'openclaude', 'codex', 'cursor', 'antigravity', 'grok', 'omp', 'muse']
 // On an SSH host only these (src/main/chat/remoteTranscripts.js): the host's
 // own chat view reads the same two there.
 export const GUEST_REMOTE_CHAT_AGENTS = ['claude', 'codex']

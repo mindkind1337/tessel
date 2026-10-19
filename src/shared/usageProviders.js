@@ -6,8 +6,9 @@ export const USAGE_PROVIDERS = Object.freeze([
   { id: 'gemini', name: 'Gemini', agents: ['gemini'], report: false },
   // The Antigravity CLI's own /usage answer (antigravityCliUsage.js).
   { id: 'antigravity', name: 'Antigravity', agents: ['antigravity'], report: false },
-  // Muse Code's own usage/read over `muse serve` (museUsage.js).
-  { id: 'muse', name: 'Muse Code', agents: ['muse'], report: false },
+  // Its quota and plan from its key call (extraProviderUsage.js), its token
+  // stats from its session logs (museUsageReport.js).
+  { id: 'muse', name: 'Muse Code', agents: ['muse'], report: true },
   { id: 'kimi', name: 'Kimi', agents: ['kimi'], report: false },
   { id: 'cursor', name: 'Cursor', agents: ['cursor'], report: false },
   // Its quota (extraProviderUsage.js) and its token stats (grokUsageReport.js).

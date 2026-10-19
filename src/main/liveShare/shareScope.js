@@ -125,6 +125,10 @@ const PROTECTED_FOLDERS = new Set([
   '.windsurf',
   '.kiro',
   '.grok',
+  // Muse Code: its project skills, plugins, workflows and memory (.agents,
+  // which Codex and others read too) and its worktrees (.muse).
+  '.agents',
+  '.muse',
   '.crush',
   '.roo',
   '.cline',

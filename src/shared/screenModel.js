@@ -21,6 +21,7 @@ const MODEL = new RegExp(
       'qwen-(?:coder|max|plus|turbo)[\\w.-]*',
       'deepseek-[a-z0-9][\\w.-]*',
       'grok-\\d[\\w.-]*',
+      'muse-[a-z][\\w.-]*',
       'glm-\\d[\\w.-]*',
       '(?:mistral|devstral|codestral|magistral)-[a-z0-9][\\w.-]*',
       'llama-?\\d[\\w.-]*',
@@ -47,6 +48,19 @@ export function modelFromScreen({ bottom = [], top = [] } = {}) {
   for (const l of clean(top)) {
     const m = modelInLine(l)
     if (m) return m
+  }
+  return null
+}
+
+// Muse Code's footer: "muse-wonder-1.0 · medium · C:\TRADING · YOLO" (its
+// model, effort, folder and permission mode), read from the bottom up. ->
+// { model, effort } or null. Only one of its eight tiers is an effort.
+const MUSE_FOOTER = /^\s*([a-z0-9][\w.:/@+-]{0,119})\s+·\s+(none|minimal|low|medium|high|xhigh|max|ultra)\s+·\s+\S/i
+export function museFooterModel(lines) {
+  const list = (lines || []).map((l) => String(l || ''))
+  for (let i = list.length - 1; i >= 0; i--) {
+    const m = MUSE_FOOTER.exec(list[i])
+    if (m) return { model: m[1], effort: m[2].toLowerCase() }
   }
   return null
 }

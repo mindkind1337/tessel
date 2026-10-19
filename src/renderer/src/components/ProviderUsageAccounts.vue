@@ -15,8 +15,8 @@ import PanelState from './ui/PanelState.vue'
 import { t } from '../i18n'
 
 // Product names and examples, the same in every language.
-const NAMES = { gemini: 'Gemini', opencode: 'OpenCode Go', minimax: 'MiniMax', glm: 'GLM Coding Plan', grok: 'Grok', cursor: 'Cursor' } // i18n-ignore
-const ORDER = ['gemini', 'opencode', 'minimax', 'glm', 'grok', 'cursor']
+const NAMES = { gemini: 'Gemini', opencode: 'OpenCode Go', minimax: 'MiniMax', glm: 'GLM Coding Plan', grok: 'Grok', muse: 'Muse Code', cursor: 'Cursor' } // i18n-ignore
+const ORDER = ['gemini', 'opencode', 'minimax', 'glm', 'grok', 'muse', 'cursor']
 // Where a GLM Coding Plan key is made (after Orca's zcode-plan-sites.ts).
 const GLM_CONSOLES = {
   zai: 'https://z.ai/manage-apikey',
@@ -57,6 +57,7 @@ const relevant = computed(() => ({
   // A GLM Coding Plan is used from ZCode, Claude Code or OpenCode.
   glm: has('zcode', 'claude', 'opencode') || !!saved.value.zcodePlanApiKey,
   grok: has('grok') || state.value?.grok?.signedIn === true,
+  muse: has('muse') || state.value?.muse?.signedIn === true,
   cursor: has('cursor') || state.value?.cursor?.signedIn === true
 }))
 const visible = computed(() =>
@@ -538,6 +539,7 @@ onBeforeUnmount(() => {
 
       <!-- ============ Grok, Cursor ============ -->
       <SignInUsageSection v-if="visible.grok" provider="grok" :status="state?.grok || null" :loading="loading" @reload="load" />
+      <SignInUsageSection v-if="visible.muse" provider="muse" :status="state?.muse || null" :loading="loading" @reload="load" />
       <SignInUsageSection v-if="visible.cursor" provider="cursor" :status="state?.cursor || null" :loading="loading" @reload="load" />
 
       <!-- Not installed, nothing saved: one quiet line, each name shows its row. -->

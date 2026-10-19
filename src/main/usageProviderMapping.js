@@ -148,6 +148,22 @@ export function mapGrok(data) {
     return [quota('Weekly', 0, reset)]
   return []
 }
+// Muse Code: its key call's answer (POST https://api.meta.ai/muse-code/key,
+// the one Muse makes at every start with its stored login) ->
+// { windows, plan, subscribed }. subs_usage: { window: { used_percent,
+// window_duration_mins, resets_at (s) }, weekly: { used_percent, resets_at },
+// tier }; subs_tier_name the plan's own name ("Muse Code High Usage"). The
+// answer also carries an API key: only these fields are ever taken from it.
+export function mapMuse(data) {
+  const usage = data?.subs_usage && typeof data.subs_usage === 'object' ? data.subs_usage : {}
+  const w = usage.window && typeof usage.window === 'object' ? usage.window : {}
+  const week = usage.weekly && typeof usage.weekly === 'object' ? usage.weekly : {}
+  const minutes = number(w.window_duration_mins)
+  const label = minutes === 300 || minutes === null ? '5-hour' : minutes % 60 === 0 ? `${minutes / 60}-hour` : `${minutes} min`
+  const windows = [quota(label, w.used_percent, w.resets_at), quota('Weekly', week.used_percent, week.resets_at)].filter(Boolean)
+  const name = typeof data?.subs_tier_name === 'string' ? data.subs_tier_name.trim().replace(/\s+/g, ' ').slice(0, 60) : ''
+  return { windows, plan: name || null, subscribed: data?.is_subs_active === true }
+}
 export function mapOpenCodeGo(data) {
   const usage = data?.usage
   const windows = [

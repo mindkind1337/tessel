@@ -54,6 +54,19 @@ describe('a Muse Code pane: model and effort', () => {
     expect(agentModel({ agentId: 'muse', command: 'muse --effort minimal' }, home)).toEqual({ model: 'muse-spark-1.3', effort: 'minimal', source: 'settings' })
   })
 
+  it("Muse 1.4.10's settings: the effort it keeps per model (model_reasoning_efforts), for a log that names none", () => {
+    // As Muse Code 1.4.10 writes it (its footer then reads "muse-wonder-1.0 · medium").
+    settings({ schema_version: 1, provider: 'meta', model: 'muse-wonder-1.0', model_reasoning_efforts: { 'muse-wonder-1.0': 'medium', 'muse-spark-1.3': 'xhigh', 'bad id;': 'low', 'muse-spark-1.2': 'turbo' } })
+    expect(agentModel({ agentId: 'muse', command: 'muse' }, home)).toEqual({ model: 'muse-wonder-1.0', effort: 'medium', source: 'settings' })
+    // Its log names the model of each turn, never the effort.
+    writeMuseSession(museSessionsDir(home), id, museLog({ model: 'muse-spark-1.3', effort: null }))
+    expect(agentModel({ agentId: 'muse', sessionId: id, command: 'muse' }, home)).toMatchObject({ model: 'muse-spark-1.3', effort: 'xhigh', source: 'session' })
+    // A model it keeps no effort for: none shown (never another model's).
+    writeMuseSession(museSessionsDir(home), id, museLog({ model: 'muse-spark-1.2', effort: null }))
+    expect(agentModel({ agentId: 'muse', sessionId: id, command: 'muse' }, home)).toMatchObject({ model: 'muse-spark-1.2', effort: null })
+    expect(museSettingsModel(home).effortFor('bad id;')).toBe(null)
+  })
+
   it('a log naming no effort takes the one it was launched with', () => {
     writeMuseSession(museSessionsDir(home), id, museLog({ effort: null }))
     expect(agentModel({ agentId: 'muse', sessionId: id, command: 'muse --reasoning-effort ultra' }, home)).toMatchObject({ model: 'muse-spark-1.3', effort: 'ultra', source: 'session' })

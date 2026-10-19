@@ -276,7 +276,8 @@ const commandText = (s) => String(s || '').normalize('NFKC').replace(/\p{Cf}/gu,
 // Whether a submitted line ({ text, over } or a string) may switch to a model
 // the rule refuses for this agent: "/model" with no model (it opens the
 // agent's own picker) or with one not allowed, a start of "/model" (the
-// agent completes it), /config (its model setting), or a command line too
+// agent completes it), /models, /config or /settings (its model setting,
+// Muse Code's picker and panel), or a command line too
 // long to follow. Only for an agent whose models the rule limits.
 export function refusedModelSwitch(rule, agent, submitted) {
   const list = allowedModels(rule, agent)
@@ -292,6 +293,9 @@ export function refusedModelSwitch(rule, agent, submitted) {
   }
   if (word.length >= 4 && '/config'.startsWith(word)) return true
   if (/^\/config\b/.test(low)) return true
+  // Muse Code's model picker (/models) and its settings panel (/settings),
+  // where its model can be changed too.
+  if (word === '/models' || (word.length >= 4 && '/settings'.startsWith(word))) return true
   const m = /^\/model\b\s*(\S*)/.exec(low)
   if (!m) return false
   return !m[1] || !list.some((x) => sameModel(x, m[1]))

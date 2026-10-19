@@ -16,7 +16,7 @@ import { entryState, FOLDER_AGENTS, OVERRIDES } from './remoteAgent/remoteAccoun
 import { cleanSubscription } from '../shared/claudeSubscription'
 
 const PLACE = /^(pc|wsl:[\w.-]{1,64}|ssh:[\w-]{1,80})$/
-const LOCAL_SIGNINS = ['gemini', 'grok', 'cursor']
+const LOCAL_SIGNINS = ['gemini', 'grok', 'cursor', 'muse']
 const text = (v, max = 200) => (typeof v === 'string' && v.trim() ? v.trim().slice(0, max) : null)
 
 // One row of a place, the same shape wherever it was read. sub: a Claude
@@ -95,7 +95,7 @@ export async function copilotRows({ home }) {
 }
 
 // accounts: providerAccounts.js; localSignIn(provider): usageProviderSources'
-// signIn (Gemini, Grok, Cursor on this PC); localOthers(): more rows of this
+// signIn (Gemini, Grok, Cursor, Muse Code on this PC); localOthers(): more rows of this
 // PC (Copilot); hosts: remoteHosts.js; connected(hostId): remoteFs's
 // connectedQuietly; remoteAccounts: remoteAccounts.js; wsl: wslAccounts.js.
 // confirmStart(name) -> true when you said yes to starting a stopped WSL

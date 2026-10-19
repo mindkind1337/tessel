@@ -73,8 +73,6 @@ function setup(options = {}) {
   const antigravityCli = { present: vi.fn(() => false), read: vi.fn(async () => ({ ok: false, reason: 'missing' })), timeoutMs: 20000 }
   // Nor this computer's Antigravity app.
   const antigravityPlan = { read: vi.fn(() => null) }
-  // Nor this computer's Muse Code (`muse serve`).
-  const museUsage = { present: vi.fn(() => false), read: vi.fn(async () => ({ ok: false, reason: 'missing' })), timeoutMs: 20000 }
   const service = createExtraProviderUsage({
     sources,
     request,
@@ -82,7 +80,6 @@ function setup(options = {}) {
     clock: () => now,
     antigravityCli,
     antigravityPlan,
-    museUsage,
     ...options
   })
   return { service, sources, request, listAgents }
