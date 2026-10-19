@@ -129,10 +129,10 @@ describe('activity:save', () => {
 })
 
 describe('the handlers that started programs on the main thread', () => {
-  it('app:inputLanguages starts PowerShell from the worker thread (spawnOffThread.js)', () => {
-    const source = block("ipcMain.handle('app:inputLanguages',")
-    expect(source).toMatch(/execFileOff\(\s*'powershell\.exe'/)
-    expect(source).not.toMatch(/[^f]execFile\(/)
+  it("index.js's execFile (app:inputLanguages' PowerShell...) is the worker thread's (spawnOffThread.js)", () => {
+    expect(main).toMatch(/^import \{ execFileOff as execFile, spawnOff \} from '\.\/spawnOffThread'$/m)
+    expect(main).not.toMatch(/^import \{[^}]*execFile[^}]*\} from '(node:)?child_process'$/m)
+    expect(block("ipcMain.handle('app:inputLanguages',")).toMatch(/execFile\(\s*'powershell\.exe'/)
   })
 
   it("agents:probeModels' CLIs and Muse's server start from the worker thread", () => {

@@ -3,7 +3,10 @@
 // Recycle Bin). Everything stays inside the project folder it was asked for.
 import fs from 'fs'
 import { join, resolve, relative, isAbsolute, dirname, basename, sep } from 'path'
-import { execFile, spawn } from 'child_process'
+import { spawn } from 'child_process'
+// Programs are started from a worker thread (spawnOffThread.js): a start
+// blocks the thread that makes it, seconds on a busy PC.
+import { execFileOff as execFile } from './spawnOffThread'
 import { StringDecoder } from 'string_decoder'
 import { t } from './i18n'
 import { localGitArgs } from './gitSafety'

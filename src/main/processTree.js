@@ -9,7 +9,9 @@
 // So the whole tree is recorded before the stop (each process by PID and
 // creation time: a PID Windows reuses for another program is never taken for
 // the old one), and then each is checked until it is really gone.
-import { execFile, spawn } from 'child_process'
+// Programs are started from a worker thread (spawnOffThread.js): a start
+// blocks the thread that makes it, seconds on a busy PC.
+import { execFileOff as execFile, spawnOff as spawn } from './spawnOffThread'
 
 // -> [{ pid, ppid, created }] (created: creation time, a number comparable
 // between two listings; null when unknown), or null when it cannot list.

@@ -3,7 +3,7 @@ import { holdClaudeDefaultModel } from './claudeDefaultModel'
 import { join, isAbsolute, dirname, basename, resolve as resolvePath, sep } from 'path'
 import os from 'os'
 import fs from 'fs'
-import { spawn, execFile } from 'child_process'
+import { spawn } from 'child_process'
 import { readDefaultPolicy, relaxShell } from './psPolicy'
 import { loadTasks, loadBoard, saveTasks } from './taskBoardPersistence'
 import { createAutomations } from './automations'
@@ -160,7 +160,10 @@ import { createLeftoverStore } from './worktreeLeftover'
 import * as scm from './sourceControl'
 import { createLocalHistory } from './localHistory'
 import { runHeadless, cancelHeadless, resolveProgram } from './agentHeadless'
-import { execFileOff, spawnOff } from './spawnOffThread'
+// Every execFile of this file starts its program from a worker thread
+// (spawnOffThread.js): a start blocks the thread that makes it, seconds on a
+// busy PC.
+import { execFileOff as execFile, spawnOff } from './spawnOffThread'
 import { createCommitMessageGeneration } from './commitMessageGeneration'
 import { createModelLister } from './agentModelList'
 import { takeTeamAcks } from './teamAcks'
@@ -1828,9 +1831,9 @@ ipcMain.handle('app:inputLanguages', () => {
   return new Promise((resolve) => {
     const script =
       '[Console]::OutputEncoding = [Text.Encoding]::UTF8; $list = Get-WinUserLanguageList; ConvertTo-Json -Compress -InputObject @(foreach ($l in $list) { [pscustomobject]@{ tag = $l.LanguageTag; name = $l.LocalizedName; tip = @($l.InputMethodTips)[0] } })'
-    // Started from a worker thread: starting PowerShell here once held the
-    // main process for 2.8 s (spawnOffThread.js).
-    execFileOff(
+    // Started from a worker thread (execFile here is spawnOffThread.js's):
+    // starting PowerShell on the main thread once held it for 2.8 s.
+    execFile(
       'powershell.exe',
       ['-NoProfile', '-NonInteractive', '-Command', script],
       { windowsHide: true, timeout: 15000 },

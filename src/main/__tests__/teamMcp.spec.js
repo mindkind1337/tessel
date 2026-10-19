@@ -1085,7 +1085,7 @@ describe('the team tools say they are running', () => {
       const p = spawn(process.execPath, [SERVER], { env, stdio: ['pipe', 'pipe', 'pipe'] })
       const file = join(dir, '.tessel', 'agents', 'pane-7-alive1.json')
       for (let i = 0; i < 50 && !fs.existsSync(file); i++) await new Promise((r) => setTimeout(r, 100))
-      expect(toolsAlive({ dir, ids: ['pane-7-alive1', 'pane-8-other0'] }).alive).toEqual({
+      expect((await toolsAlive({ dir, ids: ['pane-7-alive1', 'pane-8-other0'] })).alive).toEqual({
         'pane-7-alive1': { at: expect.any(Number), version: expect.any(String) },
         'pane-8-other0': null
       })
@@ -1093,7 +1093,7 @@ describe('the team tools say they are running', () => {
       p.stdin.end() // the agent closed it
       await ended
       expect(fs.existsSync(file)).toBe(false)
-      expect(toolsAlive({ dir, ids: ['pane-7-alive1'] }).alive['pane-7-alive1']).toBe(null)
+      expect((await toolsAlive({ dir, ids: ['pane-7-alive1'] })).alive['pane-7-alive1']).toBe(null)
     } finally {
       fs.rmSync(dir, { recursive: true, force: true })
     }

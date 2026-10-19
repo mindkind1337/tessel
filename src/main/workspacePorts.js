@@ -14,7 +14,9 @@
 // the process cannot be identified (pid + creation time + name from that
 // listing), never stops one of Tessel's own processes, re-checks the process
 // and its port right before stopping it, and then stops that one pid only.
-import { execFile } from 'child_process'
+// Programs are started from a worker thread (spawnOffThread.js): a start
+// blocks the thread that makes it, seconds on a busy PC.
+import { execFileOff as execFile } from './spawnOffThread'
 import path from 'path'
 import os from 'os'
 import { t } from './i18n'

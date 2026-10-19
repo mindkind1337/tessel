@@ -303,20 +303,25 @@ export function writeRoster({ dir, teamId, members } = {}) {
 }
 
 // Which panes have their team tools running (the tools say so every 30 s,
-// see teamMcp/server.cjs): -> { ok, alive: { paneId: { at, version } | null } }
-export function toolsAlive({ dir, ids } = {}) {
+// see teamMcp/server.cjs): -> Promise of { ok, alive: { paneId: { at, version } | null } }
+// Read without blocking (only reads, nothing shared): one file per pane,
+// read synchronously they held the main process for 586 ms on a busy disk.
+export async function toolsAlive({ dir, ids } = {}) {
   if (typeof dir !== 'string' || !isAbsolute(dir) || !Array.isArray(ids)) return { ok: false, error: 'Invalid location.' }
-  const alive = {}
-  for (const id of ids.slice(0, 200)) {
-    if (typeof id !== 'string' || !ID_RE.test(id)) continue
-    let data = null
+  const wanted = ids.slice(0, 200).filter((id) => typeof id === 'string' && ID_RE.test(id))
+  const read = async (id) => {
     try {
-      data = JSON.parse(fs.readFileSync(join(resolve(dir), '.tessel', 'agents', `${id}.json`), 'utf8'))
+      return JSON.parse(await fs.promises.readFile(join(resolve(dir), '.tessel', 'agents', `${id}.json`), 'utf8'))
     } catch {
-      data = null
+      return null
     }
-    alive[id] = data && typeof data.at === 'number' && Date.now() - data.at < 90000 ? { at: data.at, version: data.version || null } : null
   }
+  const found = await Promise.all(wanted.map(read))
+  const alive = {}
+  wanted.forEach((id, i) => {
+    const data = found[i]
+    alive[id] = data && typeof data.at === 'number' && Date.now() - data.at < 90000 ? { at: data.at, version: data.version || null } : null
+  })
   return { ok: true, alive }
 }
 

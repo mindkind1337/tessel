@@ -4,7 +4,9 @@
 // Windows, RSS elsewhere), Tessel's own processes from app.getAppMetrics()
 // (main, renderers, other), and every terminal's whole process tree, each
 // process counted once.
-import { execFile } from 'child_process'
+// Programs are started from a worker thread (spawnOffThread.js): a start
+// blocks the thread that makes it, seconds on a busy PC.
+import { execFileOff as execFile } from './spawnOffThread'
 import { t } from './i18n'
 
 // -> [{ pid, ppid, memory (bytes), privateMemory (bytes|undefined), ticks (100 ns, Windows) | pcpu }]
