@@ -170,6 +170,46 @@ describe('activity:save', () => {
   })
 })
 
+describe('activity:load and activity:archive', () => {
+  const source = block('let activityArchiveStore = null', "\n  return activityArchive().append(Array.isArray(list) ? list.filter(isEvent) : [])\n})\n")
+
+  function harness({ live, archived }) {
+    const handlers = {}
+    const appended = []
+    vm.runInNewContext(source, {
+      ipcMain: { handle: (k, v) => (handlers[k] = v) },
+      app: { getPath: () => 'U' },
+      log: { warn: vi.fn() },
+      JSON,
+      Array,
+      activityFile: () => 'A.json',
+      createActivityArchive: () => ({ read: async () => archived, append: async (list) => (appended.push(list), { ok: true, count: list.length }) }),
+      isActivityText: (t) => t.startsWith('['),
+      isEvent: (e) => !!e && typeof e.t === 'number',
+      mergeSavedActivity: (a, b) => ({ events: [a, b] }),
+      fs: { promises: { readFile: async () => { if (live === null) throw Object.assign(new Error('gone'), { code: 'ENOENT' }); return live } } }
+    })
+    return { handlers, appended }
+  }
+
+  it('hands the window the live file and the archive, as text', async () => {
+    const h = harness({ live: '[{"t":2}]', archived: '{"t":1}\n' })
+    expect(await h.handlers['activity:load']({}, { text: true })).toEqual({ text: '[{"t":2}]', archive: '{"t":1}\n' })
+  })
+
+  it('no activity.json yet: only the archive; nothing at all: empty text', async () => {
+    expect(await harness({ live: null, archived: '' }).handlers['activity:load']({}, { text: true })).toEqual({ text: '', archive: '' })
+  })
+
+  it('appends the settled events the window sends, and refuses anything that is not a list', async () => {
+    const h = harness({ live: '[]', archived: '' })
+    expect(await h.handlers['activity:archive']({}, '[{"t":1},{"nope":2}]')).toEqual({ ok: true, count: 1 })
+    expect(h.appended).toEqual([[{ t: 1 }]])
+    expect(await h.handlers['activity:archive']({}, 'oops')).toEqual({ ok: false, error: 'not a list' })
+    expect(await h.handlers['activity:archive']({}, [1])).toEqual({ ok: false, error: 'not a list' })
+  })
+})
+
 describe('the handlers that started programs on the main thread', () => {
   it("index.js's execFile (app:inputLanguages' PowerShell...) is the worker thread's (spawnOffThread.js)", () => {
     expect(main).toMatch(/^import \{ execFileOff as execFile, spawnOff \} from '\.\/spawnOffThread'$/m)

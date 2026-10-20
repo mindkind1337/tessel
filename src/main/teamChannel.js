@@ -14,7 +14,14 @@ const MAX_FILE = 64 * 1024
 const MAX_TEXT = 6000
 const MAX_PER_SENDER = 20
 const MAX_DELIVERIES = 200
-const MAX_DELIVERED_HISTORY = 2000
+// Delivered messages kept in state.json (it is read, parsed and written whole
+// at every message). Past MAX + the slack, the oldest go to archive.jsonl, so
+// the trim happens once per slack messages, not at each one.
+const MAX_DELIVERED_HISTORY = 500
+const DELIVERED_TRIM_SLACK = 100
+// archive.jsonl is moved to archive.old.jsonl (the one before it is dropped)
+// past this size.
+const MAX_ARCHIVE_BYTES = 8 * 1024 * 1024
 const MAX_SEEN_FILES = 10000
 // A message nobody can receive any more (its recipient left the team, or the
 // team was ungrouped) is dropped after this long.
@@ -33,6 +40,47 @@ function validState(state) {
 // The channel's state, saved crash-safe with its previous copy (.bak): a
 // damaged state.json is restored from that copy (the damaged one kept aside)
 // instead of stopping the whole channel.
+// The parsed state.json of the last poll of each team, valid while the file
+// has the size and time it had (a save also forgets it): a poll that finds
+// nothing new answers from it without reading and parsing the file again.
+// Only polls use it, and they only read it; everything that changes the
+// state reads the file itself (a private copy) and saves it.
+const polled = new Map() // state.json path -> { size, mtimeMs, state }
+function readPolledState(root) {
+  const file = join(root, 'state.json')
+  let st
+  try {
+    st = fs.statSync(file)
+  } catch {
+    polled.delete(file)
+    return readState(root)
+  }
+  const hit = polled.get(file)
+  if (hit && hit.size === st.size && hit.mtimeMs === st.mtimeMs) return hit.state
+  const state = readState(root)
+  // The file can be restored from its copy by readState: its stamp is read after.
+  try {
+    const after = fs.statSync(file)
+    polled.set(file, { size: after.size, mtimeMs: after.mtimeMs, state })
+  } catch {
+    polled.delete(file)
+  }
+  return state
+}
+
+// Does any member's outbox hold a file to take in? (what ingest would do)
+function outboxHasFiles(root, state) {
+  for (const m of activeMembers(state)) {
+    try {
+      const names = fs.readdirSync(join(root, 'outbox', m.token))
+      if (names.some((n) => n.toLowerCase().endsWith('.json'))) return true
+    } catch {
+      /* no outbox yet */
+    }
+  }
+  return false
+}
+
 function readState(root) {
   const file = join(root, 'state.json')
   if (!fs.existsSync(file) && !fs.existsSync(`${file}.bak`)) return { version: 1, members: {}, messages: [], seen: {} }
@@ -42,15 +90,44 @@ function readState(root) {
   return res.data
 }
 
+// Delivered messages that leave state.json are kept, one JSON line each, in
+// <team>/archive.jsonl (append only), so the log of a long-lived team is not
+// lost: readTeamArchive reads it. Undelivered messages are never moved.
+function archiveMessages(root, messages) {
+  if (!messages.length) return
+  const file = join(root, 'archive.jsonl')
+  try {
+    if (fs.statSync(file).size > MAX_ARCHIVE_BYTES) fs.renameSync(file, join(root, 'archive.old.jsonl'))
+  } catch {
+    /* no archive yet */
+  }
+  // A leading newline: a line cut by a kill never joins the next one.
+  fs.appendFileSync(file, '\n' + messages.map((m) => JSON.stringify(m)).join('\n') + '\n', 'utf8')
+}
+
+// The state.json as an older version left it (up to 2000 delivered messages),
+// kept once before the first trim moves messages out of it.
+function keepBeforeArchive(root) {
+  const file = join(root, 'state.json')
+  const copy = `${file}.before-archive`
+  try {
+    if (!fs.existsSync(copy) && fs.existsSync(file)) fs.copyFileSync(file, copy)
+  } catch {
+    /* the .bak still holds the previous copy */
+  }
+}
+
 function saveState(root, state) {
   // Keep the log responsive after months of use without dropping anything
   // that has not reached its recipient yet.
   const deliveredCount = state.messages.reduce((n, m) => n + (m.status === 'delivered' ? 1 : 0), 0)
-  if (deliveredCount > MAX_DELIVERED_HISTORY) {
+  let archived = []
+  if (deliveredCount > MAX_DELIVERED_HISTORY + DELIVERED_TRIM_SLACK) {
     let drop = deliveredCount - MAX_DELIVERED_HISTORY
     state.messages = state.messages.filter((m) => {
       if (m.status === 'delivered' && drop > 0) {
         drop--
+        archived.push(m)
         return false
       }
       return true
@@ -67,7 +144,51 @@ function saveState(root, state) {
   for (const key of seenKeys.slice(0, Math.max(0, seenKeys.length - MAX_SEEN_FILES)))
     delete state.seen[key]
   fs.mkdirSync(root, { recursive: true })
-  writeJsonSafe(join(root, 'state.json'), state, validState)
+  const file = join(root, 'state.json')
+  polled.delete(file)
+  // The archive first: a kill between the two leaves a message in both
+  // (read once, see readTeamArchive), never in neither.
+  if (archived.length) {
+    keepBeforeArchive(root)
+    archiveMessages(root, archived)
+  }
+  writeJsonSafe(file, state, validState, { indent: 0 })
+}
+
+// Messages moved out of state.json, oldest first: the last `limit` (default
+// 500, at most 5000), those before the message `before` when given.
+export function readTeamArchive({ dir, teamId, limit = 500, before = null } = {}) {
+  try {
+    const root = location({ dir, teamId })
+    if (!root) return { ok: false, error: 'Invalid team channel location.' }
+    const out = []
+    const seen = new Set()
+    for (const name of ['archive.old.jsonl', 'archive.jsonl']) {
+      let text = ''
+      try {
+        text = fs.readFileSync(join(root, name), 'utf8')
+      } catch {
+        continue
+      }
+      for (const line of text.split('\n')) {
+        if (!line.trim()) continue
+        try {
+          const m = JSON.parse(line)
+          if (!m || typeof m.id !== 'string' || seen.has(m.id)) continue
+          seen.add(m.id)
+          out.push(readBack(m))
+        } catch {
+          /* a line cut by a kill */
+        }
+      }
+    }
+    const end = typeof before === 'string' ? out.findIndex((m) => m.id === before) : -1
+    const upTo = end >= 0 ? out.slice(0, end) : out
+    const n = Math.max(1, Math.min(5000, Number(limit) || 500))
+    return { ok: true, messages: upTo.slice(-n), total: out.length }
+  } catch (err) {
+    return { ok: false, error: err.message }
+  }
 }
 
 function activeMembers(state) {
@@ -304,8 +425,13 @@ export function pollTeamChannel({ dir, teamId, availableIds, senders, tesselVers
     const root = location({ dir, teamId })
     if (!root || !fs.existsSync(join(root, 'state.json')))
       return { ok: false, error: 'Team channel is not set up.' }
-    const state = readState(root)
-    ingest(root, state, { senders, tesselVersion })
+    // From the cached parse when nothing waits in an outbox (it is only read
+    // below); a file to take in changes the state: a private copy for that.
+    let state = readPolledState(root)
+    if (outboxHasFiles(root, state)) {
+      state = readState(root)
+      ingest(root, state, { senders, tesselVersion })
+    }
     const available = Array.isArray(availableIds) ? new Set(availableIds) : null
     const held = state.messages.filter((m) => isHeld(m) && state.members[m.toId]?.active)
     // Background inbox readers are not limited by the terminal delivery batch.

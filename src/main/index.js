@@ -8,7 +8,8 @@ import { readDefaultPolicy, relaxShell } from './psPolicy'
 import { loadTasks, loadBoard, saveTasks } from './taskBoardPersistence'
 import { createAutomations } from './automations'
 import { createRemotePromptWriter } from './automationRemotePrompt'
-import { trimEvents, isEvent, isActivityText } from '../shared/activity'
+import { trimEvents, isEvent, isActivityText, mergeSavedActivity } from '../shared/activity'
+import { createActivityArchive } from './activityArchive'
 import { agentModel, agentModelLive, watchModelFiles } from './agentModel'
 import { createRemoteModelReader, remoteAgentModel } from './remoteAgentModel'
 import { createRemoteChildren } from './remoteAgentChildren'
@@ -214,7 +215,8 @@ import {
   pollTeamChannel,
   ackTeamDelivery,
   holdTeamDelivery,
-  releaseTeamDelivery
+  releaseTeamDelivery,
+  readTeamArchive
 } from './teamChannel'
 
 // Many services each clean up on will-quit (more than Node's warning limit
@@ -1018,17 +1020,38 @@ ipcMain.handle('taskboard:save', (_evt, board) => {
 // copy of every object into the page); a string crosses at once, and the
 // window parses and checks it (parseActivityText). opts.text: that form.
 const activityFile = () => join(app.getPath('userData'), 'activity.json')
+// The settled events are in activity-archive/<day>.jsonl (activityArchive.js);
+// activity.json holds the recent ones. Both are handed over: { text: the
+// live file, archive: the archived lines }, merged by the window.
+let activityArchiveStore = null
+const activityArchive = () => (activityArchiveStore ||= createActivityArchive(app.getPath('userData'), log))
 ipcMain.handle('activity:load', async (_evt, opts) => {
   const asText = !!(opts && opts.text)
+  let text = ''
   try {
-    const text = await fs.promises.readFile(activityFile(), 'utf8')
-    if (asText) return { text }
-    const data = JSON.parse(text)
-    return Array.isArray(data) ? trimEvents(data.filter(isEvent)) : []
+    text = await fs.promises.readFile(activityFile(), 'utf8')
   } catch (err) {
     if (err.code !== 'ENOENT') log.warn('activity', `load failed: ${err.message}`)
-    return asText ? { text: '' } : []
   }
+  const archive = await activityArchive().read()
+  if (asText) return { text, archive }
+  try {
+    return mergeSavedActivity(text, archive).events
+  } catch {
+    return []
+  }
+})
+// Settled events (a JSON list as text) appended to the archive. The window
+// leaves them out of activity.json once this answered { ok: true }.
+ipcMain.handle('activity:archive', async (_evt, events) => {
+  if (typeof events !== 'string' || !isActivityText(events)) return { ok: false, error: 'not a list' } // i18n-ignore internal: the renderer's own data, never shown
+  let list
+  try {
+    list = JSON.parse(events)
+  } catch (err) {
+    return { ok: false, error: err.message }
+  }
+  return activityArchive().append(Array.isArray(list) ? list.filter(isEvent) : [])
 })
 // events: the list, or the window's JSON text of it (already checked and
 // trimmed there, see activityStore.js): written as is.
@@ -2683,6 +2706,8 @@ ipcMain.handle('channel:poll', safe((q) => pollTeamChannel({ ...(q && typeof q =
 ipcMain.handle('channel:ack', safe(ackTeamDelivery))
 ipcMain.handle('channel:hold', safe(holdTeamDelivery))
 ipcMain.handle('channel:release', safe(releaseTeamDelivery))
+// Delivered messages that left state.json (archive.jsonl): { dir, teamId, limit?, before? }.
+ipcMain.handle('channel:archive', safe(readTeamArchive))
 ipcMain.handle('channel:acks', safe(takeTeamAcks))
 ipcMain.handle('team:notice', safe(addNotices))
 // This window, among Tessel windows sharing a project's team folder: its

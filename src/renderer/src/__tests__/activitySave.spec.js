@@ -15,7 +15,7 @@ describe('saving the activity log', () => {
     await store.loadActivity()
     for (let i = 0; i < 50; i++) {
       store.recordActivity({ type: 'task', action: 'x' + i })
-      vi.advanceTimersByTime(1000)
+      await vi.advanceTimersByTimeAsync(1000)
     }
     // 50 s of steady events: 3 saves, not one per event.
     expect(save.mock.calls.length).toBeGreaterThanOrEqual(3)

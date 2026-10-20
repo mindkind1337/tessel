@@ -172,3 +172,19 @@ export function setTasks(nextTasks) {
   tasks.splice(0, tasks.length, ...nextTasks.filter((t) => !(t && deleted.has(t.id))))
   return tasks
 }
+
+// What App.vue watches to save the board. The whole board is not watched
+// deeply: that tracked about 60,000 values (1,400 cards, 1,700 history
+// records) and cost 80 ms at every card change. The cards in play are
+// returned as they are (watched deeply, a few hundred values), a finished
+// card (most of the board) by the fields that can still change after
+// Done. The history has its own counter (taskHistory.js historyVersion).
+export function boardWatchState(list = tasks) {
+  const active = []
+  const finished = []
+  for (const c of list) {
+    if (c.column === 'done') finished.push(c.id, c.title, c.doneAt, c.paneId, c.wsId, c.report)
+    else active.push(c)
+  }
+  return { active, finished }
+}

@@ -85,7 +85,8 @@ const api = {
   saveNotes: (opts) => ipcRenderer.invoke('notes:save', opts),
   activity: {
     load: (opts) => ipcRenderer.invoke('activity:load', opts),
-    save: (events) => ipcRenderer.invoke('activity:save', events)
+    save: (events) => ipcRenderer.invoke('activity:save', events),
+    archive: (text) => ipcRenderer.invoke('activity:archive', text)
   },
   homeDir: () => ipcRenderer.invoke('app:homeDir'),
   systemLocale: () => ipcRenderer.invoke('app:systemLocale'),
@@ -379,6 +380,7 @@ const api = {
     ack: (args) => ipcRenderer.invoke('channel:ack', args),
     hold: (args) => ipcRenderer.invoke('channel:hold', args),
     release: (args) => ipcRenderer.invoke('channel:release', args),
+    archive: (args) => ipcRenderer.invoke('channel:archive', args),
     acks: (args) => ipcRenderer.invoke('channel:acks', args)
   },
   // Set up the team tools (MCP server + Claude hooks) for agent CLIs.

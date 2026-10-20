@@ -7,7 +7,8 @@ import {
   pollTeamChannel,
   ackTeamDelivery,
   holdTeamDelivery,
-  releaseTeamDelivery
+  releaseTeamDelivery,
+  readTeamArchive
 } from '../teamChannel'
 
 describe('persistent team channel', () => {
@@ -343,7 +344,8 @@ describe('persistent team channel', () => {
     fs.writeFileSync(stateFile, JSON.stringify(state))
     expect(ackTeamDelivery({ dir, teamId, id: 'waiting', toId: 'pane-a' }).ok).toBe(true)
     const saved = JSON.parse(fs.readFileSync(stateFile, 'utf8'))
-    expect(saved.messages).toHaveLength(2002)
+    // 500 delivered (the waiting one among them) and the two not delivered.
+    expect(saved.messages).toHaveLength(502)
     expect(saved.messages.some((m) => m.id === 'waiting')).toBe(true)
     expect(saved.messages.find((m) => m.id === 'offline')?.status).toBe('pending')
     expect(pollTeamChannel({ dir, teamId }).held[0]).toMatchObject({
@@ -351,5 +353,12 @@ describe('persistent team channel', () => {
       heldAt: 123
     })
     expect(saved.messages.some((m) => m.id === 'old-0')).toBe(false)
+    // What left state.json is in the archive, none lost, none twice.
+    const archive = readTeamArchive({ dir, teamId, limit: 5000 })
+    expect(archive.ok).toBe(true)
+    expect(archive.messages.map((m) => m.id)).toEqual(Array.from({ length: 1502 }, (_, i) => `old-${i}`))
+    expect(archive.messages.every((m) => m.status === 'delivered')).toBe(true)
+    // The state as it was is kept once before the first trim.
+    expect(fs.existsSync(`${stateFile}.before-archive`)).toBe(true)
   })
 })

@@ -82,6 +82,74 @@ export function activityText(events, now = Date.now()) {
   return JSON.stringify(trimEvents(events.filter(isEvent), now))
 }
 
+// --- Stored in pieces ----------------------------------------------------------
+// The whole log (up to 8 MB) was written again every 15 s while agents worked.
+// Now only the recent events are in activity.json (the live file): an event
+// settles SETTLE_MS after it was recorded (the few that change afterwards do
+// so within minutes, see activityChanged), and the settled ones are appended
+// once, one line each, to activity-archive/<day>.jsonl (src/main/activityArchive.js).
+// The window still holds the whole log: it reads both at start.
+export const SETTLE_MS = 60 * 60 * 1000
+export const ARCHIVE_BATCH = 3000
+
+// The UTC day an event belongs to: "2026-10-19".
+export function archiveDay(t) {
+  return new Date(t).toISOString().slice(0, 10)
+}
+
+// The events to archive next: from index `from`, those recorded more than
+// SETTLE_MS ago, at most `max` (a batch never ends between two events with
+// the same time, so a later batch starts at a new time).
+export function settledBatch(events, from, now = Date.now(), max = ARCHIVE_BATCH) {
+  let end = from
+  while (end < events.length && now - events[end].t >= SETTLE_MS && end - from < max) end++
+  while (end > from && end < events.length && now - events[end].t >= SETTLE_MS && events[end].t === events[end - 1].t) end++
+  return events.slice(from, end)
+}
+
+// Events of a JSON-lines text (one event per line; a line cut by a kill or
+// not an event is skipped).
+export function parseActivityLines(text) {
+  const out = []
+  if (typeof text !== 'string') return out
+  for (const line of text.split('\n')) {
+    if (!line.trim()) continue
+    try {
+      const e = JSON.parse(line)
+      if (isEvent(e)) out.push(e)
+    } catch {
+      /* a line cut by a kill */
+    }
+  }
+  return out
+}
+
+// What was stored -> { events, archived }: the archive's events then the live
+// file's, checked, without copies and bounded like parseActivityText; archived
+// is how many of the first events came from the archive (they need no archiving).
+// text: the live file (a JSON list; the older single file is the same);
+// archive: the archive's lines.
+export function mergeSavedActivity(liveText, archiveText, now = Date.now()) {
+  const old = parseActivityLines(archiveText)
+  let live = []
+  if (typeof liveText === 'string' && liveText.trim()) {
+    try {
+      const data = JSON.parse(liveText)
+      if (Array.isArray(data)) live = data.filter(isEvent)
+    } catch {
+      /* unreadable: the archive alone */
+    }
+  }
+  const all = dedupeEvents([...old, ...live])
+  const keptOld = new Set(old)
+  let fromArchive = 0
+  while (fromArchive < all.length && keptOld.has(all[fromArchive])) fromArchive++
+  const fresh = all.filter((e) => e && Number.isFinite(e.t) && now - e.t <= MAX_AGE_MS)
+  const dropped = all.length - fresh.length
+  const cut = fresh.length > MAX_EVENTS ? fresh.length - MAX_EVENTS : 0
+  return { events: cut ? fresh.slice(cut) : fresh, archived: Math.max(0, fromArchive - dropped - cut) }
+}
+
 function median(list) {
   if (!list.length) return null
   const s = [...list].sort((a, b) => a - b)

@@ -95,24 +95,68 @@ export function writeFileAtomic(path, text) {
 }
 const writeAtomic = writeFileAtomic
 
-export function writeJsonSafe(file, data, valid = anyShape) {
+// What was last written to a file by this process (its text, size and
+// modification time): a save of the same text, with the file still as it was
+// left, writes nothing (opts.skipIfSame).
+const lastWritten = new Map()
+
+// Options for big files saved often (the task board, 3 MB):
+//   indent         spaces in the file (default 2; 0: compact, a third smaller)
+//   backupEveryMs  the .bak is replaced at most this often (default: at every
+//                  write); the check that the file is good (a read and a
+//                  parse of all of it) and the copy are then not paid by each
+//                  save
+//   skipIfSame     nothing is written when the text is the one this process
+//                  last wrote and the file has not changed since
+// -> { written: boolean }
+export function writeJsonSafe(file, data, valid = anyShape, opts = {}) {
   if (unloaded.has(resolve(file))) {
     // i18n-ignore shared with the team tools (inlined in their process, no i18n there)
     throw Object.assign(new Error('Saved data has not been loaded; reload it before saving.'), {
       code: 'EJSONUNREAD'
     })
   }
-  const text = JSON.stringify(data, null, 2)
+  const text = JSON.stringify(data, null, opts.indent === undefined ? 2 : opts.indent)
+  const key = resolve(file)
+  if (opts.skipIfSame) {
+    const last = lastWritten.get(key)
+    if (last && last.text === text) {
+      try {
+        const st = fs.statSync(file)
+        if (st.size === last.size && st.mtimeMs === last.mtimeMs) return { written: false }
+      } catch {
+        // gone or unreadable: written again
+      }
+    }
+  }
   // Only a good file becomes the backup (a damaged one would replace the
   // last good copy), and the backup itself is replaced atomically.
   try {
-    if (fs.existsSync(file) && readGood(file, valid) !== undefined) {
-      writeAtomic(`${file}.bak`, fs.readFileSync(file, 'utf8'))
+    const bak = `${file}.bak`
+    let fresh = false
+    if (opts.backupEveryMs > 0) {
+      try {
+        fresh = Date.now() - fs.statSync(bak).mtimeMs < opts.backupEveryMs
+      } catch {
+        fresh = false
+      }
+    }
+    if (!fresh && fs.existsSync(file) && readGood(file, valid) !== undefined) {
+      writeAtomic(bak, fs.readFileSync(file, 'utf8'))
     }
   } catch {
     // no new backup this time; the previous one is still intact
   }
   writeAtomic(file, text)
+  if (opts.skipIfSame) {
+    try {
+      const st = fs.statSync(file)
+      lastWritten.set(key, { text, size: st.size, mtimeMs: st.mtimeMs })
+    } catch {
+      lastWritten.delete(key)
+    }
+  }
+  return { written: true }
 }
 
 function readAvailable(file, valid) {

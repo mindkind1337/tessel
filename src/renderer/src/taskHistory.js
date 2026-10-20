@@ -12,7 +12,7 @@
 //   cacheReadTokens, cacheWriteTokens, usd, known, model, models: [...],
 //   subagents, partial, at } | null }
 // No IPC and no DOM here: App.vue loads and saves it with the board.
-import { reactive, toRaw } from 'vue'
+import { reactive, ref, toRaw } from 'vue'
 
 export const MAX_HISTORY = 2000
 const MAX_PERIODS = 50
@@ -24,6 +24,14 @@ const GIVE_UP_MS = 24 * 60 * 60 * 1000
 
 // Oldest done first (the order they were finished).
 export const taskHistory = reactive([])
+
+// Goes up at every change of the history (the list or a record in it): App.vue
+// saves the board on it. Watching the history deeply instead (about 1,700
+// records) cost tens of milliseconds at every card change.
+export const historyVersion = ref(0)
+const touched = () => {
+  historyVersion.value++
+}
 
 // App.vue: card -> { agentName, agentKind, project } (who did it, where).
 let describer = null
@@ -93,6 +101,7 @@ export function recordDone(card, now = Date.now()) {
   if (before) taskHistory.splice(taskHistory.indexOf(before), 1)
   taskHistory.push(rec)
   trim()
+  touched()
   return taskHistory[taskHistory.length - 1]
 }
 
@@ -101,13 +110,17 @@ export function forgetDone(id) {
   const i = taskHistory.findIndex((r) => r.id === id)
   if (i === -1) return false
   taskHistory.splice(i, 1)
+  touched()
   return true
 }
 
 // A card renamed while done: the history shows its new title.
 export function renameDone(id, title) {
   const r = find(id)
-  if (r && typeof title === 'string' && title) r.title = title
+  if (r && typeof title === 'string' && title) {
+    r.title = title
+    touched()
+  }
 }
 
 function trim() {
@@ -127,7 +140,10 @@ export function backfillHistory(cards, now = Date.now()) {
     known.add(c.id)
     added++
   }
-  if (added) taskHistory.sort((a, b) => (a.doneAt || 0) - (b.doneAt || 0))
+  if (added) {
+    taskHistory.sort((a, b) => (a.doneAt || 0) - (b.doneAt || 0))
+    touched()
+  }
   return added
 }
 
@@ -205,6 +221,7 @@ export function setTaskHistory(list) {
   }
   out.sort((a, b) => a.doneAt - b.doneAt)
   taskHistory.splice(0, taskHistory.length, ...out.slice(-MAX_HISTORY))
+  touched()
   return taskHistory
 }
 
@@ -218,12 +235,14 @@ export function noteCost(id, entry, now = Date.now()) {
   if (!r || !entry || typeof entry !== 'object') return false
   if (entry.status !== 'ok' && r.cost && r.cost.status === 'ok') {
     r.cost = { ...r.cost, at: now, final: r.cost.final || now - r.doneAt >= SETTLE_MS }
+    touched()
     return false
   }
   const c = cleanCost({ ...entry, at: now })
   // Not readable a day after it was done: it will not be any more.
   c.final = c.status === 'ok' ? !c.partial && now - r.doneAt >= SETTLE_MS : now - r.doneAt >= GIVE_UP_MS
   r.cost = c
+  touched()
   return true
 }
 

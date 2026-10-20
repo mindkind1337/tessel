@@ -14,6 +14,7 @@ import fs from 'fs'
 // so it does not couple to the task model's exact field set.
 
 export const TASK_BOARD_FILENAME = 'task-board.json'
+const BACKUP_EVERY_MS = 60 * 1000
 
 /** Absolute path to the task-board file inside the given userData directory. */
 export function taskBoardFilePath(userDataDir) {
@@ -84,11 +85,40 @@ function historyOf(data) {
     : []
 }
 function savedHistory(file) {
+  return savedParts(file).history
+}
+
+// The deletions and the history of the board file as it is now. Each save
+// needs them (a window may not send the history, deletions add up), and
+// parsing the whole 3 MB file for them at each save was most of the save's
+// cost: they are kept from the last load or save and used while the file is
+// as it was left (same size and time); any other change reads the file again.
+const parts = new Map() // file -> { size, mtimeMs, deleted, history }
+function fileStamp(file) {
   try {
-    return historyOf(JSON.parse(fs.readFileSync(file, 'utf8')))
+    const st = fs.statSync(file)
+    return { size: st.size, mtimeMs: st.mtimeMs }
   } catch {
-    return []
+    return null
   }
+}
+function savedParts(file) {
+  const stamp = fileStamp(file)
+  const known = parts.get(file)
+  if (stamp && known && known.size === stamp.size && known.mtimeMs === stamp.mtimeMs) return known
+  let out = { deleted: [], history: [] }
+  try {
+    const data = JSON.parse(fs.readFileSync(file, 'utf8'))
+    out = { deleted: deletedOf(data), history: historyOf(data) }
+  } catch {
+    /* nothing readable: none */
+  }
+  if (stamp) parts.set(file, { ...stamp, ...out })
+  return out
+}
+function rememberParts(file, deleted, history) {
+  const stamp = fileStamp(file)
+  if (stamp) parts.set(file, { ...stamp, deleted, history })
 }
 
 // The ids of the cards deleted from the board (the version 2 envelope's
@@ -107,11 +137,7 @@ function withoutDeleted(tasks, deleted) {
 // The deletions already saved (best effort: a file that cannot be read now
 // adds none; the window's own list still goes in).
 function savedDeleted(file) {
-  try {
-    return deletedOf(JSON.parse(fs.readFileSync(file, 'utf8')))
-  } catch {
-    return []
-  }
+  return savedParts(file).deleted
 }
 
 // A task array, or the forward-compatible { version, tasks: [...] } envelope.
@@ -154,6 +180,18 @@ export function saveTasks(userDataDir, tasks, appliedRequests = null, deleted = 
       ...(hist.length ? { history: hist } : {})
     }
   }
-  writeJsonSafe(file, data, isTaskList)
+  // The board as an older version left it (indented, rewritten at every
+  // save), kept once as it was before this one first changes it.
+  const oldCopy = `${file}.before-compact`
+  try {
+    if (!fs.existsSync(oldCopy) && fs.existsSync(file)) fs.copyFileSync(file, oldCopy)
+  } catch {
+    /* the .bak below still holds the previous copy */
+  }
+  // Compact (a third smaller than indented), the .bak renewed at most once a
+  // minute (it was a read, a parse and a write of the whole board at each
+  // save), and nothing written when nothing changed.
+  writeJsonSafe(file, data, isTaskList, { indent: 0, backupEveryMs: BACKUP_EVERY_MS, skipIfSame: true })
+  if (!Array.isArray(data)) rememberParts(file, data.deleted || [], data.history || [])
   return file
 }

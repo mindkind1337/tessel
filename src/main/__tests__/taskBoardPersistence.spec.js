@@ -94,9 +94,9 @@ describe('taskBoardPersistence', () => {
       expect(fs.existsSync(taskBoardFilePath(dir))).toBe(true)
     })
 
-    it('writes pretty-printed JSON for human-readable diffs', () => {
+    it('writes compact JSON (the board is several MB and saved often)', () => {
       saveTasks(dir, sampleTasks())
-      expect(fs.readFileSync(taskBoardFilePath(dir), 'utf8')).toContain('\n  ')
+      expect(fs.readFileSync(taskBoardFilePath(dir), 'utf8')).not.toContain('\n  ')
     })
 
     it('overwrites prior contents', () => {

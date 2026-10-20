@@ -131,9 +131,10 @@ import { createTeamDelivery } from './teamDelivery'
 import { dropBuffer, exitOf, seedBuffer } from './ptyStore'
 import { prefetchAttaches, terminalLeafIds } from './restoreAttach'
 import { afterStartup, startupBegins, startupFinished } from './startupIdle'
-import { tasks as boardTasks, setTasks, updateTask, removeTask, addTask, deletedTaskIds, addDeletedTasks, takeDeletedToPurge, cardOnBoard, beginBoardLoad, endBoardLoad } from './taskBoardStore'
+import { tasks as boardTasks, setTasks, updateTask, removeTask, addTask, deletedTaskIds, addDeletedTasks, takeDeletedToPurge, cardOnBoard, beginBoardLoad, endBoardLoad, boardWatchState } from './taskBoardStore'
 import { usageScopeEntries, usageScopeRoots, rememberUsageCopies, loadUsageCopies, saveUsageCopies } from './usageStats'
-import { taskHistory, setTaskHistory, backfillHistory, setHistoryDescriber } from './taskHistory'
+import { createSaveScheduler } from './saveScheduler'
+import { taskHistory, historyVersion, setTaskHistory, backfillHistory, setHistoryDescriber } from './taskHistory'
 import { restoredSideTab } from './sideTabs'
 import { runSettingsTool } from './settingsTools'
 import { paneModels, paneModelIds } from './paneModels'
@@ -3368,21 +3369,38 @@ function reconcileTaskPanes() {
 // Debounced task persistence — mirrors scheduleSave() for the workspace layout,
 // but targets B2's separate taskboard store. Snapshot to plain objects so the
 // Vue reactive proxy is stripped before the IPC structured clone.
-let taskSaveTimer = null
 // Board requests from agents already applied ("<team>/<file>"), saved in the
 // board's file with the cards (see syncTeamBoard).
 const appliedRequests = new Set()
 // With the ids of the cards deleted (taskBoardStore.js): a deleted card is
 // never written back, even by a copy of the board from before its deletion.
+// Copied from the plain objects under Vue's proxies (copying through the
+// proxies was four times slower), and the history (1.3 MB, changed only when
+// a card is finished or its figures are read) only when it changed since the
+// last save: otherwise the main process keeps the one it has.
+let historySent = -1
 function boardToSave() {
-  return { tasks: JSON.parse(JSON.stringify(boardTasks)), appliedRequests: [...appliedRequests], deleted: deletedTaskIds(), history: JSON.parse(JSON.stringify(taskHistory)) }
+  const out = { tasks: JSON.parse(JSON.stringify(toRaw(boardTasks))), appliedRequests: [...appliedRequests], deleted: deletedTaskIds() }
+  if (historySent !== historyVersion.value) {
+    out.history = JSON.parse(JSON.stringify(toRaw(taskHistory)))
+    out.historyVersion = historyVersion.value
+  }
+  return out
 }
 
 // Every board save goes here: none while the saved board could not be read
 // (locked at start), so it is never overwritten.
 function saveBoard() {
   if (boardLocked) return Promise.resolve({ ok: false, error: t('app.board.lockedAtStart', 'The saved board could not be read at start.') })
-  const saving = window.shellApi.taskBoard.save(boardToSave())
+  const board = boardToSave()
+  const saving = window.shellApi.taskBoard.save(board)
+  if (board.history) {
+    const sent = board.historyVersion
+    // Marked as saved only once the main process says so: a failed save sends it again.
+    Promise.resolve(saving).then((res) => {
+      if (res && res.ok) historySent = sent
+    }, () => {})
+  }
   purgePublishedCards()
   return saving
 }
@@ -3406,13 +3424,10 @@ function purgePublishedCards() {
   for (const k of Object.keys(boardSigs)) delete boardSigs[k]
   for (const dir of dirs) api.forgetTasks({ dir, ids }).catch(() => {})
 }
-function scheduleTaskSave() {
-  if (taskSaveTimer) clearTimeout(taskSaveTimer)
-  taskSaveTimer = setTimeout(() => {
-    taskSaveTimer = null
-    saveBoard()
-  }, 500)
-}
+// Saved 500 ms after the last change, at the latest 5 s after the first one
+// waiting (saveScheduler.js).
+const taskSave = createSaveScheduler(() => saveBoard(), { quietMs: 500, maxWaitMs: 5000 })
+const scheduleTaskSave = taskSave.schedule
 
 // --- Updates ------------------------------------------------------------------
 // The main process downloads new versions in the background (updater.js); the
@@ -3452,9 +3467,7 @@ async function installUpdate() {
   // Write everything now instead of waiting for the debounced saves.
   saveLayoutNow()
   await saveActivityNow()
-  if (taskSaveTimer) {
-    clearTimeout(taskSaveTimer)
-    taskSaveTimer = null
+  if (taskSave.cancel()) {
     try {
       await saveBoard()
     } catch {
@@ -13404,9 +13417,25 @@ onMounted(async () => {
     // next real change).
     // Done cards from before the history was kept get their record (saved
     // with the next change).
+    // The history as loaded is the main process's already; what backfill adds is not.
+    historySent = historyVersion.value
     if (!boardLocked) backfillHistory(boardTasks)
     reconcileTaskPanes()
-    if (!boardLocked) watch([boardTasks, taskHistory], scheduleTaskSave, { deep: true })
+    // The board is not watched deeply as a whole: that tracked about 60,000
+    // values (1,400 cards, 1,700 history records) and cost 80 ms at each card
+    // change. The cards in play are watched deeply (a few hundred values);
+    // a finished card (most of the board) by the few fields that can still
+    // change; the history by its version counter (taskHistory.js).
+    if (!boardLocked) {
+      watch(
+        [
+          () => boardWatchState(boardTasks),
+          historyVersion
+        ],
+        scheduleTaskSave,
+        { deep: true }
+      )
+    }
     teamsReady = true
     // Scheduled automations start only now: panes, agents and the board are
     // there to run them (and to follow the runs still going).
@@ -13481,11 +13510,7 @@ async function loadUnlocked(load, tries = 10) {
 // last change before closing is not lost.
 function flushSaves() {
   saveLayoutNow()
-  if (taskSaveTimer) {
-    clearTimeout(taskSaveTimer)
-    taskSaveTimer = null
-    saveBoard()
-  }
+  taskSave.flush()
   saveActivityNow()
 }
 window.addEventListener('beforeunload', flushSaves)
