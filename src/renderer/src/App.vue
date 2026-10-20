@@ -65,6 +65,7 @@ import {
 } from './agentStatus'
 import { detectApproval } from './agentLimit'
 import { agentRulesReason, applyAgentStateRules } from './agentStateRules'
+import { stableComputed } from './stableComputed'
 import { activity, recordActivity, loadActivity, saveActivityNow, activityChanged, trimCount as activityTrimCount } from './activityStore'
 import ActivityPanel from './components/ActivityPanel.vue'
 import ConfirmDialog from './components/ConfirmDialog.vue'
@@ -2980,11 +2981,20 @@ function startTaskResize(e) {
   trackPointerDrag(e, { onMove: move, onEnd: up })
 }
 
+// Looked up through an index: the sidebar asks it for every pane each time an
+// agent's state moves, and the board holds well over a thousand cards (a find
+// through all of them for each pane cost a tenth of the window's time).
+const activeTaskByPane = computed(() => {
+  const byPane = new Map()
+  for (const t of boardTasks) if (t.paneId && (t.column === 'doing' || t.column === 'review') && !byPane.has(t.paneId)) byPane.set(t.paneId, t)
+  return byPane
+})
+
 // Live list of agent panes, handed to the board so a task can be assigned to
 // one. Walks the same tree the terminals render from, so it recomputes only when
 // the tree structure or a pane title/accent changes.
 // Agent panes a task on the current workspace's board can be assigned to.
-const agentPanes = computed(() => {
+const agentPanes = stableComputed(() => {
   const out = []
   forEachLeaf(tree.value, (leaf) => {
     if (isAgentLeaf(leaf)) {
@@ -6555,7 +6565,7 @@ function liveSharePaneRows(wsId) {
       }
     })
 }
-const sidebarProjects = computed(() =>
+const sidebarProjects = stableComputed(() =>
   workspaces.value.map((w) => {
     const panes = []
     forEachLeaf(w.tree, (leaf) => {
@@ -7682,7 +7692,7 @@ function busyReasonText(leaf) {
 // The task a pane is working on or waiting to have reviewed.
 function taskOfPane(paneId) {
   if (!paneId) return null
-  return boardTasks.find((t) => t.paneId === paneId && (t.column === 'doing' || t.column === 'review')) || null
+  return activeTaskByPane.value.get(paneId) || null
 }
 
 function taskPrompt(task, ws) {
@@ -8782,6 +8792,8 @@ async function pollTeams() {
 // tools trust only this). A project whose teams are all gone gets an empty
 // map, and its old channels are retired.
 const teamDirsSeen = new Set()
+const publishedTeams = new Map() // dir -> { sig, at } of the last publish
+const PUBLISH_AGAIN_MS = 20 * 1000
 async function publishCurrentTeams({ strict = false } = {}) {
   if (!window.shellApi.team) return
   const byDir = {}
@@ -8799,6 +8811,16 @@ async function publishCurrentTeams({ strict = false } = {}) {
     for (const l of teamMembers(team.id)) if (isAgentLeaf(l) && l.num) panes[l.id] = { team: team.id, num: l.num, paneName: l.paneName }
   }
   for (const dir of teamDirsSeen) {
+    // The same map and teams as the last round, seen a moment ago: nothing to
+    // write. Each round (every 2.5 s) otherwise made the main process read
+    // the team files of every project, whose state files are large. Still
+    // repeated every PUBLISH_AGAIN_MS: it keeps this window's file fresh and
+    // finds a team another window retired.
+    const liveTeamIds = teams.value.filter((t) => channelDir(t) === dir).map((t) => t.id)
+    const sig = JSON.stringify([byDir[dir] || {}, liveTeamIds])
+    const seen = publishedTeams.get(dir)
+    if (!strict && seen && seen.sig === sig && Date.now() - seen.at < PUBLISH_AGAIN_MS) continue
+    publishedTeams.set(dir, { sig, at: Date.now() })
     const cur = await window.shellApi.team.current({ dir, panes: byDir[dir] || {} })
     if (strict && !cur?.ok) throw new CliRequestError('failed', cur?.error || t('app.cli.teamMapFailed', 'The team map could not be saved.'))
     // Retired by another Tessel window that did not know about it yet: set
@@ -8809,6 +8831,8 @@ async function publishCurrentTeams({ strict = false } = {}) {
     }
     const res = await window.shellApi.team.retire({ dir, liveTeamIds: teams.value.filter((t) => channelDir(t) === dir).map((t) => t.id) })
     if (strict && !res?.ok) throw new CliRequestError('failed', res?.error || t('app.cli.teamMapFailed', 'The team map could not be saved.'))
+    // Anything lost, retired or failed: the next round writes again.
+    if (!cur?.ok || !res?.ok || (cur.lost || []).length || (res.retired || []).length) publishedTeams.delete(dir)
     // A retired channel is set up again from scratch if its team comes back
     // (Undo after Ungroup): forget what this session knew about it.
     for (const id of (res && res.retired) || []) {

@@ -64,6 +64,15 @@ function displayStatus(state) {
   return 'unknown'
 }
 
+function sameState(current, next) {
+  if (!current) return false
+  try {
+    return JSON.stringify(current) === JSON.stringify(next)
+  } catch {
+    return false
+  }
+}
+
 export function applyAgentStates(snapshot) {
   if (!snapshot || typeof snapshot !== 'object') return
   const entries = snapshot.paneId ? { [snapshot.paneId]: snapshot } : snapshot
@@ -79,7 +88,11 @@ export function applyAgentStates(snapshot) {
   for (const [id, state] of Object.entries(entries)) {
     if (!state || state.paneId !== id || !state.launchToken) continue
     const wasLimited = agentStates[id]?.state === 'limited' && agentStates[id].launchToken === state.launchToken
-    agentStates[id] = { ...state }
+    // The main process sends every pane's state each time one changes: a
+    // pane whose state is the same keeps its object, so what reads only
+    // that pane (and the sidebar, board and conversations built from all of
+    // them) is not run again for it.
+    if (!sameState(agentStates[id], state)) agentStates[id] = { ...state }
     // Not yet heard from its hooks: the screen keeps the status for now.
     if (!drives(state)) continue
     agentStatus[id] = displayStatus(state)
