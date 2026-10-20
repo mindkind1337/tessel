@@ -183,7 +183,7 @@ export function boardWatchState(list = tasks) {
   const active = []
   const finished = []
   for (const c of list) {
-    if (c.column === 'done') finished.push(c.id, c.title, c.doneAt, c.paneId, c.wsId, c.report)
+    if (c.column === 'done') finished.push(c.id, c.title, c.doneAt, c.paneId, c.wsId, c.report, c.worktree, c.mergedAt, c.mergeSha, c.brief, c.leadReview, c.leadNote, c.gate, c.guestBy, Object.keys(c).length)
     else active.push(c)
   }
   return { active, finished }

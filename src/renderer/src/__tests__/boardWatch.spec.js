@@ -74,6 +74,6 @@ describe('saving the task board', () => {
     setTasks(Array.from({ length: 50 }, (_, i) => ({ id: `d${i}`, title: 't', column: 'done', doneAt: i, workPeriods: [{ start: 1 }] })))
     const state = boardWatchState(tasks)
     expect(state.active).toEqual([])
-    expect(state.finished).toHaveLength(50 * 6)
+    expect(state.finished).toHaveLength(50 * 15)
   })
 })

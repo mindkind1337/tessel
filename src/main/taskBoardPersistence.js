@@ -84,10 +84,6 @@ function historyOf(data) {
     ? data.history.filter((r) => r && typeof r === 'object' && typeof r.id === 'string' && r.id).slice(-MAX_HISTORY)
     : []
 }
-function savedHistory(file) {
-  return savedParts(file).history
-}
-
 // The deletions and the history of the board file as it is now. Each save
 // needs them (a window may not send the history, deletions add up), and
 // parsing the whole 3 MB file for them at each save was most of the save's
@@ -97,28 +93,49 @@ const parts = new Map() // file -> { size, mtimeMs, deleted, history }
 function fileStamp(file) {
   try {
     const st = fs.statSync(file)
-    return { size: st.size, mtimeMs: st.mtimeMs }
+    return { size: st.size, mtimeMs: st.mtimeMs, ino: st.ino }
   } catch {
     return null
   }
 }
+// The last parts read or written for a file, whatever the file's size and
+// time: used when a read fails (never cached under the file's stamp).
+const lastKnown = new Map()
+function partsOf(data) {
+  return { deleted: deletedOf(data), history: historyOf(data) }
+}
+// -> { deleted, history, ok }. ok: false when the file exists but neither it,
+// its .bak nor an earlier read gave them (a file another program holds, a
+// damaged one): the caller must not take "none" for the answer, and nothing
+// failed is cached.
 function savedParts(file) {
   const stamp = fileStamp(file)
   const known = parts.get(file)
-  if (stamp && known && known.size === stamp.size && known.mtimeMs === stamp.mtimeMs) return known
-  let out = { deleted: [], history: [] }
+  if (stamp && known && known.size === stamp.size && known.mtimeMs === stamp.mtimeMs && known.ino === stamp.ino) return { ...known, ok: true }
+  if (!stamp) return { deleted: [], history: [], ok: true } // no file yet
+  let out = null
   try {
-    const data = JSON.parse(fs.readFileSync(file, 'utf8'))
-    out = { deleted: deletedOf(data), history: historyOf(data) }
-  } catch {
-    /* nothing readable: none */
+    out = partsOf(JSON.parse(fs.readFileSync(file, 'utf8')))
+    parts.set(file, { ...stamp, ...out })
+    lastKnown.set(file, out)
+    return { ...out, ok: true }
+  } catch (err) {
+    if (err.code === 'ENOENT') return { deleted: [], history: [], ok: true }
   }
-  if (stamp) parts.set(file, { ...stamp, ...out })
-  return out
+  for (const source of [() => partsOf(JSON.parse(fs.readFileSync(`${file}.bak`, 'utf8'))), () => lastKnown.get(file)]) {
+    try {
+      const data = source()
+      if (data) return { ...data, ok: true }
+    } catch {
+      /* next source */
+    }
+  }
+  return { deleted: [], history: [], ok: false }
 }
 function rememberParts(file, deleted, history) {
   const stamp = fileStamp(file)
   if (stamp) parts.set(file, { ...stamp, deleted, history })
+  lastKnown.set(file, { deleted, history })
 }
 
 // The ids of the cards deleted from the board (the version 2 envelope's
@@ -132,12 +149,6 @@ function withoutDeleted(tasks, deleted) {
   if (!deleted.length) return tasks
   const gone = new Set(deleted)
   return tasks.filter((t) => !(t && gone.has(t.id)))
-}
-
-// The deletions already saved (best effort: a file that cannot be read now
-// adds none; the window's own list still goes in).
-function savedDeleted(file) {
-  return savedParts(file).deleted
 }
 
 // A task array, or the forward-compatible { version, tasks: [...] } envelope.
@@ -163,7 +174,16 @@ export function saveTasks(userDataDir, tasks, appliedRequests = null, deleted = 
     // Deletions add up: those already saved (by this window or another one)
     // and this save's. A card in that list is left out, so a copy of the
     // board from before its deletion cannot write it back.
-    const all = new Set(savedDeleted(file))
+    const saved = savedParts(file)
+    // The saved history is needed (the window did not send it) and could not
+    // be read: nothing is written, so it is not replaced by none. The window
+    // sends it with its next save.
+    if (!Array.isArray(history) && !saved.ok) {
+      const err = new Error('The saved task history could not be read.') // i18n-ignore internal: the window sends it again
+      err.code = 'EHISTORYUNREAD'
+      throw err
+    }
+    const all = new Set(saved.deleted)
     for (const id of Array.isArray(deleted) ? deleted : []) {
       if (typeof id !== 'string' || !id) continue
       all.delete(id)
@@ -171,7 +191,7 @@ export function saveTasks(userDataDir, tasks, appliedRequests = null, deleted = 
     }
     const kept = [...all].slice(-MAX_DELETED)
     // A window that does not send the history (an older one) keeps it.
-    const hist = Array.isArray(history) ? historyOf({ history }) : savedHistory(file)
+    const hist = Array.isArray(history) ? historyOf({ history }) : saved.history
     data = {
       version: 2,
       tasks: withoutDeleted(tasks, kept),

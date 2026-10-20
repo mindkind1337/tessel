@@ -123,7 +123,7 @@ export function writeJsonSafe(file, data, valid = anyShape, opts = {}) {
     if (last && last.text === text) {
       try {
         const st = fs.statSync(file)
-        if (st.size === last.size && st.mtimeMs === last.mtimeMs) return { written: false }
+        if (st.size === last.size && st.mtimeMs === last.mtimeMs && st.ino === last.ino) return { written: false }
       } catch {
         // gone or unreadable: written again
       }
@@ -151,7 +151,7 @@ export function writeJsonSafe(file, data, valid = anyShape, opts = {}) {
   if (opts.skipIfSame) {
     try {
       const st = fs.statSync(file)
-      lastWritten.set(key, { text, size: st.size, mtimeMs: st.mtimeMs })
+      lastWritten.set(key, { text, size: st.size, mtimeMs: st.mtimeMs, ino: st.ino })
     } catch {
       lastWritten.delete(key)
     }

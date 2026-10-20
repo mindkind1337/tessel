@@ -93,49 +93,49 @@ describe('delivered messages past the limit go to archive.jsonl', () => {
   const pendingMessage = { id: 'wait', fromId: 'pane-a', toId: 'pane-b', text: 'not yet', status: 'pending', createdAt: 5 }
   const held = { id: 'held', fromId: 'pane-a', toId: 'pane-b', text: 'draft', status: 'uncertain', heldAt: 9, createdAt: 6 }
 
-  it('up to 600 delivered messages nothing moves; one more and the oldest go down to 500, in the archive in order', () => {
+  it('up to 600 delivered messages nothing moves; one more and the oldest go down to 500, in the archive in order', async () => {
     writeState((s) => (s.messages = [pendingMessage, ...Array.from({ length: 600 }, (_, i) => delivered(i))]))
     // A save that adds nothing to trim.
     expect(ackTeamDelivery({ dir, teamId, id: 'wait', toId: 'pane-b' }).ok).toBe(true) // now 601 delivered
     const saved = JSON.parse(fs.readFileSync(stateFile, 'utf8'))
     expect(saved.messages.filter((m) => m.status === 'delivered')).toHaveLength(500)
-    const archive = readTeamArchive({ dir, teamId, limit: 5000 })
+    const archive = await readTeamArchive({ dir, teamId, limit: 5000 })
     // 'wait' (acknowledged by this save, first in the file) and the 100 oldest after it.
     expect(archive.messages.map((m) => m.id)).toEqual(['wait', ...Array.from({ length: 100 }, (_, i) => `m-${i}`)])
     expect(fs.existsSync(join(root, 'archive.jsonl'))).toBe(true)
   })
 
-  it('never moves an undelivered message, whatever its age', () => {
+  it('never moves an undelivered message, whatever its age', async () => {
     writeState((s) => (s.messages = [pendingMessage, held, ...Array.from({ length: 900 }, (_, i) => delivered(i))]))
     expect(ackTeamDelivery({ dir, teamId, id: 'wait', toId: 'pane-b' }).ok).toBe(true)
     const saved = JSON.parse(fs.readFileSync(stateFile, 'utf8'))
     expect(saved.messages.find((m) => m.id === 'held').status).toBe('uncertain')
-    const archive = readTeamArchive({ dir, teamId, limit: 5000 })
+    const archive = await readTeamArchive({ dir, teamId, limit: 5000 })
     expect(archive.messages.every((m) => m.status === 'delivered')).toBe(true)
     expect(archive.messages.some((m) => m.id === 'held')).toBe(false)
     expect(pollTeamChannel({ dir, teamId }).held.map((m) => m.id)).toEqual(['held'])
   })
 
-  it('the archive can be read page by page, newest page first, without copies', () => {
+  it('the archive can be read page by page, newest page first, without copies', async () => {
     writeState((s) => (s.messages = [pendingMessage, ...Array.from({ length: 1300 }, (_, i) => delivered(i))]))
     ackTeamDelivery({ dir, teamId, id: 'wait', toId: 'pane-b' })
-    const all = readTeamArchive({ dir, teamId, limit: 5000 })
+    const all = await readTeamArchive({ dir, teamId, limit: 5000 })
     expect(all.total).toBe(801)
-    const page = readTeamArchive({ dir, teamId, limit: 100 })
+    const page = await readTeamArchive({ dir, teamId, limit: 100 })
     expect(page.messages.map((m) => m.id)).toEqual(all.messages.slice(-100).map((m) => m.id))
-    const older = readTeamArchive({ dir, teamId, limit: 100, before: page.messages[0].id })
+    const older = await readTeamArchive({ dir, teamId, limit: 100, before: page.messages[0].id })
     expect(older.messages.at(-1).id).toBe(all.messages.at(-101).id)
     // The same messages in the archive twice (a kill between the archive and the state): read once.
     fs.appendFileSync(join(root, 'archive.jsonl'), JSON.stringify(delivered(0)) + '\n')
-    expect(readTeamArchive({ dir, teamId, limit: 5000 }).total).toBe(801)
+    expect((await readTeamArchive({ dir, teamId, limit: 5000 })).total).toBe(801)
   })
 
-  it('migration: a state.json with 2000 delivered messages keeps them all between state.json and archive.jsonl, and the old file once', () => {
+  it('migration: a state.json with 2000 delivered messages keeps them all between state.json and archive.jsonl, and the old file once', async () => {
     writeState((s) => (s.messages = [...Array.from({ length: 2000 }, (_, i) => delivered(i)), pendingMessage]))
     const original = fs.readFileSync(stateFile, 'utf8')
     expect(ackTeamDelivery({ dir, teamId, id: 'wait', toId: 'pane-b' }).ok).toBe(true)
     const saved = JSON.parse(fs.readFileSync(stateFile, 'utf8'))
-    const archive = readTeamArchive({ dir, teamId, limit: 5000 })
+    const archive = await readTeamArchive({ dir, teamId, limit: 5000 })
     const ids = [...archive.messages.map((m) => m.id), ...saved.messages.map((m) => m.id)]
     // 2000 + 'wait' + the delivery receipt the ack made for its sender.
     expect(new Set(ids).size).toBe(2002)
@@ -148,12 +148,12 @@ describe('delivered messages past the limit go to archive.jsonl', () => {
     expect(fs.readFileSync(stateFile, 'utf8')).not.toContain('\n')
   })
 
-  it('the archive past 8 MB is moved to archive.old.jsonl and still read', () => {
+  it('the archive past 8 MB is moved to archive.old.jsonl and still read', async () => {
     fs.writeFileSync(join(root, 'archive.jsonl'), `\n${JSON.stringify(delivered(-1))}\n` + ' '.repeat(8 * 1024 * 1024 + 1))
     writeState((s) => (s.messages = [pendingMessage, ...Array.from({ length: 700 }, (_, i) => delivered(i))]))
     ackTeamDelivery({ dir, teamId, id: 'wait', toId: 'pane-b' })
     expect(fs.existsSync(join(root, 'archive.old.jsonl'))).toBe(true)
-    const archive = readTeamArchive({ dir, teamId, limit: 5000 })
+    const archive = await readTeamArchive({ dir, teamId, limit: 5000 })
     expect(archive.messages[0].id).toBe('m--1')
     expect(archive.messages.length).toBeGreaterThan(100)
   })

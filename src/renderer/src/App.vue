@@ -134,7 +134,7 @@ import { afterStartup, startupBegins, startupFinished } from './startupIdle'
 import { tasks as boardTasks, setTasks, updateTask, removeTask, addTask, deletedTaskIds, addDeletedTasks, takeDeletedToPurge, cardOnBoard, beginBoardLoad, endBoardLoad, boardWatchState } from './taskBoardStore'
 import { usageScopeEntries, usageScopeRoots, rememberUsageCopies, loadUsageCopies, saveUsageCopies } from './usageStats'
 import { createSaveScheduler } from './saveScheduler'
-import { taskHistory, historyVersion, setTaskHistory, backfillHistory, setHistoryDescriber } from './taskHistory'
+import { taskHistory, historyVersion, createHistorySync, setTaskHistory, backfillHistory, setHistoryDescriber } from './taskHistory'
 import { restoredSideTab } from './sideTabs'
 import { runSettingsTool } from './settingsTools'
 import { paneModels, paneModelIds } from './paneModels'
@@ -3378,12 +3378,13 @@ const appliedRequests = new Set()
 // proxies was four times slower), and the history (1.3 MB, changed only when
 // a card is finished or its figures are read) only when it changed since the
 // last save: otherwise the main process keeps the one it has.
-let historySent = -1
+const historySync = createHistorySync()
 function boardToSave() {
   const out = { tasks: JSON.parse(JSON.stringify(toRaw(boardTasks))), appliedRequests: [...appliedRequests], deleted: deletedTaskIds() }
-  if (historySent !== historyVersion.value) {
-    out.history = JSON.parse(JSON.stringify(toRaw(taskHistory)))
-    out.historyVersion = historyVersion.value
+  const pending = historySync.pending()
+  if (pending) {
+    out.history = pending.history
+    out.historyVersion = pending.version
   }
   return out
 }
@@ -3394,13 +3395,8 @@ function saveBoard() {
   if (boardLocked) return Promise.resolve({ ok: false, error: t('app.board.lockedAtStart', 'The saved board could not be read at start.') })
   const board = boardToSave()
   const saving = window.shellApi.taskBoard.save(board)
-  if (board.history) {
-    const sent = board.historyVersion
-    // Marked as saved only once the main process says so: a failed save sends it again.
-    Promise.resolve(saving).then((res) => {
-      if (res && res.ok) historySent = sent
-    }, () => {})
-  }
+  const sent = board.history ? board.historyVersion : null
+  Promise.resolve(saving).then((res) => historySync.settle(sent, res), () => historySync.settle(sent, null))
   purgePublishedCards()
   return saving
 }
@@ -3466,7 +3462,7 @@ async function installUpdate() {
   updateInstalling.value = true
   // Write everything now instead of waiting for the debounced saves.
   saveLayoutNow()
-  await saveActivityNow()
+  await saveActivityNow({ closing: true })
   if (taskSave.cancel()) {
     try {
       await saveBoard()
@@ -13418,7 +13414,7 @@ onMounted(async () => {
     // Done cards from before the history was kept get their record (saved
     // with the next change).
     // The history as loaded is the main process's already; what backfill adds is not.
-    historySent = historyVersion.value
+    historySync.markStored()
     if (!boardLocked) backfillHistory(boardTasks)
     reconcileTaskPanes()
     // The board is not watched deeply as a whole: that tracked about 60,000
@@ -13511,7 +13507,7 @@ async function loadUnlocked(load, tries = 10) {
 function flushSaves() {
   saveLayoutNow()
   taskSave.flush()
-  saveActivityNow()
+  saveActivityNow({ closing: true })
 }
 window.addEventListener('beforeunload', flushSaves)
 window.addEventListener('pagehide', flushSaves)

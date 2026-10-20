@@ -140,8 +140,14 @@ export function mergeSavedActivity(liveText, archiveText, now = Date.now()) {
       /* unreadable: the archive alone */
     }
   }
-  const all = dedupeEvents([...old, ...live])
+  const merged = dedupeEvents([...old, ...live])
   const keptOld = new Set(old)
+  // In time order (the archive is read by day, and an event recorded with an
+  // older time than the ones before it sits in its own day): a stable sort,
+  // only when something is out of order.
+  let ordered = true
+  for (let i = 1; i < merged.length && ordered; i++) if (merged[i].t < merged[i - 1].t) ordered = false
+  const all = ordered ? merged : [...merged].sort((a, b) => a.t - b.t)
   let fromArchive = 0
   while (fromArchive < all.length && keptOld.has(all[fromArchive])) fromArchive++
   const fresh = all.filter((e) => e && Number.isFinite(e.t) && now - e.t <= MAX_AGE_MS)

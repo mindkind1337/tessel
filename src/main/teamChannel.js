@@ -19,6 +19,9 @@ const MAX_DELIVERIES = 200
 // the trim happens once per slack messages, not at each one.
 const MAX_DELIVERED_HISTORY = 500
 const DELIVERED_TRIM_SLACK = 100
+// While the archive cannot be written the delivered messages stay in
+// state.json, up to this many (the limit before the archive existed).
+const MAX_DELIVERED_UNARCHIVED = 2000
 // archive.jsonl is moved to archive.old.jsonl (the one before it is dropped)
 // past this size.
 const MAX_ARCHIVE_BYTES = 8 * 1024 * 1024
@@ -45,7 +48,10 @@ function validState(state) {
 // nothing new answers from it without reading and parsing the file again.
 // Only polls use it, and they only read it; everything that changes the
 // state reads the file itself (a private copy) and saves it.
-const polled = new Map() // state.json path -> { size, mtimeMs, state }
+// At most MAX_POLLED teams (the least recently read goes first): the parse of
+// a team that was closed does not stay in memory.
+const MAX_POLLED = 16
+const polled = new Map() // state.json path -> { size, mtimeMs, ino, state }
 function readPolledState(root) {
   const file = join(root, 'state.json')
   let st
@@ -56,12 +62,18 @@ function readPolledState(root) {
     return readState(root)
   }
   const hit = polled.get(file)
-  if (hit && hit.size === st.size && hit.mtimeMs === st.mtimeMs) return hit.state
+  if (hit && hit.size === st.size && hit.mtimeMs === st.mtimeMs && hit.ino === st.ino) {
+    polled.delete(file)
+    polled.set(file, hit) // most recently read
+    return hit.state
+  }
   const state = readState(root)
   // The file can be restored from its copy by readState: its stamp is read after.
   try {
     const after = fs.statSync(file)
-    polled.set(file, { size: after.size, mtimeMs: after.mtimeMs, state })
+    polled.delete(file)
+    if (polled.size >= MAX_POLLED) polled.delete(polled.keys().next().value)
+    polled.set(file, { size: after.size, mtimeMs: after.mtimeMs, ino: after.ino, state })
   } catch {
     polled.delete(file)
   }
@@ -122,8 +134,10 @@ function saveState(root, state) {
   // that has not reached its recipient yet.
   const deliveredCount = state.messages.reduce((n, m) => n + (m.status === 'delivered' ? 1 : 0), 0)
   let archived = []
+  let untrimmed = null
   if (deliveredCount > MAX_DELIVERED_HISTORY + DELIVERED_TRIM_SLACK) {
     let drop = deliveredCount - MAX_DELIVERED_HISTORY
+    untrimmed = state.messages
     state.messages = state.messages.filter((m) => {
       if (m.status === 'delivered' && drop > 0) {
         drop--
@@ -134,12 +148,11 @@ function saveState(root, state) {
     })
   }
   const now = Date.now()
-  state.messages = state.messages.filter(
-    (m) =>
-      m.status === 'delivered' ||
-      (state.members[m.toId] && state.members[m.toId].active) ||
-      now - (m.createdAt || 0) < UNDELIVERABLE_KEPT_MS
-  )
+  const keepMessage = (m) =>
+    m.status === 'delivered' ||
+    (state.members[m.toId] && state.members[m.toId].active) ||
+    now - (m.createdAt || 0) < UNDELIVERABLE_KEPT_MS
+  state.messages = state.messages.filter(keepMessage)
   const seenKeys = Object.keys(state.seen)
   for (const key of seenKeys.slice(0, Math.max(0, seenKeys.length - MAX_SEEN_FILES)))
     delete state.seen[key]
@@ -147,17 +160,42 @@ function saveState(root, state) {
   const file = join(root, 'state.json')
   polled.delete(file)
   // The archive first: a kill between the two leaves a message in both
-  // (read once, see readTeamArchive), never in neither.
+  // (read once, see readTeamArchive), never in neither. An archive that
+  // cannot be written (disk full, a file another program holds) must not stop
+  // the channel: the messages stay in state.json, untrimmed, and moving them
+  // is tried again at the next save.
   if (archived.length) {
-    keepBeforeArchive(root)
-    archiveMessages(root, archived)
+    try {
+      keepBeforeArchive(root)
+      archiveMessages(root, archived)
+    } catch {
+      // Bounded all the same: as before this version, the oldest delivered
+      // ones go past MAX_DELIVERED_UNARCHIVED.
+      let over = deliveredCount - MAX_DELIVERED_UNARCHIVED
+      state.messages = untrimmed.filter((m) => {
+        if (m.status === 'delivered' && over > 0) {
+          over--
+          return false
+        }
+        return keepMessage(m)
+      })
+    }
   }
   writeJsonSafe(file, state, validState, { indent: 0 })
 }
 
+// A message can be in the archive and still in state.json (a kill between the
+// two writes). Whoever shows the archive with the channel's own messages joins
+// them here: the archive's messages that state.json does not hold, then
+// state.json's, each id once.
+export function joinWithArchive(archiveMessages, stateMessages) {
+  const inState = new Set((stateMessages || []).map((m) => m && m.id))
+  return [...(archiveMessages || []).filter((m) => m && !inState.has(m.id)), ...(stateMessages || [])]
+}
+
 // Messages moved out of state.json, oldest first: the last `limit` (default
 // 500, at most 5000), those before the message `before` when given.
-export function readTeamArchive({ dir, teamId, limit = 500, before = null } = {}) {
+export async function readTeamArchive({ dir, teamId, limit = 500, before = null } = {}) {
   try {
     const root = location({ dir, teamId })
     if (!root) return { ok: false, error: 'Invalid team channel location.' }
@@ -166,12 +204,15 @@ export function readTeamArchive({ dir, teamId, limit = 500, before = null } = {}
     for (const name of ['archive.old.jsonl', 'archive.jsonl']) {
       let text = ''
       try {
-        text = fs.readFileSync(join(root, name), 'utf8')
+        text = await fs.promises.readFile(join(root, name), 'utf8')
       } catch {
         continue
       }
+      let lineNo = 0
       for (const line of text.split('\n')) {
         if (!line.trim()) continue
+        // Not holding the main process for a big archive: a breath every 2000 lines.
+        if (++lineNo % 2000 === 0) await new Promise((r) => setImmediate(r))
         try {
           const m = JSON.parse(line)
           if (!m || typeof m.id !== 'string' || seen.has(m.id)) continue

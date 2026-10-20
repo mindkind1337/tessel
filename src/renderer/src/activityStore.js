@@ -80,11 +80,17 @@ function scheduleSave() {
 
 // One save at a time (the timer's and a closing window's would otherwise
 // archive the same events twice). Started at once when none is running.
+// closing: the window is going away (closing, reloading, installing an
+// update): the recent events are sent first, at once and without waiting for
+// a save in progress, the archive is left for the next start. A save that
+// waited for the archive could be cut off before it sent anything.
 let tail = null
-export function saveActivityNow() {
+export function saveActivityNow(opts = {}) {
   clearTimeout(saveTimer)
   saveTimer = null
-  const p = tail ? tail.then(doSave, doSave) : doSave()
+  if (opts && opts.closing) return doSave({ closing: true })
+  const run = () => doSave({})
+  const p = tail ? tail.then(run, run) : doSave({})
   const mine = p.finally(() => {
     if (tail === mine) tail = null
   })
@@ -92,7 +98,7 @@ export function saveActivityNow() {
   return p
 }
 
-async function doSave() {
+async function doSave({ closing = false } = {}) {
   const api = window.shellApi.activity
   if (!loaded || !api) return
   try {
@@ -100,7 +106,7 @@ async function doSave() {
     // The settled events go to the archive first, a batch at a time; they
     // leave activity.json only once the main process has stored them (a
     // failure keeps them in it, so nothing is lost).
-    if (typeof api.archive === 'function') {
+    if (!closing && typeof api.archive === 'function') {
       for (;;) {
         const batch = settledBatch(raw, archived)
         if (!batch.length) break

@@ -253,3 +253,30 @@ export function needsCost(r) {
   if (!r.cost) return true
   return !r.cost.final
 }
+
+// What the board save does with the history: it travels only when it changed
+// since the main process last stored it. A save that failed (or was refused
+// because the saved history could not be read) says nothing about what is
+// stored, so the next save carries the whole history again.
+export function createHistorySync() {
+  let stored = -1
+  return {
+    // The history as loaded is the main process's already.
+    markStored() {
+      stored = historyVersion.value
+    },
+    // -> { history, version } to send with this save, or null.
+    pending() {
+      if (stored === historyVersion.value) return null
+      return { history: JSON.parse(JSON.stringify(toRaw(taskHistory))), version: historyVersion.value }
+    },
+    // The save's answer. sent: the version that travelled with it, or null.
+    settle(sent, res) {
+      if (res && res.ok) {
+        if (sent !== null) stored = sent
+      } else {
+        stored = -1
+      }
+    }
+  }
+}

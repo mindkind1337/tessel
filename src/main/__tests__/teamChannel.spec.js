@@ -306,7 +306,7 @@ describe('persistent team channel', () => {
     expect(polled.deliveries.map((m) => m.id)).toEqual([message.id])
   })
 
-  it('bounds delivered history without dropping an undelivered message', () => {
+  it('bounds delivered history without dropping an undelivered message', async () => {
     const root = dirname(dirname(outboxes['pane-a']))
     const stateFile = join(root, 'state.json')
     const state = JSON.parse(fs.readFileSync(stateFile, 'utf8'))
@@ -354,7 +354,7 @@ describe('persistent team channel', () => {
     })
     expect(saved.messages.some((m) => m.id === 'old-0')).toBe(false)
     // What left state.json is in the archive, none lost, none twice.
-    const archive = readTeamArchive({ dir, teamId, limit: 5000 })
+    const archive = await readTeamArchive({ dir, teamId, limit: 5000 })
     expect(archive.ok).toBe(true)
     expect(archive.messages.map((m) => m.id)).toEqual(Array.from({ length: 1502 }, (_, i) => `old-${i}`))
     expect(archive.messages.every((m) => m.status === 'delivered')).toBe(true)
