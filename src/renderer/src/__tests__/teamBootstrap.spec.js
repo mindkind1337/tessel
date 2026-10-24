@@ -81,7 +81,7 @@ describe('team bootstrap across the main and renderer request handlers', () => {
   it.each(['current', 'retire'])('strict publication rejects a failed %s IPC response', async (operation) => {
     const api = { current: vi.fn(async () => ({ ok: true })), retire: vi.fn(async () => ({ ok: true })) }
     api[operation].mockResolvedValue({ ok: false, error: 'Disk is not writable' })
-    const ctx = { window: { shellApi: { team: api } }, workspaces: { value: [] }, teams: { value: [] }, teamDirsSeen: new Set(['C:\\test']), CliRequestError }
+    const ctx = { window: { shellApi: { team: api } }, workspaces: { value: [] }, teams: { value: [] }, teamDirsSeen: new Set(['C:\\test']), publishedTeams: new Map(), Date, JSON, CliRequestError }
     vm.createContext(ctx)
     const publish = vm.runInContext(`(${publication.trim()})`, ctx)
     await expect(publish({ strict: true })).rejects.toThrow('Disk is not writable')
