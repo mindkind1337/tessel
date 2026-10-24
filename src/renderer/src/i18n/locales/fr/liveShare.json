@@ -59,7 +59,9 @@
       "projectsSharedHint": "Cochez-les ou décochez-les à tout moment.",
       "codesTitle": "Codes d'invitation",
       "codesHint": "Envoyez-en un : chaque personne attend votre accord. Les codes cessent de fonctionner quand vous arrêtez de partager ; les personnes de confiance entrent avec n'importe quel nouveau code.",
-      "noFiles": "Ses fichiers sont sur un serveur SSH : les invités voient ses terminaux et ses agents, pas ses fichiers.",
+      "noFiles": "Il n'a pas de dossier sur cet ordinateur : les invités voient ses terminaux et ses agents, pas ses fichiers.",
+      "sshFiles": "Ses fichiers sont sur un serveur SSH : les invités peuvent les ouvrir (et les enregistrer, avec le droit de modifier) par votre connexion à ce serveur, tant qu'elle est active. Les Changements ne sont pas partagés.",
+      "sshTag": "SSH",
       "stoppedWhy": "Le partage s'est arrêté : {{error}}",
       "terminalsOnly": "Terminaux seulement",
       "firstDone": "Terminé"
@@ -545,7 +547,7 @@
       "outdated": "l'hôte doit mettre Tessel à jour.",
       "busy": "trop de changements à la fois : patientez un instant.",
       "failed": "cela n'a pas pu être fait.",
-      "remote": "les fichiers de ce projet sont sur le serveur SSH de l'hôte et ne sont pas partagés."
+      "remote": "ce n'est pas partagé pour un projet sur le serveur SSH de l'hôte."
     },
     "setting": {
       "hideIgnored": "Masquer aux invités les fichiers ignorés et secrets",

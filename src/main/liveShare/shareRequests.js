@@ -207,6 +207,12 @@ export function mayRun(op, rights) {
   return !!rights && typeof rights === 'object' && rights[right] === true
 }
 
+// An op's arguments as its schema says (null: not a known op, or not in its
+// shape), for the answers made elsewhere (shareRemoteFiles.js).
+export function parseOpArgs(op, args) {
+  return typeof op === 'string' && Object.hasOwn(OPS, op) ? parseArgs(OPS[op].args, args) : null
+}
+
 // --- The ops --------------------------------------------------------------------------
 // right: see above; kind: 'light' | 'heavy' | 'write' (the host's budgets);
 // bulk: its answer can be large (it waits behind terminal output); serial:

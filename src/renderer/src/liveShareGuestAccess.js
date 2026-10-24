@@ -71,7 +71,7 @@ export function stateOfAnswer(res) {
 export function accessStateText(state) {
   if (state === 'no-access') return t('liveShare.access.noAccess', 'You no longer have access to this project.')
   if (state === 'outdated-host') return t('liveShare.access.outdatedHost', 'The host’s Tessel is too old for this: the host needs to update Tessel.')
-  if (state === 'remote') return t('liveShare.access.remote', 'The files of this project are on the host’s SSH server and aren’t shared with guests.')
+  if (state === 'remote') return t('liveShare.access.remote', 'This isn’t shared for a project on the host’s SSH server (guests get its files, not its Changes).')
   if (state === 'ended') return t('liveShare.access.ended', 'The Live Share session ended.')
   return ''
 }

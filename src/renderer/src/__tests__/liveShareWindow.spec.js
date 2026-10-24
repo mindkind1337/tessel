@@ -355,7 +355,7 @@ describe('Live Share in the window, as the host', () => {
     expect(t.api.setLayouts).not.toHaveBeenCalled()
     sharingNow(['ws-1'])
     await flush()
-    expect(lastLayouts()).toEqual([{ id: 'ws-1', layout: expect.objectContaining({ project: 'tessel', activeId: 'pane-1' }), chats: [], root: null, tabs: { files: [], active: null } }])
+    expect(lastLayouts()).toEqual([{ id: 'ws-1', layout: expect.objectContaining({ project: 'tessel', activeId: 'pane-1' }), chats: [], root: null, remote: null, tabs: { files: [], active: null } }])
     shared.tree.title = 'npm run dev'
     await flush()
     expect(lastLayouts()[0].layout.tree.title).toBe('npm run dev')
@@ -890,7 +890,7 @@ describe('Live Share in the window: what the review found', () => {
     expect(t.api.setLayouts.mock.calls.every(([list]) => list.length === 0)).toBe(true)
     t.workspaces.value.push(reactive({ id: 'ws-1', name: 'tessel', activeId: 'pane-1', tree: { type: 'leaf', id: 'pane-1', kind: 'shell', title: 'PowerShell' } }))
     await flush()
-    expect(t.api.setLayouts).toHaveBeenLastCalledWith([{ id: 'ws-1', layout: expect.objectContaining({ project: 'tessel' }), chats: [], root: null, tabs: { files: [], active: null } }])
+    expect(t.api.setLayouts).toHaveBeenLastCalledWith([{ id: 'ws-1', layout: expect.objectContaining({ project: 'tessel' }), chats: [], root: null, remote: null, tabs: { files: [], active: null } }])
     expect(t.ls.sharedWss().map((w) => w.id)).toEqual(['ws-1'])
     expect(t.api.share).not.toHaveBeenCalled()
     // The window has its projects back and ws-2 is not among them: out of the share.
@@ -1455,7 +1455,7 @@ describe('Live Share: renaming a project and changing its folder', () => {
     sharingNow(['ws-1', 'ws-2'])
     await flush()
     expect(lastLayouts()[0].root).toBe('C:\code\tessel')
-    expect(lastLayouts()[1]).toMatchObject({ root: null, chats: [expect.objectContaining({ roots: ['/srv/fx/resources'] })] })
+    expect(lastLayouts()[1]).toMatchObject({ root: null, remote: { hostId: 'ssh-box', path: '/srv/fx/resources' }, chats: [expect.objectContaining({ roots: ['/srv/fx/resources'] })] })
     local.cwd = 'C:\code\other'
     remote.remote = { hostId: 'ssh-box', path: '/srv/fx/web' }
     await flush()

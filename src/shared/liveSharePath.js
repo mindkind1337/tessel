@@ -171,5 +171,6 @@ export const LSHARE_CODES = Object.freeze([
   'unavailable',
   'git',
   'busy',
+  'host-offline',
   'failed'
 ])

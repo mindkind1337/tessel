@@ -1921,6 +1921,7 @@ ${root}`, () => gitWorktreesNow(root))
     allow,
     allowPath,
     setRoots,
+    hasRoot: (virtual) => !!rootOf(virtual),
     listDir,
     listMany,
     projectStatus,

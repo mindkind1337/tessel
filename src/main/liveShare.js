@@ -132,6 +132,8 @@ import { TOPICS, subKey } from './liveShare/shareChannel.js'
 import { createShareRequests, SHARE_OPS } from './liveShare/shareRequests.js'
 import { createShareScope, hiddenByName, relFrom, DEFAULT_SHARE_SETTINGS, assertNoHostPaths } from './liveShare/shareScope.js'
 import { cleanRoots } from './liveShare/shareChat.js'
+import { createRemoteShareFiles } from './liveShare/shareRemoteFiles.js'
+import { remoteRoot } from '../shared/remotePath.js'
 import { createGuestFs } from './liveShare/guestFs.js'
 import { TASK_OPS, taskArgs, guestTasks, checkTasks, isTaskId } from './liveShare/shareTasks.js'
 import { PANEL_OPS, HISTORY_LIMITS, guestPanes, createAgentsFeed, guestChildren, checkPanes, checkChildren, hostHistory, guestHistory, checkHistory, needsFigures, checkUsage, hostTaskCopies, checkReviewInfo, checkReviewDiff } from './liveShare/sharePanels.js'
@@ -207,6 +209,15 @@ export function cleanRoot(root) {
   // eslint-disable-next-line no-control-regex -- control characters are what it refuses
   if (/[\u0000-\u001f]/.test(root)) return null
   return /^[a-zA-Z]:[\\/]/.test(root) || root.startsWith('/') || /^\\\\[^\\?.]/.test(root) ? root : null
+}
+
+// A shared SSH project's folder as the host's window gives it ({ hostId,
+// path }): its virtual root (src/shared/remotePath.js), or null. Only the
+// host's own saved remote projects are ever read (remoteFs.hasRoot), whatever
+// this says.
+export function cleanRemoteRoot(remote) {
+  if (!remote || typeof remote !== 'object' || typeof remote.hostId !== 'string' || typeof remote.path !== 'string') return null
+  return remoteRoot(remote.hostId, remote.path)
 }
 
 // The host window's agent panes that have a conversation to show (its
@@ -466,6 +477,9 @@ export function registerLiveShare({
   agentChildren = null,
   cardCosts = null,
   localHistory = null,
+  // The host's remoteFs (its SSH session): a shared SSH project's files for
+  // guests (liveShare/shareRemoteFiles.js); without it, none.
+  remoteFiles = null,
   sessionHistory = null,
   readTerminal = null,
   // The processes running now (agentDetect.js listProcesses): what really
@@ -723,6 +737,8 @@ export function registerLiveShare({
   // Each shared project's folder, as the host's window gives it with the
   // layouts (host-only: never sent to a guest, never in a layout).
   let roots = new Map()
+  // The shared SSH projects' virtual roots (host-only), beside `roots`.
+  let remoteRoots = new Map()
   // The share's settings, kept across shares: hideIgnored ("Hide ignored and
   // secret files from guests", on unless turned off).
   const settingsRead = settingsFile.read()
@@ -750,6 +766,7 @@ export function registerLiveShare({
   }
   const scope = createShareScope()
   const requests = createShareRequests({ scope, log })
+  const remoteShare = createRemoteShareFiles({ remote: remoteFiles, log: log && log.warn ? { warn: (m) => log.warn('liveshare', m) } : null })
   // The ops guests may ask for, by name: what each needs and costs
   // ({ right, kind, bulk }) and who answers it. Next phases add theirs with
   // addOps (and their area in shareChannel.js OP_AREAS).
@@ -878,6 +895,13 @@ export function registerLiveShare({
   // Files, notes and git (shareRequests.js), with the project's folder, the
   // guest's rights and the share's settings; a change is in the audit.
   async function fileRequest(req, ctx) {
+    // A project on an SSH server: its files are read through the host's
+    // session (shareRemoteFiles.js), with the same rules.
+    if (req && typeof req.project === 'string' && !roots.has(req.project) && remoteRoots.has(req.project)) {
+      const res = await remoteShare.handle(req, { remoteRoots, rights: ctx.rights, settings: shareSettings, recheck: ctx.recheck, cancelled: ctx.cancelled, person: ctx.person })
+      if (res && res.ok && channelOps.get(req.op)?.kind === 'write') noteAction(ctx.guest, req)
+      return res
+    }
     const res = await requests.handle(req, { roots, rights: ctx.rights, settings: shareSettings, trashItem, recheck: ctx.recheck, localHistory, taskCopy: (project, id) => taskCopies.get(project)?.get(id) || null })
     if (res && res.ok && channelOps.get(req.op)?.kind === 'write') noteAction(ctx.guest, req)
     return res
@@ -1853,6 +1877,8 @@ export function registerLiveShare({
     layouts = new Map()
     chatSources = new Map()
     roots = new Map()
+    remoteRoots = new Map()
+    remoteShare.reset()
     boards = new Map()
     actions = []
     layoutsRev++
@@ -3155,6 +3181,7 @@ export function registerLiveShare({
     const next = new Map([...layouts].filter(([id]) => keep.has(id)))
     const nextChats = new Map([...chatSources].filter(([id]) => keep.has(id)))
     const nextRoots = new Map([...roots].filter(([id]) => keep.has(id)))
+    const nextRemote = new Map([...remoteRoots].filter(([id]) => keep.has(id)))
     const nextTabs = new Map([...hostTabs].filter(([id]) => keep.has(id)))
     for (const item of (Array.isArray(list) ? list : []).filter((x) => x && keep.has(x.id)).slice(0, MAX_PROJECTS)) {
       next.set(item.id, cleanLayout(item.layout))
@@ -3164,9 +3191,14 @@ export function registerLiveShare({
       const root = cleanRoot(item.root)
       if (root) nextRoots.set(item.id, root)
       else nextRoots.delete(item.id)
+      const remoteVirtual = root ? null : cleanRemoteRoot(item.remote)
+      if (remoteVirtual) nextRemote.set(item.id, remoteVirtual)
+      else nextRemote.delete(item.id)
       nextTabs.set(item.id, cleanHostTabs(item.tabs))
     }
     const rootsBefore = roots
+    if ([...nextRemote].some(([id, v]) => remoteRoots.get(id) !== v) || nextRemote.size !== remoteRoots.size) remoteShare.reset()
+    remoteRoots = nextRemote
     roots = nextRoots
     rootsChanged(rootsBefore)
     const before = sharing ? new Map(homes(sharing)) : new Map()

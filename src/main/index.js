@@ -4408,6 +4408,8 @@ liveShare = registerLiveShare({
   agentChildren: (q) => agentChildrenOf(q),
   cardCosts: (ids) => jobCost.forCards(ids),
   localHistory,
+  // A shared SSH project's files for guests, through this computer's SSH session.
+  remoteFiles: remoteFs,
   // An image a guest pastes into a host's pane: read as a PNG on the guest's
   // side, checked and saved with the other pasted images on the host's.
   images: createPasteImages({ nativeImage, clipboard, dir: PASTE_DIR }),

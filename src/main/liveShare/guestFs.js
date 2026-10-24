@@ -35,7 +35,8 @@ const MESSAGES = {
   'bad-args': () => t('main.liveShareFs.badArgs', 'The host refused this request.'),
   'bad-path': () => t('main.liveShareFs.badPath', 'This path cannot be used on the host.'),
   'no-project': () => t('main.liveShareFs.noProject', 'You no longer have access to this project.'),
-  'remote-project': () => t('main.liveShareFs.remoteProject', "The files of this project are on the host's SSH server (or cannot be read there) and are not shared with guests."),
+  'remote-project': () => t('main.liveShareFs.remoteProject', "This is not shared for a project on the host's SSH server (guests get its files, not its Changes)."),
+  'host-offline': () => t('main.liveShareFs.hostOffline', "The host's server is not connected right now. Try again in a moment."),
   forbidden: () => t('main.liveShareFs.forbidden', 'The host has not given you the right to do this.'),
   revoked: () => t('main.liveShareFs.revoked', 'Your access changed before this was done: nothing was changed.'),
   'not-found': () => t('main.liveShareFs.notFound', 'Not found on the host.'),
@@ -82,7 +83,7 @@ export function failure(code, detail) {
   const known = Object.hasOwn(MESSAGES, code) ? code : 'failed'
   const extra = known === 'git' ? cleanDetail(detail) : ''
   const error = extra ? t('main.liveShareFs.gitDetail', 'Git failed on the host: {{detail}}', { detail: extra }) : MESSAGES[known]()
-  return { ok: false, error, code: known, ...(known === 'conflict' ? { conflict: true } : {}), ...(known === 'offline' ? { transient: true } : {}) }
+  return { ok: false, error, code: known, ...(known === 'conflict' ? { conflict: true } : {}), ...(known === 'offline' || known === 'host-offline' ? { transient: true } : {}) }
 }
 export const localOnly = () => failure('local-only')
 

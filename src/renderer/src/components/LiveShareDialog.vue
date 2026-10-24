@@ -534,7 +534,8 @@ function tabKeys(event, list, current, set) {
                       <input type="checkbox" :checked="ticked.has(p.id)" @change="toggleProject(p, $event)" />
                       <Check v-if="ticked.has(p.id)" :size="12" aria-hidden="true" />
                       <span class="ls-pchip-name">{{ p.name }}</span>
-                      <span v-if="p.noFiles" class="tag tag-warn" :title="t('liveShare.share.noFiles', 'Its files are on an SSH server: guests see its terminals and agents, not its files.')" :data-test="'ls-nofiles-' + p.id">{{ t('liveShare.share.terminalsOnly', 'Terminals only') }}</span>
+                      <span v-if="p.noFiles" class="tag tag-warn" :title="t('liveShare.share.noFiles', 'It has no folder on this computer: guests see its terminals and agents, not its files.')" :data-test="'ls-nofiles-' + p.id">{{ t('liveShare.share.terminalsOnly', 'Terminals only') }}</span>
+                      <span v-else-if="p.ssh" class="tag" :title="t('liveShare.share.sshFiles', 'Its files are on an SSH server: guests can open them (and save, with the edit right) through your connection to it, while it is connected. Changes are not shared.')" :data-test="'ls-ssh-' + p.id">{{ t('liveShare.share.sshTag', 'SSH') }}</span>
                     </label>
                   </li>
                 </ul>
@@ -611,7 +612,8 @@ function tabKeys(event, list, current, set) {
                     <input type="checkbox" :checked="ticked.has(p.id)" :disabled="lastShared(p)" @change="toggleProject(p, $event)" />
                     <Check v-if="ticked.has(p.id)" :size="12" aria-hidden="true" />
                     <span class="ls-pchip-name">{{ p.name }}</span>
-                    <span v-if="p.noFiles" class="tag tag-warn" :title="t('liveShare.share.noFiles', 'Its files are on an SSH server: guests see its terminals and agents, not its files.')" :data-test="'ls-nofiles-' + p.id">{{ t('liveShare.share.terminalsOnly', 'Terminals only') }}</span>
+                    <span v-if="p.noFiles" class="tag tag-warn" :title="t('liveShare.share.noFiles', 'It has no folder on this computer: guests see its terminals and agents, not its files.')" :data-test="'ls-nofiles-' + p.id">{{ t('liveShare.share.terminalsOnly', 'Terminals only') }}</span>
+                    <span v-else-if="p.ssh" class="tag" :title="t('liveShare.share.sshFiles', 'Its files are on an SSH server: guests can open them (and save, with the edit right) through your connection to it, while it is connected. Changes are not shared.')" :data-test="'ls-ssh-' + p.id">{{ t('liveShare.share.sshTag', 'SSH') }}</span>
                   </label>
                 </li>
               </ul>

@@ -799,7 +799,8 @@
       "tooLargeToSend": "Trop volumineux pour être envoyé à l'hôte (plus de 768 Ko).",
       "stagedOutside": "Des fichiers hors de ce projet sont indexés chez l'hôte : l'hôte doit d'abord en faire un commit ou les retirer de l'index.",
       "stagedHidden": "Des fichiers que l'hôte masque aux invités sont indexés : l'hôte doit d'abord en faire un commit ou les retirer de l'index.",
-      "remoteProject": "Les fichiers de ce projet sont sur le serveur SSH de l'hôte (ou illisibles là-bas) et ne sont pas partagés avec les invités."
+      "remoteProject": "Ce n'est pas partagé pour un projet sur le serveur SSH de l'hôte (les invités en ont les fichiers, pas les Changements).",
+      "hostOffline": "Le serveur de l'hôte n'est pas connecté pour le moment. Réessayez dans un instant."
     },
     "automations": {
       "unreadable": "Vos automatisations n'ont pas pu être lues : {{error}}. Rien ne s'exécute tant que Tessel ne les a pas lues.",
