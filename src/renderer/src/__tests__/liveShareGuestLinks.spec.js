@@ -50,7 +50,7 @@ describe('guest panes never use the local file or browser paths', () => {
     expect(pane.indexOf('// The WSL distro of a WSL pane')).toBeGreaterThan(pane.indexOf('function guestFileLinks('))
     const guest = pane.slice(pane.indexOf('function guestFileLinks('), pane.indexOf('// The WSL distro of a WSL pane'))
     expect(guest).not.toMatch(/openFile\(|shiftKey|resolveFiles/)
-    const openLink = pane.slice(pane.indexOf('function openLink(uri'), pane.indexOf('function openLink(uri') + 700)
+    const openLink = pane.slice(pane.indexOf('function openLink(uri'), pane.indexOf('function openLink(uri') + 900)
     expect(openLink.indexOf("backend === 'liveshare'")).toBeGreaterThan(0)
     expect(openLink.indexOf("backend === 'liveshare'")).toBeLessThan(openLink.indexOf('shellApi.openExternal'))
     // The link router (links/openTarget.js) comes after the guest guard, never before it.
