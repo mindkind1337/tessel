@@ -1229,6 +1229,11 @@ body.popup-open .toolbar {
   overflow: hidden;
   background: var(--surface);
   border-left: 1px solid var(--border);
+  transition: flex-basis 0.15s ease;
+}
+
+.task-panel.resizing {
+  transition: none;
 }
 
 /* A browser pane dragged: the side panel takes it (a dashed edge while it
@@ -2313,31 +2318,41 @@ html.window-hidden .ws-layer {
   background: var(--accent);
 }
 
-/* The task board's left edge: drag to resize it. */
+/* The right panel's left edge: drag to resize it. Like the sidebar's handle
+   (.osb-resize), 12 px straddling the border, beside the panel (not in it:
+   it clips its content) in a zero-width slot. */
+.task-resize-slot {
+  position: relative;
+  flex: 0 0 0;
+  width: 0;
+  height: 100%;
+  z-index: 20;
+}
+
 .task-resize {
   position: absolute;
   top: 0;
-  bottom: 0;
-  left: -5px;
-  width: 10px;
-  z-index: 20;
+  left: -6px;
+  display: flex;
+  width: 12px;
+  height: 100%;
+  justify-content: center;
   cursor: col-resize;
 }
 
-.task-resize::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  left: 5px;
+.task-resize-line {
   width: 1px;
+  height: 100%;
   background: transparent;
-  transition: background 0.12s;
+  transition: background 0.15s;
 }
 
-.task-resize:hover::before,
-.task-panel.resizing .task-resize::before {
-  background: var(--accent);
+.task-resize:hover .task-resize-line {
+  background: color-mix(in srgb, var(--text-strong) 22%, transparent);
+}
+
+.task-resize-slot.resizing .task-resize-line {
+  background: color-mix(in srgb, var(--text-strong) 44%, var(--surface));
 }
 
 /* While the sidebar's or the right panel's edge is dragged (layoutDrag.js):

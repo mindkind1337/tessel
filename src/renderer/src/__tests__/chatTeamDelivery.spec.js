@@ -7,6 +7,7 @@ import { describe, expect, it, vi, beforeEach } from 'vitest'
 import fs from 'fs'
 import vm from 'vm'
 import { join } from 'path'
+import { cleanSender } from '../senderIdentity'
 
 const source = fs.readFileSync(join(process.cwd(), 'src/renderer/src/App.vue'), 'utf8')
 function slice(from, to) {
@@ -40,6 +41,7 @@ describe('team messages for a chat agent', () => {
       findLeaf: (id) => leaves[id] || null,
       channelQueued: new Set(),
       ackChannel: vi.fn(),
+      cleanSender,
       Map,
       Object,
       Array,

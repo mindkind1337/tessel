@@ -469,9 +469,6 @@
   flex-basis: auto !important;
   border-left: 0;
 }
-.task-panel.side-fullscreen .task-resize {
-  display: none;
-}
 
 /* The pill, and under it the session's tokens and estimated cost. */
 .adb-card-side {
