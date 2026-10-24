@@ -19,6 +19,7 @@ import { terminalTheme } from '../themes'
 // Mouse-reporting modes (X10, normal, button, any-event, UTF-8, SGR, urxvt).
 const MOUSE_MODES = [9, 1000, 1002, 1003, 1005, 1006, 1015]
 import { registerPane, unregisterPane, getPane } from '../paneRegistry'
+import { detectDeviceLogin, columnOfIndex, mouseClickBytes, linkClickOpens } from '../deviceLogin'
 import {
   setAgentStatus,
   setAttention,
@@ -3006,21 +3007,119 @@ function onEscapeMenu(e) {
   if (e.key === 'Escape' && modelMenu.visible) closeModelMenu()
 }
 
+// A device sign-in on this screen (deviceLogin.js): a program on an SSH host
+// cannot open a browser, so a banner offers its page here and its code. Never
+// opened by itself, none in a Live Share pane, closable.
+const signIn = ref(null)
+const signInDismissed = ref('')
+const signInShown = computed(() => !!signIn.value && signInDismissed.value !== signIn.value.key)
+const mouseSgrAskedRef = ref(false)
+// Mouse modes the program asked for and has not reset (even when Always
+// select dropped them), for the sign-in banner's click.
+const MOUSE_TRACKING = [9, 1000, 1002, 1003]
+const mouseAsked = new Set()
+function mouseClickable() {
+  return (
+    !!term &&
+    mouseAsked.has(1006) &&
+    MOUSE_TRACKING.some((m) => mouseAsked.has(m)) &&
+    term.buffer.active.type === 'alternate'
+  )
+}
+let signInTimer = null
+const signInNoteTop = computed(
+  () => 36 + 44 * ((props.node.remoteToolsNote ? 1 : 0) + (props.node.rootNoYoloNote ? 1 : 0) + (accountMismatch.value ? 1 : 0))
+)
+function scheduleSignInScan() {
+  if (signInTimer || props.node.backend === 'liveshare' || props.node.liveShare) return
+  signInTimer = setTimeout(() => {
+    signInTimer = null
+    scanSignIn()
+  }, 400)
+}
+// The live screen's rows, read for a sign-in (null when there is none). The
+// click cell of Grok's "here" is worked out on the cells.
+function readSignIn() {
+  if (!term) return null
+  const buf = term.buffer.active
+  const lines = []
+  const wrapped = []
+  for (let y = 0; y < term.rows; y++) {
+    const line = buf.getLine(buf.baseY + y)
+    lines.push(line ? line.translateToString(true) : '')
+    wrapped.push(!!(line && line.isWrapped))
+  }
+  const found = detectDeviceLogin(lines, wrapped)
+  if (found && found.showUrl) {
+    const col = columnOfIndex(buf.getLine(buf.baseY + found.showUrl.row - 1), found.showUrl.index)
+    found.showUrl = col ? { row: found.showUrl.row, col: col + 1 } : null
+    if (!found.showUrl && !found.url) return null
+  }
+  return found
+}
+function scanSignIn() {
+  if (!term) return
+  const found = readSignIn()
+  mouseSgrAskedRef.value = mouseClickable()
+  const was = signIn.value
+  if (!found && !was) return
+  if (found && was && found.key === was.key && JSON.stringify(found.showUrl) === JSON.stringify(was.showUrl)) return
+  signIn.value = found
+  if (!found) signInDismissed.value = ''
+}
+function signInText() {
+  const s = signIn.value
+  if (!s) return ''
+  const who = s.label || ''
+  if (!s.url)
+    return t('pane.signin.needUrl', 'Sign-in on this server: click “show full URL” in the terminal, then it appears here.')
+  if (s.known)
+    return t('pane.signin.ready', 'Sign-in on this server ({{who}}): open {{page}} on this PC, then enter the code.', { who, page: s.page })
+  return t('pane.signin.readyOther', 'Sign-in on this server: this page is {{page}}. Check the name before you open it.', { page: s.page })
+}
+function openSignIn(event) {
+  const s = signIn.value
+  if (s && s.url) openLink(s.url, event, true)
+}
+function copySignInCode() {
+  const s = signIn.value
+  if (!s || !s.code || !window.shellApi.writeClipboard) return
+  window.shellApi.writeClipboard(s.code)
+  if (ctx.toast) ctx.toast(t('pane.osc52.copiedText', 'Copied "{{text}}"', { text: s.code }), { timeout: 2500 })
+}
+function showSignInUrl() {
+  const s = signIn.value
+  if (!s || !s.showUrl) return
+  // Read the screen again now, and click only a program that holds the mouse.
+  const now = readSignIn()
+  if (!now || !now.showUrl || !mouseClickable()) {
+    scanSignIn()
+    return
+  }
+  window.shellApi.writePty(props.node.id, mouseClickBytes(now.showUrl.col, now.showUrl.row))
+}
+function dismissSignIn() {
+  if (signIn.value) signInDismissed.value = signIn.value.key
+}
+
 // A clicked link goes through the one link router (links/openTarget.js): a
 // web page in the built-in browser or the system one (Settings > Browser,
 // Ctrl+click the other), mailto: in the mail program; any other scheme is
 // dropped there. Without it, the system browser (the main process only lets
 // http, https and mailto through). In a Live Share host's pane: filtered,
 // in the Live Share browser (App.vue openGuestUrl), never the router.
-function openLink(uri, event) {
+function openLink(uri, event, force = false) {
   if (props.node.backend === 'liveshare') {
     if (ctx.openGuestUrl) ctx.openGuestUrl(uri, { fromId: props.node.id, session: props.node.liveShare ? props.node.liveShare.session : null })
     return
   }
+  // A program with the mouse owns plain clicks: Ctrl/Cmd/Shift opens.
+  if (!force && !linkClickOpens(term && term.modes.mouseTrackingMode, event)) return
   // Web pages and mail addresses only: a file: (or any other) link a program
   // prints never opens from here, whatever computer the program runs on.
   if (!/^(https?:\/\/|mailto:)/i.test(String(uri || '').trim())) return
-  if (ctx.openTarget) return ctx.openTarget(uri, { event })
+  // With the mouse taken, Shift/Cmd/Ctrl only lets the click through: the default browser.
+  if (ctx.openTarget) return ctx.openTarget(uri, { event: term && term.modes.mouseTrackingMode !== 'none' ? undefined : event })
   if (window.shellApi.openExternal) window.shellApi.openExternal(uri)
 }
 // The real address of a link a program writes with a text of its own (OSC 8):
@@ -3029,7 +3128,13 @@ const linkTip = ref(null) // { text, x, y }
 function showLinkTip(event, uri) {
   if (!event || typeof uri !== 'string') return
   const text = uri.length > 300 ? uri.slice(0, 300) + '…' : uri
-  linkTip.value = { text, x: event.clientX, y: event.clientY }
+  linkTip.value = { text, x: event.clientX, y: event.clientY, hint: mouseTakenHint() }
+}
+// Hover text for a link while a program takes the mouse.
+function mouseTakenHint() {
+  const mode = term && term.modes.mouseTrackingMode
+  if (!mode || mode === 'none') return ''
+  return t('pane.link.ctrlClick', 'Shift+click to open')
 }
 function hideLinkTip() {
   linkTip.value = null
@@ -3279,7 +3384,14 @@ onMounted(() => {
   fit = new FitAddon()
   term.loadAddon(fit)
   // A link written as plain text: the same.
-  term.loadAddon(new WebLinksAddon((e, uri) => openLink(uri, e)))
+  term.loadAddon(
+    new WebLinksAddon((e, uri) => openLink(uri, e), {
+      hover: (e, uri) => {
+        if (mouseTakenHint()) showLinkTip(e, uri)
+      },
+      leave: () => hideLinkTip()
+    })
+  )
   term.registerLinkProvider({
     provideLinks(y, callback) {
       const line = term && term.buffer.active.getLine(y - 1)
@@ -3545,6 +3657,7 @@ onMounted(() => {
     if (up && following) stickToBottom()
     else if (up) newBelow.value = true
     updateScrolled()
+    scheduleSignInScan()
   })
 
   search = new SearchAddon()
@@ -3555,9 +3668,21 @@ onMounted(() => {
   // requests are ignored. (Only requests that set nothing but mouse modes, so
   // other modes in the same sequence still apply.)
   term.parser.registerCsiHandler({ prefix: '?', final: 'h' }, (params) => {
-    if (!settings.alwaysSelect) return false
     const modes = params.map((p) => (Array.isArray(p) ? p[0] : p))
+    // What the program asked for, even when it is not given (the sign-in
+    // banner can still click for you in the SGR form).
+    for (const m of modes) if (m === 1006 || MOUSE_TRACKING.includes(m)) mouseAsked.add(m)
+    if (!settings.alwaysSelect) return false
     return modes.length > 0 && modes.every((m) => MOUSE_MODES.includes(m))
+  })
+  term.parser.registerCsiHandler({ prefix: '?', final: 'l' }, (params) => {
+    for (const p of params) {
+      const m = Array.isArray(p) ? p[0] : p
+      mouseAsked.delete(m)
+      // Leaving the alternate screen: the program is done with the mouse.
+      if (m === 1049 || m === 1047 || m === 47) mouseAsked.clear()
+    }
+    return false
   })
   search.onDidChangeResults(({ resultIndex, resultCount }) => {
     findResult.index = resultIndex
@@ -3917,6 +4042,7 @@ watch(isMaximized, () => {
 
 onBeforeUnmount(() => {
   mounted = false
+  clearTimeout(signInTimer)
   if (ro) ro.disconnect()
   if (screenObserver) screenObserver.disconnect()
   clearTimeout(releaseTimer)
@@ -4417,6 +4543,18 @@ const paneMenuBindings = computed(() => ({
       <button class="exit-btn" data-test="host-account-keep" :title="t('pane.account.keepHint', 'Keeps {{saved}}: its next restart starts there', accountMismatch)" @click="resolveAccountMismatch(false)">{{ t('pane.account.keep', 'Keep') }}</button>
     </div>
 
+    <div v-if="signIn && signInShown && !node.failed" class="root-note signin-note" :style="{ top: `${signInNoteTop}px` }" data-test="device-login-banner" role="status" @mousedown.stop>
+      <span class="root-note-text" data-test="device-login-text">{{ signInText() }}</span>
+      <button v-if="signIn.url" class="exit-btn primary" data-test="device-login-open" :title="signIn.url" @click="openSignIn($event)">{{ t('pane.signin.open', 'Open the page here') }}</button>
+      <button v-else-if="signIn.showUrl && mouseSgrAskedRef" class="exit-btn primary" data-test="device-login-show" @click="showSignInUrl">{{ t('pane.signin.showUrl', 'Show the URL') }}</button>
+      <button v-if="signIn.code" class="exit-btn" data-test="device-login-copy" @click="copySignInCode">{{ t('pane.signin.copyCode', 'Copy the code') }}</button>
+      <button class="pane-nav-btn" data-test="device-login-close" :title="t('pane.rootNoYolo.close', 'Close')" :aria-label="t('pane.rootNoYolo.close', 'Close')" @click="dismissSignIn">
+        <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+          <path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
+        </svg>
+      </button>
+    </div>
+
     <div v-if="findOpen" class="find-bar" @mousedown.stop>
       <input
         ref="findInputEl"
@@ -4464,7 +4602,7 @@ const paneMenuBindings = computed(() => ({
       </button>
     </div>
 
-    <div v-if="linkTip" class="link-tip" data-test="link-tip" :style="{ left: linkTip.x + 12 + 'px', top: linkTip.y + 16 + 'px' }">{{ linkTip.text }}</div>
+    <div v-if="linkTip" class="link-tip" data-test="link-tip" :style="{ left: linkTip.x + 12 + 'px', top: linkTip.y + 16 + 'px' }">{{ linkTip.text }}<span v-if="linkTip.hint" class="link-tip-hint" data-test="link-tip-hint"> · {{ linkTip.hint }}</span></div>
 
     <button
       v-if="scrolledUp && !exited"

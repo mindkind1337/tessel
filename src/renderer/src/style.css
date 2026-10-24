@@ -2718,7 +2718,8 @@ kbd {
   top: 80px;
 }
 .tools-note .exit-btn,
-.account-note .exit-btn {
+.account-note .exit-btn,
+.signin-note .exit-btn {
   flex: none;
 }
 
@@ -4567,6 +4568,9 @@ body.pane-dragging * {
 }
 
 /* The real address of an OSC 8 link under the mouse (TerminalPane). */
+.link-tip-hint {
+  color: var(--text-dim);
+}
 .link-tip {
   position: fixed;
   z-index: 60;
