@@ -46,6 +46,7 @@
     },
     "error": {
       "noProjectFolder": "Le dossier du projet n'existe pas.",
+      "notAFolder": "Ce n'est pas un dossier.",
       "openNotes": "Impossible d'ouvrir les notes : {{error}}",
       "noCommitMessage": "L'agent n'a donné aucun message.",
       "imageTooLarge": "L'image est trop grande pour être affichée.",

@@ -396,3 +396,21 @@ describe('nested repository scan', () => {
     expect(svc.scanStop('scan-unknown')).toEqual({ ok: true, stopped: false })
   })
 })
+
+describe('checkFolder (a folder chosen for an existing project)', () => {
+  it('accepts a folder, refuses a file, a missing path and a relative one', async () => {
+    const svc = createAddProject({ home: tmp })
+    const dir = join(tmp, 'check-me')
+    fs.mkdirSync(dir, { recursive: true })
+    const file = join(dir, 'a.txt')
+    fs.writeFileSync(file, 'x')
+    const good = await svc.checkFolder({ path: dir })
+    expect(good.ok).toBe(true)
+    expect(good.path).toBe(dir)
+    expect(typeof good.real).toBe('string')
+    expect((await svc.checkFolder({ path: file })).ok).toBe(false)
+    expect((await svc.checkFolder({ path: join(tmp, 'nope') })).ok).toBe(false)
+    expect((await svc.checkFolder({ path: 'relative/dir' })).ok).toBe(false)
+    expect((await svc.checkFolder({})).ok).toBe(false)
+  })
+})

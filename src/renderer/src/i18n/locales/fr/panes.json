@@ -289,6 +289,13 @@
       "titleActive": "Options des espaces de travail ({{filters}} actifs)",
       "titleFilters": "Options des espaces de travail ({{filters}})"
     },
+    "renameDialog": {
+      "title": "Renommer le projet",
+      "label": "Nom du projet",
+      "empty": "Saisissez un nom pour ce projet.",
+      "cancel": "Annuler",
+      "save": "Enregistrer"
+    },
     "project": {
       "rename": "Renommer",
       "changeFolder": "Changer le dossier du projet…",

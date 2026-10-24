@@ -220,7 +220,10 @@
       "dismiss": "Fermer"
     },
     "cmd": {
+      "renameProject": "Renommer le projet…",
+      "changeProjectFolder": "Changer le dossier du projet…",
       "group": {
+        "project": "Projet",
         "new": "Nouveau",
         "layout": "Disposition",
         "agents": "Agents",

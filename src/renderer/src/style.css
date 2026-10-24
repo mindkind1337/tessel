@@ -13389,3 +13389,28 @@ body:has(.settings-page) > .orca-menu {
 .set-accounts-card .provider-accounts:not(:has(.prov-row)) + .provider-usage-accounts > .prov-row:first-of-type {
   border-top: 0;
 }
+
+/* The Rename project dialog (flat list, where there is no project row). */
+.rnp-input {
+  width: 100%;
+  box-sizing: border-box;
+  margin: 10px 0 0;
+  padding: 6px 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: var(--surface-2);
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+}
+
+.rnp-input:focus {
+  border-color: var(--accent);
+  outline: none;
+}
+
+.rnp-hint {
+  margin: 6px 0 0;
+  color: var(--danger, #e5484d);
+  font-size: 12px;
+}

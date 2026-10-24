@@ -1,7 +1,7 @@
 // Renaming a project and moving its folder (App.vue: renameWorkspace,
 // setWorkspaceFolder). Pure checks, so they are tested without the window.
 import { t } from './i18n'
-import { remotePathError, remoteRootRefusal, isBareHome } from './addProject'
+import { remotePathError, remoteRootRefusal, isBareHome, localRootRefusal, isBareLocalHome, samePath } from './addProject'
 import { INVISIBLE } from '../../shared/liveShareLink'
 
 // A project's name: trimmed, no control characters, at most 80 characters
@@ -39,4 +39,24 @@ export function checkRemoteFolder({ ws, picked, browsed, workspaces = [] }) {
   const other = workspaces.find((w) => w !== ws && w.remote && w.remote.hostId === ws.remote.hostId && same(w.remote.path) === same(path))
   if (other) return { error: t('project.remote.folder.other', 'The project "{{name}}" already uses this folder.', { name: other.name }) }
   return isBareHome(path) ? { path, confirmHome: true } : { path }
+}
+
+// The folder picked for a project on this computer, after main looked at it
+// (addProject:checkFolder: it exists and is a folder). Another project on the
+// same folder, or the same folder again, is refused; the roots and system
+// folders too; a user's whole home folder asks first.
+// checked: { ok, path, real } | { ok: false, error }; home: this account's home.
+// -> { path } | { path, confirmHome: true } | { error, same? }
+export function checkLocalFolder({ ws, checked, workspaces = [], home = '' }) {
+  if (!checked || checked.ok !== true) {
+    return { error: (checked && checked.error) || t('project.error.generic', 'Something went wrong.') }
+  }
+  const path = String(checked.path || '')
+  const refused = localRootRefusal(path) || (checked.real && checked.real !== path ? localRootRefusal(checked.real) : '')
+  if (refused) return { error: refused }
+  const sameFolder = (dir) => !!dir && (samePath(dir, path) || (!!checked.real && samePath(dir, checked.real)))
+  if (sameFolder(ws.cwd)) return { error: t('project.remote.folder.same', 'This project already uses this folder.'), same: true }
+  const other = workspaces.find((w) => w !== ws && !w.remote && w.live !== 'guest' && !w.liveShare && sameFolder(w.cwd))
+  if (other) return { error: t('project.remote.folder.other', 'The project "{{name}}" already uses this folder.', { name: other.name }) }
+  return isBareLocalHome(path, home) ? { path, confirmHome: true } : { path }
 }

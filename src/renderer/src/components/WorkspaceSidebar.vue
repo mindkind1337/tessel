@@ -45,6 +45,7 @@ import OrcaMenu from './OrcaMenu.vue'
 import LsAvatars from './liveshare/LsAvatars.vue'
 import WorktreeCard from './sidebar/WorktreeCard.vue'
 import HiddenWorktreesDialog from './sidebar/HiddenWorktreesDialog.vue'
+import RenameProjectDialog from './sidebar/RenameProjectDialog.vue'
 import { settings } from '../settings'
 import {
   buildSidebarRows,
@@ -443,14 +444,26 @@ const inputEls = {}
 // A Live Share project belongs to its host: guests neither rename it nor move
 // its folder (App.vue refuses too).
 const isGuestProject = (p) => !!p && p.live === 'guest'
+// The flat list has no project row to edit in place: a small dialog instead.
+const renameDialogId = ref(null)
+const renameDialogProject = computed(() => (renameDialogId.value ? props.projects.find((p) => p.id === renameDialogId.value) || null : null))
 function startRename(item) {
   if (isGuestProject(item)) return
+  if (options.value.groupBy === 'none') {
+    renameDialogId.value = item.id
+    return
+  }
   editingId.value = item.id
   draft.value = item.name
   nextTick(() => {
     const el = inputEls[item.id]
     if (el) el.select()
   })
+}
+function saveRenameDialog(name) {
+  const p = renameDialogProject.value
+  renameDialogId.value = null
+  if (p && !isGuestProject(p) && name) emit('rename', p.id, name)
 }
 function commitRename() {
   if (!editingId.value) return
@@ -855,14 +868,12 @@ const optionsMenuItems = computed(() => (optionsOpen.value ? optionsItems() : []
 
 // Rename and the project's folder (local, or on its SSH host); nothing for a
 // Live Share guest.
-// renamable: false where the project's name is not on screen to edit (the flat
-// list has no project rows).
-function projectEditItems(project, { renamable = true } = {}) {
+function projectEditItems(project) {
   if (isGuestProject(project)) return []
   const wsId = project.id
   const folder = project.remote ? project.remote.path : project.cwd
   return [
-    ...(renamable ? [{ type: 'item', icon: Pencil, label: t('sidebar.project.rename', 'Rename'), onSelect: () => startRename(project) }] : []),
+    { type: 'item', icon: Pencil, label: t('sidebar.project.rename', 'Rename'), onSelect: () => startRename(project) },
     {
       type: 'item',
       icon: FolderOpen,
@@ -1011,7 +1022,7 @@ function cardMenuItems(card) {
   // The project's own card: rename it / move its folder from here too.
   const owner = card.isMain ? props.projects.find((p) => p.id === card.projectId) : null
   if (owner && !isGuestProject(owner)) {
-    items.push(...projectEditItems(owner, { renamable: options.value.groupBy !== 'none' }))
+    items.push(...projectEditItems(owner))
     items.push({ type: 'separator' })
   }
   if (card.taskId) {
@@ -1221,9 +1232,15 @@ const railItems = computed(() =>
 )
 
 defineExpose({
+  // The rename dialog, whatever the grouping (the command palette).
+  openRenameDialog: (id) => {
+    const p = props.projects.find((i) => i.id === id)
+    if (p && !isGuestProject(p)) renameDialogId.value = p.id
+  },
   startRename: (id) => {
     const p = props.projects.find((i) => i.id === id)
-    if (p) startRename(p)
+    // A new project in the flat list: no dialog out of nowhere.
+    if (p && options.value.groupBy !== 'none') startRename(p)
   },
   startMessage: (wsId) => {
     if (messagingId.value !== wsId) startMessage(wsId, wsId)
@@ -1655,6 +1672,12 @@ defineExpose({
     />
 
     <Teleport to="body">
+      <RenameProjectDialog
+        v-if="renameDialogProject"
+        :name="renameDialogProject.name"
+        @save="saveRenameDialog"
+        @close="renameDialogId = null"
+      />
       <HiddenWorktreesDialog
         v-if="hiddenDialog"
         :project-name="hiddenDialog.project.name"

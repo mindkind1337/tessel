@@ -372,6 +372,26 @@ export function createAddProject({ spawnFn = spawn, execFileFn = execFile, git =
     return { ok: true, path: target, name }
   }
 
+  // A folder chosen for an existing project: it must exist and be a folder.
+  // -> { ok: true, path, real } | { ok: false, error }
+  async function checkFolder(input = {}) {
+    const path = String(input.path ?? '')
+    if (!path || !isAbsolute(path) || CONTROL.test(path)) return { ok: false, error: t('main.project.scan.absolute', 'Repo path must be an absolute path') }
+    try {
+      const st = await fsp.stat(path)
+      if (!st.isDirectory()) return { ok: false, error: t('main.error.notAFolder', 'This is not a folder.') }
+      let real = path
+      try {
+        real = await fsp.realpath(path)
+      } catch {
+        // the path itself is kept
+      }
+      return { ok: true, path, real }
+    } catch {
+      return { ok: false, error: t('main.error.noProjectFolder', 'The project folder does not exist.') }
+    }
+  }
+
   // -> { ok: true, scan } | { ok: false, error }
   async function scan(input = {}) {
     const path = String(input.path ?? '')
@@ -418,7 +438,7 @@ export function createAddProject({ spawnFn = spawn, execFileFn = execFile, git =
     }
   }
 
-  return { defaults, clone, cloneAbort, create, scan, scanStop, isGitAvailable, isDirectory }
+  return { defaults, clone, cloneAbort, create, scan, scanStop, checkFolder, isGitAvailable, isDirectory }
 }
 
 // IPC: addProject:* (the renderer sends a URL, a name, paths; never argv).
@@ -435,5 +455,6 @@ export function registerAddProject({ ipcMain, service }) {
   ipcMain.handle('addProject:cloneAbort', guard(() => service.cloneAbort()))
   ipcMain.handle('addProject:create', guard((a) => service.create({ parentPath: a.parentPath, name: a.name })))
   ipcMain.handle('addProject:scan', guard((a) => service.scan({ path: a.path, scanId: a.scanId })))
+  ipcMain.handle('addProject:checkFolder', guard((a) => service.checkFolder({ path: a.path })))
   ipcMain.handle('addProject:scanStop', guard((a) => service.scanStop(a.scanId)))
 }

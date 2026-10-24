@@ -109,7 +109,7 @@ import { initRemoteHosts, setRemoteHostHandlers, remoteHostsState, hostShared, r
 import { hostAddress } from './remoteHostDisplay'
 import AddProjectDialog from './components/project/AddProjectDialog.vue'
 import RemoteFolderDialog from './components/project/RemoteFolderDialog.vue'
-import { cleanProjectName, canEditProject, checkRemoteFolder } from './projectFolder'
+import { cleanProjectName, canEditProject, checkRemoteFolder, checkLocalFolder } from './projectFolder'
 import { savedRemote, savedGroup } from './addProject'
 import NotesPanel from './components/NotesPanel.vue'
 import NewTaskDialog from './components/NewTaskDialog.vue'
@@ -3770,6 +3770,14 @@ function buildCommands() {
       hint: t('app.cmd.newBrowserHint', 'A web page next to your terminals (your dev server, docs)')
     })
 
+  // The project on screen (never a Live Share guest's: it is its host's).
+  if (currentWs.value && canEditProject(currentWs.value, (w) => liveShare.isGuestWs(w))) {
+    const wsId = currentWs.value.id
+    const projectGroup = t('app.cmd.group.project', 'Project')
+    add(projectGroup, t('app.cmd.renameProject', 'Rename project…'), () => sidebarEl.value && sidebarEl.value.openRenameDialog(wsId))
+    add(projectGroup, t('app.cmd.changeProjectFolder', 'Change project folder…'), () => setWorkspaceFolder(wsId))
+  }
+
   const layout = t('app.cmd.group.layout', 'Layout')
   add(layout, t('app.cmd.splitRight', 'Split right'), () => splitActive('row'), { shortcut: 'Ctrl+Shift+E' })
   add(layout, t('app.cmd.splitDown', 'Split down'), () => splitActive('col'), { shortcut: 'Ctrl+Shift+O' })
@@ -5914,14 +5922,72 @@ async function setWorkspaceFolder(id) {
     showToast(t('app.folder.restart', 'Restart Tessel to enable project folders.'), { kind: 'error' })
     return
   }
+  // Unsaved edits of this project keep their save path (the old folder): not now.
+  if (projectHasDirtyEditor(ws)) {
+    showToast(t('project.remote.folder.dirty', 'Save or close this project’s unsaved files first: they would no longer be saved after the folder changes.'), { kind: 'error' })
+    return
+  }
   const picked = await window.shellApi.pickFolder({
     title: t('app.folder.pickTitle', 'Project folder for "{{name}}"', { name: ws.name }),
     defaultPath: ws.cwd || undefined
   })
   if (!picked) return
-  ws.cwd = picked
-  if (isDefaultWorkspaceName(ws.name)) ws.name = folderName(picked)
-  showToast(t('app.folder.set', 'New panes in {{name}} will open in {{folder}}', { name: ws.name, folder: picked }))
+  await applyLocalFolder(ws, picked)
+}
+function projectHasDirtyEditor(ws) {
+  const leaves = []
+  forEachLeaf(ws.tree, (l) => leaves.push(l))
+  return dirtyEditorPaths(leaves).length > 0
+}
+// The folder picked for a project on this computer: it must exist and be a
+// folder (main looks), not be a root or system folder, nor another project's
+// (checkLocalFolder). The project stays itself (id, name, panes, tasks,
+// team): its files, changes, git, Live Share root, new panes, agents and the
+// saved layout all follow ws.cwd; panes already open stay where they are.
+async function applyLocalFolder(ws, picked) {
+  let checked
+  try {
+    const api = window.shellApi && window.shellApi.addProject
+    checked = api && api.checkFolder ? await api.checkFolder(picked) : { ok: false, error: t('app.folder.restart', 'Restart Tessel to enable project folders.') }
+  } catch (err) {
+    checked = { ok: false, error: (err && err.message) || '' }
+  }
+  // Closed, removed, shared as a guest's or moved on meanwhile.
+  if (!workspaces.value.includes(ws) || ws.remote || liveShare.isGuestWs(ws)) return false
+  let home = ''
+  try {
+    home = (window.shellApi.homeDir && (await window.shellApi.homeDir())) || ''
+  } catch {
+    home = ''
+  }
+  const verdict = checkLocalFolder({ ws, checked, workspaces: workspaces.value, home })
+  if (verdict.error) {
+    showToast(verdict.error, { kind: verdict.same ? 'info' : 'error' })
+    return false
+  }
+  if (verdict.confirmHome) {
+    const ok = await askConfirm({
+      title: t('project.remote.folder.homeTitle', 'Use the whole home folder?'),
+      text: t('project.remote.folder.homeText', '{{path}} holds all of that user’s files. Its files, changes and agents would work on all of it. Choose a project folder inside it if you can.', { path: verdict.path }),
+      confirmLabel: t('project.remote.folder.homeOk', 'Use this folder')
+    })
+    if (ok !== true || !workspaces.value.includes(ws) || ws.remote || liveShare.isGuestWs(ws)) return false
+  }
+  // Edits opened while the dialog was up.
+  if (projectHasDirtyEditor(ws)) {
+    showToast(t('project.remote.folder.dirty', 'Save or close this project’s unsaved files first: they would no longer be saved after the folder changes.'), { kind: 'error' })
+    return false
+  }
+  const old = ws.cwd
+  ws.cwd = verdict.path
+  if (isDefaultWorkspaceName(ws.name)) ws.name = folderName(verdict.path)
+  // The old folder's worktrees and branch are not shown for the project any more.
+  if (old && old !== ws.cwd && !workspaces.value.some((w) => w.cwd === old)) {
+    delete wsWorktrees[old]
+    delete wsBranches[old]
+  }
+  showToast(t('app.folder.set', 'New panes in {{name}} will open in {{folder}}', { name: ws.name, folder: verdict.path }))
+  return true
 }
 
 // The folder dialog of a remote project (RemoteFolderDialog.vue): the folder

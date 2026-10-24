@@ -71,6 +71,7 @@ const api = {
     },
     create: (parentPath, name) => ipcRenderer.invoke('addProject:create', { parentPath, name }),
     scan: (path, scanId) => ipcRenderer.invoke('addProject:scan', { path, scanId }),
+    checkFolder: (path) => ipcRenderer.invoke('addProject:checkFolder', { path }),
     scanStop: (scanId) => ipcRenderer.invoke('addProject:scanStop', { scanId }),
     onScanProgress: (cb) => {
       const handler = (_e, payload) => cb(payload)
