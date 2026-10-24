@@ -12,6 +12,7 @@ import { join } from 'path'
 import { beginLayoutDrag, frameFollower, layoutDragging, _resetLayoutDragForTests } from '../layoutDrag'
 import WorkspaceSidebar from '../components/WorkspaceSidebar.vue'
 import { resetSettings } from '../settings'
+import { RESIZE_COLLAPSE_BELOW, RESIZE_DOUBLE_CLICK_MS } from '../layoutLimits'
 
 // Animation frames run by hand.
 let frames = []
@@ -110,6 +111,10 @@ describe('the right panel’s edge (App.vue startTaskResize)', () => {
       taskPanelWidth: { value: 330 },
       taskResizing: { value: false },
       TASK_PANEL_DEFAULT: 330,
+      RESIZE_COLLAPSE_BELOW,
+      RESIZE_DOUBLE_CLICK_MS,
+      taskPanelOpen: { value: true },
+      taskPanelShown: { value: 330 },
       clampTaskPanel: (w) => Math.round(Math.min(1200, Math.max(260, w))),
       trackPointerDrag: (_e, handlers) => (drag = handlers),
       beginLayoutDrag,
@@ -121,14 +126,18 @@ describe('the right panel’s edge (App.vue startTaskResize)', () => {
       Event
     }
     vm.createContext(ctx)
-    vm.runInContext(slice('let taskResizeLastDown = 0', '// Live list of agent panes') + '\nthis.startTaskResize = startTaskResize', ctx)
+    vm.runInContext(slice('let taskResizeLastDown = 0', '// Looked up through an index') + '\nthis.startTaskResize = startTaskResize', ctx)
+    // The handle sits in a slot beside the panel (outside its clip).
     const aside = document.createElement('aside')
     aside.getBoundingClientRect = () => ({ right: 1900 })
+    const slot = document.createElement('div')
     const handle = document.createElement('div')
+    slot.append(handle)
     const content = document.createElement('div')
     content.className = 'side-panel'
     content.getBoundingClientRect = () => ({ width: 329 })
-    aside.append(handle, content)
+    aside.append(content)
+    document.body.append(slot, aside)
     ctx.startTaskResize({ button: 0, preventDefault() {}, currentTarget: handle })
     return { ctx, aside, content, drag: () => drag }
   }
@@ -160,6 +169,36 @@ describe('the right panel’s edge (App.vue startTaskResize)', () => {
     await nextTick()
     expect(layoutDragging()).toBe(false)
     expect(layoutEvents).toBe(1)
+  })
+
+  it('closes when dragged shut like the sidebar collapses, keeping its width; a second press resets it', async () => {
+    const { ctx, aside, drag } = load()
+    drag().onMove({ clientX: 1900 - RESIZE_COLLAPSE_BELOW + 5 })
+    runFrame()
+    drag().onEnd()
+    expect(ctx.taskPanelOpen.value).toBe(false)
+    expect(ctx.taskPanelWidth.value).toBe(330)
+    expect(aside.style.flexBasis).toBe('330px')
+    await nextTick()
+    expect(layoutEvents).toBe(1)
+    // Dragged back out before it is let go: it stays open.
+    const again = load()
+    again.drag().onMove({ clientX: 1900 - 50 })
+    again.drag().onMove({ clientX: 1500 })
+    again.drag().onEnd()
+    expect(again.ctx.taskPanelOpen.value).toBe(true)
+    expect(again.ctx.taskPanelWidth.value).toBe(400)
+  })
+
+  it('has the sidebar’s handle: 12 px straddling the border, beside the panel, same shared limits', () => {
+    const css = fs.readFileSync(join(process.cwd(), 'src/renderer/src/style.css'), 'utf8')
+    expect(css).toMatch(/\.task-resize \{[^}]*left: -6px;[^}]*width: 12px;[^}]*cursor: col-resize/)
+    expect(css).toMatch(/\.task-panel\.resizing \{\s*transition: none;/)
+    expect(source).toContain('class="task-resize-slot"')
+    expect(source).toContain('RESIZE_COLLAPSE_BELOW')
+    const sidebar = fs.readFileSync(join(process.cwd(), 'src/renderer/src/components/WorkspaceSidebar.vue'), 'utf8')
+    expect(sidebar).toContain('RESIZE_COLLAPSE_BELOW')
+    expect(sidebar).toContain('RESIZE_DOUBLE_CLICK_MS')
   })
 
   it('keeps one style object for the panel until its width changes (a re-render never puts the old width back mid-drag)', () => {

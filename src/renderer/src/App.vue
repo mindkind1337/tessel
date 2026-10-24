@@ -1,5 +1,5 @@
 <script setup>
-import { sidebarMaxWidth } from './layoutLimits'
+import { sidebarMaxWidth, RESIZE_COLLAPSE_BELOW, RESIZE_DOUBLE_CLICK_MS } from './layoutLimits'
 import { beginLayoutDrag, frameFollower } from './layoutDrag'
 import { ensureAgentNames, renameAgentName, resolveAgentAddress, agentProgramLabel } from '../../shared/agentNames'
 import { ref, shallowRef, reactive, provide, watch, computed, nextTick, onMounted, onBeforeUnmount, toRaw } from 'vue'
@@ -2938,19 +2938,22 @@ function startTaskResize(e) {
   if (e.button !== 0) return
   e.preventDefault()
   const now = Date.now()
-  if (now - taskResizeLastDown < 400) {
+  if (now - taskResizeLastDown < RESIZE_DOUBLE_CLICK_MS) {
     taskResizeLastDown = 0
     taskPanelWidth.value = TASK_PANEL_DEFAULT
     window.dispatchEvent(new Event('terminal-layout-change'))
     return
   }
   taskResizeLastDown = now
-  const aside = e.currentTarget.parentElement
+  // The handle sits beside the panel (outside its clip, like the sidebar's).
+  const aside = e.currentTarget.parentElement.nextElementSibling
   const right = aside.getBoundingClientRect().right
   taskResizing.value = true
+  let wantsClose = false
   // The panel follows the pointer through its own style, once a frame; its
   // width (which redraws Tessel's whole window) is set when it is let go,
-  // and the terminals fit their new size then (layoutDrag.js). Setting it
+  // and the terminals fit their new size then (layoutDrag.js), exactly like
+  // the sidebar's edge (WorkspaceSidebar.vue). Setting it
   // on every pointer move (up to 250 a second) redrew the window each time,
   // and the page beside it lagged behind; a page follows by its own
   // ResizeObserver (BrowserPane.vue).
@@ -2966,14 +2969,23 @@ function startTaskResize(e) {
     content.style.width = `${contentWidth}px`
     content.style.alignSelf = 'flex-end'
   }
-  const move = (ev) => follow.set(clampTaskPanel(right - ev.clientX))
+  const move = (ev) => {
+    const raw = right - ev.clientX
+    // Dragged this far shut, it closes when let go (the sidebar collapses).
+    wantsClose = raw < RESIZE_COLLAPSE_BELOW
+    follow.set(clampTaskPanel(raw))
+  }
   const up = () => {
     const width = follow.finish()
     if (contentWidth > 0) {
       content.style.width = ''
       content.style.alignSelf = ''
     }
-    if (width != null) taskPanelWidth.value = width
+    // Closed, it keeps the width it had; else the new one is set once.
+    if (wantsClose) {
+      aside.style.flexBasis = `${taskPanelShown.value}px`
+      taskPanelOpen.value = false
+    } else if (width != null) taskPanelWidth.value = width
     taskResizing.value = false
     nextTick(endDrag)
   }
@@ -13944,6 +13956,15 @@ onBeforeUnmount(() => {
         </div>
         <FloatingTerminal :ctl="floating" @restore-focus="focusActiveInput" />
       </div>
+      <div v-if="taskPanelOpen && !sideFullscreen" class="task-resize-slot" :class="{ resizing: taskResizing }">
+        <div
+          class="task-resize"
+          :title="t('app.main.resizeHint', 'Drag to resize. Double-click to reset.')"
+          @pointerdown="startTaskResize"
+        >
+          <div class="task-resize-line"></div>
+        </div>
+      </div>
       <aside
         v-if="taskPanelOpen"
         class="task-panel"
@@ -13955,11 +13976,6 @@ onBeforeUnmount(() => {
         }"
         :style="taskPanelStyle"
       >
-        <div
-          class="task-resize"
-          :title="t('app.main.resizeHint', 'Drag to resize. Double-click to reset.')"
-          @pointerdown="startTaskResize"
-        ></div>
         <SidePanel
           ref="sidePanelRef"
           v-model:tab="sideTab"
