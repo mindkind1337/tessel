@@ -74,6 +74,24 @@ const ticked = ref(new Set())
 const rights = ref(cleanRights(null))
 const codeChecked = ref(false)
 const trust = ref(false)
+// "Trust next time" waits for the code check: a click on it while it waits
+// takes you to that check and makes it blink, so it is clear what to do.
+const codeBoxEl = ref(null)
+const nudged = ref(false)
+let nudgeTimer = 0
+function nudgeCode() {
+  if (codeChecked.value) return
+  const box = codeBoxEl.value
+  if (box) {
+    if (typeof box.scrollIntoView === 'function') box.scrollIntoView({ block: 'nearest' })
+    const input = box.querySelector('input')
+    if (input) input.focus()
+  }
+  nudged.value = true
+  clearTimeout(nudgeTimer)
+  nudgeTimer = setTimeout(() => (nudged.value = false), 1400)
+}
+onUnmounted(() => clearTimeout(nudgeTimer))
 const offered = () => {
   const offer = props.ask && props.ask.offer
   return offer ? new Set((offer.projects || []).filter((id) => props.projects.some((p) => p.id === id))) : new Set(props.projects.map((p) => p.id))
@@ -230,7 +248,7 @@ function trapTab(event) {
           <p v-if="viaText" class="ls-ask-p ls-ask-via" data-test="ls-ask-invite">{{ viaText }}</p>
 
           <!-- The verification code: checked with them before anything else. -->
-          <div v-if="ask.code" class="set-callout info ls-ask-code-box" data-test="ls-ask-code">
+          <div v-if="ask.code" ref="codeBoxEl" class="set-callout info ls-ask-code-box" :class="{ nudge: nudged }" data-test="ls-ask-code">
             <ShieldCheck :size="16" aria-hidden="true" />
             <div class="set-callout-text">
               <div class="ls-ask-code-line">
@@ -271,11 +289,11 @@ function trapTab(event) {
           </div>
 
           <div v-if="canTrust" class="ls-ask-section ls-ask-trust" data-test="ls-ask-trust">
-            <label class="ls-ask-check" :class="{ disabled: !codeChecked }" data-test="ls-ask-trust-box">
+            <label class="ls-ask-check" :class="{ disabled: !codeChecked }" data-test="ls-ask-trust-box" @click="nudgeCode">
               <input v-model="trust" type="checkbox" :disabled="!codeChecked" />
               <span class="ls-ask-check-text">
                 <span>{{ t('liveShare.ask.trust2', 'Trust next time: they get in without asking, with these projects and rights') }}</span>
-                <span v-if="!codeChecked" class="ls-ask-dim ls-ask-small" data-test="ls-ask-trust-why">{{ t('liveShare.ask.trustNeedsCode', 'Check the verification code first.') }}</span>
+                <span v-if="!codeChecked" class="ls-ask-need ls-ask-small" data-test="ls-ask-trust-why">{{ t('liveShare.ask.trustNeedsCode', 'Tick “I checked it with them” above first.') }}</span>
               </span>
             </label>
           </div>
@@ -414,7 +432,28 @@ function trapTab(event) {
   overflow-wrap: anywhere;
 }
 .ls-ask-check.disabled {
-  cursor: default;
+  cursor: pointer;
+}
+.ls-ask-need {
+  color: var(--warn, #e0a94b);
+}
+.ls-ask-code-box.nudge {
+  animation: ls-ask-nudge 0.35s ease-in-out 3;
+}
+@keyframes ls-ask-nudge {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 transparent;
+  }
+  50% {
+    box-shadow: 0 0 0 3px var(--warn, #e0a94b);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ls-ask-code-box.nudge {
+    animation: none;
+    box-shadow: 0 0 0 3px var(--warn, #e0a94b);
+  }
 }
 .ls-ask-check.disabled > .ls-ask-check-text > span:first-child {
   color: var(--text-dim);

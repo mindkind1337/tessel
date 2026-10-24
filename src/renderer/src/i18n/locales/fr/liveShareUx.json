@@ -10,7 +10,7 @@
       "codeChecked2": "Je l’ai vérifié avec cette personne : c’est le même",
       "typeWarning": "Cette personne peut taper : elle peut lancer n’importe quelle commande sur ce PC en votre nom. À réserver à quelqu’un de confiance.",
       "trust2": "Faire confiance la prochaine fois : cette personne entre sans demander, avec ces projets et ces droits",
-      "trustNeedsCode": "Vérifiez d’abord le code de vérification."
+      "trustNeedsCode": "Cochez d’abord « J’ai vérifié avec cette personne » plus haut."
     },
     "pill": {
       "retryIn": "Nouvel essai dans {{count}} s",

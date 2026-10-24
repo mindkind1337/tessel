@@ -78,12 +78,23 @@ describe('LiveShareAsk: someone asks to join', () => {
     expect(boxes(w, 'ls-right-')).toEqual([false, false, false, false, false, false, false, false])
   })
 
+  it('a click on the waiting Trust box takes you to the code check and makes it blink', async () => {
+    const w = mount(LiveShareAsk, { props: { ask: bob, projects: PROJECTS }, attachTo: document.body })
+    await flushPromises()
+    expect(w.find('[data-test="ls-ask-code"]').classes()).not.toContain('nudge')
+    await w.find('[data-test="ls-ask-trust-box"]').trigger('click')
+    expect(w.find('[data-test="ls-ask-code"]').classes()).toContain('nudge')
+    expect(document.activeElement).toBe(w.find('[data-test="ls-ask-code-checked"] input').element)
+    expect(w.find('[data-test="ls-ask-trust-box"] input').element.checked).toBe(false)
+    w.unmount()
+  })
+
   it('Trust next time: only once the code was checked, and only for a Tessel that can be trusted', async () => {
     const w = mount(LiveShareAsk, { props: { ask: bob, projects: PROJECTS } })
     expect(w.find('[data-test="ls-ask-trust"]').exists()).toBe(true)
     // Shown, but waiting for the code check (and it says so).
     expect(w.find('[data-test="ls-ask-trust-box"] input').element.disabled).toBe(true)
-    expect(w.find('[data-test="ls-ask-trust-why"]').text()).toBe('Check the verification code first.')
+    expect(w.find('[data-test="ls-ask-trust-why"]').text()).toBe('Tick “I checked it with them” above first.')
     await w.find('[data-test="ls-ask-code-checked"] input').setValue(true)
     expect(w.find('[data-test="ls-ask-trust-box"] input').element.disabled).toBe(false)
     expect(w.find('[data-test="ls-ask-trust-why"]').exists()).toBe(false)
