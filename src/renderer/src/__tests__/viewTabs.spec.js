@@ -10,6 +10,7 @@ import vm from 'vm'
 import { join } from 'path'
 import { computed, nextTick, reactive, ref, watch } from 'vue'
 import * as paneViews from '../paneViews'
+import * as paneGrid from '../paneGrid'
 import { openTab, samePath } from '../editor/editorTabs'
 import { fileKind } from '../../../shared/fileKinds'
 import { allowedBrowserUrl, BLANK_URL } from '../../../shared/browserUrl'
@@ -37,6 +38,7 @@ function load({ tree, activeId, cwd = 'C:\\p' } = {}) {
   let n = 0
   const ctx = {
     ...paneViews,
+    ...paneGrid,
     computed,
     reactive,
     watch,
@@ -92,7 +94,7 @@ function load({ tree, activeId, cwd = 'C:\\p' } = {}) {
       slice('// --- Tabs above the panes (paneViews.js, ViewTabs.vue)', 'const initError') +
       slice('let revealSeq = 0', '// An agent pane: a terminal agent') +
       slice('// Panes without a terminal: an editor, a browser page, a chat agent.', '// A page in the system browser') +
-      slice('async function splitLeaf(', '// Settings > Git and > General') +
+      slice('// --- Auto-tile (paneGrid.js)', '// Settings > Git and > General') +
       slice('function closeLeaf(leafId, opts = {})', '// Arrange the workspace as an even grid') +
       fnSource('function showActive(ws, id) {') +
       fnSource('function focusPane(paneId) {') +

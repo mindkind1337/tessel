@@ -39,6 +39,8 @@ export const DEFAULT_SETTINGS = Object.freeze({
   // A short sound with each new notification: 'none' | 'chime' | 'ping'.
   alertSound: 'none',
   confirmCloseAgent: true,
+  // A new pane re-tiles the project's panes as an equal grid (paneGrid.js).
+  tileNewPanes: true,
   // Closing Tessel's window quits it and stops every agent and terminal:
   // asked first while some run (quitConfirm.js).
   confirmQuitRunning: true,

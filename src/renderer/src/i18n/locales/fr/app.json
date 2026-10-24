@@ -242,6 +242,8 @@
       "newWorkspace": "Nouvel espace de travail",
       "splitRight": "Scinder vers la droite",
       "splitDown": "Scinder vers le bas",
+      "arrangeGrid": "Organiser les panneaux en grille",
+      "arrangeGridHint": "Panneaux de taille égale, aussi carrés que la place le permet ; les nouveaux panneaux s'y rangent aussi",
       "evenGrid": "Grille régulière {{grid}}",
       "maximize": "Agrandir ou restaurer le panneau actif",
       "resetTerminal": "Réinitialiser le terminal actif",
