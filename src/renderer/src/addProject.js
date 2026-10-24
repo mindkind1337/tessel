@@ -204,12 +204,14 @@ export const isBareHome = (path) => /^\/(home|Users)\/[^/]+\/?$/.test(String(pat
 // filesystem root, the system folders and the folder that holds every user's
 // home (C:\Windows, C:\Program Files, C:\Users, /etc, /usr, /home...).
 // -> '' when fine, else the reason.
-const LOCAL_SYSTEM_DIRS = ['/', '/root', '/var', '/tmp', '/run', '/srv', '/opt', '/home', '/Users', '/Applications', '/System', '/Library', '/Volumes', '/private', '/mnt', '/media']
-const LOCAL_SYSTEM_TREES = /^\/(etc|proc|sys|dev|boot|usr|bin|lib|lib32|lib64|sbin)(\/|$)/
+const LOCAL_SYSTEM_DIRS = ['/', '/root', '/var', '/tmp', '/run', '/srv', '/opt', '/home', '/users', '/applications', '/system', '/library', '/volumes', '/private', '/mnt', '/media']
+const LOCAL_SYSTEM_TREES = /^\/(etc|proc|sys|dev|boot|usr|bin|lib|lib32|lib64|sbin)(\/|$)/i
 const WIN_SYSTEM_DIR = /^[a-z]:\\(windows|program files|program files \(x86\)|programdata|users|\$recycle\.bin|system volume information|recovery|perflogs)$/i
 export function localRootRefusal(path) {
   const raw = String(path || '').trim()
   const refused = t('project.remote.rootRefused', 'This folder is too broad or belongs to the system: choose a project folder inside it.')
+  // The device and long-path forms (backslash-backslash-? and -.) are never a project folder.
+  if (/^[\\/]{2}[?.][\\/]/.test(raw)) return refused
   if (/^[a-z]:[\\/]*$/i.test(raw)) return refused
   if (/^[a-z]:[\\/]/i.test(raw)) {
     const p = raw.replace(/\//g, '\\').replace(/\\+$/, '')
@@ -221,13 +223,14 @@ export function localRootRefusal(path) {
   }
   if (!raw.startsWith('/')) return ''
   const p = raw.replace(/\/+$/, '') || '/'
-  return LOCAL_SYSTEM_DIRS.includes(p) || LOCAL_SYSTEM_TREES.test(p) ? refused : ''
+  // (Case-insensitive: macOS and Windows volumes match /ETC and /users too.)
+  return LOCAL_SYSTEM_DIRS.includes(p.toLowerCase()) || LOCAL_SYSTEM_TREES.test(p) ? refused : ''
 }
 // The folder of one user (C:\Users\me, /home/me, /Users/me, or the home folder
 // of this account): allowed, after a confirmation.
 export function isBareLocalHome(path, home = '') {
   const p = String(path || '').trim().replace(/[\\/]+$/, '')
-  if (/^[a-z]:[\\/]users[\\/][^\\/]+$/i.test(p) || /^\/(home|Users)\/[^/]+$/.test(p)) return true
+  if (/^[a-z]:[\\/]users[\\/][^\\/]+$/i.test(p) || /^\/(home|users)\/[^/]+$/i.test(p)) return true
   const h = String(home || '').replace(/[\\/]+$/, '')
   return !!h && samePath(p, h)
 }

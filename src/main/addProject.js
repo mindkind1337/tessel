@@ -376,7 +376,7 @@ export function createAddProject({ spawnFn = spawn, execFileFn = execFile, git =
   // -> { ok: true, path, real } | { ok: false, error }
   async function checkFolder(input = {}) {
     const path = String(input.path ?? '')
-    if (!path || !isAbsolute(path) || CONTROL.test(path)) return { ok: false, error: t('main.project.scan.absolute', 'Repo path must be an absolute path') }
+    if (!path || path.length > 1024 || !isAbsolute(path) || CONTROL.test(path)) return { ok: false, error: t('main.project.scan.absolute', 'Repo path must be an absolute path') }
     try {
       const st = await fsp.stat(path)
       if (!st.isDirectory()) return { ok: false, error: t('main.error.notAFolder', 'This is not a folder.') }

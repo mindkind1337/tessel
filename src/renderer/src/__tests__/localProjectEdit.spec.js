@@ -149,7 +149,7 @@ describe('the rename dialog', () => {
 
 describe('a folder on this computer', () => {
   it('refuses drive roots, system folders and the folder of all homes', () => {
-    for (const p of ['C:\\', 'C:/', 'D:/', 'C:\\Windows', 'c:\\windows\\system32', 'C:\\Program Files', 'C:\\Program Files (x86)', 'C:\\Users', 'C:\\ProgramData', '\\\\server', '/', '/etc', '/etc/ssh', '/usr', '/usr/lib', '/home', '/Users', '/bin']) {
+    for (const p of ['C:\\', 'C:/', 'D:/', 'C:\\Windows', 'c:\\windows\\system32', 'C:\\Program Files', 'C:\\Program Files (x86)', 'C:\\Users', 'C:\\ProgramData', '\\\\server', '/', '/etc', '/etc/ssh', '/usr', '/usr/lib', '/home', '/Users', '/bin', '/ETC', '/users', '/Library', '\\\\?\\C:\\Windows', '\\\\.\\C:\\', '//?/C:/Windows']) {
       expect(localRootRefusal(p), p).toBeTruthy()
     }
     for (const p of ['C:\\code\\api', '\\\\server\\share', '/home/me/api', '/srv/app', '/opt/app', 'C:\\Program Files\\App', 'C:\\Users\\me\\code']) {
@@ -162,6 +162,11 @@ describe('a folder on this computer', () => {
     expect(isBareLocalHome('/Users/me')).toBe(true)
     expect(isBareLocalHome('E:\\Profiles\\me', 'E:\\profiles\\me\\')).toBe(true)
     expect(isBareLocalHome('C:\\Users\\me\\code')).toBe(false)
+  })
+
+  it('a link to the home folder asks first, like the home folder itself', () => {
+    const checked = { ok: true, path: 'D:\\x', real: 'C:\\Users\\me' }
+    expect(checkLocalFolder({ ws: { id: 'a', name: 'api', cwd: 'C:\\code\\api' }, checked, workspaces: [], home: '' })).toEqual({ path: 'D:\\x', confirmHome: true })
   })
 
   const ws = { id: 'a', name: 'api', cwd: 'C:\\code\\api' }

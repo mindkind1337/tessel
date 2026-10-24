@@ -58,5 +58,5 @@ export function checkLocalFolder({ ws, checked, workspaces = [], home = '' }) {
   if (sameFolder(ws.cwd)) return { error: t('project.remote.folder.same', 'This project already uses this folder.'), same: true }
   const other = workspaces.find((w) => w !== ws && !w.remote && w.live !== 'guest' && !w.liveShare && sameFolder(w.cwd))
   if (other) return { error: t('project.remote.folder.other', 'The project "{{name}}" already uses this folder.', { name: other.name }) }
-  return isBareLocalHome(path, home) ? { path, confirmHome: true } : { path }
+  return isBareLocalHome(path, home) || (checked.real && isBareLocalHome(checked.real, home)) ? { path, confirmHome: true } : { path }
 }
