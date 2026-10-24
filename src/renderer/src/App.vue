@@ -5926,6 +5926,13 @@ async function chooseRemoteFolder(picked) {
   const state = remoteFolder.value
   const ws = remoteFolderWs.value
   if (!state || !ws || !ws.remote || state.busy) return
+  // Unsaved edits of this project keep their save path (the old folder): not now.
+  const leaves = []
+  forEachLeaf(ws.tree, (l) => leaves.push(l))
+  if (dirtyEditorPaths(leaves).length) {
+    state.error = t('project.remote.folder.dirty', 'Save or close this project’s unsaved files first: they would no longer be saved after the folder changes.')
+    return
+  }
   state.busy = true
   state.error = ''
   const hostId = ws.remote.hostId
@@ -5943,6 +5950,19 @@ async function chooseRemoteFolder(picked) {
     state.busy = false
     state.error = checked.error
     return
+  }
+  // The folder of one user (/home/me): asked first.
+  if (checked.confirmHome) {
+    const ok = await askConfirm({
+      title: t('project.remote.folder.homeTitle', 'Use the whole home folder?'),
+      text: t('project.remote.folder.homeText', '{{path}} holds all of that user’s files. Its files, changes and agents would work on all of it. Choose a project folder inside it if you can.', { path: checked.path }),
+      confirmLabel: t('project.remote.folder.homeOk', 'Use this folder')
+    })
+    if (remoteFolder.value !== state || !workspaces.value.includes(ws) || !ws.remote) return
+    if (ok !== true) {
+      state.busy = false
+      return
+    }
   }
   if (!applyRemoteFolder(ws, checked.path)) {
     state.busy = false
@@ -10897,7 +10917,8 @@ const orchestrator = createOrchestrator({
 function automationWorkspace(a) {
   const ws = wsById(a.wsId)
   if (!ws) return null
-  if (a.remote) return ws.remote && ws.remote.hostId === a.remote.hostId && ws.remote.path === a.remote.path ? ws : null
+  // By id first: the project's folder on the host may have been changed since.
+  if (a.remote) return ws.remote && ws.remote.hostId === a.remote.hostId ? ws : null
   return !ws.remote && ws.cwd && samePath(ws.cwd, a.projectCwd) ? ws : null
 }
 function automationAgent(id) {

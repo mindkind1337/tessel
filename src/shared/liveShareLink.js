@@ -27,7 +27,7 @@ import { localOnlyHost } from './livePageUrl.js'
 export const LINK_LIMITS = Object.freeze({ url: 2000, title: 200 })
 
 /* eslint-disable no-control-regex */
-const INVISIBLE = /[\u0000-\u001f\u007f-\u009f\u00ad\u200b-\u200f\u2028-\u202e\u2060-\u2069\ufeff]/g
+export const INVISIBLE = /[\u0000-\u001f\u007f-\u009f\u00ad\u200b-\u200f\u2028-\u202e\u2060-\u2069\ufeff]/g
 /* eslint-enable no-control-regex */
 
 // A parameter (of the query or a fragment) whose name says it is a secret:

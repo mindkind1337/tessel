@@ -135,6 +135,7 @@ import { cleanRoots } from './liveShare/shareChat.js'
 import { createGuestFs } from './liveShare/guestFs.js'
 import { TASK_OPS, taskArgs, guestTasks, checkTasks, isTaskId } from './liveShare/shareTasks.js'
 import { PANEL_OPS, HISTORY_LIMITS, guestPanes, createAgentsFeed, guestChildren, checkPanes, checkChildren, hostHistory, guestHistory, checkHistory, needsFigures, checkUsage, hostTaskCopies, checkReviewInfo, checkReviewDiff } from './liveShare/sharePanels.js'
+import { INVISIBLE } from '../shared/liveShareLink'
 import { parseLsharePath, lshareRoot, lsharePath, cleanRel } from '../shared/liveSharePath'
 import { createShareHistory, HISTORY_OPS, listArgs, isRef, checkSessionList, checkSessionDetails, checkTerminal } from './liveShare/shareHistory.js'
 import { guestActivity, checkActivity, mapActivityTexts } from './liveShare/shareActivity.js'
@@ -278,7 +279,8 @@ export function cleanLayout(layout) {
   const walk = (n) => (n.type === 'leaf' ? ids.add(n.id) : n.children.forEach(walk))
   if (tree) walk(tree)
   return {
-    project: str(layout.project) || null,
+    // The host's name for the project: no bidi override or invisible character reaches a guest.
+    project: str(typeof layout.project === 'string' ? layout.project.replace(INVISIBLE, ' ').replace(/\s+/g, ' ').trim() : '') || null,
     tree,
     activeId: ids.has(layout.activeId) ? layout.activeId : null,
     maximizedId: ids.has(layout.maximizedId) ? layout.maximizedId : null,

@@ -106,13 +106,18 @@
       "connect": "Connecter",
       "folder": {
         "title": "Dossier du projet sur {{host}}",
-        "description": "Les nouveaux volets de « {{name}} » démarrent dans le dossier choisi. Les volets déjà ouverts restent où ils sont.",
+        "description": "Les nouveaux volets de « {{name}} » démarrent dans le dossier choisi. Les volets déjà ouverts restent où ils sont, et les fichiers ouverts dans l'ancien dossier ne seront plus enregistrés ni listés.",
         "checking": "Vérification du dossier sur l'hôte…",
         "same": "Ce projet utilise déjà ce dossier.",
         "other": "Le projet « {{name}} » utilise déjà ce dossier.",
         "guest": "Un projet Live Share appartient à son hôte : lui seul peut le modifier.",
-        "hostGone": "Cet hôte distant n'est plus enregistré dans Tessel."
-      }
+        "hostGone": "Cet hôte distant n'est plus enregistré dans Tessel.",
+        "dirty": "Enregistrez ou fermez d'abord les fichiers non enregistrés de ce projet : ils ne pourraient plus l'être une fois le dossier changé.",
+        "homeTitle": "Utiliser tout le dossier personnel ?",
+        "homeText": "{{path}} contient tous les fichiers de cet utilisateur. Ses fichiers, modifications et agents travailleraient sur l'ensemble. Choisissez plutôt un dossier de projet à l'intérieur si possible.",
+        "homeOk": "Utiliser ce dossier"
+      },
+      "rootRefused": "Ce dossier est trop large ou appartient au système : choisissez un dossier de projet à l'intérieur."
     },
     "nested": {
       "title": "Importer des dépôts depuis un dossier",

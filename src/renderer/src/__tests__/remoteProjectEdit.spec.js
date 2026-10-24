@@ -12,6 +12,8 @@ import { resetSettings } from '../settings'
 import { setUiLanguage, t } from '../i18n'
 import { _resetFeedsForTest } from '../agentChildrenFeed'
 import { cleanProjectName, canEditProject, checkRemoteFolder } from '../projectFolder'
+import { remoteRootRefusal } from '../addProject'
+import { hostLayoutFromWorkspace, hostChatsFromWorkspace } from '../liveShareLayout'
 
 const NOW = 1_000_000_000
 const project = (extra = {}) => ({
@@ -116,7 +118,7 @@ describe('the checks', () => {
   })
 
   it('refuses bad typed paths, odd answers, the same folder and another project’s folder', () => {
-    const bad = (picked, browsed) => checkRemoteFolder({ ws, picked, browsed: browsed || { ok: true, path: '/ok' }, workspaces: [ws, other] })
+    const bad = (picked, browsed) => checkRemoteFolder({ ws, picked, browsed: browsed || { ok: true, path: '/srv/ok' }, workspaces: [ws, other] })
     expect(bad('relative/dir').error).toBeTruthy()
     expect(bad('/a\u0007b').error).toBeTruthy()
     expect(bad('C:\\dir').error).toBeTruthy()
@@ -126,12 +128,57 @@ describe('the checks', () => {
     expect(bad('/a', { ok: true, path: '/srv/web' }).error).toContain('web')
   })
 
+  it('refuses the host’s root, system folders and one-part folders; the home folder asks first', () => {
+    const at = (p) => checkRemoteFolder({ ws, picked: p, browsed: { ok: true, path: p }, workspaces: [ws] })
+    for (const p of ['/', '/etc', '/root', '/proc', '/sys', '/dev', '/boot', '/var', '/usr', '/bin', '/lib', '/sbin', '/home', '/opt', '//']) {
+      expect(at(p).error, p).toBeTruthy()
+      expect(at(p).path, p).toBeUndefined()
+    }
+    expect(at('/home/me')).toEqual({ path: '/home/me', confirmHome: true })
+    expect(at('/home/me/fx')).toEqual({ path: '/home/me/fx' })
+    expect(at('/var/www')).toEqual({ path: '/var/www' })
+    // Add a project shares the check
+    expect(remoteRootRefusal('/')).toBeTruthy()
+    expect(remoteRootRefusal('~')).toBe('')
+    expect(remoteRootRefusal('/srv/app')).toBe('')
+    expect(readFileSync(resolve(__dirname, '../components/project/AddProjectDialog.vue'), 'utf8')).toContain('remotePathError(path) || remoteRootRefusal(path)')
+  })
+
+  it('no SSH chat root is made from a project whose folder is /', () => {
+    const tree = { type: 'leaf', id: 'pane-1', kind: 'agent', agentId: 'claude', sessionId: 's1', remoteHostId: 'ssh-box', cwd: 'ssh://ssh-box/etc' }
+    const mk = (path) => ({ id: 'w', name: 'x', activeId: 'pane-1', tree, remote: { hostId: 'ssh-box', path } })
+    expect(hostChatsFromWorkspace(mk('/'))[0].roots).toEqual([])
+    expect(hostChatsFromWorkspace(mk('/srv/app'))[0].roots).toEqual(['/srv/app'])
+  })
+
+  it('a name loses bidi overrides, zero-width and separator characters, here and in main’s layout', async () => {
+    const dirty = 'a‮b⁦c​d ef­g﻿h'
+    expect(cleanProjectName(dirty)).toBe('a b c d e f g h')
+    const { cleanLayout } = await import('../../../main/liveShare.js')
+    expect(cleanLayout({ project: dirty, tree: { type: 'leaf', id: 'p1' } }).project).toBe('a b c d e f g h')
+    expect(hostLayoutFromWorkspace({ name: 'x', tree: null }).project).toBe('x')
+  })
+
+  it('unsaved files block the folder switch, and the dialog says what happens to open files', () => {
+    expect(src).toContain('if (dirtyEditorPaths(leaves).length) {')
+    expect(src.indexOf("project.remote.folder.dirty")).toBeLessThan(src.indexOf('state.busy = true', src.indexOf('async function chooseRemoteFolder')))
+    expect(readFileSync(resolve(__dirname, '../components/project/RemoteFolderDialog.vue'), 'utf8')).toMatch(/no longer be saved or listed/)
+    expect(src).toContain('if (checked.confirmHome) {')
+  })
+
+  it('an automation of the project still finds it after the folder changed (by id, host only)', () => {
+    expect(src).toContain('if (a.remote) return ws.remote && ws.remote.hostId === a.remote.hostId ? ws : null')
+  })
+
   it('its words are in French', async () => {
     await setUiLanguage('fr')
     for (const [key, en] of [
       ['project.remote.folder.title', 'Project folder on {{host}}'],
       ['project.remote.folder.checking', 'Checking the folder on the host…'],
       ['project.remote.folder.same', 'This project already uses this folder.'],
+      ['project.remote.rootRefused', 'This folder is too broad or belongs to the system: choose a project folder inside it.'],
+      ['project.remote.folder.dirty', 'Save or close this project’s unsaved files first: they would no longer be saved after the folder changes.'],
+      ['project.remote.folder.homeTitle', 'Use the whole home folder?'],
       ['project.remote.folder.guest', 'A Live Share project belongs to its host: only they can change it.'],
       ['project.remote.folder.hostGone', 'This remote host is no longer saved in Tessel.'],
       ['project.remoteBrowser.footerFolder', 'New panes start in this folder on this host · {{path}}']

@@ -185,6 +185,21 @@ export function enterAction(filtered) {
   return { type: 'noop' }
 }
 
+// A folder that must not become a project's root (its files are read and
+// written, guests' too): the host's root, a system folder, or a folder with
+// fewer than two parts (/home...). -> '' when fine, else the reason.
+const SYSTEM_DIRS = ['/etc', '/root', '/proc', '/sys', '/dev', '/boot', '/var', '/usr', '/bin', '/lib', '/lib64', '/sbin', '/run', '/opt', '/srv', '/tmp', '/home', '/Users']
+export function remoteRootRefusal(path) {
+  const p = String(path || '').trim().replace(/\/+$/, '') || '/'
+  if (!p.startsWith('/')) return ''
+  if (p.split('/').filter(Boolean).length < 2 || SYSTEM_DIRS.includes(p)) {
+    return t('project.remote.rootRefused', 'This folder is too broad or belongs to the system: choose a project folder inside it.')
+  }
+  return ''
+}
+// The folder of one user (/home/me): allowed, after a confirmation.
+export const isBareHome = (path) => /^\/(home|Users)\/[^/]+\/?$/.test(String(path || ''))
+
 export function remoteProjectName(path, hostLabel) {
   const p = String(path || '').trim()
   if (p === '~' || p === '~/' || p === '/') return hostLabel || p

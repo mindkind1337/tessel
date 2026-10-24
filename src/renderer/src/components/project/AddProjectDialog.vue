@@ -33,7 +33,8 @@ import {
   newScanId,
   planImport,
   remotePathError,
-  remoteProjectName
+  remoteProjectName,
+  remoteRootRefusal
 } from '../../addProject'
 import { sshCredentialState } from '../../sshCredentials'
 import AddProjectHostSelector from './AddProjectHostSelector.vue'
@@ -545,7 +546,7 @@ function openRemote() {
   step.value = 'remote'
 }
 function addRemoteFolder(path) {
-  const err = remotePathError(path)
+  const err = remotePathError(path) || remoteRootRefusal(path)
   if (err) {
     remoteError.value = err
     return

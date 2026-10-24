@@ -156,7 +156,7 @@ export function hostChatsFromWorkspace(ws) {
     // The project's folder, and the pane's own folders only when inside it:
     // a pane opened elsewhere (the home folder, another repository) never
     // makes that folder's paths readable to guests (main checks it again).
-    const top = remote ? (ws.remote && typeof ws.remote.path === 'string' && ws.remote.path.startsWith('/') ? ws.remote.path : null) : isLocalDir(ws.cwd) ? ws.cwd : null
+    const top = remote ? (ws.remote && typeof ws.remote.path === 'string' && ws.remote.path.startsWith('/') && ws.remote.path !== '/' ? ws.remote.path : null) : isLocalDir(ws.cwd) ? ws.cwd : null
     const paneDirs = remote
       ? [hostDir(n.cwd), hostDir(n.startDir), hostDir(n.projectDir), n.remotePath].filter((p) => typeof p === 'string' && p.startsWith('/'))
       : [n.startDir, n.cwd, n.projectDir, n.worktree && n.worktree.path].filter(isLocalDir)

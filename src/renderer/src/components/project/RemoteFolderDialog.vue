@@ -19,7 +19,7 @@ const emit = defineEmits(['select', 'close'])
 // (Mustaches cannot sit inside a template expression.)
 const titleText = () => t('project.remote.folder.title', 'Project folder on {{host}}', { host: props.hostLabel || props.hostId })
 const descText = () =>
-  t('project.remote.folder.description', 'New panes of "{{name}}" start in the folder you choose. Panes already open stay where they are.', { name: props.projectName })
+  t('project.remote.folder.description', 'New panes of "{{name}}" start in the folder you choose. Panes already open stay where they are, and files open under the old folder will no longer be saved or listed.', { name: props.projectName })
 
 function onKey(e) {
   if (e.key === 'Escape') {
