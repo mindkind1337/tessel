@@ -560,13 +560,13 @@ it('on an SSH host: an agent missing there is not typed; the pane shows its card
   ctx.remoteAgentCommand = vi.fn(async () => null)
   expect(await launchLine('codex', { id: 'pane-m', remoteHostId: 'ssh-box', sessionId: 's-7', resume: true })).toBeUndefined()
   expect(written()).toEqual([])
-  expect(ctx.remoteAgentCommand).toHaveBeenCalledWith('ssh-box', 'codex', 'codex', { strict: false })
+  expect(ctx.remoteAgentCommand).toHaveBeenCalledWith('ssh-box', 'codex', 'codex', { strict: false, restore: true })
   expect(lastLeaf().agentMissing).toEqual({ agent: 'codex', name: 'Codex CLI', resume: true })
   expect(lastLeaf().sessionId).toBe('s-7')
   // A pane already missing it (restored, reconnected): only what the host
   // says now counts (strict).
   await launchLine('claude', { id: 'pane-m', remoteHostId: 'ssh-box', agentMissing: true })
-  expect(ctx.remoteAgentCommand).toHaveBeenLastCalledWith('ssh-box', 'claude', 'claude', { strict: true })
+  expect(ctx.remoteAgentCommand).toHaveBeenLastCalledWith('ssh-box', 'claude', 'claude', { strict: true, restore: true })
   expect(lastLeaf().agentMissing).toMatchObject({ agent: 'claude', name: 'Claude Code', resume: false })
   ctx.remoteAgentCommand = vi.fn(async () => "'/home/u/.local/bin/claude'")
   ctx.window.shellApi.remoteAgentSessionExists = vi.fn(async () => null)
@@ -588,7 +588,7 @@ it('on an SSH host, any agent (Antigravity): missing there, nothing typed and it
   ctx.remoteAgentCommand = vi.fn(async () => null)
   const leaf = { id: 'pane-a' }
   await api.launch(leaf, agy, { id: 'pane-a', remoteHostId: 'ssh-box', sessionId: null }, 'pane-a', yolo, undefined, null)
-  expect(ctx.remoteAgentCommand).toHaveBeenCalledWith('ssh-box', 'antigravity', 'agy', { strict: false })
+  expect(ctx.remoteAgentCommand).toHaveBeenCalledWith('ssh-box', 'antigravity', 'agy', { strict: false, restore: true })
   expect(leaf.agentMissing).toEqual({ agent: 'antigravity', name: 'Antigravity', resume: false })
   expect(written()).toEqual([])
   // Installed: its path there, its Yolo flag as first asked.

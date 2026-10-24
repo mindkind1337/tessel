@@ -37,9 +37,11 @@ function setup() {
     paneClosing() {},
     paneExited() {}
   }
-  const rfs = createRemoteFs({ hosts, spawnImpl, send: () => {}, env: {}, now: () => clock })
+  const sent = []
+  const rfs = createRemoteFs({ hosts, spawnImpl, send: (c, p) => sent.push([c, p]), env: {}, now: () => clock })
   return {
     rfs,
+    sent,
     spawned: () => spawned,
     advance: (ms) => (clock += ms),
     noMoreCancel: () => (cancelNext = false)
@@ -56,9 +58,10 @@ describe('a cancelled sign-in', () => {
     // The shim install, the agent check, a poll: no new session, no new question.
     for (let i = 0; i < 3; i++) {
       const again = await s.rfs.agentTools(HOST, ['claude'])
-      expect(again.error).toBeTruthy()
-      expect(again.code).toBeUndefined()
+      // Said as "not connected" with Connect offered (needsConnect), not as an error to act on.
+      expect(again.error).toMatch(/not connected|Connect/i)
     }
+    expect(s.sent.some(([c, p]) => c === 'remoteFs:activity' && p.needsConnect === true)).toBe(true)
     expect(s.spawned()).toBe(1)
     s.rfs.close()
   })

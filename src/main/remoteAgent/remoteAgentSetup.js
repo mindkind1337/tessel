@@ -190,6 +190,7 @@ export function createRemoteAgentCheck({ ensureShim, agentTools, agentBins = [],
   const waiting = new Map() // paneId -> hostId
   const latest = new Map() // hostId -> { at, status } (the last check that reached the host)
   const running = new Map() // hostId -> Promise<status>
+  const freshRunning = new Map() // hostId -> Promise<status> (a `fresh` check)
   const bins = (Array.isArray(agentBins) ? agentBins : []).filter((b) => b && typeof b.id === 'string' && typeof b.bin === 'string' && BIN_NAME.test(b.bin))
   // Each agent by its command: its path there, null when missing; not
   // reported (an older shell): left out (not checked).
@@ -282,7 +283,16 @@ export function createRemoteAgentCheck({ ensureShim, agentTools, agentBins = [],
         const busy = running.get(hostId)
         if (busy) return busy
       }
-      return ask(hostId)
+      if (!fresh) return ask(hostId)
+      // Repeated "Check again" clicks share the fresh check already running:
+      // they cannot stack first-priority requests in the host's queue.
+      const again = freshRunning.get(hostId)
+      if (again) return again
+      const p = ask(hostId).finally(() => {
+        if (freshRunning.get(hostId) === p) freshRunning.delete(hostId)
+      })
+      freshRunning.set(hostId, p)
+      return p
     }
   }
 }

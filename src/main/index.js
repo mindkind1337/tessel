@@ -1737,6 +1737,7 @@ ipcMain.on('agents:screen', (_evt, q) => {
 const hookOptIn = (value) => ({ cursor: !!(value && typeof value === 'object' && value.cursor === true) })
 // A new agent pane prepares its hooks twice a moment apart (agentStatusMemo.js).
 const prepareStatusMemo = createStatusMemo({
+  nodeOf: (env) => findNode({ env }),
   run: (provider, env, optIn) => prepareAgentStateHooks({ provider, env, optIn, source: teamServerSource, sharedDir: join(app.getPath('appData'), 'tessel-team') })
 })
 function prepareStatus(provider, env = process.env, optIn = {}) {

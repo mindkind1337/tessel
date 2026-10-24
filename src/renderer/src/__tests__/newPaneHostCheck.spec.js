@@ -8,7 +8,9 @@ describe('a new pane on an SSH host and the host agent check', () => {
   it('waits a few seconds at most (the check stays queued behind the host\'s other work), a restored pane that must know keeps the long wait', () => {
     expect(src).toMatch(/const REMOTE_LAUNCH_CHECK_MS = 4000/)
     expect(src).toMatch(/const waitMs = newPane \? REMOTE_LAUNCH_CHECK_MS : REMOTE_CHECK_MS/)
-    expect(src).toMatch(/askHostAgents\(hostId, \{ newPane: !strict \}\)/)
+    expect(src).toMatch(/askHostAgents\(hostId, \{ newPane: !strict && !restore \}\)/)
+    // A restored pane (reopened with its id) keeps the long wait.
+    expect(src).toMatch(/restore: !!opts\.id/)
     expect(REMOTE_LAUNCH < REMOTE_LONG).toBe(true)
   })
 })

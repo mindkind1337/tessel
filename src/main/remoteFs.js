@@ -511,8 +511,10 @@ export function createRemoteFs({
     const existing = sessions.get(hostId)
     if (existing && !existing.closed) return existing.ready
     if (!noSignIn && cancelCoolingDown(hostId)) {
+      // Said as "not connected" (the Files panel then offers Connect), not as
+      // a sign-in error nobody can act on.
       activity(hostId, null, { needsConnect: true })
-      return Promise.reject(Object.assign(new Error('sign-in cancelled'), { code: 'auth-cancelled' })) // i18n-ignore internal, replaced by sessionErrorText
+      return Promise.reject(Object.assign(new Error('not connected'), { code: 'not-connected' })) // i18n-ignore internal, replaced by sessionErrorText
     }
     if (noSignIn ? !(hosts.sharedConnected && hosts.sharedConnected(hostId)) : !mayOpen(hostId)) {
       activity(hostId, null, { needsConnect: true })

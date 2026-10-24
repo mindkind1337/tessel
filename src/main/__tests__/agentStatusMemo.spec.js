@@ -22,9 +22,26 @@ describe('agent status hooks prepared twice a moment apart', () => {
     await prepare('claude', { CLAUDE_CONFIG_DIR: 'C:/a' }, {})
     await prepare('claude', { CLAUDE_CONFIG_DIR: 'C:/b' }, {})
     await prepare('claude', {}, {})
-    await prepare('cursor', {}, { cursor: true })
-    await prepare('cursor', {}, {})
-    expect(run).toHaveBeenCalledTimes(5)
+    expect(run).toHaveBeenCalledTimes(3)
+  })
+
+  it('the node found on the PATH of the pane is part of the key', async () => {
+    const run = vi.fn(async () => ok)
+    const prepare = createStatusMemo({ run, nodeOf: (env) => env.NODE_AT })
+    await prepare('codex', { NODE_AT: 'C:/n1/node.exe' }, {})
+    await prepare('codex', { NODE_AT: 'C:/n2/node.exe' }, {})
+    await prepare('codex', { NODE_AT: 'C:/n1/node.exe' }, {})
+    expect(run).toHaveBeenCalledTimes(2)
+  })
+
+  it('agents with several config variables (Grok, Kimi, Pi...) are prepared every time', async () => {
+    const run = vi.fn(async () => ok)
+    const prepare = createStatusMemo({ run })
+    for (const p of ['grok', 'kimi', 'pi', 'muse', 'cursor']) {
+      await prepare(p, { GROK_HOME: 'A' }, { cursor: true })
+      await prepare(p, { GROK_HOME: 'B' }, { cursor: true })
+    }
+    expect(run).toHaveBeenCalledTimes(10)
   })
 
   it('prepares again after the wait, and never keeps a failure or an unsupported agent', async () => {
@@ -42,7 +59,7 @@ describe('agent status hooks prepared twice a moment apart', () => {
   })
 
   it('keys by provider and folder', () => {
-    expect(statusMemoKey('claude', { Claude_Config_Dir: 'D' }, {})).toBe('claude|D|0')
-    expect(statusMemoKey('gemini', { CLAUDE_CONFIG_DIR: 'D' }, { cursor: true })).toBe('gemini||1')
+    expect(statusMemoKey('claude', { Claude_Config_Dir: 'D' }, {})).toBe('claude|D|0|')
+    expect(statusMemoKey('gemini', { CLAUDE_CONFIG_DIR: 'D' }, { cursor: true })).toBeNull()
   })
 })

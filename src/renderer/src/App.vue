@@ -1726,7 +1726,7 @@ async function createLeaf(shellId, agent = null, cwd = null, worktree = null, op
   // there now. A command of your own (Settings > Agents) is typed as is.
   let launchCommand = launch && launch.command
   if (agent && agent.command && opts.remoteHostId && !agent.custom && launchCommand === agent.command) {
-    launchCommand = await remoteAgentCommand(opts.remoteHostId, agent.id, launchCommand, { strict: !!opts.agentMissing })
+    launchCommand = await remoteAgentCommand(opts.remoteHostId, agent.id, launchCommand, { strict: !!opts.agentMissing, restore: !!opts.id })
     if (typeof paneStep === 'function') paneStep('host agent check')
     if (!launchCommand) {
       leaf.sessionId = opts.sessionId || null
@@ -6556,9 +6556,9 @@ function watchRootYoloRefusal(leaf, id, retry) {
   })
   setTimeout(stop, ROOT_REFUSAL_WATCH_MS)
 }
-async function remoteAgentCommand(hostId, id, command, { strict = false } = {}) {
+async function remoteAgentCommand(hostId, id, command, { strict = false, restore = false } = {}) {
   let st = remoteAgentTools[hostId]
-  if (needsRemoteAgentCheck(id, st, { connected: hostShared(hostId) })) st = (await askHostAgents(hostId, { newPane: !strict })) || st
+  if (needsRemoteAgentCheck(id, st, { connected: hostShared(hostId) })) st = (await askHostAgents(hostId, { newPane: !strict && !restore })) || st
   if (strict && remoteAgentFound(id, st) !== true) return null
   return remoteAgentLine(id, st, command)
 }
