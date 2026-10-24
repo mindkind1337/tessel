@@ -1033,7 +1033,10 @@ export function createRemoteSession({
   function pump() {
     if (state !== 'ready' || current || !queue.length) return
     // The user's own requests first; background ones in the gaps.
+    // Then the background ones that a pane waits for (first: the agent check
+    // made when a terminal opens), before Live Share guests' reads and polls.
     let at = queue.findIndex((r) => !r.bg)
+    if (at < 0) at = queue.findIndex((r) => r.first)
     if (at < 0) at = 0
     const [req] = queue.splice(at, 1)
     if (req.waitTimer) timers.clearTimeout(req.waitTimer)
@@ -1122,7 +1125,7 @@ export function createRemoteSession({
   // goes on). background: a poll or a reader, behind the user's requests.
   // signal: an AbortSignal; aborted while it waits, the request is dropped
   // (once it runs, only the session's end stops it).
-  function run(fn, args = [], { cap = 4 * 1024 * 1024, timeoutMs = DEFAULT_TIMEOUT_MS, upload = null, touch = true, background = false, queueWaitMs, signal = null } = {}) {
+  function run(fn, args = [], { cap = 4 * 1024 * 1024, timeoutMs = DEFAULT_TIMEOUT_MS, upload = null, touch = true, background = false, first = false, queueWaitMs, signal = null } = {}) {
     if (state === 'closed') return Promise.reject(sessionError(closedReason || 'closed'))
     if (signal && signal.aborted) return Promise.reject(Object.assign(new Error('cancelled'), { code: 'cancelled' })) // i18n-ignore internal
     const waiting = queue.filter((q) => !!q.bg === !!background).length
@@ -1137,7 +1140,7 @@ export function createRemoteSession({
     }
     const data = upload ? Buffer.from(upload) : null
     return new Promise((resolve, reject) => {
-      const req = { id, cap, script, upload: data, timeoutMs, touch, bg: !!background, resolve, reject, waitTimer: null }
+      const req = { id, cap, script, upload: data, timeoutMs, touch, bg: !!background, first: !!first && !!background, resolve, reject, waitTimer: null }
       const drop = (err) => {
         const at = queue.indexOf(req)
         if (at < 0) return
@@ -1148,7 +1151,7 @@ export function createRemoteSession({
       queue.push(req)
       // Its turn has to come within the wait limit (counted from now, so
       // only while the session is up or starting).
-      const wait = Number.isFinite(queueWaitMs) && queueWaitMs > 0 ? queueWaitMs : background ? BG_QUEUE_WAIT_MS : QUEUE_WAIT_MS
+      const wait = Number.isFinite(queueWaitMs) && queueWaitMs > 0 ? queueWaitMs : first ? QUEUE_WAIT_MS : background ? BG_QUEUE_WAIT_MS : QUEUE_WAIT_MS
       req.waitTimer = timers.setTimeout(() => drop(busyError()), wait)
       if (signal && typeof signal.addEventListener === 'function') {
         signal.addEventListener('abort', () => drop(Object.assign(new Error('cancelled'), { code: 'cancelled' })), { once: true }) // i18n-ignore internal

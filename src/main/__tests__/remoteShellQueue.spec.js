@@ -55,6 +55,30 @@ describe('remote session queue', () => {
     await expect(bg).resolves.toMatchObject({ rc: 0 })
   })
 
+  it('a background request a terminal waits for (first) goes before the other background ones', async () => {
+    const { s, child } = await ready()
+    const running = s.run('__t_nop', [])
+    const guest = s.run('__t_nop', ['guest'], { background: true })
+    const check = s.run('__t_nop', ['check'], { background: true, first: true })
+    answer(child, idOf(child.stdin.written.pop()), 'one')
+    await running
+    const next = child.stdin.written.pop()
+    expect(next).toContain("'check'")
+    answer(child, idOf(next))
+    await check
+    const last = child.stdin.written.pop()
+    expect(last).toContain("'guest'")
+    answer(child, idOf(last))
+    await expect(guest).resolves.toMatchObject({ rc: 0 })
+  })
+
+  it('a first request waits as long as a user request (not the short background wait)', async () => {
+    const { s } = await ready()
+    void s.run('__t_nop', []).catch(() => {})
+    const check = s.run('__t_nop', ['check'], { background: true, first: true, queueWaitMs: 20 })
+    await expect(check).rejects.toMatchObject({ code: 'busy' })
+  })
+
   it('a request that waits too long for its turn fails as busy; the session goes on', async () => {
     const { s, child } = await ready()
     const first = s.run('__t_nop', [])

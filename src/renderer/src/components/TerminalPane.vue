@@ -108,6 +108,7 @@ import { liveShareFit, liveShareOffset, LS_TEXT_SIZES } from '../liveShareFit'
 import { pasteFailText } from '../liveSharePaste'
 import { layoutDragging } from '../layoutDrag'
 import { claimWebgl, releaseWebgl, noteWebglShown } from '../terminalWebgl'
+import { disposeTerminal } from '../terminalDispose'
 
 const props = defineProps({
   node: { type: Object, required: true }
@@ -1840,6 +1841,7 @@ function acknowledge() {
 }
 
 let term = null
+let termOpenedAt = 0
 let fit = null
 let search = null
 let ro = null
@@ -3357,6 +3359,7 @@ watch(
   { immediate: true }
 )
 onMounted(() => {
+  const mountT0 = performance.now()
   const theme = paneTheme()
   term = new Terminal({
     fontFamily: fontStack(settings.fontFamily),
@@ -3688,7 +3691,10 @@ onMounted(() => {
     findResult.index = resultIndex
     findResult.count = resultCount
   })
+  const openT0 = performance.now()
   term.open(hostEl.value)
+  termOpenedAt = Date.now()
+  const openMs = performance.now() - openT0
   // Scrolling by hand in the terminal (the wheel, Shift+PageUp and other
   // scroll keys, the scrollbar, a click-drag): the view may then leave the
   // bottom and stay there. Typing does not count.
@@ -3721,7 +3727,9 @@ onMounted(() => {
   hostEl.value.addEventListener('mousemove', showMouse, { passive: true })
   if (term.onBell) term.onBell(onTerminalBell)
 
+  const fitT0 = performance.now()
   doFit()
+  const fitMs = performance.now() - fitT0
 
   // Output saved when the app last closed: write it, a divider, then enough
   // blank lines to move it all into the scrollback, so the new shell (which
@@ -3952,6 +3960,12 @@ onMounted(() => {
     agentAdapter: getAgentAdapter
   }
   registerPane(props.node.id, paneApi)
+  // A slow mount (xterm created, opened, fitted, its history replayed) is
+  // said in the log with where the time went; a quick one is not.
+  const mountMs = performance.now() - mountT0
+  if (mountMs >= 150 && window.shellApi && window.shellApi.log) {
+    window.shellApi.log('info', `[pane] ${props.node.id} terminal mounted in ${Math.round(mountMs)} ms (xterm open ${Math.round(openMs)}, fit ${Math.round(fitMs)})`) // i18n-ignore log
+  }
 
   if (isAgent.value) activityMonitor.stateChanged(observedState.value)
 
@@ -4062,7 +4076,7 @@ onBeforeUnmount(() => {
   webgl = null
   releaseWebgl(webglOwner)
   if (gl) releaseWebglContext(gl)
-  if (term) term.dispose()
+  disposeTerminal(term, termOpenedAt)
   term = null
   // NOTE: the PTY is intentionally NOT killed here — the pane may merely be
   // re-mounting after a layout change. App.closeLeaf() owns PTY termination.

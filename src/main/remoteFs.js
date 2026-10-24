@@ -80,6 +80,8 @@ export const MAX_LINK_STATS = 50
 // requests in the session's queue, never a sign-in (a dropped session says
 // "not connected"), never run again after a drop, and bounded in time.
 const GUEST_TIMEOUT_MS = 15_000
+// How long a cancelled sign-in is left alone by what runs on its own.
+export const AUTH_CANCEL_COOLDOWN_MS = 60_000
 const GUEST_SEARCH_MS = 8_000
 
 const arg = (path) => rawArg(remotePathArg(path))
@@ -473,6 +475,23 @@ export function createRemoteFs({
   function allow(hostId) {
     if (typeof hostId === 'string' && hostId) allowed.add(hostId)
   }
+  // A sign-in the user cancelled is not asked again for AUTH_CANCEL_COOLDOWN_MS
+  // by what runs on its own (the agent check, the shim install, a poll, the
+  // Files panel): each of them opened a new session and a new question, one
+  // every 1-2 s (2026-10-24 19:00). The user's own action (Connect, a terminal
+  // opened on the host: userAllow) ends the wait.
+  const cancelledAt = new Map() // hostId -> time of the cancel
+  const cancelCoolingDown = (hostId) => {
+    const at = cancelledAt.get(hostId)
+    if (at === undefined) return false
+    if (now() - at < AUTH_CANCEL_COOLDOWN_MS) return true
+    cancelledAt.delete(hostId)
+    return false
+  }
+  function userAllow(hostId) {
+    if (typeof hostId === 'string' && hostId) cancelledAt.delete(hostId)
+    allow(hostId)
+  }
   // A path of a remote project (ssh://…): its host.
   function allowPath(virtual) {
     const p = parseRemotePath(virtual)
@@ -491,6 +510,10 @@ export function createRemoteFs({
   function open(hostId, { noSignIn = false } = {}) {
     const existing = sessions.get(hostId)
     if (existing && !existing.closed) return existing.ready
+    if (!noSignIn && cancelCoolingDown(hostId)) {
+      activity(hostId, null, { needsConnect: true })
+      return Promise.reject(Object.assign(new Error('sign-in cancelled'), { code: 'auth-cancelled' })) // i18n-ignore internal, replaced by sessionErrorText
+    }
     if (noSignIn ? !(hosts.sharedConnected && hosts.sharedConnected(hostId)) : !mayOpen(hostId)) {
       activity(hostId, null, { needsConnect: true })
       return Promise.reject(Object.assign(new Error('not connected'), { code: 'not-connected' })) // i18n-ignore internal
@@ -581,6 +604,7 @@ export function createRemoteFs({
   function ended(hostId, entry, reason) {
     if (entry.closed) return
     entry.closed = true
+    if (reason === 'auth-cancelled') cancelledAt.set(hostId, now())
     if (sessions.get(hostId) === entry) sessions.delete(hostId)
     for (const k of [...repoInfos.keys()]) if (k.startsWith(`${hostId}\n`)) repoInfos.delete(k)
     if (askpass) {
@@ -656,7 +680,7 @@ export function createRemoteFs({
     }
     return res
   }
-  async function callOnce(hostId, fn, args, { cap, timeoutMs: askedMs, upload, op = '', quiet = false, ifOpen = false, background: bg = false, guest = false } = {}) {
+  async function callOnce(hostId, fn, args, { cap, timeoutMs: askedMs, upload, op = '', quiet = false, ifOpen = false, background: bg = false, first = false, guest = false } = {}) {
     const background = bg || guest
     const timeoutMs = guest ? Math.min(askedMs || GUEST_TIMEOUT_MS, GUEST_TIMEOUT_MS) : askedMs
     let session
@@ -695,7 +719,8 @@ export function createRemoteFs({
         ...(timeoutMs ? { timeoutMs } : {}),
         ...(upload ? { upload } : {}),
         ...(ifOpen ? { touch: false } : {}),
-        ...(quiet || background ? { background: true } : {})
+        ...(quiet || background ? { background: true } : {}),
+        ...(first && !guest ? { first: true } : {})
       })
     } catch (err) {
       return { error: sessionErrorText(hostId, err), code: (err && err.code) || 'failed', ...(err && err.notSent ? { notSent: true } : {}) }
@@ -1706,7 +1731,7 @@ ${root}`, () => gitWorktreesNow(root))
   async function connect(hostId) {
     if (!hostIdOk(hostId)) return { ok: false, error: t('main.remote.notFound', 'This remote host is no longer saved in Tessel.') }
     // The user's own action (Connect, Add a project): it may sign in.
-    allow(hostId)
+    userAllow(hostId)
     try {
       await open(hostId)
       return { ok: true }
@@ -1766,10 +1791,13 @@ ${root}`, () => gitWorktreesNow(root))
 
   // bins: the command names looked for (each agent's), else Claude Code's
   // and Codex's.
-  async function agentTools(hostId, bins = null) {
+  // first: asked for a terminal that is opening: it goes before Live Share
+  // guests' reads in the session's queue (it starved behind them: "still busy
+  // with earlier operations", 2026-10-24).
+  async function agentTools(hostId, bins = null, { first = false } = {}) {
     if (!hostIdOk(hostId)) return { error: t('main.remote.notFound', 'This remote host is no longer saved in Tessel.') }
     const names = Array.isArray(bins) ? [...new Set(bins.filter((b) => typeof b === 'string' && BIN_NAME.test(b)))].slice(0, 128) : []
-    const res = await call(hostId, '__t_agents', names, { cap: 64 * 1024, timeoutMs: 30_000, op: 'agents', background: true })
+    const res = await call(hostId, '__t_agents', names, { cap: 64 * 1024, timeoutMs: 30_000, op: 'agents', background: true, ...(first ? { first: true } : {}) })
     if (!res || res.error) return { error: (res && res.error) || 'failed' }
     if (res.rc !== 0) return { error: rcText(res, `rc ${res.rc}`) }
     return parseAgentTools(Buffer.isBuffer(res.out) ? res.out.toString('utf8') : String(res.out || ''))
@@ -2042,6 +2070,7 @@ ${root}`, () => gitWorktreesNow(root))
 
   return {
     allow,
+    userAllow,
     allowPath,
     setRoots,
     hasRoot: (virtual) => !!rootOf(virtual),

@@ -108,6 +108,9 @@ import { cleanEnv } from './cleanEnv'
 import { createPtyClient } from './ptyClient'
 import { watchLoopLag } from './loopLag'
 import { createIpcTiming } from './ipcTiming'
+import { paneOpenLine } from '../shared/paneTiming'
+import { createStatusMemo } from './agentStatusMemo'
+import { waitForShim } from './remoteAgent/shimWait'
 import { PANE_HISTORY_CHARS } from '../shared/paneHistory'
 import { registerLiveShare } from './liveShare'
 import { createPasteImages, isImageFile, PASTE_LIMITS, pngSize } from './liveShare/sharePaste.js'
@@ -1732,8 +1735,12 @@ ipcMain.on('agents:screen', (_evt, q) => {
 // optIn: the agents whose status hooks the user turned on in Settings (only
 // Cursor's are off by default), from the renderer: { cursor: true }.
 const hookOptIn = (value) => ({ cursor: !!(value && typeof value === 'object' && value.cursor === true) })
+// A new agent pane prepares its hooks twice a moment apart (agentStatusMemo.js).
+const prepareStatusMemo = createStatusMemo({
+  run: (provider, env, optIn) => prepareAgentStateHooks({ provider, env, optIn, source: teamServerSource, sharedDir: join(app.getPath('appData'), 'tessel-team') })
+})
 function prepareStatus(provider, env = process.env, optIn = {}) {
-  return prepareAgentStateHooks({ provider, env, optIn: hookOptIn(optIn), source: teamServerSource, sharedDir: join(app.getPath('appData'), 'tessel-team') })
+  return prepareStatusMemo(provider, env, hookOptIn(optIn))
 }
 ipcMain.handle('agents:prepareStatus', (_evt, provider, optIn) => prepareStatus(provider, process.env, optIn))
 // Read without blocking: one file per agent pane, asked often, and once
@@ -4474,7 +4481,7 @@ const remoteShims = createShimInstaller({
 const REMOTE_AGENT_BINS = AGENT_PRESETS.map((a) => ({ id: a.id, bin: firstWord(a.command) })).filter((b) => BIN_NAME.test(b.bin))
 const remoteAgentCheck = createRemoteAgentCheck({
   ensureShim: (hostId) => remoteShims.ensure(hostId),
-  agentTools: (hostId) => remoteFs.agentTools(hostId, REMOTE_AGENT_BINS.map((b) => b.bin)),
+  agentTools: (hostId) => remoteFs.agentTools(hostId, REMOTE_AGENT_BINS.map((b) => b.bin), { first: true }),
   agentBins: REMOTE_AGENT_BINS,
   label: (hostId) => {
     const target = remoteHosts.get(hostId)
@@ -4530,11 +4537,13 @@ async function prepareRemoteAgent({ id, target, remotePath, agentId, teamSecret 
   }
   const node = findNode({ env: freshEnv() })
   if (!node) return fail('local-node')
-  let shim = await remoteShims.ensure(target.id)
+  // Not longer than SHIM_WAIT_MS (shimWait.js): the pane's shell does not wait
+  // for an install stuck behind other work on the host; it goes on meanwhile.
+  let shim = await waitForShim(remoteShims.ensure(target.id))
   // Installed when this agent was not there yet (it was skipped): again, now.
   if (shim.ok && shim.result && Array.isArray(shim.result.skipped) && shim.result.skipped.includes(provider)) {
     remoteShims.forget(target.id)
-    shim = await remoteShims.ensure(target.id)
+    shim = await waitForShim(remoteShims.ensure(target.id))
   }
   if (!shim.ok) return fail(shim.reason, shim.detail)
   // Still skipped (no settings of that agent there), or its files could not
@@ -4623,6 +4632,16 @@ ipcMain.handle('pty:create', async (_evt, opts = {}) => {
   })
   const { id, shellId, cols = 80, rows = 24, cwd, projectDir } = opts
   if (!id) throw new Error('pty:create requires an id') // i18n-ignore internal: programming error
+  // Where the time goes when a pane opens: one line in the log ("[pane]",
+  // paneOpenLine in paneTiming.js) once it is started.
+  const paneT0 = Date.now()
+  let paneMark = paneT0
+  const paneSteps = []
+  const paneStep = (name) => {
+    const at = Date.now()
+    paneSteps.push([name, at - paneMark])
+    paneMark = at
+  }
   // A Live Share guest's pane (liveShare.js guestPaneId) is the host's
   // terminal: never a shell of this computer under its id.
   if (/^pane-ls\d+-/.test(String(id))) return { ok: false, error: t('main.liveShare.notLocal', 'This pane belongs to a Live Share session: it cannot start a terminal on this computer.') }
@@ -4640,8 +4659,11 @@ ipcMain.handle('pty:create', async (_evt, opts = {}) => {
     // A terminal opened on the host (a new pane, or Connect in a restored
     // one): its Files / Changes session may sign in too from now on.
     remoteFs.allow(target.id)
+    // The user's own action: a sign-in they cancelled a moment ago may be asked again.
+    if (remoteFs.userAllow) remoteFs.userAllow(target.id)
     const mode = await sshRemote.modeFor(target)
-    if (mode.mode === 'ssh2') return createSshPane(opts, target, mode.spec, shell, startedAt)
+    paneStep('ssh mode')
+    if (mode.mode === 'ssh2') return createSshPane(opts, target, mode.spec, shell, startedAt, { t0: paneT0, steps: paneSteps, mark: paneMark })
     // Closed while that was decided: nothing is started.
     if ((paneKills.get(id) || 0) >= startedAt) return launchCancelled()
   }
@@ -4657,6 +4679,7 @@ ipcMain.handle('pty:create', async (_evt, opts = {}) => {
   const backend = useConpty ? 'conpty' : 'winpty'
   // Its agent's variables and its provider account's (see paneEnv.js).
   const env = paneEnv(freshEnv(), opts)
+  paneStep('env')
   // The agents whose own hooks report their status (agentStateModel.js).
   const agentProvider = STATUS_PROVIDERS.includes(opts.agentId) ? opts.agentId : null
   const agentLaunchToken = agentProvider ? crypto.randomBytes(16).toString('hex') : null
@@ -4676,6 +4699,7 @@ ipcMain.handle('pty:create', async (_evt, opts = {}) => {
   if (agentProvider) {
     const setup = await prepareStatus(agentProvider, env, opts.hookOptIn)
     if (!setup.ok) agentStatusWarning = setup.error
+    paneStep('status hooks')
   }
   // The agent does not stop at "Do you trust this folder?" in a folder the
   // user chose in Tessel (agentFolderTrust.js decides which; never throws).
@@ -4688,12 +4712,14 @@ ipcMain.handle('pty:create', async (_evt, opts = {}) => {
       remote: !!remote,
       wsl: shell.id === 'wsl' || /[\\/]wsl\.exe$/i.test(String(shell.file || ''))
     })
+    paneStep('folder trust')
   }
   // ssh's questions go to Tessel's askpass helper (sshAskpass.js). 'fallback'
   // (old ssh, no helper): ssh asks in the terminal. 'cancelled': the pane was
   // closed or launched again meanwhile: ssh is not started at all.
   const launch = remote ? await sshAskpass.prepareLaunch(id, { hostId: remote.target.id, label: remote.name, sshExe: remote.file }) : null
   if (launch && launch.status === 'cancelled') return launchCancelled()
+  if (launch) paneStep('askpass')
   const askpassEnv = launch && launch.status === 'ready' ? launch.env : null
   // This launch's own token: its success / failure touches only it.
   const askpassToken = askpassEnv ? askpassEnv.TESSEL_ASKPASS_TOKEN : undefined
@@ -4729,6 +4755,7 @@ ipcMain.handle('pty:create', async (_evt, opts = {}) => {
   } catch (err) {
     res = { ok: false, error: err.message }
   }
+  paneStep('terminal host')
   if (!res.ok) {
     if (askpassToken) sshAskpass.releasePane(id, askpassToken)
     log.error('pty', `failed to launch ${shell.name} (${shell.file}) in ${startDir}: ${res.error}`)
@@ -4761,9 +4788,15 @@ ipcMain.handle('pty:create', async (_evt, opts = {}) => {
     try { await agentStateStore.register({ paneId: id, provider: agentProvider, launchToken: agentLaunchToken, startedAt: agentStartedAt }) }
     catch { agentStatusWarning = t('main.agents.statusUnavailable', 'Agent status observations are unavailable.') }
   }
+  paneStep('register')
   liveShare?.noteSize(id, cols, rows)
   // A pane restarted in place: Live Share guests get its new screen.
   liveShare?.paneStarted(id)
+  try {
+    log.info('pane', paneOpenLine(`${agentProvider || opts.agentId || 'shell'} ${remote ? 'ssh' : 'local'}`, id, Date.now() - paneT0, paneSteps))
+  } catch {
+    /* only a log line */
+  }
   return {
     ok: true,
     shell: { id: shell.id, name: shell.name },
@@ -4786,7 +4819,15 @@ ipcMain.handle('pty:create', async (_evt, opts = {}) => {
 // ends it (the kill reached the host before the terminal existed).
 const paneKills = new Map() // id -> time
 
-async function createSshPane(opts, target, spec, shell, startedAt) {
+async function createSshPane(opts, target, spec, shell, startedAt, timing = null) {
+  const t0 = timing ? timing.t0 : Date.now()
+  let mark = timing ? timing.mark : t0
+  const steps = timing ? timing.steps : []
+  const step = (name) => {
+    const at = Date.now()
+    steps.push([name, at - mark])
+    mark = at
+  }
   const { id, cols = 80, rows = 24 } = opts
   let remotePath = null
   if (opts.remotePath) {
@@ -4801,6 +4842,7 @@ async function createSshPane(opts, target, spec, shell, startedAt) {
   // An agent Tessel starts here gets the team tools and its status like a
   // local one (src/main/remoteAgent/REMOTE_AGENTS.md); without them it still starts.
   const agent = await prepareRemoteAgent({ id, target, remotePath, agentId: opts.agentId, teamSecret })
+  if (opts.agentId) step('remote agent setup')
   if ((paneKills.get(id) || 0) >= startedAt) return { ok: false, cancelled: true, error: t('main.remote.launchCancelled', 'The terminal was closed before ssh started.') }
   const agentProvider = agent.remoteAgent ? agent.remoteAgent.provider : null
   const agentLaunchToken = agent.launchToken || null
@@ -4820,6 +4862,7 @@ async function createSshPane(opts, target, spec, shell, startedAt) {
   } catch (err) {
     res = { ok: false, error: err.message }
   }
+  step('terminal host')
   if (!res.ok) {
     log.error('pty', `failed to open an ssh terminal on ${target.id}: ${res.error}`)
     return { ok: false, error: t('main.error.launchShell', 'Failed to launch {{shell}}: {{error}}', { shell: target.label, error: res.error }) }
@@ -4836,6 +4879,11 @@ async function createSshPane(opts, target, spec, shell, startedAt) {
   liveShare?.noteSize(id, cols, rows)
   // A pane restarted in place: Live Share guests get its new screen.
   liveShare?.paneStarted(id)
+  try {
+    log.info('pane', paneOpenLine(`${agentProvider || 'shell'} ssh2`, id, Date.now() - t0, steps))
+  } catch {
+    /* only a log line */
+  }
   return {
     ok: true,
     shell: { id: shell.id, name: shell.name },

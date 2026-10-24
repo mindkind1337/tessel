@@ -133,6 +133,7 @@ import { createTeamDelivery } from './teamDelivery'
 import { dropBuffer, exitOf, seedBuffer } from './ptyStore'
 import { prefetchAttaches, terminalLeafIds } from './restoreAttach'
 import { afterStartup, startupBegins, startupFinished } from './startupIdle'
+import { paneOpenLine } from '../../shared/paneTiming'
 import { tasks as boardTasks, setTasks, updateTask, removeTask, addTask, deletedTaskIds, addDeletedTasks, takeDeletedToPurge, cardOnBoard, beginBoardLoad, endBoardLoad, boardWatchState } from './taskBoardStore'
 import { usageScopeEntries, usageScopeRoots, rememberUsageCopies, loadUsageCopies, saveUsageCopies } from './usageStats'
 import { createSaveScheduler } from './saveScheduler'
@@ -1422,10 +1423,25 @@ function watchFoundSession(leaf, kind) {
   setTimeout(tick, 8000)
 }
 
+// The log line of a pane that opened (createLeaf): its steps and their time.
+function logPaneOpened(kind, id, ms, steps) {
+  if (window.shellApi.log) window.shellApi.log('info', `[pane] ${paneOpenLine(kind, id, ms, steps)}`) // i18n-ignore log
+}
+
 async function createLeaf(shellId, agent = null, cwd = null, worktree = null, opts = {}) {
   const projectDir = cwd
   if (worktree && worktree.path) cwd = worktree.path
   const id = opts.id || newId('pane')
+  // Where the time goes when a pane opens: one line in the log when it is
+  // started (logPaneOpened).
+  const paneT0 = performance.now()
+  let paneMark = paneT0
+  const paneSteps = []
+  const paneStep = (name) => {
+    const at = performance.now()
+    paneSteps.push([name, at - paneMark])
+    paneMark = at
+  }
   let res = null
   let attached = false
   let restoredText = ''
@@ -1545,6 +1561,7 @@ async function createLeaf(shellId, agent = null, cwd = null, worktree = null, op
   if (agent && !attached && window.shellApi.prepareAgentStatus) {
     const statusSetup = await window.shellApi.prepareAgentStatus(agent.id, { cursor: settings.cursorStatusHooks === true }).catch(() => null)
     if (statusSetup?.needsReview) showToast(t('app.codexHooks.updated', 'Codex status hooks were updated. Review them in /hooks to enable live status.'), { timeout: 10000 })
+    paneStep('status hooks')
   }
   // An agent on an SSH host signs in there: no account of this computer.
   if (agent && !attached && !opts.remoteHostId && window.shellApi.accounts && window.shellApi.accounts.launchEnv) {
@@ -1576,6 +1593,7 @@ async function createLeaf(shellId, agent = null, cwd = null, worktree = null, op
       if (acc.env && typeof acc.env === 'object') accountEnv = { ...acc.env }
       accountId = typeof acc.accountId === 'string' ? acc.accountId : null
     }
+    paneStep('account')
   }
   if (refused) {
     res = { ok: false, error: refused }
@@ -1586,6 +1604,7 @@ async function createLeaf(shellId, agent = null, cwd = null, worktree = null, op
       res = { ok: false, error: err && err.message }
     }
     answeredAt = performance.now()
+    paneStep('create terminal')
     // The terminal stopped when the app closed: the pane shows what it last
     // printed above the new session (see TerminalPane).
     restoredText = res && res.ok ? opts.savedOutput || '' : ''
@@ -1707,6 +1726,7 @@ async function createLeaf(shellId, agent = null, cwd = null, worktree = null, op
   let launchCommand = launch && launch.command
   if (agent && agent.command && opts.remoteHostId && !agent.custom && launchCommand === agent.command) {
     launchCommand = await remoteAgentCommand(opts.remoteHostId, agent.id, launchCommand, { strict: !!opts.agentMissing })
+    if (typeof paneStep === 'function') paneStep('host agent check')
     if (!launchCommand) {
       leaf.sessionId = opts.sessionId || null
       leaf.agentMissing = { agent: agent.id, name: remoteAgentName(agent.id), resume: !!opts.resume }
@@ -1749,6 +1769,7 @@ async function createLeaf(shellId, agent = null, cwd = null, worktree = null, op
       hostId: opts.remoteHostId || null
     })
     leaf.sessionId = start.sessionId
+    if (typeof paneStep === 'function') paneStep('start line')
     // Its arguments (or the Yolo flag) at the end: they work with resuming too.
     // A worker's launch options (model, effort, its first prompt) only on a
     // fresh start, through the one helper (src/shared/orchestration.js).
@@ -1810,6 +1831,11 @@ async function createLeaf(shellId, agent = null, cwd = null, worktree = null, op
       }
     }, 600)
     if (FOUND_AFTER_START.includes(sessionKind(agent)) && !leaf.sessionId) watchFoundSession(leaf, agent.id)
+  }
+  try {
+    logPaneOpened(`${agent ? agent.id : 'shell'} ${opts.remoteHostId ? 'ssh' : 'local'}`, id, performance.now() - paneT0, paneSteps)
+  } catch {
+    /* only a log line */
   }
   return leaf
 }
@@ -6373,6 +6399,9 @@ function offerAgentInstall(hostId, id, label) {
 // again first when it was missing (installed since?) or never checked while
 // the host is connected; null when it is not there.
 const REMOTE_CHECK_MS = 15000
+// A new pane waits for the host's agent check this long at most: unknown, its
+// agent is started anyway (a restored pane that must know waits REMOTE_CHECK_MS).
+const REMOTE_LAUNCH_CHECK_MS = 4000
 // opts.strict: only when the host says it is there (a pane already missing
 // it never types it on a check that failed or was too slow).
 // Claude Code's Yolo as root (createLeaf): whether the host's sessions run as
@@ -6427,7 +6456,7 @@ function watchRootYoloRefusal(leaf, id, retry) {
 }
 async function remoteAgentCommand(hostId, id, command, { strict = false } = {}) {
   let st = remoteAgentTools[hostId]
-  if (needsRemoteAgentCheck(id, st, { connected: hostShared(hostId) })) st = (await askHostAgents(hostId)) || st
+  if (needsRemoteAgentCheck(id, st, { connected: hostShared(hostId) })) st = (await askHostAgents(hostId, { newPane: !strict })) || st
   if (strict && remoteAgentFound(id, st) !== true) return null
   return remoteAgentLine(id, st, command)
 }
@@ -6510,14 +6539,15 @@ const missingAgentInstalls = {} // install pane id -> the waiting pane's id
 // The host's agents, asked now (at most REMOTE_CHECK_MS). opts.fresh: the
 // host itself, never main's check of a few seconds ago (Check again, after
 // an install). -> its status, or null.
-async function askHostAgents(hostId, { fresh: anew = false } = {}) {
+async function askHostAgents(hostId, { fresh: anew = false, newPane = false } = {}) {
+  const waitMs = newPane ? REMOTE_LAUNCH_CHECK_MS : REMOTE_CHECK_MS
   const api = window.shellApi.remoteAgents
   if (!api || !api.check) return null
   let timer = null
   const fresh = await Promise.race([
     (anew ? api.check(hostId, { fresh: true }) : api.check(hostId)).catch(() => null),
     new Promise((resolve) => {
-      timer = setTimeout(() => resolve(null), REMOTE_CHECK_MS)
+      timer = setTimeout(() => resolve(null), waitMs)
     })
   ])
   clearTimeout(timer)

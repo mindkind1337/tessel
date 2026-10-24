@@ -195,11 +195,20 @@ export function createSshResolver({ sshExe = () => null, runFile = execFile, hom
     })
   }
 
+  // Panes opened together on one host (a restore, a team) share one `ssh -G`.
+  const pending = new Map()
   // target: remoteHosts.js's saved host. -> { ok, spec } | { ok: false, system, reason }
-  async function resolve(target) {
+  function resolve(target) {
     const key = JSON.stringify(target)
     const hit = cache.get(key)
-    if (hit && now() - hit.at < CACHE_MS) return hit.value
+    if (hit && now() - hit.at < CACHE_MS) return Promise.resolve(hit.value)
+    const running = pending.get(key)
+    if (running) return running
+    const p = resolveNow(target, key).finally(() => pending.delete(key))
+    pending.set(key, p)
+    return p
+  }
+  async function resolveNow(target, key) {
     let value
     const exe = sshExe()
     let args = null
