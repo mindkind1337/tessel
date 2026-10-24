@@ -127,6 +127,8 @@ describe('Confirm before closing running terminals', () => {
       agentTerminalTargets: { forget: vi.fn() },
       maximizedId: { value: null },
       removeLeaf: () => null,
+      isTabLeaf: () => false,
+      canAutoTile: () => false,
       firstLeafId: () => null,
       createLeaf: () => Promise.resolve(null),
       wsLeafOpts: (_ws, opts = {}) => opts,

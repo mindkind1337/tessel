@@ -22,6 +22,7 @@ import { createProjectWorktrees } from './projectWorktrees'
 import { prAgentTargets } from './prAgentTargets'
 import { withWorktreePath } from './prAgentPrompts'
 import { workspaceViews, viewKey, leafViewPath, isTabLeaf, addTabLeaf, gridLeafFor, pruneTree } from './paneViews'
+import { gridShape, buildGridTree, isNearGrid, gridRootOf, swapNode } from './paneGrid'
 import { createPortScanner, browserUrlForPort, addressForPort } from './portScanner'
 import { allowedBrowserUrl, BLANK_URL, displayUrl } from '../../shared/browserUrl'
 import { channelHead, leadHead, reviewRequest, teammateHead } from '../../shared/tesselDelivery'
@@ -2300,6 +2301,7 @@ function saveLayoutNow() {
       cwd: w.cwd || null,
       ...(w.remote ? { remote: { hostId: w.remote.hostId, path: w.remote.path } } : {}),
       ...(w.group ? { group: { repos: w.group.repos.map((r) => ({ path: r.path, name: r.name })) } } : {}),
+      ...(typeof w.manualSizes === 'boolean' ? { manualSizes: w.manualSizes } : {}),
       tree: serializeNode(w.tree)
     }))
   }
@@ -2316,6 +2318,66 @@ function saveLayoutNow() {
   }
 }
 let lastLayoutText = ''
+
+// --- Auto-tile (paneGrid.js): a new pane re-tiles the tab's panes as a grid.
+// ws.manualSizes: true once the layout was arranged by hand (a divider moved,
+// a pane split or dragged); false once tiled; absent in an older layout
+// (tiles only when it already is a grid).
+let lastRoomSize = { w: 1600, h: 900 }
+// The room the grid has on screen (pixels); the last one seen when its tab is
+// not on screen.
+function gridRoomSize(ws) {
+  try {
+    const el = document.querySelector(`.ws-layer[data-ws="${ws.id}"] .view-layer:not(.hidden) .view-grid .view-room`) // i18n-ignore
+    if (el && el.clientWidth > 50 && el.clientHeight > 50) lastRoomSize = { w: el.clientWidth, h: el.clientHeight }
+  } catch {
+    /* keep the last one */
+  }
+  return lastRoomSize
+}
+// May this project's panes be tiled for `extra` (a pane about to join)? Not
+// when the setting is off, on a Live Share guest's screen (the host's layout),
+// nor when panes of several copies (task worktrees) share the tree.
+function canAutoTile(ws, extra = null) {
+  if (!ws || !settings.tileNewPanes || liveShare.isGuestWs(ws)) return false
+  const keys = new Set()
+  forEachLeaf(ws.tree, (l) => keys.add(viewKey(l, ws.cwd)))
+  if (extra) keys.add(viewKey(extra, ws.cwd))
+  return keys.size <= 1
+}
+// Is its layout the tiled kind (false: arranged by hand)?
+function autoTileActive(ws) {
+  if (ws.manualSizes === true) return false
+  if (ws.manualSizes === false) return true
+  return isNearGrid(pruneTree(ws.tree, (l) => !isTabLeaf(l)))
+}
+// The workspace's grid panes (plus `extra`, last) as an equal grid. The panes
+// keep running: only the tree changes, and the splits that stay keep their ids.
+function tileWorkspace(ws, extra = null) {
+  const leaves = []
+  const tabs = []
+  forEachLeaf(ws.tree, (l) => (isTabLeaf(l) ? tabs : leaves).push(l))
+  if (extra) leaves.push(extra)
+  if (!leaves.length) return false
+  const room = gridRoomSize(ws)
+  const counts = gridShape(leaves.length, room.w, room.h)
+  const oldRoot = gridRootOf(ws.tree, isTabLeaf)
+  if (oldRoot || !tabs.length) {
+    const root = buildGridTree(leaves, counts, makeSplit, oldRoot)
+    ws.tree = oldRoot ? swapNode(ws.tree, oldRoot, root) : root
+  } else {
+    const root = buildGridTree(leaves, counts, makeSplit, null)
+    ws.tree = addTabLeaf(ws.tree, root, makeSplit)
+  }
+  ws.manualSizes = false
+  refitSoon()
+  return true
+}
+// "Arrange panes in a grid": tile this project's panes now (order kept).
+function arrangePanes(ws = currentWs.value) {
+  if (!ws || !ws.tree || liveShare.isGuestWs(ws)) return
+  if (tileWorkspace(ws)) scheduleSave()
+}
 
 async function splitLeaf(
   leafId,
@@ -2357,6 +2419,28 @@ async function splitLeaf(
     // The workspace is gone meanwhile: do not leave its terminal running.
     window.shellApi.killPty(leaf.id)
     return
+  }
+  // Settings > Terminal, "Tile new panes in a grid": the panes of the project
+  // are laid out again as an equal grid, the new one last (paneGrid.js). A
+  // layout arranged by hand is kept: the largest pane is split along its
+  // longer side. A split asked for in a direction (opts.exact: the pane's
+  // menu, the split shortcuts) is made as asked, and the layout is then
+  // the user's own.
+  if (opts.exact) ws.manualSizes = true
+  else if (canAutoTile(ws, leaf)) {
+    if (!ws.tree || autoTileActive(ws)) {
+      tileWorkspace(ws, leaf)
+      showActive(ws, leaf.id)
+      return leaf
+    }
+    const room = gridRoomSize(ws)
+    const big = largestLeaf(pruneTree(ws.tree, (l) => !isTabLeaf(l)), room.w, room.h)
+    if (big && big.id) {
+      leafId = big.id
+      dir = big.dir
+      opts = { ...opts, before: false }
+      besideAll = false
+    }
   }
   // The pane it was split from was closed meanwhile (or is a tab whose grid
   // is empty): the new pane goes next to what is there (or is the whole
@@ -2491,9 +2575,12 @@ function closeLeaf(leafId, opts = {}) {
   }
   if (!ws) return
   if (maximizedId.value === leafId) maximizedId.value = null
+  // An auto-tiled project stays a grid without the pane (no hole, no strips).
+  const retile = !!closing && !isTabLeaf(closing) && canAutoTile(ws) && autoTileActive(ws)
   const next = removeLeaf(ws.tree, leafId)
   if (next) {
     ws.tree = next
+    if (retile) tileWorkspace(ws)
     // The pane on screen closed: the Terminal tab comes up (an editor or a
     // browser tab closed goes back to it), on the terminal or agent last
     // used in that grid (paneViews.js).
@@ -2582,6 +2669,9 @@ async function buildGrid(cols, rows, ws = currentWs.value) {
   // or a browser was on screen: its first pane).
   if (!active || !findLeafIn(root, active)) ws.activeId = firstLeafId(root)
   ws.view = 'terminal'
+  // An even grid is a grid: new panes tile again (a wider one than the room
+  // suits is rebuilt on the next pane).
+  ws.manualSizes = false
   maximizedId.value = null
   window.dispatchEvent(new Event('terminal-layout-change'))
 }
@@ -3535,8 +3625,11 @@ provide('panelCtx', {
   agents,
   selectedShell,
   routeInput,
-  splitLeaf,
+  // The pane's own menu (split right / down): made as asked.
+  splitLeaf: (id, dir, agent = null, shellId = selectedShell.value, worktree = null, opts = {}) => splitLeaf(id, dir, agent, shellId, worktree, { ...opts, exact: true }),
   closeLeaf,
+  // The pane's menu: tile its project's panes as a grid.
+  arrangePanes: (id) => arrangePanes(wsOfLeaf(id) || currentWs.value),
   restartLeaf,
   restartWithPermissions,
   restartOnAccount,
@@ -3691,7 +3784,7 @@ provide('panelCtx', {
 })
 
 function splitActive(dir) {
-  if (activeId.value) splitLeaf(activeId.value, dir, null, selectedShell.value, null, { inheritView: true, onHost: true })
+  if (activeId.value) splitLeaf(activeId.value, dir, null, selectedShell.value, null, { inheritView: true, onHost: true, exact: true })
 }
 
 function closeActive() {
@@ -3781,6 +3874,10 @@ function buildCommands() {
   const layout = t('app.cmd.group.layout', 'Layout')
   add(layout, t('app.cmd.splitRight', 'Split right'), () => splitActive('row'), { shortcut: 'Ctrl+Shift+E' })
   add(layout, t('app.cmd.splitDown', 'Split down'), () => splitActive('col'), { shortcut: 'Ctrl+Shift+O' })
+  if (currentWs.value && currentWs.value.tree && !liveShare.isGuestWs(currentWs.value))
+    add(layout, t('app.cmd.arrangeGrid', 'Arrange panes in a grid'), () => arrangePanes(), {
+      hint: t('app.cmd.arrangeGridHint', 'Equal panes, as square as the room allows; new panes then tile too')
+    })
   for (const o of gridOptions) add(layout, t('app.cmd.evenGrid', 'Even grid {{grid}}', { grid: o.label }), () => applyGrid(o.value))
   if (activeId.value) {
     const id = activeId.value
@@ -4026,7 +4123,7 @@ async function launch({ kind, id, sessionOptions = null, accountId, installOnHos
 
   const ws = (targetId && wsOfLeaf(targetId)) || currentWs.value
   if (targetId && ws && ws.tree) {
-    const leaf = await splitLeaf(targetId, where === 'down' ? 'col' : 'row', agent, shellId, worktree, { before: where === 'left', sessionOptions, inheritView: true, ...account })
+    const leaf = await splitLeaf(targetId, where === 'down' ? 'col' : 'row', agent, shellId, worktree, { before: where === 'left', sessionOptions, inheritView: true, ...(where !== placement.value ? { exact: true } : {}), ...account })
     offerHostInstall(leaf, installOnHost)
     return
   }
@@ -5621,6 +5718,11 @@ function movePane(srcId, target) {
   if (liveShare.isGuestWs(srcWs) || liveShare.isGuestWs(dstWsOf) || liveShare.isGuestLeaf(src)) {
     showToast(t('liveShare.noMove', 'A Live Share project follows the host’s layout: its panes do not move, and no pane moves into it.'), { timeout: 5000 })
     return
+  }
+  // Moved by hand (a swap keeps the grid): the layout is the user's own now.
+  if (!(target.kind === 'pane' && target.zone === 'center')) {
+    srcWs.manualSizes = true
+    if (dstWsOf) dstWsOf.manualSizes = true
   }
 
   if (target.kind === 'ws') {
@@ -11639,6 +11741,10 @@ watch(activeId, (id) => id && agentTerminalTargets.touch(id))
 {
   const onResized = (e) => {
     for (const id of (e && e.detail && e.detail.ids) || []) agentTerminalTargets.touch(id)
+    // A divider moved by hand: the sizes are the user's now.
+    const ids = (e && e.detail && e.detail.ids) || []
+    const owner = ids.length ? wsOfLeaf(ids[0]) : null
+    if (owner) owner.manualSizes = true
   }
   window.addEventListener('tessel-panes-resized', onResized)
   onBeforeUnmount(() => window.removeEventListener('tessel-panes-resized', onResized))
@@ -13360,6 +13466,8 @@ async function restoreOrSeedLayout() {
       ws.remote = savedRemote(snap.remote)
       if (ws.remote) ws.cwd = null
       ws.group = savedGroup(snap.group)
+      // Absent in a layout saved by an older version.
+      if (typeof snap.manualSizes === 'boolean') ws.manualSizes = snap.manualSizes
       made.push(ws)
     }
     // The project you were in comes back first and is shown at once, while
@@ -14038,6 +14146,7 @@ onBeforeUnmount(() => {
           v-for="ws in workspaces"
           :key="ws.id"
           class="ws-layer"
+          :data-ws="ws.id"
           :class="{ hidden: ws.id !== currentWsId }"
           :aria-hidden="ws.id !== currentWsId"
         >

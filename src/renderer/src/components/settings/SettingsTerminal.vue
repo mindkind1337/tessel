@@ -360,6 +360,18 @@ function resetScrollSpeed() {
       </div>
     </div>
     <div class="set-group">
+      <h3 class="set-group-title">{{ t('settings.terminal.layout', 'Layout') }}</h3>
+      <div class="set-card">
+        <label class="set-row">
+          <div class="set-label">
+            {{ t('settings.terminal.tileNewPanes', 'Tile new panes in a grid') }}
+            <span class="set-hint">{{ t('settings.terminal.tileNewPanesHint', 'A new pane re-arranges the panes of the project into equal cells, as square as the room allows. A layout you resized or moved by hand is kept until you choose Arrange panes in a grid.') }}</span>
+          </div>
+          <input v-model="settings.tileNewPanes" type="checkbox" class="set-switch" />
+        </label>
+      </div>
+    </div>
+    <div class="set-group">
       <h3 class="set-group-title">{{ t('settings.terminal.copyPaste', 'Copy and paste') }}</h3>
       <div class="set-card">
         <label class="set-row">

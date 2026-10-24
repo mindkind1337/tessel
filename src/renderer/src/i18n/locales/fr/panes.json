@@ -561,6 +561,7 @@
       "openHere": "Ouvrir un terminal ou un agent ici…",
       "splitRight": "Diviser à droite",
       "splitDown": "Diviser vers le bas",
+      "arrangeGrid": "Organiser les panneaux en grille",
       "model": "Modèle…",
       "modelHint": "Choisir le modèle utilisé par cet agent",
       "restartYolo": "Redémarrer en Yolo",
