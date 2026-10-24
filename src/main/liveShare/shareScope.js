@@ -182,12 +182,23 @@ const PROTECTED_FILES = new Set([
   'continue.config.json'
 ])
 const PROTECTED_PATTERNS = [/^\.?lefthook(-local)?\.ya?ml$/, /^\.lintstagedrc(\..+)?$/, /^lint-staged\.config\.[cm]?[jt]s$/, /^\.?commitlint(rc|\.config)(\..+)?$/]
+// The names git runs by itself as hooks: with core.hooksPath on the project's
+// own folder ('.'), these files of the project's top level run on a commit.
+const HOOK_NAMES = new Set([
+  'applypatch-msg', 'pre-applypatch', 'post-applypatch', 'pre-commit', 'pre-merge-commit', 'prepare-commit-msg',
+  'commit-msg', 'post-commit', 'pre-rebase', 'post-checkout', 'post-merge', 'pre-push', 'pre-receive', 'update',
+  'proc-receive', 'post-receive', 'post-update', 'reference-transaction', 'push-to-checkout', 'pre-auto-gc',
+  'post-rewrite', 'sendemail-validate', 'fsmonitor-watchman', 'p4-changelist', 'p4-prepare-changelist',
+  'p4-post-changelist', 'p4-pre-submit', 'post-index-change'
+])
 export function isProtectedRel(rel, extra = null) {
   const segs = segsOf(rel)
   if (segs.some((x) => PROTECTED_FOLDERS.has(x))) return true
   const name = segs.length ? segs[segs.length - 1] : ''
   if (name && (PROTECTED_FILES.has(name) || PROTECTED_PATTERNS.some((re) => re.test(name)))) return true
   const low = lower(rel)
+  // '' is the project folder itself: its top-level files named like a hook.
+  if (Array.isArray(extra) && extra.includes('') && segs.length === 1 && HOOK_NAMES.has(name)) return true
   return Array.isArray(extra) && extra.some((x) => x && (low === x || low.startsWith(`${x}/`)))
 }
 // May a guest with these rights change `rel` (the edit or git right itself is

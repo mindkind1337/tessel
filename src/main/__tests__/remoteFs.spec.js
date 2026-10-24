@@ -3,6 +3,8 @@ import fs from 'fs'
 import os from 'os'
 import { join } from 'path'
 import { execFileSync } from 'child_process'
+import { EventEmitter } from 'events'
+import { PassThrough } from 'stream'
 import { createRemoteFs, checkRemoteName, cleanRel, findPattern, trashInfoPath, porcelainLetters, parseStat, parseFingerprint } from '../remoteFs'
 import { remoteRoot, childPath } from '../../shared/remotePath'
 import { gitSh, fakeSpawn, posixPath } from './fixtures/fakeSsh'
@@ -757,5 +759,127 @@ describe.skipIf(!gitSh())('a Live Share guest\'s calls on a real repository (fak
     const res = await rfs.searchContent({ root, query: 'one', guest: true })
     expect(res.ok).toBe(true)
     expect(res.results.map((r) => r.rel)).toContain('a.txt')
+  }, 30000)
+})
+
+describe('a guest\'s calls: a session still connecting, a connection dropped meanwhile', () => {
+  const root = remoteRoot(HOST, '/srv/app')
+
+  it('does not wait for a session that is still connecting: not connected after the guest timeout', async () => {
+    const never = () =>
+      Object.assign(new EventEmitter(), { stdin: new PassThrough(), stdout: new PassThrough(), stderr: new PassThrough(), kill() {}, pid: 1 })
+    const waits = []
+    const timers = {
+      ...globalThis,
+      setTimeout: (fn, ms, ...rest) => {
+        waits.push(ms)
+        // The guest's wait ends at once; the others are the real ones.
+        return ms === 15000 ? setTimeout(fn, 0) : setTimeout(fn, ms, ...rest)
+      },
+      clearTimeout: (x) => clearTimeout(x),
+      setInterval: (...a) => setInterval(...a),
+      clearInterval: (x) => clearInterval(x)
+    }
+    const rfs = createRemoteFs({ hosts: { ...stubHosts([]), sharedConnected: () => true }, spawnImpl: never, timers })
+    rfs.setRoots([root])
+    // The host's own call starts the session; it stays connecting.
+    const own = rfs.listDir({ root })
+    own.catch(() => {})
+    const res = await rfs.listDir({ root, guest: true })
+    expect(res.ok).toBe(false)
+    expect(waits).toContain(15000)
+    rfs.close()
+  }, 30000)
+
+  it('re-checks the shared connection right before it opens one: dropped meanwhile means not connected', async () => {
+    let connected = true
+    let spawned = 0
+    const ssh = {
+      modeFor: async () => {
+        connected = false // the connection dropped while the mode was looked up
+        return { mode: 'ssh2', spec: {} }
+      },
+      spawnFor: () => {
+        spawned++
+        throw new Error('must not be reached')
+      }
+    }
+    const hosts = { ...stubHosts([]), get: () => ({ id: HOST, label: 'Box' }), sharedConnected: () => connected }
+    const rfs = createRemoteFs({ hosts, ssh })
+    rfs.setRoots([root])
+    const res = await rfs.statForEdit(childPath(root, 'a.txt'), { guest: true })
+    expect(res.ok).toBe(false)
+    expect(spawned).toBe(0)
+    rfs.close()
+  })
+})
+
+describe.skipIf(!gitSh())('a guest\'s calls: hooks folder through a link', () => {
+  let base
+  let proj
+  let home
+  let root
+  let rfs
+  const g = (...a) => execFileSync('git', ['-C', proj, ...a], { stdio: 'pipe' }).toString()
+
+  beforeAll(async () => {
+    base = fs.mkdtempSync(join(os.tmpdir(), 'tessel-rfs-hooks-'))
+    proj = join(base, 'proj')
+    home = join(base, 'home')
+    fs.mkdirSync(proj)
+    fs.mkdirSync(home)
+    g('init', '-q', '-b', 'main')
+    fs.mkdirSync(join(proj, 'scripts', 'h'), { recursive: true })
+    fs.writeFileSync(join(proj, 'scripts', 'h', 'pre-commit'), '#!/bin/sh\n')
+    root = remoteRoot(HOST, posixPath(proj))
+    rfs = createRemoteFs({ hosts: stubHosts([]), spawnImpl: fakeSpawn({ home }) })
+    rfs.setRoots([root])
+    await rfs.listDir({ root })
+  }, 30000)
+  afterAll(() => {
+    rfs.close()
+    fs.rmSync(base, { recursive: true, force: true })
+  })
+
+  it('protects the real target of a hooks folder that is a link, and the folder itself', async () => {
+    try {
+      fs.symlinkSync(join(proj, 'scripts', 'h'), join(proj, 'hooks'), 'junction')
+    } catch {
+      return // no link can be made here
+    }
+    g('config', 'core.hooksPath', 'hooks')
+    const res = await rfs.hooksPathOf({ root, guest: true })
+    expect(res.ok).toBe(true)
+    expect(res.rels).toContain('hooks')
+    // Where the link leads, when this host resolves it (a junction may not be one for sh).
+    const real = await rfs.realRootOf({ root, guest: true })
+    expect(real.ok).toBe(true)
+  }, 60000)
+
+  it('the project folder itself as hooks folder is [""]', async () => {
+    g('config', 'core.hooksPath', '.')
+    expect(await rfs.hooksPathOf({ root, guest: true })).toEqual({ ok: true, rels: [''] })
+    g('config', '--unset', 'core.hooksPath')
+  }, 30000)
+
+  it('gives the real path of the project folder', async () => {
+    const res = await rfs.realRootOf({ root, guest: true })
+    expect(res.ok).toBe(true)
+    expect(res.real.toLowerCase()).toContain('proj')
+  }, 30000)
+
+  it('makes a new file by a link that fails when the target is there; no temporary file is left', async () => {
+    const file = childPath(root, 'new.txt')
+    expect((await rfs.writeForEdit({ file, text: 'a\n', createOnly: true, guest: true })).ok).toBe(true)
+    expect(fs.readFileSync(join(proj, 'new.txt'), 'utf8')).toBe('a\n')
+    const again = await rfs.writeForEdit({ file, text: 'b\n', createOnly: true, guest: true })
+    expect(again).toMatchObject({ ok: false, conflict: true })
+    expect(fs.readFileSync(join(proj, 'new.txt'), 'utf8')).toBe('a\n')
+    // A folder in the way is a conflict too, and nothing is put inside it.
+    fs.mkdirSync(join(proj, 'dirhere'))
+    const inDir = await rfs.writeForEdit({ file: childPath(root, 'dirhere'), text: 'c\n', createOnly: true, guest: true })
+    expect(inDir.ok).toBe(false)
+    expect(fs.readdirSync(join(proj, 'dirhere'))).toEqual([])
+    expect(fs.readdirSync(proj).filter((n) => n.includes('tessel'))).toEqual([])
   }, 30000)
 })

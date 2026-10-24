@@ -368,8 +368,16 @@ __t_write() {
   chmod "$__m" "$__tmp" 2>/dev/null
   __t_same "$__P" "$3" "$4" || { rm -f "$__tmp"; __t_sig "$__P"; return 95; }
   if [ -n "$6" ]; then
-    mv -n "$__tmp" "$__P" || { rm -f "$__tmp"; return 98; }
-    if [ -e "$__tmp" ]; then rm -f "$__tmp"; __t_sig "$__P"; return 95; fi
+    if [ -n "$__T_MT" ]; then ln -T "$__tmp" "$__P" 2>/dev/null; else ln "$__tmp" "$__P" 2>/dev/null; fi
+    __lrc=$?
+    if [ "$__lrc" = 0 ]; then
+      rm -f "$__tmp"
+      if [ -d "$__P" ] && [ ! -L "$__P" ]; then rm -f "$__P/\${__tmp##*/}"; return 95; fi
+    else
+      rm -f "$__tmp"
+      { [ -e "$__P" ] || [ -L "$__P" ]; } && { __t_sig "$__P" 2>/dev/null; return 95; }
+      return 98
+    fi
   else
     mv -f "$__tmp" "$__P" || { rm -f "$__tmp"; return 98; }
   fi

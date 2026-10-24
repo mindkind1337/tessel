@@ -17,6 +17,7 @@ import { hashOf } from '../editorFiles'
 import { LSHARE_CODES, LSHARE_LIMITS as L } from '../../shared/liveSharePath'
 import { createGuestFs } from '../liveShare/guestFs'
 import { cleanRemoteRoot } from '../liveShare'
+import { isProtectedRel } from '../liveShare/shareScope'
 import { remoteRootTooBroad } from '../../shared/remoteRootPolicy'
 
 const ROOT = 'ssh://ssh-a1/home/me/app'
@@ -35,6 +36,8 @@ function fakeRemote(tree) {
     delay: 0,
     unguarded: [],
     hooks: [],
+    real: '/home/me/app',
+    listeners: [],
     tree
   }
   const rel = (v) => {
@@ -193,6 +196,14 @@ function fakeRemote(tree) {
         for (const p of state.ignored) files[`${ROOT}\\${p.replace(/\//g, '\\')}`] = '!'
         return { ok: true, repo: true, files }
       }),
+    realRootOf: (q) =>
+      track('real', q, () =>
+        state.real === null ? { ok: false } : { ok: true, real: state.real }
+      ),
+    onChange: (fn) => {
+      state.listeners.push(fn)
+      return () => {}
+    },
     hooksPathOf: (q) =>
       track('hooks', q, () =>
         state.hooks === null ? { ok: false } : { ok: true, rels: state.hooks }
@@ -837,7 +848,8 @@ describe('security review fixes', () => {
     it("the host's shell makes a new file only if nothing is there, and cuts a read at its limit", async () => {
       const { prelude } = await import('../remoteShell')
       const text = prelude('0123456789abcdef0123456789abcdef')
-      expect(text).toContain('mv -n "$__tmp" "$__P"')
+      expect(text).toContain('ln -T "$__tmp" "$__P"')
+      expect(text).toContain('ln "$__tmp" "$__P"')
       expect(text).toContain('[ -z "$6" ] || { __t_sig "$__P"; return 95; }')
       expect(text).toContain('head -c "$(($3+1))" "$__P"')
       expect(text).toContain('! -type d ! -type l -print0')
@@ -881,6 +893,176 @@ describe('security review fixes', () => {
       const names = res.data.entries.map((e) => e.name)
       expect(names).not.toContain('.env')
       expect(names).not.toContain('build')
+    })
+  })
+})
+
+describe('second review', () => {
+  const OKW = { recheck: async () => true }
+  const withTree = (more) => Object.assign(remote.state.tree, more)
+
+  describe('1: the real folder of core.hooksPath', () => {
+    it('the folders the host names (link target included) are all protected', async () => {
+      withTree({
+        scripts: { dir: true },
+        'scripts/h': { dir: true },
+        'scripts/h/pre-commit': { text: '#!/bin/sh\n' }
+      })
+      // core.hooksPath=hooks is a link to scripts/h: remoteFs gives both.
+      remote.state.hooks = ['hooks', 'scripts/h']
+      const cur = (await ask('fs.read', { path: 'scripts/h/pre-commit' }, { rights: EDIT })).data
+      expect(cur.readOnly).toBe(true)
+      const res = await ask(
+        'fs.write',
+        { path: 'scripts/h/pre-commit', text: 'evil', expectHash: cur.hash },
+        { rights: EDIT, ...OKW }
+      )
+      expect(res.code).toBe('not-allowed')
+      expect(remote.state.calls).not.toContain('write')
+      // The link itself is below no real folder a guest may write.
+      expect(
+        (
+          await ask(
+            'fs.write',
+            { path: 'hooks/pre-commit', text: 'evil' },
+            { rights: EDIT, ...OKW }
+          )
+        ).code
+      ).toBe('not-allowed')
+    })
+  })
+
+  describe('2: core.hooksPath on the project folder itself', () => {
+    it('protects the top-level files named like a git hook, nothing else', () => {
+      for (const name of [
+        'pre-commit',
+        'commit-msg',
+        'pre-push',
+        'post-merge',
+        'prepare-commit-msg',
+        'update',
+        'Pre-Commit'
+      ]) {
+        expect(isProtectedRel(name, ['']), name).toBe(true)
+      }
+      expect(isProtectedRel('README.md', [''])).toBe(false)
+      expect(isProtectedRel('src/pre-commit', [''])).toBe(false)
+      expect(isProtectedRel('pre-commit', [])).toBe(false)
+      expect(isProtectedRel('pre-commit', null)).toBe(false)
+    })
+
+    it('an edit-only guest cannot write them (type right can)', async () => {
+      withTree({ 'pre-commit': { text: '#!/bin/sh\n' } })
+      remote.state.hooks = ['']
+      const cur = (await ask('fs.read', { path: 'pre-commit' }, { rights: EDIT })).data
+      expect(cur.readOnly).toBe(true)
+      expect(
+        (
+          await ask(
+            'fs.write',
+            { path: 'pre-commit', text: 'x', expectHash: cur.hash },
+            { rights: EDIT, ...OKW }
+          )
+        ).code
+      ).toBe('not-allowed')
+      expect(
+        (
+          await ask(
+            'fs.write',
+            { path: 'a.txt', text: 'x', expectHash: hashOf(Buffer.from('hello')) },
+            { rights: EDIT, ...OKW }
+          )
+        ).ok
+      ).toBe(true)
+      const typed = { edit: true, type: true }
+      expect(
+        (
+          await ask(
+            'fs.write',
+            { path: 'pre-commit', text: 'x', expectHash: cur.hash },
+            { rights: typed, ...OKW }
+          )
+        ).ok
+      ).toBe(true)
+    })
+  })
+
+  describe('3: broad roots, case, system trees, real path', () => {
+    it('compares without case and refuses system trees and secret folders at any depth', () => {
+      for (const p of [
+        '/ETC',
+        '/etc/ssh',
+        '/Etc/ssh/keys',
+        '/var/log',
+        '/usr/local/bin',
+        '/root/proj',
+        '/proc/1',
+        '/sys/x',
+        '/dev/shm',
+        '/boot/x',
+        '/HOME/me',
+        '/Users/me',
+        '/home/me/.ssh',
+        '/home/me/.ssh/keys',
+        '/home/me/.AWS/x',
+        '/Users/me/.gnupg',
+        '/home/me/.config/app',
+        '~/.ssh',
+        '~/.config/x',
+        '~',
+        '/',
+        '/opt',
+        '/srv'
+      ]) {
+        expect(remoteRootTooBroad(p), p).toBe(true)
+      }
+      for (const p of [
+        '/home/me/app',
+        '/Users/me/Code/app',
+        '/srv/app',
+        '/opt/app',
+        '~/app',
+        '~/code/x'
+      ]) {
+        expect(remoteRootTooBroad(p), p).toBe(false)
+      }
+    })
+
+    it('a project folder that is a link to a broad folder is refused (the real path is checked)', async () => {
+      for (const real of ['/', '/home/me', '/etc', '/home/me/.ssh']) {
+        rig.reset()
+        remote.state.real = real
+        const res = await ask('fs.list', {})
+        expect(res.code, real).toBe('remote-project')
+      }
+      expect(remote.state.calls.filter((c) => c === 'listDir')).toEqual([])
+      rig.reset()
+      remote.state.real = '/srv/real-app'
+      expect((await ask('fs.list', {})).ok).toBe(true)
+    })
+
+    it('a real path that cannot be read: nothing is shown', async () => {
+      remote.state.real = null
+      expect((await ask('fs.list', {})).ok).toBe(false)
+    })
+  })
+
+  describe("4: the host explorer's change notice", () => {
+    it('makes the ignore list stale (read again after the minimum interval), like the local scope', async () => {
+      let t = 5_000_000
+      rig = createRemoteShareFiles({ remote: remote.svc, now: () => t })
+      const scans = () => remote.state.calls.filter((c) => c === 'status').length
+      await ask('fs.list', {})
+      expect(remote.state.listeners).toHaveLength(1)
+      t += 4000 // still inside the cache's life
+      await ask('fs.list', {})
+      expect(scans()).toBe(1)
+      remote.state.listeners.forEach((fn) => fn(ROOT))
+      await ask('fs.list', {}) // stale and past the minimum interval
+      expect(scans()).toBe(2)
+      remote.state.listeners.forEach((fn) => fn(ROOT))
+      await ask('fs.list', {}) // stale, but scanned a moment ago
+      expect(scans()).toBe(2)
     })
   })
 })

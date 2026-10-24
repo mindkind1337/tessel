@@ -359,6 +359,7 @@ export function createRemoteFs({
   const repoInfos = new Map() // hostId\nroot path -> Promise<info>
   const watchedRoots = new Map() // virtual root -> { hostId, root, last }
   const watchedFiles = new Map() // hostId\npath -> { virtual, loc, sig }
+  const changeListeners = new Set() // fn(virtual root): a watched project changed
   let pollTimer = null
   let pollTick = 0
   let markerSeq = 0
@@ -506,6 +507,8 @@ export function createRemoteFs({
       if (noSignIn && mode.mode !== 'ssh2') throw Object.assign(new Error('not connected'), { code: 'not-connected' }) // i18n-ignore internal
       if (entry.closed) throw Object.assign(new Error('cancelled'), { code: 'cancelled' }) // i18n-ignore internal
       if (mode.mode === 'ssh2') {
+        // The connection may have dropped while the mode was looked up: a guest's call never signs in.
+        if (noSignIn && !(hosts.sharedConnected && hosts.sharedConnected(hostId))) throw Object.assign(new Error('not connected'), { code: 'not-connected' }) // i18n-ignore internal
         activity(hostId, entry)
         const session = createRemoteSession({
           file: 'ssh2',
@@ -555,6 +558,24 @@ export function createRemoteFs({
       if (!entry.closed) ended(hostId, entry, (err && err.code) || 'connect')
     })
     return entry.ready
+  }
+
+  // A guest does not wait for a session that is still connecting (the host
+  // may be answering a password question): not connected, for now.
+  function untilGuestTimeout(promise) {
+    return new Promise((resolve, reject) => {
+      const timer = timers.setTimeout(() => reject(Object.assign(new Error('not connected'), { code: 'not-connected' })), GUEST_TIMEOUT_MS) // i18n-ignore internal
+      promise.then(
+        (v) => {
+          timers.clearTimeout(timer)
+          resolve(v)
+        },
+        (e) => {
+          timers.clearTimeout(timer)
+          reject(e)
+        }
+      )
+    })
   }
 
   function ended(hostId, entry, reason) {
@@ -646,7 +667,7 @@ export function createRemoteFs({
       session = entry0.session
     } else {
       try {
-        session = await open(hostId, { noSignIn: guest })
+        session = await (guest ? untilGuestTimeout(open(hostId, { noSignIn: true })) : open(hostId))
       } catch (err) {
         return { error: sessionErrorText(hostId, err), code: (err && err.code) || 'failed' }
       }
@@ -1141,9 +1162,14 @@ ${q.root}`, () => sparseInfoNow(q))
   async function hooksPathOf({ root, guest = false } = {}) {
     const loc = under(root, root)
     if (!loc) return { ok: false }
-    const info = await repoInfo(loc, { guest })
-    if (info.error || info.missing) return { ok: false }
-    if (!info.top) return { ok: true, rels: [] }
+    // Not through repoInfo: reading one setting runs no program of the
+    // repository, so a repository the host has not decided on still tells.
+    const found = await call(loc.hostId, '__t_top', [arg(loc.root.path)], { cap: 64 * 1024, timeoutMs: 15000, op: 'status', retry: true, ...(guest ? { guest: true } : {}) })
+    if (found.error) return { ok: false }
+    if (found.rc === RC.NOT_REPO) return { ok: true, rels: [] }
+    const lines = found.rc === 0 ? found.out.toString('utf8').split('\n') : []
+    if (!lines[0] || !lines[1]) return { ok: false }
+    const info = { realRoot: lines[0], top: lines[1] }
     const res = await call(loc.hostId, '__t_gitin', [arg(loc.root.path), arg(info.top), '-c', 'core.fsmonitor=false', 'config', '--get', 'core.hooksPath'], {
       cap: 8192,
       timeoutMs: 15000,
@@ -1164,8 +1190,33 @@ ${q.root}`, () => sparseInfoNow(q))
       if (seg === '..') segs.pop()
       else segs.push(seg)
     }
-    const rel = relativeTo(info.realRoot, `/${segs.join('/')}`)
-    return { ok: true, rels: rel === null ? [] : [rel.toLowerCase()] }
+    const abs = `/${segs.join('/')}`
+    const rels = new Set()
+    const lexical = relativeTo(info.realRoot, abs)
+    if (lexical !== null) rels.add(lexical.toLowerCase())
+    // Where the folder really is (a link to another folder of the project
+    // makes the files there run as hooks too).
+    const real = await call(loc.hostId, '__t_top', [arg(abs)], { cap: 64 * 1024, timeoutMs: 15000, op: 'status', retry: true, ...(guest ? { guest: true } : {}) })
+    if (real.error) return { ok: false }
+    if (real.rc === 0 || real.rc === RC.NOT_REPO) {
+      const target = real.out.toString('utf8').split('\n')[0]
+      const rr = target.startsWith('/') ? relativeTo(info.realRoot, target) : null
+      if (rr !== null) rels.add(rr.toLowerCase())
+    } else if (real.rc !== RC.MISSING) return { ok: false }
+    return { ok: true, rels: [...rels] }
+  }
+
+  // The project folder's real path on the host (links resolved), for the
+  // checks that must not be fooled by a link to a broad folder.
+  // -> { ok: true, real } | { ok: false, error? }
+  async function realRootOf({ root, guest = false } = {}) {
+    const loc = under(root, root)
+    if (!loc) return { ok: false }
+    const res = await call(loc.hostId, '__t_top', [arg(loc.root.path)], { cap: 64 * 1024, timeoutMs: 15000, op: 'status', retry: true, ...(guest ? { guest: true } : {}) })
+    if (res.error) return { ok: false, error: res.error, code: res.code }
+    if (res.rc !== 0 && res.rc !== RC.NOT_REPO) return { ok: false }
+    const real = res.out.toString('utf8').split('\n')[0]
+    return real.startsWith('/') ? { ok: true, real } : { ok: false }
   }
 
   // --- Editor ----------------------------------------------------------------------------
@@ -1384,6 +1435,13 @@ ${q.root}`, () => sparseInfoNow(q))
           if (!rels || rels.some((r) => r === '.git' || /^\.git\/(config|hooks|commondir|worktrees)/.test(r))) {
             repoInfos.delete(`${w.hostId}\n${w.root.path}`)
             repoInfos.delete(`${w.hostId}\n${w.root.path}\nguest`)
+          }
+          for (const fn of [...changeListeners]) {
+            try {
+              fn(virtual)
+            } catch {
+              /* a listener's own matter */
+            }
           }
           send('explorer:changed', { root: virtual, paths: rels ? rels.map((r) => (r ? childPath(virtual, r) : virtual)) : null })
         }
@@ -1987,6 +2045,11 @@ ${root}`, () => gitWorktreesNow(root))
     allowPath,
     setRoots,
     hasRoot: (virtual) => !!rootOf(virtual),
+    realRootOf,
+    onChange: (fn) => {
+      changeListeners.add(fn)
+      return () => changeListeners.delete(fn)
+    },
     listDir,
     listMany,
     projectStatus,

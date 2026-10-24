@@ -74,6 +74,7 @@ export const MAX_ACTIVE = 2 // requests on one host's session at once
 export const MAX_WAITING = 6 // and waiting for their turn
 export const MAX_PER_PERSON = 3 // running or waiting, per person
 const IGNORE_TTL_MS = 8000
+const REAL_ROOT_TTL_MS = 60_000
 const MIN_SCAN_MS = 3000 // a scan of what git ignores is not made again sooner
 const MAX_LISTED_DIRS = 60 // folders one request to the host lists (search results)
 const VERIFIED_TTL_MS = 10_000
@@ -103,6 +104,8 @@ export function createRemoteShareFiles({ remote, log = null, now = () => Date.no
   const ignoredCache = new Map() // virtual root -> { at, set } | { at, promise }
   const verified = new Map() // virtual root -> Map(dir rel -> expiry)
   const hooksCache = new Map() // virtual root -> { at, promise }
+  const realCache = new Map() // virtual root -> { at, promise } the folder's real path checked
+  const unsubscribed = new WeakSet()
 
   // --- Concurrency ----------------------------------------------------------
   // -> a release function, or null when the host's session is as busy as
@@ -378,6 +381,37 @@ export function createRemoteShareFiles({ remote, log = null, now = () => Date.no
   function invalidate(root, rel) {
     const c = ignoredCache.get(root)
     if (c && IGNORE_FILES.has(basename(rel).toLowerCase())) c.stale = true
+  }
+
+  // The host's explorer saw the project change: what was read of it is old
+  // (the ignore list is read again, after the minimum interval).
+  function changed(root) {
+    const c = ignoredCache.get(root)
+    if (c) c.stale = true
+    verified.delete(root)
+    hooksCache.delete(root)
+  }
+  function listen(svc) {
+    if (typeof svc.onChange !== 'function' || unsubscribed.has(svc)) return
+    unsubscribed.add(svc)
+    svc.onChange(changed)
+  }
+
+  // The project folder's real path must not be a broad folder either (the
+  // saved path may be a link to the host's root or a home folder).
+  // -> null (fine) | a code
+  async function realRootBad(svc, st) {
+    if (typeof svc.realRootOf !== 'function') return null
+    const hit = realCache.get(st.root)
+    if (hit && now() - hit.at < REAL_ROOT_TTL_MS) return hit.promise
+    const promise = svc.realRootOf({ root: st.root, ...G }).then((r) => {
+      if (!r || r.ok !== true) return failedCode(svc, st, r)
+      return remoteRootTooBroad(r.real) ? 'remote-project' : null
+    })
+    realCache.set(st.root, { at: now(), promise })
+    const code = await promise.catch(() => 'failed')
+    if (code && code !== 'remote-project') realCache.delete(st.root)
+    return code
   }
 
   // core.hooksPath, relative to the project: the files there run when the
@@ -763,6 +797,9 @@ export function createRemoteShareFiles({ remote, log = null, now = () => Date.no
     let res
     try {
       if (typeof ctx.cancelled === 'function' && ctx.cancelled()) return fail('failed')
+      listen(svc)
+      const broad = await realRootBad(svc, st)
+      if (broad) return fail(broad)
       res = await RUN[name](svc, a, st, { settings, rights, recheck: ctx.recheck })
     } catch (err) {
       if (log && log.warn)
@@ -792,6 +829,7 @@ export function createRemoteShareFiles({ remote, log = null, now = () => Date.no
     ignoredCache.clear()
     verified.clear()
     hooksCache.clear()
+    realCache.clear()
   }
 
   return { handle, supports, reset }
