@@ -549,6 +549,7 @@
       "confirmMultilineHint": "Pour qu'un collage accidentel ne puisse pas exécuter de commandes",
       "alwaysSelect": "Toujours sélectionner avec la souris",
       "alwaysSelectHint": "Même dans les programmes qui utilisent la souris (htop), qui ne reçoivent alors plus les clics. Sinon, maintenez Maj.",
+      "mouseProgramsHint": "Les programmes qui utilisent la souris (tmux, vim, Grok) reçoivent les clics simples ; leurs liens s'ouvrent avec Maj+clic ou Cmd+clic.",
       "scrollSpeed": "Vitesse de défilement",
       "scrollSpeedHint": "Ajustez le ressenti de la molette dans l'historique et dans les applications de terminal sensibles à la souris.",
       "scrollNormal": "Normal",

@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { detectDeviceLogin, mouseClickBytes, linkClickOpens } from '../deviceLogin'
+import { detectDeviceLogin, columnOfIndex, mouseClickBytes, linkClickOpens } from '../deviceLogin'
 
 const pane = readFileSync(join(__dirname, '..', 'components', 'TerminalPane.vue'), 'utf8')
 
@@ -31,7 +31,7 @@ describe('detectDeviceLogin', () => {
     expect(r.provider).toBe('grok')
     expect(r.url).toBeNull()
     expect(r.code).toBe('ABCD-1234')
-    expect(r.showUrl).toEqual({ row: 9, col: 32 })
+    expect(r.showUrl).toEqual({ row: 9, index: 30 })
     expect(grokFirst[8].slice(30, 34)).toBe('here')
   })
   it('Grok with its URL: host, and the code from user_code', () => {
@@ -39,6 +39,7 @@ describe('detectDeviceLogin', () => {
     expect(r.url).toBe('https://accounts.x.ai/oauth2/device?user_code=ABCD-1234')
     expect(r.host).toBe('accounts.x.ai')
     expect(r.known).toBe(true)
+    expect(r.page).toBe('https://accounts.x.ai/oauth2/device')
     expect(r.code).toBe('ABCD-1234')
     expect(r.showUrl).toBeNull()
   })
@@ -90,6 +91,52 @@ describe('detectDeviceLogin', () => {
   })
 })
 
+describe('what a known host vouches for', () => {
+  it('a hostile OAuth page on github.com is not the device flow', () => {
+    const r = detectDeviceLogin(['Approve in your browser', 'https://github.com/login/oauth/authorize?client_id=evil&scope=repo', 'ABCD-1234'])
+    expect(r.known).toBe(false)
+    expect(r.label).toBe('')
+    expect(r.page).toBe('https://github.com/login/oauth/authorize')
+  })
+  it('storage.googleapis.com is not Gemini, and a port shows in the page', () => {
+    const r = detectDeviceLogin(['Enter the code', 'https://storage.googleapis.com/b/page.html'])
+    expect(r.known).toBe(false)
+    expect(r.provider).toBe('other')
+    const p = detectDeviceLogin(['Enter the code ABCD-1234', 'https://accounts.x.ai:8443/oauth2/device'])
+    expect(p.page).toBe('https://accounts.x.ai:8443/oauth2/device')
+  })
+})
+
+describe('several pages, wrapped URLs, and the code near the prompt', () => {
+  it('two different https pages: no banner', () => {
+    expect(detectDeviceLogin(['Enter the code ABCD-1234', 'https://github.com/login/device', 'https://evil.test/x'])).toBeNull()
+  })
+  it('a URL wrapped by the terminal is whole again', () => {
+    const r = detectDeviceLogin(['Approve in your browser', 'https://accounts.x.ai/oauth2/dev', 'ice?user_code=ABCD-1234'], [false, false, true])
+    expect(r.url).toBe('https://accounts.x.ai/oauth2/device?user_code=ABCD-1234')
+  })
+  it('a code far from the prompt (a log or listing) is not offered', () => {
+    const far = ['Enter the code', 'https://github.com/login/device', ...Array(10).fill('x'), 'build ABCD-1234']
+    expect(detectDeviceLogin(far).code).toBeNull()
+    const near = ['Enter the code', 'https://github.com/login/device', 'ABCD-1234']
+    expect(detectDeviceLogin(near).code).toBe('ABCD-1234')
+  })
+})
+
+describe('columnOfIndex', () => {
+  const cell = (chars, width = 1) => ({ getChars: () => chars, getWidth: () => width })
+  const row = (cells) => ({ length: cells.length, getCell: (x) => cells[x] })
+  it('counts cells, not string positions, past wide characters and surrogate pairs', () => {
+    const r = row([cell('日', 2), cell('', 0), cell('😀', 2), cell('', 0), cell(' '), cell('h'), cell('e')])
+    const text = '日😀 he'
+    expect(text.indexOf('h')).toBe(4)
+    expect(columnOfIndex(r, 4)).toBe(6)
+  })
+  it('an empty cell is one blank', () => {
+    expect(columnOfIndex(row([cell(''), cell(''), cell('h')]), 2)).toBe(3)
+  })
+})
+
 describe('mouse helpers', () => {
   it('writes an SGR press and release', () => {
     expect(mouseClickBytes(28, 9)).toBe('\x1b[<0;28;9M\x1b[<0;28;9m')
@@ -112,9 +159,23 @@ describe('TerminalPane sign-in banner and link clicks', () => {
   })
   it('the link gate and the hover hint', () => {
     expect(pane).toContain('if (!force && !linkClickOpens(term && term.modes.mouseTrackingMode, event)) return')
-    expect(pane).toContain("t('pane.link.ctrlClick', 'Ctrl+click to open')")
+    expect(pane).toContain("t('pane.link.ctrlClick', 'Shift+click to open')")
+    // Shift/Cmd/Ctrl lets the click through; the router's other-browser flag is not used.
+    expect(pane).toContain("event: term && term.modes.mouseTrackingMode !== 'none' ? undefined : event")
   })
   it('remembers an SGR mouse request even when Always select drops it', () => {
-    expect(pane).toContain('mouseSgrAsked = true')
+    expect(pane).toContain('mouseAsked.add(m)')
+  })
+  it('the synthetic click: cells, a fresh read, a program holding the mouse, the alternate screen', () => {
+    expect(pane).toContain('columnOfIndex(buf.getLine(buf.baseY + found.showUrl.row - 1)')
+    expect(pane).toMatch(/const now = readSignIn\(\)\s+if \(!now \|\| !now\.showUrl \|\| !mouseClickable\(\)\)/)
+    expect(pane).toContain("term.buffer.active.type === 'alternate'")
+    expect(pane).toContain('if (m === 1049 || m === 1047 || m === 47) mouseAsked.clear()')
+  })
+  it('Settings > Terminal explains plain clicks and Shift/Cmd+click, in English and French', () => {
+    const set = readFileSync(join(__dirname, '..', 'components', 'settings', 'SettingsTerminal.vue'), 'utf8')
+    expect(set).toContain('settings.terminal.mouseProgramsHint')
+    const fr = readFileSync(join(__dirname, '..', 'i18n', 'locales', 'fr', 'settings.json'), 'utf8')
+    expect(fr).toContain('"mouseProgramsHint"')
   })
 })

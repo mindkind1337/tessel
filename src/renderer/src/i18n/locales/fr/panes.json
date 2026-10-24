@@ -817,15 +817,15 @@
       "keepHint": "Garde {{saved}} : son prochain redémarrage part de là"
     },
     "link": {
-      "ctrlClick": "Ctrl+clic pour ouvrir"
+      "ctrlClick": "Maj+clic pour ouvrir"
     },
     "signin": {
       "open": "Ouvrir la page ici",
       "copyCode": "Copier le code",
       "showUrl": "Afficher l'URL",
       "needUrl": "Connexion sur ce serveur : cliquez sur « show full URL » dans le terminal, puis elle apparaît ici.",
-      "ready": "Connexion sur ce serveur ({{who}}) : ouvrez {{host}} sur ce PC, puis saisissez le code.",
-      "readyOther": "Connexion sur ce serveur : cette page est sur {{host}}. Vérifiez le nom avant de l'ouvrir."
+      "ready": "Connexion sur ce serveur ({{who}}) : ouvrez {{page}} sur ce PC, puis saisissez le code.",
+      "readyOther": "Connexion sur ce serveur : cette page est {{page}}. Vérifiez le nom avant de l'ouvrir."
     }
   },
   "floating": {

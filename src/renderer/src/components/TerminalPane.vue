@@ -19,7 +19,7 @@ import { terminalTheme } from '../themes'
 // Mouse-reporting modes (X10, normal, button, any-event, UTF-8, SGR, urxvt).
 const MOUSE_MODES = [9, 1000, 1002, 1003, 1005, 1006, 1015]
 import { registerPane, unregisterPane, getPane } from '../paneRegistry'
-import { detectDeviceLogin, mouseClickBytes, linkClickOpens } from '../deviceLogin'
+import { detectDeviceLogin, columnOfIndex, mouseClickBytes, linkClickOpens } from '../deviceLogin'
 import {
   setAgentStatus,
   setAttention,
@@ -3014,7 +3014,18 @@ const signIn = ref(null)
 const signInDismissed = ref('')
 const signInShown = computed(() => !!signIn.value && signInDismissed.value !== signIn.value.key)
 const mouseSgrAskedRef = ref(false)
-let mouseSgrAsked = false
+// Mouse modes the program asked for and has not reset (even when Always
+// select dropped them), for the sign-in banner's click.
+const MOUSE_TRACKING = [9, 1000, 1002, 1003]
+const mouseAsked = new Set()
+function mouseClickable() {
+  return (
+    !!term &&
+    mouseAsked.has(1006) &&
+    MOUSE_TRACKING.some((m) => mouseAsked.has(m)) &&
+    term.buffer.active.type === 'alternate'
+  )
+}
 let signInTimer = null
 const signInNoteTop = computed(
   () => 36 + 44 * ((props.node.remoteToolsNote ? 1 : 0) + (props.node.rootNoYoloNote ? 1 : 0) + (accountMismatch.value ? 1 : 0))
@@ -3026,16 +3037,30 @@ function scheduleSignInScan() {
     scanSignIn()
   }, 400)
 }
-function scanSignIn() {
-  if (!term) return
+// The live screen's rows, read for a sign-in (null when there is none). The
+// click cell of Grok's "here" is worked out on the cells.
+function readSignIn() {
+  if (!term) return null
   const buf = term.buffer.active
   const lines = []
+  const wrapped = []
   for (let y = 0; y < term.rows; y++) {
     const line = buf.getLine(buf.baseY + y)
     lines.push(line ? line.translateToString(true) : '')
+    wrapped.push(!!(line && line.isWrapped))
   }
-  const found = detectDeviceLogin(lines)
-  mouseSgrAskedRef.value = mouseSgrAsked
+  const found = detectDeviceLogin(lines, wrapped)
+  if (found && found.showUrl) {
+    const col = columnOfIndex(buf.getLine(buf.baseY + found.showUrl.row - 1), found.showUrl.index)
+    found.showUrl = col ? { row: found.showUrl.row, col: col + 1 } : null
+    if (!found.showUrl && !found.url) return null
+  }
+  return found
+}
+function scanSignIn() {
+  if (!term) return
+  const found = readSignIn()
+  mouseSgrAskedRef.value = mouseClickable()
   const was = signIn.value
   if (!found && !was) return
   if (found && was && found.key === was.key && JSON.stringify(found.showUrl) === JSON.stringify(was.showUrl)) return
@@ -3049,8 +3074,8 @@ function signInText() {
   if (!s.url)
     return t('pane.signin.needUrl', 'Sign-in on this server: click “show full URL” in the terminal, then it appears here.')
   if (s.known)
-    return t('pane.signin.ready', 'Sign-in on this server ({{who}}): open {{host}} on this PC, then enter the code.', { who, host: s.host })
-  return t('pane.signin.readyOther', 'Sign-in on this server: this page is on {{host}}. Check the name before you open it.', { host: s.host })
+    return t('pane.signin.ready', 'Sign-in on this server ({{who}}): open {{page}} on this PC, then enter the code.', { who, page: s.page })
+  return t('pane.signin.readyOther', 'Sign-in on this server: this page is {{page}}. Check the name before you open it.', { page: s.page })
 }
 function openSignIn(event) {
   const s = signIn.value
@@ -3065,7 +3090,13 @@ function copySignInCode() {
 function showSignInUrl() {
   const s = signIn.value
   if (!s || !s.showUrl) return
-  window.shellApi.writePty(props.node.id, mouseClickBytes(s.showUrl.col, s.showUrl.row))
+  // Read the screen again now, and click only a program that holds the mouse.
+  const now = readSignIn()
+  if (!now || !now.showUrl || !mouseClickable()) {
+    scanSignIn()
+    return
+  }
+  window.shellApi.writePty(props.node.id, mouseClickBytes(now.showUrl.col, now.showUrl.row))
 }
 function dismissSignIn() {
   if (signIn.value) signInDismissed.value = signIn.value.key
@@ -3087,7 +3118,8 @@ function openLink(uri, event, force = false) {
   // Web pages and mail addresses only: a file: (or any other) link a program
   // prints never opens from here, whatever computer the program runs on.
   if (!/^(https?:\/\/|mailto:)/i.test(String(uri || '').trim())) return
-  if (ctx.openTarget) return ctx.openTarget(uri, { event })
+  // With the mouse taken, Shift/Cmd/Ctrl only lets the click through: the default browser.
+  if (ctx.openTarget) return ctx.openTarget(uri, { event: term && term.modes.mouseTrackingMode !== 'none' ? undefined : event })
   if (window.shellApi.openExternal) window.shellApi.openExternal(uri)
 }
 // The real address of a link a program writes with a text of its own (OSC 8):
@@ -3102,7 +3134,7 @@ function showLinkTip(event, uri) {
 function mouseTakenHint() {
   const mode = term && term.modes.mouseTrackingMode
   if (!mode || mode === 'none') return ''
-  return t('pane.link.ctrlClick', 'Ctrl+click to open')
+  return t('pane.link.ctrlClick', 'Shift+click to open')
 }
 function hideLinkTip() {
   linkTip.value = null
@@ -3639,12 +3671,17 @@ onMounted(() => {
     const modes = params.map((p) => (Array.isArray(p) ? p[0] : p))
     // What the program asked for, even when it is not given (the sign-in
     // banner can still click for you in the SGR form).
-    if (modes.some((m) => m === 1006)) mouseSgrAsked = true
+    for (const m of modes) if (m === 1006 || MOUSE_TRACKING.includes(m)) mouseAsked.add(m)
     if (!settings.alwaysSelect) return false
     return modes.length > 0 && modes.every((m) => MOUSE_MODES.includes(m))
   })
   term.parser.registerCsiHandler({ prefix: '?', final: 'l' }, (params) => {
-    if (params.some((p) => (Array.isArray(p) ? p[0] : p) === 1006)) mouseSgrAsked = false
+    for (const p of params) {
+      const m = Array.isArray(p) ? p[0] : p
+      mouseAsked.delete(m)
+      // Leaving the alternate screen: the program is done with the mouse.
+      if (m === 1049 || m === 1047 || m === 47) mouseAsked.clear()
+    }
     return false
   })
   search.onDidChangeResults(({ resultIndex, resultCount }) => {
