@@ -440,7 +440,11 @@ const editingId = ref(null)
 const draft = ref('')
 const inputEls = {}
 
+// A Live Share project belongs to its host: guests neither rename it nor move
+// its folder (App.vue refuses too).
+const isGuestProject = (p) => !!p && p.live === 'guest'
 function startRename(item) {
+  if (isGuestProject(item)) return
   editingId.value = item.id
   draft.value = item.name
   nextTick(() => {
@@ -849,21 +853,30 @@ function optionsItems() {
 const optionsOpen = ref(null) // anchor rect
 const optionsMenuItems = computed(() => (optionsOpen.value ? optionsItems() : []))
 
-function projectActionItems(project) {
+// Rename and the project's folder (local, or on its SSH host); nothing for a
+// Live Share guest.
+// renamable: false where the project's name is not on screen to edit (the flat
+// list has no project rows).
+function projectEditItems(project, { renamable = true } = {}) {
+  if (isGuestProject(project)) return []
   const wsId = project.id
+  const folder = project.remote ? project.remote.path : project.cwd
   return [
-    { type: 'item', icon: Pencil, label: t('sidebar.project.rename', 'Rename'), onSelect: () => startRename(project) },
+    ...(renamable ? [{ type: 'item', icon: Pencil, label: t('sidebar.project.rename', 'Rename'), onSelect: () => startRename(project) }] : []),
     {
       type: 'item',
       icon: FolderOpen,
-      label: project.cwd
-        ? t('sidebar.project.changeFolder', 'Change Project Folder…')
-        : t('sidebar.project.setFolder', 'Set Project Folder…'),
-      title: project.cwd
-        ? t('sidebar.project.folder', 'Project folder: {{path}}', { path: project.cwd })
-        : t('sidebar.project.folderHint', 'New panes start in the project folder'),
+      label: folder ? t('sidebar.project.changeFolder', 'Change Project Folder…') : t('sidebar.project.setFolder', 'Set Project Folder…'),
+      title: folder ? t('sidebar.project.folder', 'Project folder: {{path}}', { path: folder }) : t('sidebar.project.folderHint', 'New panes start in the project folder'),
       onSelect: () => emit('folder', wsId)
-    },
+    }
+  ]
+}
+
+function projectActionItems(project) {
+  const wsId = project.id
+  return [
+    ...projectEditItems(project),
     { type: 'separator' },
     {
       type: 'item',
@@ -995,6 +1008,12 @@ function cardMenuItems(card) {
     onSelect: () => emit('copy', card.branch || card.title, 'name')
   })
   items.push({ type: 'separator' })
+  // The project's own card: rename it / move its folder from here too.
+  const owner = card.isMain ? props.projects.find((p) => p.id === card.projectId) : null
+  if (owner && !isGuestProject(owner)) {
+    items.push(...projectEditItems(owner, { renamable: options.value.groupBy !== 'none' }))
+    items.push({ type: 'separator' })
+  }
   if (card.taskId) {
     items.push({ type: 'item', icon: GitCompare, label: t('sidebar.card.review', 'Review Changes…'), onSelect: () => emit('review-task', card.taskId) })
   }

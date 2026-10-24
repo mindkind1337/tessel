@@ -103,7 +103,16 @@
         "working": "Opération sur l'hôte…"
       },
       "notConnected": "Non connecté",
-      "connect": "Connecter"
+      "connect": "Connecter",
+      "folder": {
+        "title": "Dossier du projet sur {{host}}",
+        "description": "Les nouveaux volets de « {{name}} » démarrent dans le dossier choisi. Les volets déjà ouverts restent où ils sont.",
+        "checking": "Vérification du dossier sur l'hôte…",
+        "same": "Ce projet utilise déjà ce dossier.",
+        "other": "Le projet « {{name}} » utilise déjà ce dossier.",
+        "guest": "Un projet Live Share appartient à son hôte : lui seul peut le modifier.",
+        "hostGone": "Cet hôte distant n'est plus enregistré dans Tessel."
+      }
     },
     "nested": {
       "title": "Importer des dépôts depuis un dossier",
@@ -167,7 +176,8 @@
       "fileHint": "Un fichier ne peut pas être ouvert comme projet",
       "truncated": "Seules les premières entrées sont affichées. Saisissez un chemin pour aller plus loin.",
       "cancel": "Annuler",
-      "select": "Sélectionner le dossier"
+      "select": "Sélectionner le dossier",
+      "footerFolder": "Les nouveaux volets démarrent dans ce dossier sur cet hôte · {{path}}"
     }
   }
 }

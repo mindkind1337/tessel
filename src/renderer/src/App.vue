@@ -108,6 +108,8 @@ import { addNotification, readForPane, playAlertSound } from './notificationsSto
 import { initRemoteHosts, setRemoteHostHandlers, remoteHostsState, hostShared, recentlyDisconnected } from './remoteHosts'
 import { hostAddress } from './remoteHostDisplay'
 import AddProjectDialog from './components/project/AddProjectDialog.vue'
+import RemoteFolderDialog from './components/project/RemoteFolderDialog.vue'
+import { cleanProjectName, canEditProject, checkRemoteFolder } from './projectFolder'
 import { savedRemote, savedGroup } from './addProject'
 import NotesPanel from './components/NotesPanel.vue'
 import NewTaskDialog from './components/NewTaskDialog.vue'
@@ -5881,9 +5883,19 @@ function folderName(path) {
 async function setWorkspaceFolder(id) {
   const ws = wsById(id)
   if (!ws) return
-  // A remote project's folder is on its host (Add a project sets it).
+  // A Live Share project is its host's: only they move its folder.
+  if (!canEditProject(ws, (w) => liveShare.isGuestWs(w))) {
+    showToast(t('project.remote.folder.guest', 'A Live Share project belongs to its host: only they can change it.'), { kind: 'error' })
+    return
+  }
+  // A remote project's folder is on its host: picked there (the host's
+  // folders, over its signed-in session), never on this computer's disk.
   if (ws.remote) {
-    showToast(t('project.remote.unavailable', 'Not available for a remote project yet'))
+    if (!remoteHostState(ws.remote.hostId).saved) {
+      showToast(t('project.remote.folder.hostGone', 'This remote host is no longer saved in Tessel.'), { kind: 'error' })
+      return
+    }
+    remoteFolder.value = { wsId: ws.id, busy: false, error: '' }
     return
   }
   if (!window.shellApi.pickFolder) {
@@ -5898,6 +5910,52 @@ async function setWorkspaceFolder(id) {
   ws.cwd = picked
   if (isDefaultWorkspaceName(ws.name)) ws.name = folderName(picked)
   showToast(t('app.folder.set', 'New panes in {{name}} will open in {{folder}}', { name: ws.name, folder: picked }))
+}
+
+// The folder dialog of a remote project (RemoteFolderDialog.vue): the folder
+// chosen is listed on the host first (it exists, is a folder, can be read),
+// then kept. The project stays itself (id, name, panes, tasks, team): its
+// files, changes, git, new panes, agents and the saved layout all follow
+// ws.remote; panes already open stay where they are.
+const remoteFolder = ref(null) // { wsId, busy, error }
+const remoteFolderWs = computed(() => (remoteFolder.value ? wsById(remoteFolder.value.wsId) : null))
+function closeRemoteFolder() {
+  remoteFolder.value = null
+}
+async function chooseRemoteFolder(picked) {
+  const state = remoteFolder.value
+  const ws = remoteFolderWs.value
+  if (!state || !ws || !ws.remote || state.busy) return
+  state.busy = true
+  state.error = ''
+  const hostId = ws.remote.hostId
+  let browsed
+  try {
+    const api = window.shellApi && window.shellApi.remoteFs
+    browsed = api && api.browse ? await api.browse(hostId, picked) : { ok: false, error: t('app.folder.restart', 'Restart Tessel to enable project folders.') }
+  } catch (err) {
+    browsed = { ok: false, error: (err && err.message) || '' }
+  }
+  // Closed, removed or moved on meanwhile.
+  if (remoteFolder.value !== state || !workspaces.value.includes(ws) || !ws.remote || ws.remote.hostId !== hostId) return
+  const checked = checkRemoteFolder({ ws, picked, browsed, workspaces: workspaces.value })
+  if (checked.error) {
+    state.busy = false
+    state.error = checked.error
+    return
+  }
+  if (!applyRemoteFolder(ws, checked.path)) {
+    state.busy = false
+    return
+  }
+  remoteFolder.value = null
+  showToast(t('app.folder.set', 'New panes in {{name}} will open in {{folder}}', { name: ws.name, folder: checked.path }))
+}
+function applyRemoteFolder(ws, path) {
+  if (!ws.remote || liveShare.isGuestWs(ws)) return false
+  // A new object, so everything watching ws.remote (git, roots, the layout) sees it.
+  ws.remote = { hostId: ws.remote.hostId, path }
+  return true
 }
 
 // "Workspace 3", in the interface's language.
@@ -5944,7 +6002,10 @@ async function createWorkspace() {
 
 function renameWorkspace(id, name) {
   const ws = wsById(id)
-  if (ws) ws.name = name
+  // A Live Share project's name is its host's.
+  if (!ws || !canEditProject(ws, (w) => liveShare.isGuestWs(w))) return
+  const clean = cleanProjectName(name)
+  if (clean) ws.name = clean
 }
 
 // Projects arranged in the sidebar (dragged, or Alt+Up/Down): the workspaces
@@ -14160,6 +14221,17 @@ onBeforeUnmount(() => {
       :project-count="workspaces.length"
       @add="addProjects"
       @close="addProjectOpen = false"
+    />
+    <RemoteFolderDialog
+      v-if="remoteFolder && remoteFolderWs && remoteFolderWs.remote"
+      :host-id="remoteFolderWs.remote.hostId"
+      :host-label="remoteHostLabel(remoteFolderWs.remote.hostId)"
+      :project-name="remoteFolderWs.name"
+      :initial-path="remoteFolderWs.remote.path"
+      :busy="remoteFolder.busy"
+      :error="remoteFolder.error"
+      @select="chooseRemoteFolder"
+      @close="closeRemoteFolder"
     />
     <GitHubDialog v-if="githubOpen" :cwd="(issueWorkspace && gitKeyOf(issueWorkspace)) || ''" :pr-cwd="githubTaskContext?.cwd || ''" :pr-base="githubTaskContext?.base || ''" :initial-mode="githubTaskContext ? 'createPr' : ''" :agents="taskAgentKinds" :default-agent="settings.defaultAgent || ''" :start-issue="prepareLinkedIssue" :pr-agents="githubPrAgents" :send-prompt="sendGithubPrompt" @busy="githubBusy = $event" @close="githubOpen = false" />
     <LinearDialog v-if="linearOpen" :cwd="issueWorkspace?.cwd || ''" :agents="taskAgentKinds" :default-agent="settings.defaultAgent || ''" :start-issue="prepareLinkedIssue" @busy="linearBusy = $event" @close="linearOpen = false" />

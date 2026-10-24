@@ -1,4 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { reactive, ref, nextTick } from 'vue'
 import { createLiveShareWindow } from '../liveShareWindow'
 import { NO_RIGHTS } from '../../../shared/liveShareRights'
@@ -1412,5 +1414,75 @@ describe('Live Share in the window, as a guest: following and the keyboard', () 
     await flush()
     expect(t.workspaces.value[0].activeId).toBe('pane-ls1-a')
     el.remove()
+  })
+})
+
+describe('Live Share: renaming a project and changing its folder', () => {
+  let t
+  beforeEach(async () => {
+    t = setup()
+    t.layoutReady.value = true
+    await t.ls.init()
+  })
+  afterEach(() => t.ls.dispose())
+
+  const sharingNow = (ids) => {
+    t.hostIds.splice(0, t.hostIds.length, ...ids)
+    t.listeners.onHost({ state: 'sharing', invite: 'TS1.x.y', projectIds: [...ids], guests: [], progress: null, error: null })
+  }
+  const lastLayouts = () => t.api.setLayouts.mock.calls.at(-1)[0]
+  const agentLeaf = { type: 'leaf', id: 'pane-1', kind: 'agent', agentId: 'claude', sessionId: 'sess-1', remoteHostId: 'ssh-box', title: 'Claude' }
+
+  it('as the host: a rename goes to guests at once (local and SSH projects), and the name is the window’s, so a restart keeps it', async () => {
+    const local = reactive({ id: 'ws-1', name: 'tessel', activeId: 'pane-1', cwd: 'C:\code\tessel', tree: { type: 'leaf', id: 'pane-1', kind: 'shell', title: 'PowerShell' } })
+    const remote = reactive({ id: 'ws-2', name: 'resources', activeId: 'pane-1', cwd: null, remote: { hostId: 'ssh-box', path: '/srv/fx/resources' }, tree: { ...agentLeaf } })
+    t.workspaces.value.push(local, remote)
+    sharingNow(['ws-1', 'ws-2'])
+    await flush()
+    expect(lastLayouts().map((x) => x.layout.project)).toEqual(['tessel', 'resources'])
+    local.name = 'Tessel app'
+    remote.name = 'FX resources'
+    await flush()
+    expect(lastLayouts().map((x) => x.layout.project)).toEqual(['Tessel app', 'FX resources'])
+    // The share record is the project ids; the name comes back from the window's saved layout (ws.name), which App.vue saves with it.
+    expect(t.ls.sharedIds()).toEqual(['ws-1', 'ws-2'])
+  })
+
+  it('as the host: a folder switch reaches guests (a local project’s root, an SSH project’s chat roots) and never shows an SSH path in the layout', async () => {
+    const local = reactive({ id: 'ws-1', name: 'tessel', activeId: 'pane-1', cwd: 'C:\code\tessel', tree: { type: 'leaf', id: 'pane-1', kind: 'shell', title: 'PowerShell' } })
+    const remote = reactive({ id: 'ws-2', name: 'resources', activeId: 'pane-1', cwd: null, remote: { hostId: 'ssh-box', path: '/srv/fx/resources' }, tree: { ...agentLeaf } })
+    t.workspaces.value.push(local, remote)
+    sharingNow(['ws-1', 'ws-2'])
+    await flush()
+    expect(lastLayouts()[0].root).toBe('C:\code\tessel')
+    expect(lastLayouts()[1]).toMatchObject({ root: null, chats: [expect.objectContaining({ roots: ['/srv/fx/resources'] })] })
+    local.cwd = 'C:\code\other'
+    remote.remote = { hostId: 'ssh-box', path: '/srv/fx/web' }
+    await flush()
+    expect(lastLayouts()[0].root).toBe('C:\code\other')
+    expect(lastLayouts()[1].chats[0].roots).toEqual(['/srv/fx/web'])
+    // What guests get to see of the layout (the panes) carries no folder.
+    expect(JSON.stringify(lastLayouts().map((x) => x.layout))).not.toMatch(/srv\/fx|code\\other/)
+  })
+
+  it('as a guest: the host’s name wins on every update, also over a name set in this window', async () => {
+    const lay = (project) => ({ project, tree: leaf('pane-ls1-a'), activeId: null, maximizedId: null })
+    t.listeners.onGuest({ state: 'joined', host: 'Ada', session: 1, panes: [pane('pane-ls1-a')], layout: lay('resources') })
+    const ws = t.workspaces.value[0]
+    expect(ws.name).toBe('resources — Ada')
+    ws.name = 'my own name' // nothing in the interface does this; a stray write is undone
+    t.listeners.onGuest({ state: 'joined', host: 'Ada', session: 1, panes: [pane('pane-ls1-a')], layout: lay('resources') })
+    expect(ws.name).toBe('resources — Ada')
+    t.listeners.onGuest({ state: 'joined', host: 'Ada', session: 1, panes: [pane('pane-ls1-a')], layout: lay('FX resources') })
+    expect(ws.name).toBe('FX resources — Ada')
+    expect(ws.liveShare.projectName).toBe('FX resources')
+  })
+
+  it('a guest has no request that renames a project or moves its folder (file operations only)', () => {
+    const ops = [...readFileSync(resolve(__dirname, '../../../main/liveShare/shareRequests.js'), 'utf8').matchAll(/^op\('([\w.]+)'/gm)].map((m) => m[1])
+    expect(ops.length).toBeGreaterThan(10)
+    expect(ops.filter((o) => /project|folder|root|workspace/i.test(o))).toEqual([])
+    const guestApi = readFileSync(resolve(__dirname, '../../../preload/index.js'), 'utf8')
+    expect(guestApi).not.toMatch(/liveShare:(renameProject|setFolder|projectFolder|setProject)/)
   })
 })

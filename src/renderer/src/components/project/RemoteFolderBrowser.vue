@@ -17,7 +17,7 @@ import { joinRemote, parentRemote, remoteCrumbs, isPathInput, resolveTypedPath, 
 const props = defineProps({
   hostId: { type: String, required: true },
   initialPath: { type: String, default: '~' },
-  // What choosing does: 'project' (open it), 'clone' / 'create' (the parent folder).
+  // What choosing does: 'project' (open it), 'folder' (a project's new folder), 'clone' / 'create' (the parent folder).
   purpose: { type: String, default: 'project' }
 })
 const emit = defineEmits(['select', 'cancel'])
@@ -155,6 +155,7 @@ function noMatchesText() {
 function footerText() {
   const vars = { path: path.value }
   if (props.purpose === 'clone') return t('project.remoteBrowser.footerClone', 'Clones into this folder on this host · {{path}}', vars)
+  if (props.purpose === 'folder') return t('project.remoteBrowser.footerFolder', 'New panes start in this folder on this host · {{path}}', vars)
   if (props.purpose === 'create') return t('project.remoteBrowser.footerCreate', 'Creates the project in this folder on this host · {{path}}', vars)
   return t('project.remoteBrowser.footer', 'Opens as a project on this host · {{path}}', vars)
 }
