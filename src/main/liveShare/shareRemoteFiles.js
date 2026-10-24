@@ -47,6 +47,7 @@
 import { cleanRel, segmentOk, LSHARE_LIMITS as L } from '../../shared/liveSharePath'
 import { fileKind } from '../../shared/fileKinds'
 import { childPath, parseRemotePath } from '../../shared/remotePath'
+import { remoteRootTooBroad } from '../../shared/remoteRootPolicy'
 import { hashOf, signatureOf } from '../editorFiles'
 import { parseOpArgs, mayRun } from './shareRequests'
 import {
@@ -73,6 +74,8 @@ export const MAX_ACTIVE = 2 // requests on one host's session at once
 export const MAX_WAITING = 6 // and waiting for their turn
 export const MAX_PER_PERSON = 3 // running or waiting, per person
 const IGNORE_TTL_MS = 8000
+const MIN_SCAN_MS = 3000 // a scan of what git ignores is not made again sooner
+const MAX_LISTED_DIRS = 60 // folders one request to the host lists (search results)
 const VERIFIED_TTL_MS = 10_000
 const MAX_DEPTH = 32
 const MAX_ANCESTORS = 33
@@ -99,6 +102,7 @@ export function createRemoteShareFiles({ remote, log = null, now = () => Date.no
   const persons = new Map() // hostId\nperson -> count
   const ignoredCache = new Map() // virtual root -> { at, set } | { at, promise }
   const verified = new Map() // virtual root -> Map(dir rel -> expiry)
+  const hooksCache = new Map() // virtual root -> { at, promise }
 
   // --- Concurrency ----------------------------------------------------------
   // -> a release function, or null when the host's session is as busy as
@@ -133,44 +137,78 @@ export function createRemoteShareFiles({ remote, log = null, now = () => Date.no
   }
 
   // --- Reading the host's folders ------------------------------------------
+  // Every call is a guest's (guest: true): behind the host's own requests,
+  // no sign-in, no dialog, no second try after a drop, bounded in time.
   const virt = (root, rel) => (rel ? childPath(root, rel) : root)
-
-  // One folder as the host lists it: { entries: Map name -> { dir, link }, truncated } | { code }
-  async function listRaw(svc, root, rel, st) {
-    const res = await svc.listDir({ root, dir: virt(root, rel), dotfiles: true, background: true })
-    // A folder that is gone or cannot be read (the words stay here).
-    if (!res || res.ok !== true) return { code: failedCode(svc, st, res, 'not-found') }
+  const G = { guest: true }
+  const relOfVirtual = (root, v) => {
+    const base = root.replace(/[\\/]+$/, '')
+    if (v === root || v === base) return ''
+    return typeof v === 'string' && v.startsWith(`${base}\\`)
+      ? v.slice(base.length + 1).replace(/\\/g, '/')
+      : null
+  }
+  const entriesOf = (list) => {
     const entries = new Map()
-    for (const e of res.entries || []) {
-      if (typeof e.name === 'string' && segmentOk(e.name))
+    for (const e of list || []) {
+      if (e && typeof e.name === 'string' && segmentOk(e.name))
         entries.set(e.name, { dir: !!e.dir, link: e.link === true })
     }
-    return { entries, truncated: !!res.truncated }
+    return entries
+  }
+
+  // One folder as the host lists it:
+  // { entries: Map name -> { dir, link }, truncated, hasGit } | { code }
+  async function listRaw(svc, root, rel, st) {
+    const res = await svc.listDir({
+      root,
+      dir: virt(root, rel),
+      dotfiles: true,
+      background: true,
+      ...G
+    })
+    // A folder that is gone or cannot be read (the words stay here).
+    if (!res || res.ok !== true) return { code: failedCode(svc, st, res, 'not-found') }
+    return {
+      entries: entriesOf(res.entries),
+      truncated: !!res.truncated,
+      hasGit: res.hasGit === true
+    }
   }
   // A failed call: the server is not connected (now), the host cannot be
   // asked, or the host's own words that stay here.
   function failedCode(svc, st, res, fallback = 'failed') {
     if (!svc.connectedQuietly(st.hostId)) return 'host-offline'
+    if (res && res.code === 'not-connected') return 'host-offline'
     // The host did not answer in time (slow, busy): later.
     if (res && res.transient) return 'busy'
     return fallback
   }
+  // A folder below the project that holds a .git is a nested repository: its
+  // own ignore rules are not read, so guests get nothing of it. A folder too
+  // large to see whether it holds one is refused the same way.
+  // -> null | a code
+  const nestedBad = (listing, rel) =>
+    !rel ? null : listing.hasGit ? 'not-found' : listing.truncated ? 'too-large' : null
 
   const verifiedOf = (root) => {
     let m = verified.get(root)
     if (!m) verified.set(root, (m = new Map()))
     return m
   }
+  // Folders known to be real (not a link, not a nested repository) for a few seconds.
   const isVerified = (root, rel) => !rel || (verifiedOf(root).get(rel) || 0) > now()
   const markVerified = (root, rel) => {
+    if (!rel) return
     const m = verifiedOf(root)
     if (m.size > 2000) m.clear()
     m.set(rel, now() + VERIFIED_TTL_MS)
   }
 
-  // Is every folder on the way to `rel` (and `rel` itself when it is a
-  // folder) a real folder, not a link? One request for all the folders above
-  // it. -> null (yes) | a code
+  // Is every folder on the way to `rel` a real folder (not a link, not a
+  // nested repository)? One request for all the folders above it.
+  // `rel` itself is checked by whoever lists it (nestedBad).
+  // -> null (yes) | a code
   async function verifyDir(svc, root, rel, st) {
     if (isVerified(root, rel)) return null
     const segs = rel.split('/')
@@ -186,29 +224,34 @@ export function createRemoteShareFiles({ remote, log = null, now = () => Date.no
         root,
         dirs: need.map((p) => virt(root, p)),
         dotfiles: true,
-        background: true
+        background: true,
+        ...G
       })
       if (!res || res.ok !== true) return failedCode(svc, st, res)
-      for (let i = 0; i < need.length; i++) {
-        const r = (res.results || []).find((x) => x && x.dir === virt(root, need[i]))
+      for (const p of need) {
+        const r = (res.results || []).find((x) => x && x.dir === virt(root, p))
         if (!r || r.ok !== true) return failedCode(svc, st, r || res)
-        lists.set(need[i], r)
+        lists.set(p, {
+          entries: entriesOf(r.entries),
+          truncated: !!r.truncated,
+          hasGit: r.hasGit === true
+        })
       }
     }
     for (let i = 0; i < segs.length; i++) {
       const parent = parents[i]
-      let entry
-      if (lists.has(parent))
-        entry = (lists.get(parent).entries || []).find((e) => e.name === segs[i])
-      else if (isVerified(root, join2(parent, segs[i]))) continue
-      else {
-        const one = await listRaw(svc, root, parent, st)
-        if (one.code) return one.code
-        entry = one.entries.get(segs[i])
+      let listing = lists.get(parent)
+      if (!listing) {
+        if (isVerified(root, join2(parent, segs[i]))) continue
+        listing = await listRaw(svc, root, parent, st)
+        if (listing.code) return listing.code
+      } else {
+        const nested = nestedBad(listing, parent)
+        if (nested) return nested
+        markVerified(root, parent)
       }
-      if (!entry) return 'not-found'
-      if (entry.link === true || entry.dir !== true) return 'not-found'
-      markVerified(root, join2(parent, segs[i]))
+      const entry = listing.entries.get(segs[i])
+      if (!entry || entry.link === true || entry.dir !== true) return 'not-found'
     }
     return null
   }
@@ -221,20 +264,92 @@ export function createRemoteShareFiles({ remote, log = null, now = () => Date.no
     if (bad) return { code: bad }
     const one = await listRaw(svc, root, parent, st)
     if (one.code) return { code: one.code }
+    const nested = nestedBad(one, parent)
+    if (nested) return { code: nested }
+    markVerified(root, parent)
     const entry = one.entries.get(basename(rel)) || null
     if (!entry && one.truncated) return { code: 'too-large' } // cannot tell
     return { entry, listing: one }
   }
 
+  // Of these paths (files or folders), the ones a guest may name: every
+  // folder above each is a real one (no link, no nested repository) and the
+  // path itself is not a link. One request for all their folders; the
+  // paths past the number of folders one request holds are left out.
+  // -> { good: Set, cut } | { code }
+  async function reachable(svc, st, rels) {
+    const dirs = new Set([''])
+    const taken = []
+    let cut = false
+    for (const rel of rels) {
+      const ups = []
+      for (let d = dirname(rel); d; d = dirname(d)) ups.push(d)
+      const fresh = ups.filter((d) => !dirs.has(d))
+      if (dirs.size + fresh.length > MAX_LISTED_DIRS) {
+        cut = true
+        continue
+      }
+      for (const d of fresh) dirs.add(d)
+      taken.push(rel)
+    }
+    const res = await svc.listMany({
+      root: st.root,
+      dirs: [...dirs].map((d) => virt(st.root, d)),
+      dotfiles: true,
+      background: true,
+      ...G
+    })
+    if (!res || res.ok !== true) return { code: failedCode(svc, st, res) }
+    const lists = new Map()
+    for (const d of dirs) {
+      const r = (res.results || []).find((x) => x && x.dir === virt(st.root, d))
+      if (r && r.ok === true)
+        lists.set(d, {
+          entries: entriesOf(r.entries),
+          truncated: !!r.truncated,
+          hasGit: r.hasGit === true
+        })
+    }
+    const memo = new Map()
+    const dirGood = (d) => {
+      if (memo.has(d)) return memo.get(d)
+      let ok = false
+      const l = lists.get(d)
+      if (l && !nestedBad(l, d)) {
+        if (!d) ok = true
+        else {
+          const above = lists.get(dirname(d))
+          const e = above && above.entries.get(basename(d))
+          ok = !!e && e.dir && !e.link && dirGood(dirname(d))
+        }
+      }
+      memo.set(d, ok)
+      return ok
+    }
+    const good = new Set()
+    for (const rel of taken) {
+      const l = lists.get(dirname(rel))
+      const e = l && l.entries.get(basename(rel))
+      if (e && !e.link && dirGood(dirname(rel))) good.add(rel)
+    }
+    return { good, cut }
+  }
+
   // --- What git ignores ---------------------------------------------------------
   // The project's ignored paths (files and folders, relative to it), from git
   // status --ignored on the host. null: it cannot be read (fail closed).
+  // A scan is never made again within MIN_SCAN_MS, a change of an ignore file
+  // only marks the last one stale (it is made again after that).
   async function ignoredOf(svc, root) {
     const cached = ignoredCache.get(root)
-    if (cached && cached.set && now() - cached.at < IGNORE_TTL_MS) return cached.set
-    if (cached && cached.promise) return cached.promise
+    if (cached) {
+      if (cached.promise) return cached.promise
+      const age = now() - cached.at
+      if (age < MIN_SCAN_MS) return cached.set
+      if (cached.set && !cached.stale && age < IGNORE_TTL_MS) return cached.set
+    }
     const promise = (async () => {
-      const res = await svc.projectStatus({ root, ignored: true })
+      const res = await svc.projectStatus({ root, ignored: true, ...G })
       if (!res || res.ok !== true) return null
       const set = new Set()
       const base = `${root.replace(/[\\/]+$/, '')}\\`
@@ -246,8 +361,7 @@ export function createRemoteShareFiles({ remote, log = null, now = () => Date.no
     })()
     ignoredCache.set(root, { at: now(), promise })
     const set = await promise.catch(() => null)
-    if (set) ignoredCache.set(root, { at: now(), set })
-    else ignoredCache.delete(root)
+    ignoredCache.set(root, { at: now(), set, stale: false })
     return set
   }
   const isIgnored = (set, rel) => {
@@ -255,24 +369,41 @@ export function createRemoteShareFiles({ remote, log = null, now = () => Date.no
     let cur = rel
     for (;;) {
       if (set.has(cur)) return true
-      const up = dirname(cur)
-      if (up === cur || !cur.includes('/')) return false
-      cur = up
+      if (!cur.includes('/')) return false
+      cur = dirname(cur)
     }
+  }
+  // Only a file that changes what git ignores makes the list stale.
+  const IGNORE_FILES = new Set(['.gitignore', '.ignore', 'exclude'])
+  function invalidate(root, rel) {
+    const c = ignoredCache.get(root)
+    if (c && IGNORE_FILES.has(basename(rel).toLowerCase())) c.stale = true
+  }
+
+  // core.hooksPath, relative to the project: the files there run when the
+  // host commits, so a guest never writes them without the `type` right.
+  // -> an array of lower-case folders | null (unreadable: nothing is written)
+  async function extraOf(svc, root) {
+    const hit = hooksCache.get(root)
+    if (hit && now() - hit.at < IGNORE_TTL_MS) return hit.promise
+    const promise = svc.hooksPathOf({ root, ...G }).then(
+      (r) => (r && r.ok === true && Array.isArray(r.rels) ? r.rels : null),
+      () => null
+    )
+    hooksCache.set(root, { at: now(), promise })
+    return promise
   }
 
   // The reading of the share's privacy for one request: hidden(rel) says
   // whether a guest may not see a path. -> { hidden } | { code }
-  async function privacy(svc, root, st, settings, needIgnore = true) {
+  async function privacy(svc, root, st, settings) {
     let set = null
-    if (hidesPrivate(settings) && needIgnore) {
+    if (hidesPrivate(settings)) {
       set = await ignoredOf(svc, root)
       if (!set) return { code: svc.connectedQuietly(st.hostId) ? 'failed' : 'host-offline' }
     }
     return { hidden: (rel) => hiddenByName(rel, settings) || isIgnored(set, rel) }
   }
-
-  const invalidate = (root) => ignoredCache.delete(root)
 
   // --- The ops --------------------------------------------------------------------
   // Listed entries a guest may see.
@@ -297,9 +428,10 @@ export function createRemoteShareFiles({ remote, log = null, now = () => Date.no
     if (a.dir && p.hidden(a.dir)) return fail('not-found')
     const listing = await listRaw(svc, st.root, a.dir, st)
     if (listing.code) return fail(listing.code)
+    const nested = nestedBad(listing, a.dir)
+    if (nested) return fail(nested)
+    markVerified(st.root, a.dir)
     const { entries, hidden } = visible(listing, a.dir, p.hidden)
-    for (const e of entries) if (e.dir) markVerified(st.root, join2(a.dir, e.name))
-    if (a.dir) markVerified(st.root, a.dir)
     return done({
       entries: entries.slice(0, L.entries),
       truncated: listing.truncated || entries.length > L.entries,
@@ -307,54 +439,80 @@ export function createRemoteShareFiles({ remote, log = null, now = () => Date.no
     })
   }
 
+  // Several folders in one request to the host (and its own chain of single
+  // sub-folders): each checked as a listing of its own would be.
   async function opListMany(svc, a, st, settings) {
     const p = await privacy(svc, st.root, st, settings)
     if (p.code) return fail(p.code)
     const results = []
-    let total = 0
-    let round = a.dirs.map((rel) => ({ rel, depth: 0 }))
-    while (round.length) {
-      const next = []
-      for (const item of round) {
-        if (total >= L.listManyEntries) {
-          results.push({ dir: item.rel, ok: false, code: 'too-large' })
-          continue
-        }
-        const bad =
-          item.rel &&
-          (p.hidden(item.rel) ? 'not-found' : await verifyDir(svc, st.root, item.rel, st))
-        if (bad) {
-          results.push({ dir: item.rel, ok: false, code: bad })
-          continue
-        }
-        const listing = await listRaw(svc, st.root, item.rel, st)
-        if (listing.code) {
-          results.push({ dir: item.rel, ok: false, code: listing.code })
-          continue
-        }
-        const { entries, hidden } = visible(listing, item.rel, p.hidden)
-        total += entries.length
-        for (const e of entries) if (e.dir) markVerified(st.root, join2(item.rel, e.name))
-        results.push({ dir: item.rel, ok: true, entries, truncated: listing.truncated, hidden })
-        if (a.chain && item.depth < MAX_DEPTH && entries.length === 1 && entries[0].dir)
-          next.push({ rel: join2(item.rel, entries[0].name), depth: item.depth + 1 })
-      }
-      round = next
+    const asked = []
+    for (const rel of a.dirs) {
+      const bad = rel && (p.hidden(rel) ? 'not-found' : await verifyDir(svc, st.root, rel, st))
+      if (bad) results.push({ dir: rel, ok: false, code: bad })
+      else asked.push(rel)
     }
+    if (!asked.length) return done({ results })
+    const res = await svc.listMany({
+      root: st.root,
+      dirs: asked.map((d) => virt(st.root, d)),
+      dotfiles: true,
+      chain: a.chain,
+      background: true,
+      ...G
+    })
+    if (!res || res.ok !== true) return fail(failedCode(svc, st, res))
+    const seen = new Map() // rel -> its entries, for the chain
+    let total = 0
+    for (const r of res.results || []) {
+      const rel = relOfVirtual(st.root, r && r.dir)
+      if (rel === null || (rel && cleanRel(rel) !== rel)) continue
+      if (!asked.includes(rel)) {
+        // A chained folder: the single sub-folder of one shown before, a
+        // real one (no link) and one a guest may see.
+        const up = seen.get(dirname(rel))
+        const e = up && up.get(basename(rel))
+        if (!a.chain || !e || !e.dir || e.link || p.hidden(rel)) continue
+      }
+      if (total >= L.listManyEntries) {
+        results.push({ dir: rel, ok: false, code: 'too-large' })
+        continue
+      }
+      if (r.ok !== true) {
+        results.push({ dir: rel, ok: false, code: failedCode(svc, st, r, 'not-found') })
+        continue
+      }
+      const listing = {
+        entries: entriesOf(r.entries),
+        truncated: !!r.truncated,
+        hasGit: r.hasGit === true
+      }
+      const nested = nestedBad(listing, rel)
+      if (nested) {
+        results.push({ dir: rel, ok: false, code: nested })
+        continue
+      }
+      markVerified(st.root, rel)
+      const { entries, hidden } = visible(listing, rel, p.hidden)
+      seen.set(rel, listing.entries)
+      total += entries.length
+      results.push({ dir: rel, ok: true, entries, truncated: listing.truncated, hidden })
+    }
+    for (const rel of asked)
+      if (!results.some((x) => x.dir === rel))
+        results.push({ dir: rel, ok: false, code: 'not-found' })
     return done({ results })
   }
 
   // A file a guest may read: not hidden, not a link, below real folders.
-  // -> { rel, size?, ... } | { code }
-  async function fileOf(svc, a, st, settings, { mustExist = true } = {}) {
+  // -> { exists, dir } | { code }
+  async function fileOf(svc, a, st, settings) {
     if (hiddenByName(a.path, settings)) return { code: 'not-found' }
     const p = await privacy(svc, st.root, st, settings)
     if (p.code) return { code: p.code }
     if (p.hidden(a.path)) return { code: 'not-found' }
     const got = await entryOf(svc, st.root, a.path, st)
     if (got.code) return { code: got.code }
-    if (!got.entry) return mustExist ? { code: 'not-found' } : { exists: false }
-    if (got.entry.link) return { code: mustExist ? 'not-found' : 'not-allowed' }
+    if (!got.entry || got.entry.link) return { code: 'not-found' }
     return { exists: true, dir: got.entry.dir }
   }
   const fileVirtual = (st, rel) => childPath(st.root, rel)
@@ -364,16 +522,17 @@ export function createRemoteShareFiles({ remote, log = null, now = () => Date.no
     if (f.code === 'not-found') return done({ exists: false, sig: null })
     if (f.code) return fail(f.code)
     if (f.dir) return done({ exists: false, sig: null })
-    const res = await svc.statForEdit(fileVirtual(st, a.path))
+    const res = await svc.statForEdit(fileVirtual(st, a.path), G)
     if (!res || res.ok !== true) return fail(failedCode(svc, st, res))
     if (!res.exists) return done({ exists: false, sig: null })
     return done({ exists: true, size: res.size, mtimeMs: res.mtimeMs, sig: sigOf(res) })
   }
 
   // A file's size before it is read, so nothing over the limit comes over
-  // the connection. -> { stat } | { code }
+  // the connection (the host's shell cuts the read at the limit too).
+  // -> { stat } | { code }
   async function sizeCheck(svc, st, rel, max) {
-    const s = await svc.statForEdit(fileVirtual(st, rel))
+    const s = await svc.statForEdit(fileVirtual(st, rel), G)
     if (!s || s.ok !== true) return { code: failedCode(svc, st, s) }
     if (!s.exists) return { code: 'not-found' }
     if (s.size > max) return { code: 'too-large' }
@@ -387,8 +546,12 @@ export function createRemoteShareFiles({ remote, log = null, now = () => Date.no
     binary: 'binary',
     encoding: 'encoding'
   }
-  const canWrite = (rights, rel) =>
-    rights.edit === true && writeAllowed(rel, rights) && !touchesSpecial(rel)
+  // May this guest change `rel`? extra: the hooks folder (null: unreadable).
+  const canWrite = (rights, rel, extra) =>
+    rights.edit === true &&
+    Array.isArray(extra) &&
+    writeAllowed(rel, rights, extra) &&
+    !touchesSpecial(rel)
 
   async function opRead(svc, a, st, settings, rights) {
     const f = await fileOf(svc, a, st, settings)
@@ -396,11 +559,12 @@ export function createRemoteShareFiles({ remote, log = null, now = () => Date.no
     if (f.dir) return fail('not-file')
     const size = await sizeCheck(svc, st, a.path, L.textBytes)
     if (size.code) return fail(size.code)
-    const res = await svc.readForEdit(fileVirtual(st, a.path))
+    const res = await svc.readForEdit(fileVirtual(st, a.path), G)
     if (!res || res.ok !== true)
       return fail((res && readCode[res.code]) || failedCode(svc, st, res))
     const raw = Buffer.concat([res.bom ? BOM : Buffer.alloc(0), Buffer.from(res.text, 'utf8')])
     if (raw.length > L.textBytes) return fail('too-large')
+    const extra = rights.edit === true ? await extraOf(svc, st.root) : null
     return done({
       text: res.text,
       bom: !!res.bom,
@@ -408,7 +572,7 @@ export function createRemoteShareFiles({ remote, log = null, now = () => Date.no
       mtimeMs: res.mtimeMs,
       sig: sigOf({ mtimeMs: res.mtimeMs, size: raw.length }),
       hash: hashOf(raw),
-      readOnly: !canWrite(rights, a.path)
+      readOnly: !canWrite(rights, a.path, extra)
     })
   }
 
@@ -419,34 +583,50 @@ export function createRemoteShareFiles({ remote, log = null, now = () => Date.no
     if (f.dir) return fail('not-file')
     const size = await sizeCheck(svc, st, a.path, L.imageBytes)
     if (size.code) return fail(size.code)
-    const res = await svc.readImage(fileVirtual(st, a.path))
+    const res = await svc.readImage(fileVirtual(st, a.path), G)
     if (!res || res.ok !== true)
       return fail(res && res.kind === 'image' ? 'too-large' : failedCode(svc, st, res))
     if (typeof res.dataUrl !== 'string' || res.size > L.imageBytes) return fail('too-large')
     return done({ size: res.size, dataUrl: res.dataUrl })
   }
 
+  // A refusal to change a path is always 'not-allowed', whatever the reason
+  // (hidden, ignored, protected, a link, a folder that is not there): the
+  // same host work comes before it, so it says nothing of what exists.
   async function opWrite(svc, a, st, settings, rights, ctx) {
     if (Buffer.byteLength(a.text, 'utf8') + (a.bom ? 3 : 0) > L.writeBytes) return fail('too-large')
-    if (touchesSpecial(a.path) || hiddenByName(a.path, settings) || !canWrite(rights, a.path))
-      return fail('not-allowed')
-    const f = await fileOf(svc, a, st, settings, { mustExist: false })
-    if (f.code) return fail(f.code === 'not-found' ? 'not-allowed' : f.code)
-    if (f.exists && f.dir) return fail('is-folder')
-    let expect = {}
-    if (f.exists) {
+    const p = await privacy(svc, st.root, st, settings)
+    if (p.code) return fail(p.code)
+    const extra = await extraOf(svc, st.root)
+    const got = await entryOf(svc, st.root, a.path, st)
+    if (got.code && !['not-found', 'too-large', 'bad-path'].includes(got.code))
+      return fail(got.code)
+    const blocked =
+      !!got.code ||
+      !!(got.entry && got.entry.link) ||
+      touchesSpecial(a.path) ||
+      hiddenByName(a.path, settings) ||
+      p.hidden(a.path) ||
+      !canWrite(rights, a.path, extra)
+    if (blocked) return fail('not-allowed')
+    if (got.entry && got.entry.dir) return fail('is-folder')
+    let expect
+    if (got.entry) {
       // A file there is replaced only as the guest last read it: compared
       // here with what the host has now, and the host compares again with
       // that very version when it writes (atomic, one rename).
       if (!a.expectHash) return fail('conflict')
       const size = await sizeCheck(svc, st, a.path, L.textBytes)
       if (size.code) return fail(size.code === 'too-large' ? 'conflict' : size.code)
-      const cur = await svc.readForEdit(fileVirtual(st, a.path))
+      const cur = await svc.readForEdit(fileVirtual(st, a.path), G)
       if (!cur || cur.ok !== true)
         return fail((cur && readCode[cur.code]) || failedCode(svc, st, cur))
       const raw = Buffer.concat([cur.bom ? BOM : Buffer.alloc(0), Buffer.from(cur.text, 'utf8')])
       if (hashOf(raw) !== a.expectHash) return fail('conflict')
       expect = cur.hash ? { expectHash: cur.hash } : { expectSig: cur.sig }
+    } else {
+      // A new file is made only if nothing is there when it is written.
+      expect = { createOnly: true }
     }
     if (typeof ctx.recheck === 'function') {
       let ok
@@ -461,9 +641,10 @@ export function createRemoteShareFiles({ remote, log = null, now = () => Date.no
       file: fileVirtual(st, a.path),
       text: a.text,
       bom: a.bom,
-      ...expect
+      ...expect,
+      ...G
     })
-    invalidate(st.root)
+    invalidate(st.root, a.path)
     if (!res || res.ok !== true)
       return fail(res && res.conflict ? 'conflict' : failedCode(svc, st, res))
     const raw = Buffer.concat([a.bom ? BOM : Buffer.alloc(0), Buffer.from(a.text, 'utf8')])
@@ -475,8 +656,8 @@ export function createRemoteShareFiles({ remote, log = null, now = () => Date.no
     })
   }
 
-  // Search results: a path a guest may see (not hidden, ignored, or below a
-  // link: a link shows by name only and is refused when read).
+  // Search results: only paths a guest may name (not hidden, not ignored,
+  // below real folders, not links, not in a nested repository).
   async function opSearchNames(svc, a, st, settings) {
     const p = await privacy(svc, st.root, st, settings)
     if (p.code) return fail(p.code)
@@ -489,16 +670,27 @@ export function createRemoteShareFiles({ remote, log = null, now = () => Date.no
       dir: a.dir ? virt(st.root, a.dir) : undefined,
       query: a.query,
       dotfiles: a.dotfiles,
-      limit: 500
+      limit: 500,
+      ...G
     })
     if (!res || res.ok !== true) return fail(failedCode(svc, st, res))
-    const results = []
-    let truncated = !!res.truncated
+    const found = []
     for (const r of res.results || []) {
       const rel = cleanRel(r.rel)
-      if (!rel || p.hidden(rel)) continue
+      if (rel && !p.hidden(rel)) found.push({ rel, dir: !!r.dir })
+    }
+    const seen = await reachable(
+      svc,
+      st,
+      found.map((r) => r.rel)
+    )
+    if (seen.code) return fail(seen.code)
+    const results = []
+    let truncated = !!res.truncated || seen.cut
+    for (const r of found) {
+      if (!seen.good.has(r.rel)) continue
       if (results.length >= a.limit) truncated = true
-      else results.push({ rel, dir: !!r.dir })
+      else results.push(r)
     }
     return done({ results, truncated, hidden: 0 })
   }
@@ -506,15 +698,22 @@ export function createRemoteShareFiles({ remote, log = null, now = () => Date.no
   async function opSearchContent(svc, a, st, settings) {
     const p = await privacy(svc, st.root, st, settings)
     if (p.code) return fail(p.code)
-    const res = await svc.searchContent({ root: st.root, query: a.query, limit: 500 })
+    const res = await svc.searchContent({ root: st.root, query: a.query, limit: 500, ...G })
     if (!res || res.ok !== true) return fail(failedCode(svc, st, res))
-    const results = []
-    let truncated = !!res.truncated
+    const found = []
     for (const r of res.results || []) {
       const rel = cleanRel(r.rel)
-      if (!rel || p.hidden(rel)) continue
+      if (rel && !p.hidden(rel))
+        found.push({ rel, line: r.line, text: String(r.text || '').slice(0, 1000) })
+    }
+    const seen = await reachable(svc, st, [...new Set(found.map((r) => r.rel))])
+    if (seen.code) return fail(seen.code)
+    const results = []
+    let truncated = !!res.truncated || seen.cut
+    for (const r of found) {
+      if (!seen.good.has(r.rel)) continue
       if (results.length >= a.limit) truncated = true
-      else results.push({ rel, line: r.line, text: String(r.text || '').slice(0, 1000) })
+      else results.push(r)
     }
     return done({ results, truncated, hidden: 0 })
   }
@@ -543,7 +742,8 @@ export function createRemoteShareFiles({ remote, log = null, now = () => Date.no
     const roots = ctx.remoteRoots
     const root = roots instanceof Map && typeof project === 'string' ? roots.get(project) : null
     const parsed = typeof root === 'string' ? parseRemotePath(root) : null
-    if (!parsed) return fail('remote-project')
+    // A root too broad to share (the host's root, a home or system folder).
+    if (!parsed || remoteRootTooBroad(parsed.path)) return fail('remote-project')
     const svc = service()
     if (!svc || typeof svc.hasRoot !== 'function' || !svc.hasRoot(root))
       return fail('remote-project')
@@ -577,7 +777,7 @@ export function createRemoteShareFiles({ remote, log = null, now = () => Date.no
       name === 'fs.read'
         ? ['text']
         : name === 'fs.searchContent'
-          ? ['results.*.text']
+          ? []
           : name === 'fs.image'
             ? ['dataUrl']
             : []
@@ -591,6 +791,7 @@ export function createRemoteShareFiles({ remote, log = null, now = () => Date.no
   function reset() {
     ignoredCache.clear()
     verified.clear()
+    hooksCache.clear()
   }
 
   return { handle, supports, reset }

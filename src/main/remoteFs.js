@@ -28,7 +28,7 @@ import { createRemoteSession, sessionArgs, remotePathArg, rawArg, RC } from './r
 import { createScm } from './sourceControl'
 import { looksBinary, MAX_EDIT_BYTES, MAX_HEAD_BYTES } from './editorFiles'
 import { cleanEnv } from './cleanEnv'
-import { RISKY_CONFIG_ARGS, parseRisky, hookEntries, neutralize, gitTrust } from './gitSafety'
+import { RISKY_CONFIG_ARGS, GUEST_FIXED_ARGS, parseRisky, hookEntries, neutralize, gitTrust } from './gitSafety'
 import { parseRemotePath, remoteRoot, relativeTo, childPath, isRemotePath } from '../shared/remotePath'
 import { fileKind, extOf, IMAGE_MIME } from '../shared/fileKinds'
 import { sortEntries } from '../shared/explorerSort'
@@ -75,6 +75,12 @@ export const SLOW_MS = 12_000
 export const REMOTE_UNTRACKED_COUNTS = 200
 // Paths of one terminal link batch looked up on a host (statLinks).
 export const MAX_LINK_STATS = 50
+
+// A Live Share guest's calls (shareRemoteFiles.js): behind the host's own
+// requests in the session's queue, never a sign-in (a dropped session says
+// "not connected"), never run again after a drop, and bounded in time.
+const GUEST_TIMEOUT_MS = 15_000
+const GUEST_SEARCH_MS = 8_000
 
 const arg = (path) => rawArg(remotePathArg(path))
 const joinPath = (base, rel) => (rel ? (base.endsWith('/') ? `${base}${rel}` : `${base}/${rel}`) : base)
@@ -479,10 +485,12 @@ export function createRemoteFs({
       return false
     }
   }
-  function open(hostId) {
+  // noSignIn (a guest's call): only an open session, or the host's shared
+  // ssh2 connection that is signed in already; never a new sign-in.
+  function open(hostId, { noSignIn = false } = {}) {
     const existing = sessions.get(hostId)
     if (existing && !existing.closed) return existing.ready
-    if (!mayOpen(hostId)) {
+    if (noSignIn ? !(hosts.sharedConnected && hosts.sharedConnected(hostId)) : !mayOpen(hostId)) {
       activity(hostId, null, { needsConnect: true })
       return Promise.reject(Object.assign(new Error('not connected'), { code: 'not-connected' })) // i18n-ignore internal
     }
@@ -495,6 +503,7 @@ export function createRemoteFs({
       const target = ssh ? hosts.get(hostId) : null
       if (ssh && !target) throw Object.assign(new Error(t('main.remote.notFound', 'This remote host is no longer saved in Tessel.')), { code: 'host' })
       const mode = target ? await ssh.modeFor(target) : { mode: 'system' }
+      if (noSignIn && mode.mode !== 'ssh2') throw Object.assign(new Error('not connected'), { code: 'not-connected' }) // i18n-ignore internal
       if (entry.closed) throw Object.assign(new Error('cancelled'), { code: 'cancelled' }) // i18n-ignore internal
       if (mode.mode === 'ssh2') {
         activity(hostId, entry)
@@ -621,12 +630,14 @@ export function createRemoteFs({
   async function call(hostId, fn, args, opts = {}) {
     const t0 = now()
     const res = await callOnce(hostId, fn, args, opts)
-    if (res && res.error && !opts.quiet && !opts.ifOpen && RETRY_ON.has(res.code) && (res.notSent || opts.retry) && now() - t0 < SLOW_MS) {
+    if (res && res.error && !opts.guest && !opts.quiet && !opts.ifOpen && RETRY_ON.has(res.code) && (res.notSent || opts.retry) && now() - t0 < SLOW_MS) {
       return callOnce(hostId, fn, args, opts)
     }
     return res
   }
-  async function callOnce(hostId, fn, args, { cap, timeoutMs, upload, op = '', quiet = false, ifOpen = false, background = false } = {}) {
+  async function callOnce(hostId, fn, args, { cap, timeoutMs: askedMs, upload, op = '', quiet = false, ifOpen = false, background: bg = false, guest = false } = {}) {
+    const background = bg || guest
+    const timeoutMs = guest ? Math.min(askedMs || GUEST_TIMEOUT_MS, GUEST_TIMEOUT_MS) : askedMs
     let session
     const entry0 = sessions.get(hostId)
     if (ifOpen) quiet = true
@@ -635,9 +646,9 @@ export function createRemoteFs({
       session = entry0.session
     } else {
       try {
-        session = await open(hostId)
+        session = await open(hostId, { noSignIn: guest })
       } catch (err) {
-        return { error: sessionErrorText(hostId, err) }
+        return { error: sessionErrorText(hostId, err), code: (err && err.code) || 'failed' }
       }
     }
     const entry = sessions.get(hostId)
@@ -741,10 +752,15 @@ export function createRemoteFs({
   // arguments its git calls get (gitSafety.js: the repository's own settings
   // that run programs stay off until the user trusts it).
   // -> { realRoot, top | null, gitArgs } | { error } | { missing }
-  function repoInfo(loc) {
-    const key = `${loc.hostId}\n${loc.root.path}`
+  // guest: a Live Share guest's request: no dialog is ever shown for it (a
+  // repository whose settings run programs and the host has not decided on
+  // is unreadable for guests), and its git calls get the guest's fixed
+  // arguments too.
+  function repoInfo(loc, { guest = false } = {}) {
+    const key = `${loc.hostId}\n${loc.root.path}${guest ? '\nguest' : ''}`
+    const g = guest ? { guest: true } : {}
     if (!repoInfos.has(key)) {
-      const p = call(loc.hostId, '__t_top', [arg(loc.root.path)], { cap: 64 * 1024, op: 'status', retry: true }).then(async (res) => {
+      const p = call(loc.hostId, '__t_top', [arg(loc.root.path)], { cap: 64 * 1024, op: 'status', retry: true, ...g }).then(async (res) => {
         if (res.error) return { error: res.error }
         const lines = res.out.toString('utf8').split('\n')
         if (res.rc === RC.NOT_REPO) {
@@ -754,10 +770,10 @@ export function createRemoteFs({
         if (res.rc === RC.MISSING) return { missing: true }
         if (res.rc !== 0 || !lines[0] || !lines[1]) return { error: rcText(res, t('main.scm.statusFailed', 'Git status failed.')) }
         loc.root.real = lines[0]
-        const cfg = await call(loc.hostId, '__t_gitin', [arg(loc.root.path), arg(lines[1]), ...RISKY_CONFIG_ARGS], { cap: 256 * 1024, op: 'status', retry: true })
+        const cfg = await call(loc.hostId, '__t_gitin', [arg(loc.root.path), arg(lines[1]), ...RISKY_CONFIG_ARGS], { cap: 256 * 1024, op: 'status', retry: true, ...g })
         if (cfg.error) return { error: cfg.error }
         // Its runnable hooks ($GIT_DIR/hooks, not the *.sample ones) count too.
-        const hooks = await call(loc.hostId, '__t_hooks', [arg(loc.root.path), arg(lines[1])], { cap: 64 * 1024, op: 'status', retry: true })
+        const hooks = await call(loc.hostId, '__t_hooks', [arg(loc.root.path), arg(lines[1])], { cap: 64 * 1024, op: 'status', retry: true, ...g })
         if (hooks.error) return { error: hooks.error }
         // Exit 1: none of them set. Unreadable: everything they could be stays off.
         const risky = [
@@ -765,12 +781,17 @@ export function createRemoteFs({
           ...(hooks.rc === 0 ? hookEntries(hooks.out.toString('utf8').split('\0')) : [])
         ]
         let gitArgs = []
-        if ((cfg.rc !== 0 && cfg.rc !== 1) || hooks.rc !== 0) gitArgs = neutralize([], { hooksDir: NO_HOOKS })
-        else if (risky.length) {
-          const trusted = await trust().decide(`${loc.hostId}:${lines[1]}`, risky, { name: lines[1], where: hostLabel(loc.hostId) })
-          if (!trusted) gitArgs = neutralize(risky, { hooksDir: NO_HOOKS })
+        if ((cfg.rc !== 0 && cfg.rc !== 1) || hooks.rc !== 0) {
+          if (guest) return { error: t('main.remoteFs.untrusted', 'This repository’s settings have not been checked on this computer.') }
+          gitArgs = neutralize([], { hooksDir: NO_HOOKS })
+        } else if (risky.length) {
+          const trusted = await trust().decide(`${loc.hostId}:${lines[1]}`, risky, { name: lines[1], where: hostLabel(loc.hostId), mayAsk: !guest })
+          if (!trusted) {
+            if (guest) return { error: t('main.remoteFs.untrusted', 'This repository’s settings have not been checked on this computer.') }
+            gitArgs = neutralize(risky, { hooksDir: NO_HOOKS })
+          }
         }
-        return { realRoot: lines[0], top: lines[1], gitArgs }
+        return { realRoot: lines[0], top: lines[1], gitArgs: guest ? [...gitArgs, ...GUEST_FIXED_ARGS] : gitArgs }
       })
       repoInfos.set(key, p)
       p.then((info) => {
@@ -795,17 +816,17 @@ export function createRemoteFs({
   }
 
   function listDir(q = {}) {
-    return shared(`ls
+    return shared(`ls${q.guest === true ? 'g' : ''}
 ${q.root}
 ${q.dir || ''}
 ${q.dotfiles !== false}`, () => listDirNow(q))
   }
   // background: a refresh of what is shown (after a change notice), behind
   // the user's own requests; a folder opened by the user is not.
-  async function listDirNow({ root, dir, dotfiles = true, background = false } = {}) {
+  async function listDirNow({ root, dir, dotfiles = true, background = false, guest = false } = {}) {
     const loc = under(root, dir || root)
     if (!loc) return { ok: false, error: t('main.explorer.outside', 'Outside the project.') }
-    const res = await call(loc.hostId, '__t_ls', [arg(loc.root.path), arg(loc.path), String(MAX_ENTRIES + 1)], { cap: 16 * 1024 * 1024, op: 'list', background: background === true, retry: true })
+    const res = await call(loc.hostId, '__t_ls', [arg(loc.root.path), arg(loc.path), String(MAX_ENTRIES + 1)], { cap: 16 * 1024 * 1024, op: 'list', background: background === true, retry: true, ...(guest ? { guest: true } : {}) })
     // transient: the host did not answer (slow, busy, connection lost), the
     // folder itself may be fine: the window keeps what it showed.
     if (res.error) return { ok: false, error: res.error, transient: true }
@@ -823,11 +844,13 @@ ${q.dotfiles !== false}`, () => listDirNow(q))
   function listEntries(records, base, dotfiles, max) {
     const entries = []
     let count = 0
+    let hasGit = false
     for (const rec of records) {
       const m = /^([dfLlo]) (.+)$/s.exec(rec)
       if (!m) continue
       count++
       const name = m[2]
+      if (name === '.git') hasGit = true
       // Not addressable (a backslash or a control character in the name) or hidden.
       if (CONTROL.test(name) || name.includes('\\') || name === '.git') continue
       if (!dotfiles && name.startsWith('.')) continue
@@ -835,7 +858,8 @@ ${q.dotfiles !== false}`, () => listDirNow(q))
       entries.push({ name, path: childPath(base, name), dir: m[1] === 'd' || m[1] === 'L', ...(m[1] === 'L' || m[1] === 'l' ? { link: true } : {}) })
     }
     sortEntries(entries)
-    return { ok: true, entries, truncated: count > max }
+    // hasGit: the folder holds a .git (a nested repository for guests).
+    return { ok: true, entries, truncated: count > max, hasGit }
   }
 
   // Several folders in one round trip (a refresh of the open ones, a
@@ -846,14 +870,14 @@ ${q.dotfiles !== false}`, () => listDirNow(q))
   // A folder the answer did not reach (cut at its size) is left out.
   function listMany(q = {}) {
     const dirs = Array.isArray(q.dirs) ? q.dirs.filter((d) => typeof d === 'string').slice(0, MAX_LIST_MANY) : []
-    return shared(`lm
+    return shared(`lm${q.guest === true ? 'g' : ''}
 ${q.root}
 ${dirs.join('\n')}
 ${q.dotfiles !== false}
 ${!!q.chain}
 ${q.max || ''}`, () => listManyNow({ ...q, dirs }))
   }
-  async function listManyNow({ root, dirs, dotfiles = true, chain = false, background = false, max = MAX_ENTRIES } = {}) {
+  async function listManyNow({ root, dirs, dotfiles = true, chain = false, background = false, max = MAX_ENTRIES, guest = false } = {}) {
     const top = under(root, root)
     if (!top) return { ok: false, error: t('main.explorer.outside', 'Outside the project.') }
     const limit = Number.isInteger(max) && max > 0 ? Math.min(max, MAX_ENTRIES) : MAX_ENTRIES
@@ -870,7 +894,8 @@ ${q.max || ''}`, () => listManyNow({ ...q, dirs }))
       timeoutMs: 60000,
       op: 'list',
       background: background === true,
-      retry: true
+      retry: true,
+      ...(guest ? { guest: true } : {})
     })
     if (res.error) return { ok: false, error: res.error, transient: true }
     const sections = []
@@ -903,18 +928,18 @@ ${q.max || ''}`, () => listManyNow({ ...q, dirs }))
 
   // The explorer's letters, keyed by the files' virtual paths.
   function projectStatus(q = {}) {
-    return shared(`st
+    return shared(`st${q.guest === true ? 'g' : ''}
 ${q.root}
 ${!!q.ignored}`, () => projectStatusNow(q))
   }
-  async function projectStatusNow({ root, ignored = false, background = false } = {}) {
+  async function projectStatusNow({ root, ignored = false, background = false, guest = false } = {}) {
     const loc = under(root, root)
     if (!loc) return { ok: false, error: t('main.explorer.invalidFolder', 'Invalid folder.') }
-    const info = await repoInfo(loc)
+    const info = await repoInfo(loc, { guest })
     if (info.error) return { ok: false, error: info.error }
     if (info.missing || !info.top) return { ok: true, files: {}, repo: false }
     const args = ['status', '--porcelain=v1', '-z', '--untracked-files=all', ...(ignored ? ['--ignored=matching'] : [])]
-    const res = await call(loc.hostId, '__t_gitin', [arg(loc.root.path), arg(info.top), ...info.gitArgs, ...args], { cap: 32 * 1024 * 1024, timeoutMs: 30000, op: 'status', background: background === true, retry: true })
+    const res = await call(loc.hostId, '__t_gitin', [arg(loc.root.path), arg(info.top), ...info.gitArgs, ...args], { cap: 32 * 1024 * 1024, timeoutMs: 30000, op: 'status', background: background === true, retry: true, ...(guest ? { guest: true } : {}) })
     if (res.error) return { ok: false, error: res.error }
     if (res.rc !== 0) return { ok: false, error: rcText(res, t('main.scm.statusFailed', 'Git status failed.')) }
     const files = {}
@@ -953,7 +978,7 @@ ${q.root}`, () => sparseInfoNow(q))
 
   // `dir`: only names below that folder of the project (the tree's root
   // when it shows one sparse folder).
-  async function searchNames({ root, dir, query, dotfiles = true, limit = SEARCH_LIMIT } = {}) {
+  async function searchNames({ root, dir, query, dotfiles = true, limit = SEARCH_LIMIT, guest = false } = {}) {
     const loc = under(root, root)
     if (!loc) return { ok: false, error: t('main.explorer.invalidFolder', 'Invalid folder.') }
     const scope = dir ? under(root, dir) : loc
@@ -966,7 +991,7 @@ ${q.root}`, () => sparseInfoNow(q))
     const results = []
     let truncated = false
     for (const kind of ['d', 'f']) {
-      const res = await call(loc.hostId, '__t_findn', [arg(loc.root.path), findPattern(q), kind], { cap: 1024 * 1024, timeoutMs: 20000, op: 'search' })
+      const res = await call(loc.hostId, '__t_findn', [arg(loc.root.path), findPattern(q), kind], { cap: 1024 * 1024, timeoutMs: guest ? GUEST_SEARCH_MS : 20000, op: 'search', ...(guest ? { guest: true } : {}) })
       if (res.error) return { ok: false, error: res.error }
       if (res.rc !== 0 && res.rc !== RC.PIPE && !res.truncated && res.rc !== 1) return { ok: false, error: rcText(res, t('main.remoteFs.searchFailed', 'The search failed.')) }
       if (res.truncated || res.rc === RC.PIPE) truncated = true
@@ -997,26 +1022,27 @@ ${q.root}`, () => sparseInfoNow(q))
     return (start > 0 ? '…' : '') + s.slice(start, start + 240) + (start + 240 < s.length ? '…' : '')
   }
 
-  async function searchContent({ root, query, limit = SEARCH_LIMIT } = {}) {
+  async function searchContent({ root, query, limit = SEARCH_LIMIT, guest = false } = {}) {
     const loc = under(root, root)
     if (!loc) return { ok: false, error: t('main.explorer.invalidFolder', 'Invalid folder.') }
     const max = Number.isInteger(limit) && limit > 0 ? Math.min(limit, SEARCH_LIMIT) : SEARCH_LIMIT
     const q = String(query || '')
     if (!q.trim()) return { ok: true, results: [], truncated: false }
     if (CONTROL.test(q) || q.length > 1000) return { ok: true, results: [], truncated: false }
-    const info = await repoInfo(loc)
+    const info = await repoInfo(loc, { guest })
     if (info.error) return { ok: false, error: info.error }
     const git = !!info.top
     const args = git
       ? [
           arg(loc.root.path), 'git',
+          ...(guest ? info.gitArgs : []),
           '-c', 'grep.fullName=false', '-c', 'grep.lineNumber=true', '-c', 'grep.column=false', '-c', 'grep.patternType=fixed',
           '-c', 'grep.extendedRegexp=false', '-c', 'color.grep=never',
           'grep', '-n', '-I', '-z', '-i', '-F', '--untracked', '--no-color', '-e', q, '--', '.',
           ...HEAVY.map((h) => `:(exclude,glob)**/${h}/**`)
         ]
       : [arg(loc.root.path), 'plain', q]
-    const res = await call(loc.hostId, '__t_grep', args, { cap: SEARCH_OUTPUT + 1, timeoutMs: 30000, op: 'search' })
+    const res = await call(loc.hostId, '__t_grep', args, { cap: SEARCH_OUTPUT + 1, timeoutMs: guest ? GUEST_SEARCH_MS : 30000, op: 'search', ...(guest ? { guest: true } : {}) })
     if (res.error) return { ok: false, error: res.error }
     // 0: matches, 1: none, 141: cut at the cap; anything else is a failure.
     if (res.rc !== 0 && res.rc !== 1 && res.rc !== RC.PIPE) return { ok: false, error: rcText(res, t('main.explorer.grepFailed', 'The search failed (git grep).')) }
@@ -1108,6 +1134,40 @@ ${q.root}`, () => sparseInfoNow(q))
     return trashAt(loc.hostId, loc.root.path, loc.path, joinPath(info.realRoot, loc.rel))
   }
 
+  // The folder core.hooksPath names, relative to the project, lower case
+  // (['' for the project itself), for the files a guest may not write (they
+  // run when the host commits). Read without the repository's own overrides.
+  // -> { ok: true, rels } | { ok: false } (unreadable: the caller refuses).
+  async function hooksPathOf({ root, guest = false } = {}) {
+    const loc = under(root, root)
+    if (!loc) return { ok: false }
+    const info = await repoInfo(loc, { guest })
+    if (info.error || info.missing) return { ok: false }
+    if (!info.top) return { ok: true, rels: [] }
+    const res = await call(loc.hostId, '__t_gitin', [arg(loc.root.path), arg(info.top), '-c', 'core.fsmonitor=false', 'config', '--get', 'core.hooksPath'], {
+      cap: 8192,
+      timeoutMs: 15000,
+      op: 'status',
+      retry: true,
+      ...(guest ? { guest: true } : {})
+    })
+    if (res.error) return { ok: false }
+    if (res.rc === 1) return { ok: true, rels: [] }
+    if (res.rc !== 0) return { ok: false }
+    const where = res.out.toString('utf8').split('\n')[0].trim()
+    if (!where) return { ok: true, rels: [] }
+    // A home-relative or odd value cannot be placed: unreadable.
+    if (where.startsWith('~') || CONTROL.test(where)) return { ok: false }
+    const segs = []
+    for (const seg of (where.startsWith('/') ? where : joinPath(info.top, where)).split('/')) {
+      if (!seg || seg === '.') continue
+      if (seg === '..') segs.pop()
+      else segs.push(seg)
+    }
+    const rel = relativeTo(info.realRoot, `/${segs.join('/')}`)
+    return { ok: true, rels: rel === null ? [] : [rel.toLowerCase()] }
+  }
+
   // --- Editor ----------------------------------------------------------------------------
   function locateFile(file) {
     const loc = isRemotePath(file) ? locate(file) : null
@@ -1116,14 +1176,15 @@ ${q.root}`, () => sparseInfoNow(q))
   const notInProject = () => t('main.remoteFs.noProject', 'This remote file is not in an open remote project.')
 
   // -> { ok, text, bom, size, mtimeMs, sig, hash } | { ok: false, error, code }
-  async function readForEdit(file) {
+  async function readForEdit(file, { guest = false } = {}) {
     const loc = locateFile(file)
     if (!loc) return { ok: false, error: notInProject(), code: 'error' }
     const res = await call(loc.hostId, '__t_read', [arg(loc.root.path), arg(loc.path), String(MAX_EDIT_BYTES)], {
       cap: MAX_EDIT_BYTES + HEADER_SLACK,
       timeoutMs: 120000,
       op: 'read',
-      retry: true
+      retry: true,
+      ...(guest ? { guest: true } : {})
     })
     if (res.error) return { ok: false, error: res.error, code: 'error' }
     if (res.rc === RC.MISSING) return { ok: false, error: t('main.editor.notFound', 'The file was not found.'), code: 'missing' }
@@ -1149,10 +1210,10 @@ ${q.root}`, () => sparseInfoNow(q))
     return { ok: true, text, bom, size: buf.length, mtimeMs: st.mtimeMs, sig: st.sig, hash: HASH_RE.test(hash) ? hash : undefined }
   }
 
-  async function statForEdit(file) {
+  async function statForEdit(file, { guest = false } = {}) {
     const loc = locateFile(file)
     if (!loc) return { ok: false, error: notInProject() }
-    const res = await call(loc.hostId, '__t_stats', [arg(loc.root.path), arg(loc.path)], { cap: 4096, op: 'read', retry: true })
+    const res = await call(loc.hostId, '__t_stats', [arg(loc.root.path), arg(loc.path)], { cap: 4096, op: 'read', retry: true, ...(guest ? { guest: true } : {}) })
     if (res.error) return { ok: false, error: res.error }
     const st = res.rc === 0 ? parseStat(res.out.toString('latin1')) : null
     return st ? { ok: true, exists: true, ...st } : { ok: true, exists: false, sig: null }
@@ -1199,14 +1260,15 @@ ${q.root}`, () => sparseInfoNow(q))
   // { file, text, bom, expectSig, expectHash } -> like editorFiles.writeForEdit.
   // privateNew: a file created by this write is readable by its owner only
   // (0600; an automation's prompt).
-  async function writeForEdit({ file, text, bom = false, expectSig, expectHash, privateNew = false } = {}) {
+  async function writeForEdit({ file, text, bom = false, expectSig, expectHash, privateNew = false, createOnly = false, guest = false } = {}) {
     const loc = locateFile(file)
     if (!loc) return { ok: false, error: notInProject() }
     if (typeof text !== 'string') return { ok: false, error: t('main.editor.nothingToWrite', 'Nothing to write.') }
     const data = bom ? Buffer.concat([BOM, Buffer.from(text, 'utf8')]) : Buffer.from(text, 'utf8')
     if (data.length > MAX_EDIT_BYTES) return { ok: false, error: t('main.editor.textTooLarge', 'The text is too large to save (over 50 MB).') }
     const hash = typeof expectHash === 'string' && HASH_RE.test(expectHash) ? expectHash : ''
-    const res = await call(loc.hostId, '__t_write', [arg(loc.root.path), arg(loc.path), hash, hash ? '' : sigForHost(expectSig), privateNew ? '600' : ''], {
+    const res = await call(loc.hostId, '__t_write', [arg(loc.root.path), arg(loc.path), hash, hash ? '' : sigForHost(expectSig), privateNew ? '600' : '', createOnly ? 'new' : ''], {
+      ...(guest ? { guest: true } : {}),
       cap: 64 * 1024,
       upload: data,
       timeoutMs: 30000 + Math.ceil(data.length / (512 * 1024)) * 1000,
@@ -1261,11 +1323,11 @@ ${q.root}`, () => sparseInfoNow(q))
   }
 
   // An image (Markdown pictures, the image view) as a data URL.
-  async function readImage(file) {
+  async function readImage(file, { guest = false } = {}) {
     if (fileKind(file) !== 'image') return { ok: false, error: t('main.file.notImage', 'Not an image.') }
     const loc = locateFile(file)
     if (!loc) return { ok: false, error: notInProject() }
-    const res = await call(loc.hostId, '__t_read', [arg(loc.root.path), arg(loc.path), String(MAX_IMAGE)], { cap: MAX_IMAGE + HEADER_SLACK, timeoutMs: 120000, op: 'read', retry: true })
+    const res = await call(loc.hostId, '__t_read', [arg(loc.root.path), arg(loc.path), String(MAX_IMAGE)], { cap: MAX_IMAGE + HEADER_SLACK, timeoutMs: 120000, op: 'read', retry: true, ...(guest ? { guest: true } : {}) })
     if (res.error) return { ok: false, error: res.error }
     if (res.rc === RC.TOO_LARGE) return { ok: false, kind: 'image', error: t('main.file.imageTooLarge', 'This image is too large to show here.') }
     if (res.rc !== 0 || res.truncated) return { ok: false, error: rcText(res, t('main.file.notFound', 'The file was not found.')) }
@@ -1319,7 +1381,10 @@ ${q.root}`, () => sparseInfoNow(q))
           // settings and hooks are looked at again only when git's own
           // folder may have changed them.
           const rels = change.rels
-          if (!rels || rels.some((r) => r === '.git' || /^\.git\/(config|hooks|commondir|worktrees)/.test(r))) repoInfos.delete(`${w.hostId}\n${w.root.path}`)
+          if (!rels || rels.some((r) => r === '.git' || /^\.git\/(config|hooks|commondir|worktrees)/.test(r))) {
+            repoInfos.delete(`${w.hostId}\n${w.root.path}`)
+            repoInfos.delete(`${w.hostId}\n${w.root.path}\nguest`)
+          }
           send('explorer:changed', { root: virtual, paths: rels ? rels.map((r) => (r ? childPath(virtual, r) : virtual)) : null })
         }
       }
@@ -1928,6 +1993,7 @@ ${root}`, () => gitWorktreesNow(root))
     sparseInfo,
     searchNames,
     searchContent,
+    hooksPathOf,
     create,
     rename,
     trash,

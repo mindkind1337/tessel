@@ -134,6 +134,7 @@ import { createShareScope, hiddenByName, relFrom, DEFAULT_SHARE_SETTINGS, assert
 import { cleanRoots } from './liveShare/shareChat.js'
 import { createRemoteShareFiles } from './liveShare/shareRemoteFiles.js'
 import { remoteRoot } from '../shared/remotePath.js'
+import { remoteRootTooBroad } from '../shared/remoteRootPolicy.js'
 import { createGuestFs } from './liveShare/guestFs.js'
 import { TASK_OPS, taskArgs, guestTasks, checkTasks, isTaskId } from './liveShare/shareTasks.js'
 import { PANEL_OPS, HISTORY_LIMITS, guestPanes, createAgentsFeed, guestChildren, checkPanes, checkChildren, hostHistory, guestHistory, checkHistory, needsFigures, checkUsage, hostTaskCopies, checkReviewInfo, checkReviewDiff } from './liveShare/sharePanels.js'
@@ -217,6 +218,9 @@ export function cleanRoot(root) {
 // this says.
 export function cleanRemoteRoot(remote) {
   if (!remote || typeof remote !== 'object' || typeof remote.hostId !== 'string' || typeof remote.path !== 'string') return null
+  // A root too broad (the host's root, a home folder, a system folder) is
+  // not shared with guests, whatever the project says.
+  if (remoteRootTooBroad(remote.path)) return null
   return remoteRoot(remote.hostId, remote.path)
 }
 

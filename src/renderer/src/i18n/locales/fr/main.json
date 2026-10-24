@@ -726,6 +726,7 @@
       "loginUnavailable": "Cette connexion Codex n'est pas disponible. Reconnectez-vous avant de la sélectionner."
     },
     "remoteFs": {
+      "untrusted": "Les réglages de ce dépôt n'ont pas été vérifiés sur cet ordinateur.",
       "noImage": "Le presse-papiers ne contient pas d'image.",
       "noImageFile": "Ce fichier n'est pas une image.",
       "imageTooManyPixels": "L'image est trop grande pour être envoyée (plus de 25 mégapixels).",

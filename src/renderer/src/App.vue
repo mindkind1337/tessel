@@ -2691,7 +2691,7 @@ const liveShare = createLiveShareWindow({
 const liveShareOpen = ref(false)
 const liveShareAt = reactive({ tab: 'share', section: 'overview', project: null })
 // The projects you can share (a Live Share project is someone else's).
-const shareableProjects = computed(() => workspaces.value.filter((w) => !w.liveShare).map((w) => ({ id: w.id, name: w.name, noFiles: !w.remote && !(typeof w.cwd === 'string' && w.cwd), ssh: !!w.remote })))
+const shareableProjects = computed(() => workspaces.value.filter((w) => !w.liveShare).map((w) => ({ id: w.id, name: w.name, noFiles: !w.remote && !(typeof w.cwd === 'string' && w.cwd), ssh: !!w.remote, sshPath: w.remote && typeof w.remote.path === 'string' ? w.remote.path : '' })))
 // The projects you share, by name (a guest asking to join gets the ones you tick).
 const sharedProjectList = computed(() => liveShare.sharedWss().map((w) => ({ id: w.id, name: w.name })))
 // What the sidebar's project menus need: Share in / Remove from Live Share.

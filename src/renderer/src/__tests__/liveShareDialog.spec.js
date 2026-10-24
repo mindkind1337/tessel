@@ -186,12 +186,17 @@ describe('LiveShareDialog: before sharing', () => {
   })
 
   it('the setup card: project chips (a project without a folder shows terminals only; an SSH project shows an SSH tag), the warning as a callout, the facts and a way to Settings', async () => {
-    const wrapper = await open({ projects: [...PROJECTS.projects, { id: 'ws-3', name: 'box', noFiles: true }, { id: 'ws-4', name: 'srv', ssh: true }], projectIds: ['ws-1'] })
+    const wrapper = await open({ projects: [...PROJECTS.projects, { id: 'ws-3', name: 'box', noFiles: true }, { id: 'ws-4', name: 'srv', ssh: true, sshPath: '/srv/app' }, { id: 'ws-5', name: 'home', ssh: true, sshPath: '/home/me' }], projectIds: ['ws-1'] })
     expect(wrapper.find('[data-test="ls-project-ws-1"]').classes()).toContain('on')
     expect(wrapper.find('[data-test="ls-nofiles-ws-3"]').text()).toBe('Terminals only')
-    // An SSH project's files are shared: a plain tag, no warning.
+    // An SSH project's files are shared (guests can read them on the server): a warning-style tag that says so.
     expect(wrapper.find('[data-test="ls-ssh-ws-4"]').text()).toBe('SSH')
-    expect(wrapper.find('[data-test="ls-ssh-ws-4"]').classes()).not.toContain('tag-warn')
+    expect(wrapper.find('[data-test="ls-ssh-ws-4"]').classes()).toContain('tag-warn')
+    expect(wrapper.find('[data-test="ls-ssh-ws-4"]').attributes('title')).toMatch(/Guests can read this project’s files on the server/)
+    // A root too broad shares no files, and the dialog says so.
+    expect(wrapper.find('[data-test="ls-ssh-ws-5"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="ls-ssh-broad-ws-5"]').text()).toBe('SSH, no files')
+    expect(wrapper.find('[data-test="ls-ssh-broad-ws-5"]').attributes('title')).toMatch(/too broad/)
     expect(wrapper.find('[data-test="ls-nofiles-ws-4"]').exists()).toBe(false)
     expect(wrapper.find('[data-test="ls-type-warning"]').classes()).toContain('warn')
     // A first invitation that lets them type: the warning turns red.

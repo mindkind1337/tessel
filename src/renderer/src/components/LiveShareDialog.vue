@@ -29,6 +29,7 @@ import { t, intlLocale } from '../i18n'
 import { actionText } from '../liveShareWindow'
 import { accessError, invitesOf, inviteName, inviteExpiry, joinedGuests, waitingGuests, offlinePeople, personName, viaName, shortCode } from '../liveShareAccess'
 import { cleanRights } from '../../../shared/liveShareRights'
+import { remoteRootTooBroad } from '../../../shared/remoteRootPolicy'
 import { shownRights, presetRights } from '../liveShareRights'
 import LsInviteEditor from './liveshare/LsInviteEditor.vue'
 import LsInvitations from './liveshare/LsInvitations.vue'
@@ -39,6 +40,9 @@ import LsAvatars from './liveshare/LsAvatars.vue'
 import LsGuest from './liveshare/LsGuest.vue'
 import RightsChip from './liveshare/RightsChip.vue'
 import { plainBridge } from '../liveShareBridge'
+
+// An SSH project whose folder is too broad shares no files (main refuses it too).
+const sshBroad = (p) => remoteRootTooBroad(p.sshPath)
 
 const props = defineProps({
   open: { type: Boolean, default: false },
@@ -535,7 +539,8 @@ function tabKeys(event, list, current, set) {
                       <Check v-if="ticked.has(p.id)" :size="12" aria-hidden="true" />
                       <span class="ls-pchip-name">{{ p.name }}</span>
                       <span v-if="p.noFiles" class="tag tag-warn" :title="t('liveShare.share.noFiles', 'It has no folder on this computer: guests see its terminals and agents, not its files.')" :data-test="'ls-nofiles-' + p.id">{{ t('liveShare.share.terminalsOnly', 'Terminals only') }}</span>
-                      <span v-else-if="p.ssh" class="tag" :title="t('liveShare.share.sshFiles', 'Its files are on an SSH server: guests can open them (and save, with the edit right) through your connection to it, while it is connected. Changes are not shared.')" :data-test="'ls-ssh-' + p.id">{{ t('liveShare.share.sshTag', 'SSH') }}</span>
+                      <span v-else-if="p.ssh && sshBroad(p)" class="tag tag-warn" :title="t('liveShare.share.sshBroad', 'This SSH folder is too broad to share its files (the server’s root, a home or system folder): guests get its terminals and agents only. Choose a project folder inside it to share files.')" :data-test="'ls-ssh-broad-' + p.id">{{ t('liveShare.share.sshBroadTag', 'SSH, no files') }}</span>
+                      <span v-else-if="p.ssh" class="tag tag-warn" :title="t('liveShare.share.sshFiles', 'Guests can read this project’s files on the server (through your connection to it, while it is connected) and save them with the edit right. Secret and git-ignored files stay hidden unless you turn that off. Changes are not shared.')" :data-test="'ls-ssh-' + p.id">{{ t('liveShare.share.sshTag', 'SSH') }}</span>
                     </label>
                   </li>
                 </ul>
@@ -613,7 +618,8 @@ function tabKeys(event, list, current, set) {
                     <Check v-if="ticked.has(p.id)" :size="12" aria-hidden="true" />
                     <span class="ls-pchip-name">{{ p.name }}</span>
                     <span v-if="p.noFiles" class="tag tag-warn" :title="t('liveShare.share.noFiles', 'It has no folder on this computer: guests see its terminals and agents, not its files.')" :data-test="'ls-nofiles-' + p.id">{{ t('liveShare.share.terminalsOnly', 'Terminals only') }}</span>
-                    <span v-else-if="p.ssh" class="tag" :title="t('liveShare.share.sshFiles', 'Its files are on an SSH server: guests can open them (and save, with the edit right) through your connection to it, while it is connected. Changes are not shared.')" :data-test="'ls-ssh-' + p.id">{{ t('liveShare.share.sshTag', 'SSH') }}</span>
+                    <span v-else-if="p.ssh && sshBroad(p)" class="tag tag-warn" :title="t('liveShare.share.sshBroad', 'This SSH folder is too broad to share its files (the server’s root, a home or system folder): guests get its terminals and agents only. Choose a project folder inside it to share files.')" :data-test="'ls-ssh-broad-' + p.id">{{ t('liveShare.share.sshBroadTag', 'SSH, no files') }}</span>
+                    <span v-else-if="p.ssh" class="tag tag-warn" :title="t('liveShare.share.sshFiles', 'Guests can read this project’s files on the server (through your connection to it, while it is connected) and save them with the edit right. Secret and git-ignored files stay hidden unless you turn that off. Changes are not shared.')" :data-test="'ls-ssh-' + p.id">{{ t('liveShare.share.sshTag', 'SSH') }}</span>
                   </label>
                 </li>
               </ul>

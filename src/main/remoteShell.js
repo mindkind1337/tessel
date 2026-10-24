@@ -336,7 +336,8 @@ __t_read() {
   if [ ! -f "$__P" ]; then [ -d "$__P" ] && return 96; return 92; fi
   __s=$(__t_sig "$__P") || return 91
   [ "\${__s%% *}" -le "$3" ] || { printf '%s\\n' "$__s"; return 93; }
-  cat "$__P" >"$__T_D/c" || return 98
+  head -c "$(($3+1))" "$__P" >"$__T_D/c" || return 98
+  [ "$(($(wc -c <"$__T_D/c")))" -le "$3" ] || { __t_sig "$__P"; return 93; }
   printf '%s %s\\n' "$(__t_sig "$__P")" "$(__t_hash "$__T_D/c")"
   cat "$__T_D/c"
 }
@@ -348,6 +349,7 @@ __t_same() {
 }
 __t_write() {
   case $5 in ''|600) ;; *) return 90 ;; esac
+  case $6 in ''|new) ;; *) return 90 ;; esac
   __t_root "$1" || return $?
   __E=
   if [ -e "$2" ] || [ -L "$2" ]; then
@@ -355,6 +357,7 @@ __t_write() {
     [ -d "$__P" ] && return 96
     [ -f "$__P" ] || return 92
     __E=1
+    [ -z "$6" ] || { __t_sig "$__P"; return 95; }
   else
     __t_ent "$1" "$2" || return $?
   fi
@@ -364,7 +367,12 @@ __t_write() {
   if [ -n "$__E" ]; then __m=$(__t_sig "$__P"); __m=\${__m##* }; elif [ -n "$5" ]; then __m=$5; else __m=$(__t_newmode); fi
   chmod "$__m" "$__tmp" 2>/dev/null
   __t_same "$__P" "$3" "$4" || { rm -f "$__tmp"; __t_sig "$__P"; return 95; }
-  mv -f "$__tmp" "$__P" || { rm -f "$__tmp"; return 98; }
+  if [ -n "$6" ]; then
+    mv -n "$__tmp" "$__P" || { rm -f "$__tmp"; return 98; }
+    if [ -e "$__tmp" ]; then rm -f "$__tmp"; __t_sig "$__P"; return 95; fi
+  else
+    mv -f "$__tmp" "$__P" || { rm -f "$__tmp"; return 98; }
+  fi
   rm -f "$__T_D/u"
   printf '%s %s\\n' "$(__t_sig "$__P")" "$(__t_hash "$__P")"
 }
@@ -454,7 +462,7 @@ __t_findn() {
   if [ "$3" = d ]; then
     find "$__R/." \\( -name .git -o -name node_modules -o -name dist -o -name build -o -name out -o -name .next -o -name .cache -o -name target -o -name .venv -o -name __pycache__ \\) -prune -o -iname "$2" -type d -print0
   else
-    find "$__R/." \\( -name .git -o -name node_modules -o -name dist -o -name build -o -name out -o -name .next -o -name .cache -o -name target -o -name .venv -o -name __pycache__ \\) -prune -o -iname "$2" ! -type d -print0
+    find "$__R/." \\( -name .git -o -name node_modules -o -name dist -o -name build -o -name out -o -name .next -o -name .cache -o -name target -o -name .venv -o -name __pycache__ \\) -prune -o -iname "$2" ! -type d ! -type l -print0
   fi
 }
 __t_grep() {
