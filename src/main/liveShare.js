@@ -1063,7 +1063,13 @@ export function registerLiveShare({
   // A project's folder changed (the window said another one): its watch
   // starts again, its files are found again.
   function rootsChanged(before) {
-    for (const [project, w] of folderWatches) if (before.get(project) !== roots.get(project)) startFolder(project, w)
+    for (const [project, w] of folderWatches) {
+      if (before.get(project) === roots.get(project)) continue
+      startFolder(project, w)
+      // Guests' Files and Changes read the new folder again.
+      w.git = true
+      folderChanged(project, w, null)
+    }
     for (const e of [...fileWanted.values()]) if (before.get(e.project) !== roots.get(e.project)) watchFile(e.s, e.project, e.rel, true)
     for (const [project, root] of before) if (roots.get(project) !== root) scope.invalidate(root)
   }

@@ -159,6 +159,7 @@
       "openInExplorer": "Ouvrir dans l'explorateur de fichiers",
       "copyPath": "Copier le chemin",
       "copyName": "Copier le nom du worktree",
+      "renameProject": "Renommer le projet…",
       "menuMarkRead": "Marquer comme lu",
       "menuMarkUnread": "Marquer comme non lu",
       "review": "Examiner les changements…",

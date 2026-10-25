@@ -111,7 +111,7 @@ import { initRemoteHosts, setRemoteHostHandlers, remoteHostsState, hostShared, r
 import { hostAddress } from './remoteHostDisplay'
 import AddProjectDialog from './components/project/AddProjectDialog.vue'
 import RemoteFolderDialog from './components/project/RemoteFolderDialog.vue'
-import { cleanProjectName, canEditProject, checkRemoteFolder, checkLocalFolder } from './projectFolder'
+import { cleanProjectName, checkRemoteFolder, checkLocalFolder } from './projectFolder'
 import { savedRemote, savedGroup } from './addProject'
 import NotesPanel from './components/NotesPanel.vue'
 import NewTaskDialog from './components/NewTaskDialog.vue'
@@ -3465,13 +3465,14 @@ async function closeAllEditors() {
   }
 }
 // The main process reads files only below the remote projects of the saved
-// layout: a remote project added or removed is saved at once (not after the
-// usual short delay), so its Files tab can read it right away.
+// layout, and lists worktrees and pre-trusts agents only in its local project
+// folders: a project added, removed or moved to another folder is saved at
+// once (not after the usual short delay), so its Files tab can read the new
+// folder right away and the old one is no longer reachable.
 watch(
   () =>
     workspaces.value
-      .filter((w) => w.remote)
-      .map((w) => remoteRoot(w.remote.hostId, w.remote.path))
+      .map((w) => (w.remote ? remoteRoot(w.remote.hostId, w.remote.path) : w.liveShare ? '' : w.cwd || ''))
       .filter(Boolean)
       .join('\n'),
   () => saveLayoutNow()
@@ -3908,7 +3909,7 @@ function buildCommands() {
     })
 
   // The project on screen (never a Live Share guest's: it is its host's).
-  if (currentWs.value && canEditProject(currentWs.value, (w) => liveShare.isGuestWs(w))) {
+  if (currentWs.value && !liveShare.isGuestWs(currentWs.value)) {
     const wsId = currentWs.value.id
     const projectGroup = t('app.cmd.group.project', 'Project')
     add(projectGroup, t('app.cmd.renameProject', 'Rename project…'), () => sidebarEl.value && sidebarEl.value.openRenameDialog(wsId))
@@ -6079,7 +6080,7 @@ async function setWorkspaceFolder(id) {
   const ws = wsById(id)
   if (!ws) return
   // A Live Share project is its host's: only they move its folder.
-  if (!canEditProject(ws, (w) => liveShare.isGuestWs(w))) {
+  if (liveShare.isGuestWs(ws)) {
     showToast(t('project.remote.folder.guest', 'A Live Share project belongs to its host: only they can change it.'), { kind: 'error' })
     return
   }
@@ -6155,6 +6156,8 @@ async function applyLocalFolder(ws, picked) {
   }
   const old = ws.cwd
   ws.cwd = verdict.path
+  // A folder imported with the repositories inside it: those were the old folder's.
+  ws.group = null
   if (isDefaultWorkspaceName(ws.name)) ws.name = folderName(verdict.path)
   // The old folder's worktrees and branch are not shown for the project any more.
   if (old && old !== ws.cwd && !workspaces.value.some((w) => w.cwd === old)) {
@@ -6276,7 +6279,7 @@ async function createWorkspace() {
 function renameWorkspace(id, name) {
   const ws = wsById(id)
   // A Live Share project's name is its host's.
-  if (!ws || !canEditProject(ws, (w) => liveShare.isGuestWs(w))) return
+  if (!ws || liveShare.isGuestWs(ws)) return
   const clean = cleanProjectName(name)
   if (clean) ws.name = clean
 }
