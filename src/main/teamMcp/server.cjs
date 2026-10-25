@@ -2512,7 +2512,12 @@ function hookMain() {
 // While this server runs for a pane Tessel started, it says so every 30 s in
 // <project>/.tessel/agents/<paneId>.json, so Tessel can tell the user when an
 // agent's team tools are not connected (never started, or closed: "Transport
-// closed"). Removed when the server ends normally.
+// closed"). Removed when the server ends normally, except for an agent on an
+// SSH host: there the tunnel ends this server when the link is idle or drops
+// while the agent's shim keeps its stdio and opens a new one on its next call
+// (tessel-shim.cjs 1.4+), so the file stays, with the time it last ran: it
+// proves the tools connected since the agent started (App.vue
+// checkRemoteAgentTools).
 const ALIVE_EVERY_MS = 30000
 function aliveFile() {
   const paneId = process.env.TESSEL_PANE_ID || ''
@@ -2537,6 +2542,7 @@ function startAlive() {
   const timer = setInterval(sayAlive, ALIVE_EVERY_MS)
   timer.unref()
   const done = () => {
+    if (isRemote()) return sayAlive()
     const file = aliveFile()
     try {
       if (file && JSON.parse(fs.readFileSync(file, 'utf8')).pid === process.pid) fs.rmSync(file, { force: true })

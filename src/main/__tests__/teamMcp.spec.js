@@ -1094,6 +1094,31 @@ describe('the team tools say they are running', () => {
       await ended
       expect(fs.existsSync(file)).toBe(false)
       expect((await toolsAlive({ dir, ids: ['pane-7-alive1'] })).alive['pane-7-alive1']).toBe(null)
+      expect((await toolsAlive({ dir, ids: ['pane-7-alive1'] })).seen['pane-7-alive1']).toBe(null)
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true })
+    }
+  }, 20000)
+  it('an agent on an SSH host keeps its file when its tools stop (its shim opens them again): seen, with the time it last ran', async () => {
+    const dir = fs.mkdtempSync(join(os.tmpdir(), 'tessel-alive-'))
+    try {
+      const env = { ...process.env, TESSEL_PANE_ID: 'pane-7-remote', TESSEL_PROJECT_DIR: dir, TESSEL_REMOTE: '1' }
+      const started = Date.now()
+      const p = spawn(process.execPath, [SERVER], { env, stdio: ['pipe', 'pipe', 'pipe'] })
+      const file = join(dir, '.tessel', 'agents', 'pane-7-remote.json')
+      for (let i = 0; i < 50 && !fs.existsSync(file); i++) await new Promise((r) => setTimeout(r, 100))
+      const ended = new Promise((r) => p.on('exit', r))
+      p.stdin.end() // the tunnel closed the link (idle)
+      await ended
+      expect(fs.existsSync(file)).toBe(true)
+      const res = await toolsAlive({ dir, ids: ['pane-7-remote'] })
+      expect(res.seen['pane-7-remote']).toBeGreaterThanOrEqual(started)
+      // An hour later it is no longer alive, but still seen.
+      const old = JSON.parse(fs.readFileSync(file, 'utf8'))
+      fs.writeFileSync(file, JSON.stringify({ ...old, at: started - 3600_000 }))
+      const later = await toolsAlive({ dir, ids: ['pane-7-remote'] })
+      expect(later.alive['pane-7-remote']).toBe(null)
+      expect(later.seen['pane-7-remote']).toBe(started - 3600_000)
     } finally {
       fs.rmSync(dir, { recursive: true, force: true })
     }

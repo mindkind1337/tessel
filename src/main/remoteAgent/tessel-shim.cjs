@@ -16,7 +16,7 @@ const os = require('os')
 const net = require('net')
 const path = require('path')
 
-const VERSION = '1.4.2'
+const VERSION = '1.4.3'
 const PROTOCOL = 1
 const SERVER_NAME = 'tessel-team'
 const SHIM_NAME = 'tessel-shim.cjs'
@@ -193,13 +193,23 @@ function linkProblem(err) {
 // sent first is replayed); a call that was running when the link dropped, and
 // a call the new link cannot take, are answered with a precise message
 // instead of "Transport closed".
+// The first link: the pane's socket may not be bound yet when the agent starts
+// its servers (Tessel binds it again after a dropped connection), so a missing
+// or refusing socket, or "busy", is tried again a few times (3 s in all)
+// before this agent gets a server without tools for the rest of its life.
+const FIRST_RETRY_MS = [500, 1000, 1500]
+const firstRetry = (err) => /^(ENOENT|ECONNREFUSED|busy)$/.test(safeReason(err))
 function runMcp(argv, env = process.env) {
   const conn = remoteEnv(env)
   if (conn.error) return emptyServer(null)
-  open(conn, 'mcp', [], (err, socket, rest) => {
-    if (err) return emptyServer(safeReason(err))
-    proxyMcp(conn, socket, rest)
-  })
+  let tries = 0
+  const attempt = () =>
+    open(conn, 'mcp', [], (err, socket, rest) => {
+      if (err && tries < FIRST_RETRY_MS.length && firstRetry(err)) return setTimeout(attempt, FIRST_RETRY_MS[tries++])
+      if (err) return emptyServer(safeReason(err))
+      proxyMcp(conn, socket, rest)
+    })
+  attempt()
 }
 
 function proxyMcp(conn, first, firstRest) {

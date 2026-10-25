@@ -9255,7 +9255,7 @@ async function checkTeamTools(round) {
     for (const [dir, ids] of Object.entries(byDir)) {
       const res = await window.shellApi.team.toolsAlive({ dir, ids })
       if (roundGone(round)) return
-      for (const [id, a] of Object.entries((res && res.ok && res.alive) || {})) if (a) alive.add(id)
+      for (const id of ids) if (toolsRanSince(res, id, findLeaf(id))) alive.add(id)
     }
     for (const m of members) {
       // Started with older tools (before they said they run): cannot tell;
@@ -9287,13 +9287,25 @@ async function checkTeamTools(round) {
   await checkRemoteAgentTools(round)
 }
 
-// An agent on an SSH host whose tessel-team server never connected, or was
-// lost (Codex's startup timeout, a stale shim, a closed tunnel): every such
-// pane, in a team or not, gets the pane's note with Retry, since the agent
-// would otherwise silently fall back to curl or Playwright on the server
-// instead of Tessel's browser. Two checks in a row (about 40 s) before the
-// note, so a slow start is not reported.
+// Its team tools ran since this launch: running now (their file is fresh), or,
+// for an agent on an SSH host, they ran after it started. Its tools stop when
+// the link is idle (30 min) or drops, and its shim (tessel-shim.cjs 1.4+)
+// opens them again on its next call: server.cjs keeps their file there.
+function toolsRanSince(res, id, leaf) {
+  if (!res || !res.ok || !leaf) return false
+  if (res.alive && res.alive[id]) return true
+  const at = leaf.remoteHostId && res.seen ? res.seen[id] : null
+  return Number.isFinite(at) && at >= (leaf.restartedAt || leaf.launchedAt || 0) - 5000
+}
+// An agent on an SSH host whose tessel-team server never connected since it
+// started (Codex's startup timeout, a stale shim, no link when it started):
+// every such pane, in a team or not, gets the pane's note with Retry, since
+// the agent would otherwise silently fall back to curl or Playwright on the
+// server instead of Tessel's browser. Two checks in a row (about 40 s) before
+// the note, so a slow start is not reported; the note goes by itself once
+// its tools connect (a sign-in finished first).
 const remoteToolsMisses = {} // paneId -> consecutive checks without its tools
+const remoteToolsNoted = new Set() // panes whose note this check put
 async function checkRemoteAgentTools(round) {
   const byDir = {}
   const seen = new Set()
@@ -9311,20 +9323,23 @@ async function checkRemoteAgentTools(round) {
   for (const [dir, ids] of Object.entries(byDir)) {
     const res = await window.shellApi.team.toolsAlive({ dir, ids })
     if (roundGone(round)) return
-    for (const [id, a] of Object.entries((res && res.ok && res.alive) || {})) if (a) alive.add(id)
+    for (const id of ids) if (toolsRanSince(res, id, findLeaf(id))) alive.add(id)
   }
   for (const id of Object.keys(remoteToolsMisses)) if (!seen.has(id)) delete remoteToolsMisses[id]
+  for (const id of [...remoteToolsNoted]) if (!findLeaf(id)) remoteToolsNoted.delete(id)
   for (const id of seen) {
     const leaf = findLeaf(id)
     if (!leaf) continue
     if (alive.has(id)) {
       delete remoteToolsMisses[id]
+      if (remoteToolsNoted.delete(id)) delete leaf.remoteToolsNote
       continue
     }
     remoteToolsMisses[id] = (remoteToolsMisses[id] || 0) + 1
     if (remoteToolsMisses[id] < 2 || leaf.remoteToolsNote) continue
     const host = remoteHostLabel(leaf.remoteHostId)
     leaf.remoteToolsNote = t('app.remoteAgents.toolsNotRunning', 'Tessel tools are not connected on {{host}}: this agent has no Tessel browser or team tools, so it may use the server for web pages instead. Retry restarts it with them.', { host })
+    remoteToolsNoted.add(id)
     if (window.shellApi.log) window.shellApi.log('warn', `pane ${id}: tessel-team not connected on ${leaf.remoteHostId} (no proof of life), note shown`)
   }
 }

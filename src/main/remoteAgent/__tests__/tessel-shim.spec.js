@@ -384,6 +384,7 @@ describe('round trip', () => {
 
   it('mcp with Tessel closed or refusing: the same empty server, the reason only in its instructions', async () => {
     for (const env of [{ TESSEL_REMOTE_SOCK: sock + '-nope' }, { TESSEL_REMOTE_TOKEN: 'cd'.repeat(32) }]) {
+      const t0 = Date.now()
       const r = await run(['mcp'], { input: session, env })
       expect(r.code).toBe(0)
       expect(r.err).toBe('')
@@ -391,9 +392,46 @@ describe('round trip', () => {
       expect(init.result.serverInfo.name).toBe('tessel-team')
       expect(init.result.instructions).toMatch(/not reachable/)
       expect(list.result).toEqual({ tools: [] })
+      // No socket: tried again for 3 s first; a refusal is final at once.
+      if (env.TESSEL_REMOTE_SOCK) expect(Date.now() - t0).toBeGreaterThanOrEqual(2900)
     }
+    // The refusal was asked once, never again.
     expect(seen.map((h) => h.token)).toEqual(['cd'.repeat(32)])
-  })
+  }, 20000)
+
+  it('mcp started before its socket is bound: the first link waits for it (a few tries) instead of giving up for good', async () => {
+    const late = sockPath()
+    let lateServer = null
+    const timer = setTimeout(() => {
+      lateServer = net.createServer((c) => {
+        let buf = ''
+        let hello = false
+        c.on('data', (d) => {
+          buf += d
+          if (!hello) {
+            const nl = buf.indexOf('\n')
+            if (nl < 0) return
+            hello = true
+            buf = buf.slice(nl + 1)
+            c.write('{"ok":true}\n')
+          }
+          if (buf) {
+            c.write(buf.toUpperCase())
+            buf = ''
+          }
+        })
+        c.on('error', () => {})
+      })
+      lateServer.listen(late)
+    }, 700)
+    try {
+      const r = await run(['mcp'], { input: '{"jsonrpc":"2.0"}\n', keepOpen: true, env: { TESSEL_REMOTE_SOCK: late } })
+      expect(r.out).toBe('{"JSONRPC":"2.0"}\n')
+    } finally {
+      clearTimeout(timer)
+      if (lateServer) await new Promise((res) => lateServer.close(res))
+    }
+  }, 20000)
 
   it('version', async () => {
     expect((await run(['version'])).out).toBe(`${shim.VERSION}\n`)

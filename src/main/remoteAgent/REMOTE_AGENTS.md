@@ -194,3 +194,10 @@ opens a new connection (hello, replay of the client's `initialize` under an id
 the client never sees). A call running when the link dropped, or one the new link
 refuses, is answered with a tool result `isError` saying what happened and what to
 do. The tunnel logs `remote agent tools opened/closed` with the reason.
+
+1.4.3: the first link is tried again for 3 s when the socket is missing or
+refusing (bound again after a drop) before the agent gets a server without
+tools. server.cjs of a remote pane keeps `.tessel/agents/<pane>.json` when it
+stops (the tunnel ends it when idle or on a drop): Tessel's proof-of-life check
+(App.vue `checkRemoteAgentTools`) counts tools that ran since the agent started,
+so an idle agent is not reported as disconnected.

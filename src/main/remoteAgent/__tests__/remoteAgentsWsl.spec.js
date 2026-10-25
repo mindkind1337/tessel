@@ -102,6 +102,22 @@ console.log("INIT=" + (init && init.result ? "ok" : "none") + " TOOLS=" + names.
 ' "$out"
 `
 
+// The same exchange kept open across a dropped connection: a second
+// tools/list once "go" exists (shim 1.4+ opens a new link for it).
+const MCP_KEEP_SCRIPT = `#!/bin/sh
+d="$HOME/tessel-smoke"
+{
+  printf '%s\\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"smoke","version":"1"}}}'
+  sleep 2
+  printf '%s\\n' '{"jsonrpc":"2.0","method":"notifications/initialized"}'
+  printf '%s\\n' '{"jsonrpc":"2.0","id":2,"method":"tools/list"}'
+  i=0
+  while [ ! -f "$d/go" ] && [ $i -lt 300 ]; do sleep 0.5; i=$((i+1)); done
+  printf '%s\\n' '{"jsonrpc":"2.0","id":3,"method":"tools/list"}'
+  sleep 8
+} | node "$HOME/.tessel-server/bin/tessel-shim.cjs" mcp > "$d/keep.out" 2> "$d/keep.err"
+`
+
 describe.skipIf(!RUN)('remote agents on a real sshd (WSL smoke test)', () => {
   let base
   let target
@@ -274,8 +290,9 @@ describe.skipIf(!RUN)('remote agents on a real sshd (WSL smoke test)', () => {
     expect(out).toContain('INIT=ok')
     expect(tools).toContain('team_send')
     expect(tools).toContain('team_inbox')
-    // A remote pane has no browser tools on this computer (TESSEL_REMOTE).
-    expect(tools.filter((n) => n.startsWith('browser_'))).toEqual([])
+    // Tessel's browser is the agent's too: it runs on this computer.
+    expect(tools).toContain('browser_open')
+    expect(tools).toContain('browser_snapshot')
   }, 120000)
 
   const events = () => {
@@ -303,23 +320,31 @@ describe.skipIf(!RUN)('remote agents on a real sshd (WSL smoke test)', () => {
 
   it('refuses a wrong token and a closed pane token', async () => {
     const shim = '"$HOME/.tessel-server/bin/tessel-shim.cjs"'
-    const bad = await inPane(paneA, `TESSEL_REMOTE_TOKEN=${'0'.repeat(64)} node ${shim} mcp </dev/null; echo "BADRC=$?"`)
-    expect(bad).toMatch(/bad-token/)
-    expect(bad).toContain('BADRC=1')
+    // Refused: a valid server without tools (the agent does not list it as
+    // failed), the reason in its instructions (shim 1.4+).
+    const init = `printf '%s\\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}'`
+    const bad = await inPane(paneA, `${init} | TESSEL_REMOTE_TOKEN=${'0'.repeat(64)} node ${shim} mcp; echo "BADRC=$?"`)
+    expect(bad).toMatch(/not reachable right now \(bad-token\)/)
+    expect(bad).toContain('BADRC=0')
     // A second pane, closed: its token no longer opens anything.
     const paneB = openPane('smoke-b')
     await until(() => prompted(paneB), 30000, 'pane b prompt')
     const tokenB = paneB.remoteAgent.token
     paneB.pty.kill()
     await until(() => paneB.out.exit, 10000, 'pane b exit')
-    const closed = await inPane(paneA, `TESSEL_PANE_ID=smoke-b TESSEL_REMOTE_TOKEN=${tokenB} node ${shim} mcp </dev/null; echo "CLOSEDRC=$?"`)
-    expect(closed).toMatch(/unknown-pane/)
-    expect(closed).toContain('CLOSEDRC=1')
+    const closed = await inPane(paneA, `${init} | TESSEL_PANE_ID=smoke-b TESSEL_REMOTE_TOKEN=${tokenB} node ${shim} mcp; echo "CLOSEDRC=$?"`)
+    expect(closed).toMatch(/not reachable right now \(unknown-pane\)/)
+    expect(closed).toContain('CLOSEDRC=0')
     // The pane A socket is still there (another pane on the host).
     expect(bridge.tunnel.isBound(HOST)).toBe(true)
   }, 120000)
 
   it('binds the socket again after the ssh2 connection is killed', async () => {
+    // An agent that outlives the connection (in tmux, say): its MCP session
+    // through the shim, started now and kept open across the drop.
+    sshRun('cat > "$HOME/tessel-smoke/mcp-keep.sh" && chmod 700 "$HOME/tessel-smoke/mcp-keep.sh"', MCP_KEEP_SCRIPT)
+    await inPane(paneA, '(setsid sh "$HOME/tessel-smoke/mcp-keep.sh" </dev/null >/dev/null 2>&1 &)')
+    await until(() => /"id":2/.test(sshRun('cat "$HOME/tessel-smoke/keep.out" 2>/dev/null || true')), 30000, 'keep: first tools/list')
     const { client, release } = await bridge.manager.open(HOST, validateSpec(spec), 'exec', { command: 'true' })
     release()
     const forwardsBefore = logs.filter((l) => l.includes('remote agent socket bound')).length
@@ -335,6 +360,17 @@ describe.skipIf(!RUN)('remote agents on a real sshd (WSL smoke test)', () => {
     // The new shell's env file is gone too.
     const ls = await inPane(paneA, 'ls -A "$HOME/.tessel-server/run"')
     expect(ls).not.toContain('smoke-a.env')
+    // The agent's MCP session lived through the drop: its next call opened a
+    // new link (the initialize replayed, its answer not shown) and was answered.
+    sshRun(': > "$HOME/tessel-smoke/go"')
+    const keep = await until(() => {
+      const t = sshRun('cat "$HOME/tessel-smoke/keep.out" 2>/dev/null || true')
+      return /"id":3/.test(t) ? t : null
+    }, 60000, 'keep: tools/list after the drop')
+    const answers = keep.split('\n').filter(Boolean).map((l) => JSON.parse(l))
+    expect(answers.map((m) => m.id)).toEqual([1, 2, 3])
+    expect(answers[2].result.tools.map((x) => x.name)).toContain('browser_open')
+    expect(sshRun('cat "$HOME/tessel-smoke/keep.err" 2>/dev/null || true')).toMatch(/link to Tessel closed/)
   }, 180000)
 
   it('no token in a log line or a message', () => {

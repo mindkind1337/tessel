@@ -311,7 +311,9 @@ export function writeRoster({ dir, teamId, members } = {}) {
 }
 
 // Which panes have their team tools running (the tools say so every 30 s,
-// see teamMcp/server.cjs): -> Promise of { ok, alive: { paneId: { at, version } | null } }
+// see teamMcp/server.cjs): -> Promise of { ok, alive: { paneId: { at, version } | null },
+// seen: { paneId: at | null } } (seen: when its tools last ran, however long
+// ago: an SSH host's agent keeps the file once its tools stop).
 // Read without blocking (only reads, nothing shared): one file per pane,
 // read synchronously they held the main process for 586 ms on a busy disk.
 export async function toolsAlive({ dir, ids } = {}) {
@@ -326,11 +328,14 @@ export async function toolsAlive({ dir, ids } = {}) {
   }
   const found = await Promise.all(wanted.map(read))
   const alive = {}
+  const seen = {}
   wanted.forEach((id, i) => {
     const data = found[i]
-    alive[id] = data && typeof data.at === 'number' && Date.now() - data.at < 90000 ? { at: data.at, version: data.version || null } : null
+    const at = data && Number.isFinite(data.at) ? data.at : null
+    alive[id] = at !== null && Date.now() - at < 90000 ? { at, version: data.version || null } : null
+    seen[id] = at
   })
-  return { ok: true, alive }
+  return { ok: true, alive, seen }
 }
 
 // The status of team messages by id, read from the channel's state:
