@@ -165,6 +165,10 @@ describe('Live Share phase 2a: a shared project on a guest\u2019s screen', () =>
     expect(cleanRoot('C:\\Users\\ada\\site')).toBe('C:\\Users\\ada\\site')
     expect(cleanRoot('/home/ada/site')).toBe('/home/ada/site')
     for (const bad of ['ssh://host/x', 'lshare://ws-1', 'relative\\path', '', null, 'C:\\a\u0000b', 'x'.repeat(2000)]) expect(cleanRoot(bad)).toBe(null)
+    // Too broad to share, whatever the window says: a drive, a system folder,
+    // the folder of all homes, an admin share, a WSL drive mount or distribution.
+    for (const broad of ['C:\\', 'C:\\Windows', 'c:\\windows\\system32', 'C:\\Users', 'C:\\Program Files', '/', '/etc', '/home', '/mnt/c', '/mnt/c/Users', '\\\\localhost\\c$', '\\\\host\\c$\\Users', '\\\\host\\admin$', '\\\\wsl$\\Ubuntu']) expect(cleanRoot(broad), broad).toBe(null)
+    expect(cleanRoot('\\\\host\\c$\\code\\site')).toBe('\\\\host\\c$\\code\\site')
     const { guest } = await session()
     const said = JSON.stringify(guest.sent)
     expect(said).not.toContain(repo)
@@ -264,6 +268,29 @@ describe('Live Share phase 2a: a shared project on a guest\u2019s screen', () =>
     guest.api.guestUnwatchRoots()
     guest.api.guestWatchFiles([])
     await until(() => w.stopped && host.fileWatcher.closed)
+  })
+
+  it('the host moves the project to another folder: the guest following it reads it all again, from the new folder', async () => {
+    const { host, guest } = await session()
+    expect(guest.api.guestWatchRoot('lshare://ws-1')).toEqual({ ok: true })
+    const w = await until(() => host.folderWatches[0])
+    const moved = join(tmp, 'moved-site')
+    fs.mkdirSync(moved, { recursive: true })
+    const before = guest.events('explorer:changed').filter((c) => c.paths === null).length
+    host.on['liveShare:layouts'](null, [{ id: 'ws-1', layout: { project: 'site', tree: leaf('pane-1-ps'), activeId: 'pane-1-ps' }, chats: [], root: moved }])
+    await until(() => w.stopped && host.folderWatches.some((x) => x !== w && !x.stopped && x.root.toLowerCase() === fs.realpathSync.native(moved).toLowerCase()))
+    await until(() => guest.events('explorer:changed').filter((c) => c.paths === null).length > before)
+  })
+
+  it('an SSH project moved to another folder of its host: the guest following it reads it all again', async () => {
+    const { host, guest } = await session()
+    const show = (path) => host.on['liveShare:layouts'](null, [{ id: 'ws-1', layout: { project: 'site', tree: leaf('pane-1-ps'), activeId: 'pane-1-ps' }, chats: [], remote: { hostId: 'ssh-box', path } }])
+    show('/srv/app')
+    expect(guest.api.guestWatchRoot('lshare://ws-1')).toEqual({ ok: true })
+    await wait(100)
+    const before = guest.events('explorer:changed').filter((c) => c.paths === null).length
+    show('/srv/app2')
+    await until(() => guest.events('explorer:changed').filter((c) => c.paths === null).length > before)
   })
 
   it('sends the project\u2019s task board to the guest, masked, and takes a guest\u2019s change through the host\u2019s window', async () => {

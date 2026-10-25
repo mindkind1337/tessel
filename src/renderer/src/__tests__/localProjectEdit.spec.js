@@ -153,6 +153,13 @@ describe('a folder on this computer', () => {
     for (const p of ['C:\\', 'C:/', 'D:/', 'C:\\Windows', 'c:\\windows\\system32', 'C:\\Program Files', 'C:\\Program Files (x86)', 'C:\\Users', 'C:\\ProgramData', '\\\\server', '/', '/etc', '/usr', '/usr/lib', '/usr/local', '/proc/1', '/home', '/Users', '/bin', '/ETC', '/users', '/Library', '\\\\?\\C:\\Windows', '\\\\.\\C:\\', '//?/C:/Windows', '\\\\wsl$\\Ubuntu', '\\\\wsl.localhost\\Ubuntu\\', '\\\\wsl$\\Ubuntu\\etc']) {
       expect(localRootRefusal(p), p).toBeTruthy()
     }
+    // A Windows drive seen from WSL takes the Windows rule; an admin share, its drive's.
+    for (const p of ['/mnt/c', '/mnt/c/', '/mnt/c/Windows', '/mnt/c/Windows/System32', '/mnt/c/Users', '/mnt/d', '\\\\wsl.localhost\\Ubuntu\\mnt\\c', '\\\\wsl$\\Ubuntu\\mnt\\c\\Program Files', '\\\\localhost\\c$', '\\\\localhost\\C$\\', '\\\\localhost\\c$\\Users', '\\\\host\\c$\\Windows\\Temp', '\\\\host\\admin$', '\\\\host\\ADMIN$\\System32']) {
+      expect(localRootRefusal(p), p).toBeTruthy()
+    }
+    for (const p of ['/mnt/c/code/api', '/mnt/data', '\\\\wsl$\\Ubuntu\\mnt\\c\\code', '\\\\host\\c$\\code\\api', '\\\\nas\\projects$']) {
+      expect(localRootRefusal(p), p).toBe('')
+    }
     // A project inside a system folder or a top folder of its own is fine.
     for (const p of ['C:\\code\\api', '\\\\server\\share', '/home/me/api', '/srv/app', '/opt/app', '/etc/nginx', '/app', 'C:\\Program Files\\App', 'C:\\Users\\me\\code', '\\\\wsl$\\Ubuntu\\home\\me\\api']) {
       expect(localRootRefusal(p), p).toBe('')
@@ -164,6 +171,9 @@ describe('a folder on this computer', () => {
     expect(isBareLocalHome('/Users/me')).toBe(true)
     expect(isBareLocalHome('/root')).toBe(true)
     expect(isBareLocalHome('\\\\wsl$\\Ubuntu\\home\\me')).toBe(true)
+    expect(isBareLocalHome('/mnt/c/Users/me/')).toBe(true)
+    expect(isBareLocalHome('\\\\host\\c$\\Users\\me')).toBe(true)
+    expect(isBareLocalHome('/mnt/c/Users/me/code')).toBe(false)
     expect(isBareLocalHome('E:\\Profiles\\me', 'E:\\profiles\\me\\')).toBe(true)
     expect(isBareLocalHome('C:\\Users\\me\\code')).toBe(false)
   })

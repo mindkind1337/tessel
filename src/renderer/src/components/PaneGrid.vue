@@ -13,7 +13,7 @@ import { ref, computed, onBeforeUnmount } from 'vue'
 import { t } from '../i18n'
 import { trackPointerDrag } from '../browser/webviewPassthrough'
 import { writeViewSizes } from '../paneViews'
-import { gridLayout, cssLength, pxLength } from '../paneGrid'
+import { gridLayout, cssLength, pxLength, shareOf } from '../paneGrid'
 import SplitNode from './SplitNode.vue'
 
 const props = defineProps({
@@ -61,7 +61,7 @@ function userResized(split, i) {
   window.dispatchEvent(new CustomEvent('tessel-panes-resized', { detail: { ids } }))
 }
 
-const sharesOf = (split) => split.children.map((_, i) => (Array.isArray(split.sizes) && Number.isFinite(split.sizes[i]) ? split.sizes[i] : 100 / split.children.length))
+const sharesOf = (split) => split.children.map((_, i) => shareOf(split, i))
 
 // Keyboard: the arrow keys move a divider by 2% (each pane keeps at least
 // 5% of the split).

@@ -54,6 +54,7 @@ import { join, relative, isAbsolute, sep, resolve, dirname } from 'path'
 import { localGitArgs } from '../gitSafety'
 import { cleanEnv } from '../cleanEnv'
 import { relSegments } from '../../shared/liveSharePath'
+import { localRootTooBroad } from '../../shared/projectRootPolicy'
 
 // --- Rules on relative paths (pure) ---------------------------------------------
 const lower = (rel) => String(rel || '').toLowerCase()
@@ -221,8 +222,10 @@ export function rootInfo(root) {
   try {
     const real = fs.realpathSync.native(resolve(root))
     if (!fs.statSync(real).isDirectory()) return null
-    // A whole drive or share is never a project.
-    if (dirname(real) === real) return null
+    // A whole drive or share is never a project, nor a system folder or the
+    // folder of all homes, by its real path too (a link to one), whatever
+    // the window let through (shared/projectRootPolicy.js).
+    if (dirname(real) === real || localRootTooBroad(real) || localRootTooBroad(resolve(root))) return null
     return { root: resolve(root), real }
   } catch {
     return null

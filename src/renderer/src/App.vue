@@ -23,7 +23,7 @@ import { createProjectWorktrees } from './projectWorktrees'
 import { prAgentTargets } from './prAgentTargets'
 import { withWorktreePath } from './prAgentPrompts'
 import { workspaceViews, viewKey, leafViewPath, isTabLeaf, addTabLeaf, gridLeafFor, pruneTree } from './paneViews'
-import { isNearGrid, tileTree, savedGridModes } from './paneGrid'
+import { isNearGrid, tileTree, savedGridModes, gridModeFields } from './paneGrid'
 import { createPortScanner, browserUrlForPort, addressForPort } from './portScanner'
 import { allowedBrowserUrl, BLANK_URL, displayUrl } from '../../shared/browserUrl'
 import { channelHead, leadHead, reviewRequest, teammateHead } from '../../shared/tesselDelivery'
@@ -2328,7 +2328,8 @@ function saveLayoutNow() {
       cwd: w.cwd || null,
       ...(w.remote ? { remote: { hostId: w.remote.hostId, path: w.remote.path } } : {}),
       ...(w.group ? { group: { repos: w.group.repos.map((r) => ({ path: r.path, name: r.name })) } } : {}),
-      ...(w.gridModes && Object.keys(w.gridModes).length ? { gridModes: { ...w.gridModes } } : {}),
+      // Auto-tile: the grids arranged by hand (paneGrid.js).
+      ...gridModeFields(w),
       tree: serializeNode(w.tree)
     }))
   }
@@ -3486,7 +3487,7 @@ function insertPathInPane(text) {
 
 // The task board: the side panel's Tasks tab (Ctrl+Shift+K). Opening/closing
 // the panel changes the terminal area's width — toggleSideTab nudges panes to
-// refit with the same event SplitNode dispatches on a divider drag.
+// refit with the same event PaneGrid dispatches on a divider drag.
 function toggleTaskPanel() {
   toggleSideTab('tasks')
 }

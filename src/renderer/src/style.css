@@ -465,10 +465,6 @@ body.popup-open .toolbar {
   overflow: hidden;
 }
 
-.pane-grid > .divider {
-  position: absolute;
-}
-
 /* A maximized pane fills the whole room: its tile takes it. */
 .pane-grid > .pane-tile:has(> .pane.maximized) {
   inset: 0 !important;
@@ -476,12 +472,11 @@ body.popup-open .toolbar {
   height: auto !important;
 }
 
-/* Thin dividers with a wider invisible grab area. */
+/* Thin dividers with a wider invisible grab area, placed by PaneGrid (their
+   thickness: Settings > Appearance, Divider Thickness, --divider-thickness). */
 .divider {
-  /* Settings > Appearance, Divider Thickness. */
-  flex: 0 0 var(--divider-thickness, 3px);
+  position: absolute;
   background: var(--backdrop);
-  position: relative;
   z-index: 2;
   transition: background 0.12s ease;
 }

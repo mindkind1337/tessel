@@ -10,6 +10,7 @@
 // everything again.
 import { FolderOpen, Globe, Plus } from 'lucide-vue-next'
 import { t } from './i18n'
+import { posixRootTooBroad, localRootTooBroad, isBareHomePath } from '../../shared/projectRootPolicy'
 import { hostStatus, statusLabel } from './remoteHosts'
 import { hostAddress, hostFolder, shortRemotePath } from './remoteHostDisplay'
 
@@ -186,68 +187,23 @@ export function enterAction(filtered) {
 }
 
 // A folder that must not become a project's root (its files are read and
-// written, by agents and by Live Share guests too): a filesystem root, a
-// system folder, the folder that holds every user's home, the kernel's own
-// trees (/proc, /sys, /dev). A project folder inside a system folder is
-// fine (/etc/nginx, /opt/app, /srv/www), and so is a top folder of its own
-// (/app, /workspace, /data). Case-insensitive (macOS and Windows volumes).
-const POSIX_BROAD = new Set(
-  ('/ /bin /boot /dev /etc /home /lib /lib32 /lib64 /libx32 /lost+found /media /mnt /opt /proc /run /sbin /snap /srv /sys /tmp ' +
-    '/usr /usr/bin /usr/lib /usr/local /usr/sbin /usr/share /var /var/lib /var/log /var/tmp /users /volumes /system /library /applications ' +
-    '/private /private/etc /private/tmp /private/var /cores').split(' ')
-)
+// written, by agents and by Live Share guests too): the rule is shared with
+// the main process (src/shared/projectRootPolicy.js), which applies it again
+// to a shared project's real path. -> '' when fine, else the reason.
 const ROOT_REFUSED = () => t('project.remote.rootRefused', 'This folder is too broad or belongs to the system: choose a project folder inside it.')
-function posixRootRefusal(path) {
-  const p = String(path || '').trim().replace(/\/+$/, '') || '/'
-  if (!p.startsWith('/')) return ''
-  return POSIX_BROAD.has(p.toLowerCase()) || /^\/(proc|sys|dev)(\/|$)/i.test(p) ? ROOT_REFUSED() : ''
-}
-// The folder of one user (/home/me, /Users/me, root's /root).
-const isPosixHome = (path) => /^\/((home|users)\/[^/]+|root)\/?$/i.test(String(path || '').trim())
-
-// A folder on an SSH host. -> '' when fine, else the reason.
-export const remoteRootRefusal = posixRootRefusal
-// The folder of one user there: allowed, after a confirmation.
-export const isBareHome = isPosixHome
-
-// A WSL distribution's files seen from Windows (\\wsl$\Ubuntu\home\me):
-// its own POSIX path, else null.
-function wslPath(raw) {
-  const m = /^[\\/]{2}(?:wsl\$|wsl\.localhost)[\\/]+[^\\/]+(.*)$/i.exec(raw)
-  return m ? m[1].replace(/\\/g, '/') || '/' : null
-}
-
-// The same rule for a folder on this computer: on Windows a drive's root,
-// C:\Windows (and all inside), C:\Program Files, C:\ProgramData, C:\Users
-// and the other system folders of a drive, a server without a share, a
-// device or long-path form, a WSL distribution's root; on macOS and Linux
-// the POSIX rule. -> '' when fine, else the reason.
-const WIN_SYSTEM_DIR = /^[a-z]:\\(windows|program files|program files \(x86\)|programdata|users|\$recycle\.bin|system volume information|recovery|perflogs|config\.msi)$/i
-export function localRootRefusal(path) {
-  const raw = String(path || '').trim()
-  // The device and long-path forms (backslash-backslash-? and -.) are never a project folder.
-  if (/^[\\/]{2}[?.][\\/]/.test(raw)) return ROOT_REFUSED()
-  if (/^[a-z]:[\\/]*$/i.test(raw)) return ROOT_REFUSED()
-  if (/^[a-z]:[\\/]/i.test(raw)) {
-    const p = raw.replace(/\//g, '\\').replace(/\\+$/, '')
-    return WIN_SYSTEM_DIR.test(p) || /^[a-z]:\\windows\\/i.test(p) ? ROOT_REFUSED() : ''
-  }
-  const wsl = wslPath(raw)
-  if (wsl !== null) return posixRootRefusal(wsl)
-  if (/^[\\/]{2}/.test(raw)) {
-    // A server alone has no share: too broad.
-    return raw.split(/[\\/]+/).filter(Boolean).length < 2 ? ROOT_REFUSED() : ''
-  }
-  return posixRootRefusal(raw)
-}
-// The folder of one user (C:\Users\me, /home/me, /Users/me, /root, one in a
-// WSL distribution, or the home folder of this account): allowed, after a
+// A folder on an SSH host.
+export const remoteRootRefusal = (path) => (posixRootTooBroad(path) ? ROOT_REFUSED() : '')
+// A folder on this computer (Windows, macOS, Linux, a WSL distribution).
+export const localRootRefusal = (path) => (localRootTooBroad(path) ? ROOT_REFUSED() : '')
+// The folder of one user on an SSH host (/home/me, /root): allowed, after a
 // confirmation.
+export const isBareHome = (path) => String(path || '').trim().startsWith('/') && isBareHomePath(path)
+// The folder of one user on this computer (C:\Users\me, /home/me, one in a
+// WSL distribution or through an admin share), or the home folder of this
+// account: allowed, after a confirmation.
 export function isBareLocalHome(path, home = '') {
   const p = String(path || '').trim().replace(/[\\/]+$/, '')
-  if (/^[a-z]:[\\/]users[\\/][^\\/]+$/i.test(p) || isPosixHome(p)) return true
-  const wsl = wslPath(p)
-  if (wsl !== null && isPosixHome(wsl)) return true
+  if (isBareHomePath(p)) return true
   const h = String(home || '').replace(/[\\/]+$/, '')
   return !!h && samePath(p, h)
 }

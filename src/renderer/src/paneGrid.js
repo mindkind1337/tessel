@@ -9,6 +9,7 @@
 // row by row, in their order; the rows share the panes as evenly as they can
 // (the longer rows first) and each row's panes share its width equally, so a
 // shorter row stretches its panes to the full width.
+import { isTabLeaf, viewKey } from './paneViews'
 
 // Cells as square as the room allows, a little wider than tall (a terminal's
 // lines are long), never under about 45 columns or 6 lines when avoidable.
@@ -63,7 +64,9 @@ export function gridShape(n, width, height) {
 }
 
 const near = (a, b) => Math.abs(a - b) <= 2
-const shareOf = (node, i) => {
+// Child i's share of a split (an odd or missing size: an equal share). The
+// grid is drawn and its dividers dragged by these same shares (PaneGrid.vue).
+export const shareOf = (node, i) => {
   const k = node.children.length
   const s = Array.isArray(node.sizes) && node.sizes.length === k ? Number(node.sizes[i]) : NaN
   return Number.isFinite(s) && s > 0 ? s : 100 / k
@@ -129,19 +132,31 @@ export function withoutLeaves(node, ids) {
   return { ...node, children: kept.map((k) => k.node), sizes: kept.map((k) => (k.size / total) * 100) }
 }
 
+// The tree with the pane `id` replaced by `next` (the splits on the way are
+// new objects, the rest the same).
+function replaceLeaf(node, id, next) {
+  if (!node) return node
+  if (node.type === 'leaf') return node.id === id ? next : node
+  const children = node.children.map((c) => replaceLeaf(c, id, next))
+  return children.some((c, i) => c !== node.children[i]) ? { ...node, children } : node
+}
+
 // The tree with the panes `inView` accepts (one view's terminals and agents)
 // laid out again as a grid for a room of room.w x room.h pixels, in their
-// order, `extra` (a new pane) last. The rest of the tree (another task
-// copy's panes, the editor and browser tabs: each view and tab is drawn on
-// its own, paneViews.js) keeps its shape beside it. The panes keep running:
-// only the tree changes (PaneGrid.vue keeps every pane mounted).
+// order, `extra` (a new pane) last. The grid takes the place of its first
+// pane; the rest of the tree (another task copy's panes, the editor and
+// browser tabs: each view and tab is drawn on its own, paneViews.js) keeps
+// its shape and its place. A grid with no pane yet goes beside it all. The
+// panes keep running: only the tree changes (PaneGrid.vue keeps every pane
+// mounted).
 export function tileTree(tree, { inView, extra = null, room, makeSplit }) {
-  const leaves = treeLeaves(tree, inView)
-  if (extra) leaves.push(extra)
+  const own = treeLeaves(tree, inView)
+  const leaves = extra ? [...own, extra] : own
   if (!leaves.length) return tree
   const grid = buildGridTree(leaves, gridShape(leaves.length, room && room.w, room && room.h), makeSplit)
-  const rest = withoutLeaves(tree, new Set(leaves.map((l) => l.id)))
-  return rest ? makeSplit('row', [grid, rest], [50, 50]) : grid
+  if (!own.length) return tree ? makeSplit('row', [tree, grid], [50, 50]) : grid
+  const others = new Set(own.slice(1).map((l) => l.id))
+  return replaceLeaf(withoutLeaves(tree, others), own[0].id, grid)
 }
 
 // A project's grid modes as its saved layout has them ({ [grid key]:
@@ -154,6 +169,18 @@ export function savedGridModes(snap) {
     for (const [key, mode] of Object.entries(modes).slice(0, 64)) if (key.length <= 1024 && (mode === 'manual' || mode === 'tiled')) out[key] = mode
   } else if (snap && typeof snap.manualSizes === 'boolean') out[''] = snap.manualSizes ? 'manual' : 'tiled'
   return out
+}
+
+// What a project's saved layout keeps of its grid modes: only the grids that
+// still have panes (a task copy closed long ago leaves nothing), and, for a
+// version before this one (going back), manualSizes for the folder's grid.
+// -> fields to spread into the saved project ({} when none).
+export function gridModeFields(ws) {
+  const live = new Set(treeLeaves(ws && ws.tree, (l) => !isTabLeaf(l)).map((l) => viewKey(l, ws.cwd)))
+  const modes = {}
+  for (const [key, mode] of Object.entries((ws && ws.gridModes) || {})) if (live.has(key) && (mode === 'manual' || mode === 'tiled')) modes[key] = mode
+  if (!Object.keys(modes).length) return {}
+  return { gridModes: modes, ...(modes[''] ? { manualSizes: modes[''] === 'manual' } : {}) }
 }
 
 // --- Where each pane sits (PaneGrid.vue) --------------------------------------------

@@ -34,7 +34,8 @@ import {
   planImport,
   remotePathError,
   remoteProjectName,
-  remoteRootRefusal
+  remoteRootRefusal,
+  localRootRefusal
 } from '../../addProject'
 import { sshCredentialState } from '../../sshCredentials'
 import AddProjectHostSelector from './AddProjectHostSelector.vue'
@@ -272,6 +273,13 @@ async function browseLocal() {
   try {
     const path = await window.shellApi.pickFolder({ title: t('project.browse.pickTitle', 'Choose a project folder') })
     if (my !== gen || !path) return
+    // A drive, a system folder, the folder of all homes: never a project
+    // (nor scanned whole for repositories).
+    const refused = localRootRefusal(path)
+    if (refused) {
+      startError.value = refused
+      return
+    }
     busyLabel.value = t('project.busy.scanning', 'Scanning for repositories...')
     scanId = newScanId()
     const id = scanId

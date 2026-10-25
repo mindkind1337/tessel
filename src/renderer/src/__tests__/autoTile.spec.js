@@ -198,7 +198,7 @@ describe('where each pane sits (gridLayout)', () => {
 
 describe('tiling a tree (tileTree)', () => {
   const make = (dir, children, sizes) => ({ type: 'split', id: 'n', dir, sizes, children })
-  it('lays out one grid again and keeps the rest (another copy, the tabs) beside it, its shape untouched', () => {
+  it('lays out one grid again in the place of its first pane; the rest (another copy, the tabs) keeps its shape and place', () => {
     const a = leaf('a')
     const b = leaf('b')
     const x = inCopy('x')
@@ -208,11 +208,26 @@ describe('tiling a tree (tileTree)', () => {
     const tree = { type: 'split', id: 'root', dir: 'row', sizes: [40, 30, 30], children: [{ type: 'split', id: 'main', dir: 'row', sizes: [80, 20], children: [a, b] }, copy, ed] }
     const inMain = (l) => !paneViews.isTabLeaf(l) && paneViews.viewKey(l, 'C:\\p') === ''
     const next = paneGrid.tileTree(tree, { inView: inMain, extra: leaf('c'), room: { w: 2000, h: 1500 }, makeSplit: make })
+    expect(next.id).toBe('root')
+    expect(next.sizes).toEqual([40, 30, 30])
     expect(ids(next.children[0])).toEqual(['a', 'b', 'c'])
     expect(shape(next.children[0])).toEqual([2, 1])
-    // The copy's grid is the same object (its own shares), the editor tab still there.
-    expect(next.children[1].children[0]).toBe(copy)
-    expect(ids(next.children[1])).toEqual(['x', 'y', 'ed'])
+    // The copy's grid is the same object (its own shares), the editor tab still after it.
+    expect(next.children[1]).toBe(copy)
+    expect(next.children[2]).toBe(ed)
+    // A grid with no pane yet goes after it all.
+    const first = paneGrid.tileTree(tree, { inView: () => false, extra: leaf('z'), room: { w: 2000, h: 1500 }, makeSplit: make })
+    expect(first.children[0]).toBe(tree)
+    expect(first.children[1].id).toBe('z')
+  })
+  it('keeps the grid modes of the grids that still have panes, and manualSizes for the version before', () => {
+    const tree = { type: 'split', id: 's', dir: 'row', sizes: [50, 50], children: [leaf('a'), inCopy('x')] }
+    const ws = { cwd: 'C:\\p', tree, gridModes: { '': 'manual', 'c:/p-copies/fix': 'tiled', 'c:/gone': 'manual' } }
+    expect(paneGrid.gridModeFields(ws)).toEqual({ gridModes: { '': 'manual', 'c:/p-copies/fix': 'tiled' }, manualSizes: true })
+    expect(paneGrid.gridModeFields({ ...ws, gridModes: { 'c:/p-copies/fix': 'tiled' } })).toEqual({ gridModes: { 'c:/p-copies/fix': 'tiled' } })
+    expect(paneGrid.gridModeFields({ ...ws, gridModes: { 'c:/gone': 'manual' } })).toEqual({})
+    // Read back as saved.
+    expect(paneGrid.savedGridModes(paneGrid.gridModeFields(ws))).toEqual({ '': 'manual', 'c:/p-copies/fix': 'tiled' })
   })
   it('without the panes taken out, the others keep their share (as removeLeaf)', () => {
     const t = { type: 'split', id: 's', dir: 'row', sizes: [20, 30, 50], children: [leaf('a'), leaf('b'), leaf('c')] }
@@ -320,6 +335,25 @@ describe('adding a pane', () => {
     expect(mainView.grid.sizes).toEqual([70, 30])
     expect(ws.gridModes['']).toBe('manual')
     expect(ws.gridModes['c:/p-copies/fix']).toBe('tiled')
+  })
+})
+
+describe('the views of the task copies', () => {
+  it('adding a pane in copy K never reorders the views (their layers are keyed in the page) and leaves the others where they are', async () => {
+    const inK = (id) => leaf(id, { worktree: { path: 'C:\\p-copies\\k', branch: 'k' } })
+    const inJ = (id) => leaf(id, { worktree: { path: 'C:\\p-copies\\j', branch: 'j' } })
+    const tree = reactive({ type: 'split', id: 'root', dir: 'row', sizes: [40, 30, 30], children: [leaf('a'), equalRow(inK('k1'), inK('k2')), inJ('j1')] })
+    const { api, ws } = load({ tree })
+    const keys = () => paneViews.workspaceViews(ws).map((v) => v.key)
+    const before = keys()
+    expect(before).toEqual([':main', 'c:/p-copies/j', 'c:/p-copies/k'])
+    const made = await api.splitLeaf('k2', 'row', null, 'pwsh', null, { inheritView: true })
+    expect(keys()).toEqual(before)
+    // K's grid tiled where it was; the folder's pane and J's stay in their places.
+    expect(ws.tree.id).toBe('root')
+    expect(ws.tree.children[0].id).toBe('a')
+    expect(ids(ws.tree.children[1])).toEqual(['k1', 'k2', made.id])
+    expect(ws.tree.children[2].id).toBe('j1')
   })
 })
 
