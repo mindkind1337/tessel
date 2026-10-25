@@ -12,6 +12,7 @@ import PanelState from './ui/PanelState.vue'
 import { statusOf, folderStatus, ignoredSet, isIgnored } from '../explorerStatus'
 import { buildRows, toggledPaths, soleSubfolder, activeGuide, segmentOf, rowPadding, guideX, stickyFolders, INDENT, ROW_HEIGHT } from '../explorerRows'
 import { statusMatters, foldersToReload, sameEntries, sameStatus, rememberIgnored, inGitDir, parentOf } from '../explorerChanges'
+import { saveTree, loadTree, forgetTree } from '../explorerTreeCache'
 import { settings } from '../settings'
 import { isRemotePath, remoteHostPath } from '../../../shared/remotePath'
 import { isVirtualPath, isLsharePath, parseLsharePath } from '../../../shared/liveSharePath'
@@ -133,9 +134,10 @@ function noteAnswer(res) {
 let shownRoot = null
 watch(accessState, (state, before) => {
   if (state) {
-    // Answers still on their way are dropped.
+    // Answers still on their way are dropped, and nothing of it is kept.
     viewRevision++
     directoryRequests.clear()
+    if (props.root) forgetTree(props.root)
     for (const k of Object.keys(nodes)) delete nodes[k]
     status.value = {}
     Object.assign(search, { busy: false, results: [], truncated: false, error: '', done: false })
@@ -202,20 +204,29 @@ function applyListing(dir, res, cur) {
   if (res && res.ok) {
     const now = nodes[dir]
     nodes[dir] = { entries: now && sameEntries(now.entries, res.entries) ? now.entries : res.entries, loading: false, error: '' }
+    rememberSoon()
     return
   }
   const error = (res && res.error) || t('explorer.readFailed', 'Could not read it.')
-  nodes[dir] = { entries: res && res.transient ? before.entries : [], loading: false, error }
+  // A host that did not answer: what was shown (read before, or kept from
+  // the last time) stays, with the error.
+  nodes[dir] = { entries: res && res.transient ? before.entries : [], loading: false, error, ...(res && res.transient && before.stale ? { stale: true } : {}) }
 }
+// Open folders read again in the background: a small spinner on their row.
+const refreshing = reactive({})
 function markLoading(dir, request, background) {
   directoryRequests.set(dir, request)
   const cur = nodes[dir] || { entries: [], loading: false, error: '' }
   // A refresh in the background keeps the rows as they are until it answers.
   if (!background || !nodes[dir]) nodes[dir] = { ...cur, loading: true }
+  else refreshing[dir] = true
   return cur
 }
 function doneLoading(dir, request) {
-  if (directoryRequests.get(dir) === request) directoryRequests.delete(dir)
+  if (directoryRequests.get(dir) === request) {
+    directoryRequests.delete(dir)
+    delete refreshing[dir]
+  }
 }
 async function loadDir(dir, { background = false } = {}) {
   if (!api() || !props.root) return
@@ -308,10 +319,14 @@ function loadSoon(dir, { chain = false } = {}) {
   if (chain) loadBatch.chain = true
   return loadBatch.done
 }
-async function loadStatus({ background = false } = {}) {
+// The git letters: always in the background (they decorate a tree already
+// shown; the listing never waits for them). Slow or failed: the tree and the
+// last letters known stay as they are.
+async function loadStatus() {
   if (!api() || !props.root) return
   const revision = viewRevision, root = props.root, request = ++statusRequest
-  const res = await api().status({ root, ignored: true, ...(background ? { background: true } : {}) }).catch(() => null)
+  const res = await api().status({ root, ignored: true, background: true }).catch(() => null)
+  if (res && Number.isFinite(res.ms)) statusCost = res.ms
   if (!stillCurrent(revision, root) || request !== statusRequest) return
   if (res && !res.ok && stateOfAnswer(res) === 'no-access') noteAnswer(res)
   if (!res || !res.ok) return
@@ -321,6 +336,7 @@ async function loadStatus({ background = false } = {}) {
   if (!sameStatus(status.value, out)) {
     status.value = out
     repoChanges.value++
+    rememberSoon()
   }
   repo.value = !!res.repo
 }
@@ -337,7 +353,10 @@ let statusTimer = 0
 let statusBusy = false
 let statusAgain = false
 let statusLast = 0
-const statusGap = () => (remote.value ? 4000 : 1000)
+// On a remote host, a status that takes long (a big project) is asked less
+// often: at most a quarter of the time on it (3x its own time between runs).
+let statusCost = 0
+const statusGap = () => (remote.value ? Math.max(4000, Math.min(60000, statusCost * 3)) : 1000)
 function requestStatus() {
   if (statusBusy) {
     statusAgain = true
@@ -350,7 +369,7 @@ async function runStatus() {
   statusTimer = 0
   statusBusy = true
   try {
-    await loadStatus({ background: true })
+    await loadStatus()
   } finally {
     statusBusy = false
     statusLast = Date.now()
@@ -374,7 +393,7 @@ async function refresh() {
   prefetched.clear()
   await Promise.all([loadDirs(openDirs(), { background: true }), loadSparse()])
   if (!stillCurrent(revision, root)) return
-  loadStatus({ background: true })
+  loadStatus()
   if (query.value.trim()) runSearch()
 }
 // A change notice: the folders it touches read again, git status when it
@@ -456,7 +475,11 @@ async function runPrefetch() {
 // A folder to show: from the prefetch, or read (with its chain of sole
 // sub-folders when compact folders are on).
 function ensureDir(dir) {
-  if (nodes[dir] && !nodes[dir].error) return Promise.resolve()
+  if (nodes[dir] && !nodes[dir].error) {
+    // Kept from the last time (explorerTreeCache.js): shown now, read again.
+    if (nodes[dir].stale) loadDirs([dir], { background: true })
+    return Promise.resolve()
+  }
   const pre = prefetched.get(key(dir))
   if (pre && pre.dir === dir) {
     prefetched.delete(key(dir))
@@ -605,6 +628,7 @@ function onHitClick(h) {
 async function toggleRow(row) {
   if (!row.dir) return
   const paths = toggledPaths(row)
+  rememberSoon()
   if (row.open) {
     for (const p of paths) delete open[p]
     return
@@ -729,6 +753,7 @@ function onTreeScroll(ev) {
   nextFrame(() => {
     scrollQueued = false
     scrollTop.value = el.scrollTop
+    rememberSoon()
   })
 }
 function measure() {
@@ -761,6 +786,34 @@ function retryRoot() {
   loadDir(dir).then(() => {
     if (!repo.value) loadStatus()
   })
+}
+// --- The tree kept per project (explorerTreeCache.js) ---------------------------
+// What is shown, as a snapshot: the folders read (their entries' own
+// arrays), the open ones, the selection, the scroll, the git letters.
+function snapshotTree() {
+  const out = {}
+  for (const [d, n] of Object.entries(nodes)) if (n && Array.isArray(n.entries) && (n.entries.length || (!n.loading && !n.error))) out[d] = n.entries
+  return {
+    nodes: out,
+    open: Object.keys(open).filter((d) => open[d]),
+    selected: selected.value,
+    scrollTop: treeEl.value ? treeEl.value.scrollTop || 0 : scrollTop.value,
+    status: status.value,
+    repo: repo.value
+  }
+}
+// Kept for the project shown (not a Live Share project this guest cannot read).
+let saveTimer = 0
+function rememberTree() {
+  clearTimeout(saveTimer)
+  saveTimer = 0
+  if (!shownRoot || shownRoot !== props.root || accessState.value) return
+  saveTree(shownRoot, snapshotTree(), api())
+}
+watch(selected, () => rememberSoon())
+function rememberSoon() {
+  if (saveTimer || disposed) return
+  saveTimer = setTimeout(rememberTree, 1500)
 }
 // The project's folder could not be read: what went wrong, with Retry;
 // above the rows when a remote host did not answer and they were kept.
@@ -1020,30 +1073,55 @@ async function doTrash() {
 let stopChanged = null
 let changedTimer = 0
 async function showRoot() {
+  // The project shown until now: kept as it was, for when it comes back.
+  if (shownRoot && shownRoot !== props.root && !accessState.value) saveTree(shownRoot, snapshotTree(), api())
+  clearTimeout(saveTimer)
+  saveTimer = 0
   const revision = ++viewRevision, root = props.root
   directoryRequests.clear()
+  for (const k of Object.keys(refreshing)) delete refreshing[k]
   prefetched.clear()
   prefetchWanted.clear()
   clearTimeout(prefetchTimer)
   clearTimeout(changedTimer)
   pendingChange = { all: false, paths: new Set(), renamed: new Set(), renamedKnown: true }
   resetStatusRuns()
+  statusCost = 0
   loadBatch = null
   for (const k of Object.keys(nodes)) delete nodes[k]
   for (const k of Object.keys(open)) delete open[k]
   status.value = {}
-  if (treeEl.value) treeEl.value.scrollTop = 0
-  scrollTop.value = 0
+  repo.value = false
+  selected.value = null
   edit.value = null
   sparseDirs.value = []
   scope.value = WHOLE
   shownRoot = props.root
-  if (!props.root || !api()) return
   // A Live Share project the window says this guest cannot read: nothing is
-  // asked.
-  if (access.value && access.value.state !== 'ok') return
+  // shown or asked.
+  const readable = !!props.root && !!api() && !(access.value && access.value.state !== 'ok')
+  // Stale while it is read again: the tree as it was last shown comes back
+  // at once (its folders open, the selection, the scroll, the git letters),
+  // never an empty "Loading…"; then its open folders are read again in the
+  // background and only what changed is applied.
+  const kept = readable ? loadTree(props.root, api()) : null
+  if (kept) {
+    for (const [d, entries] of Object.entries(kept.nodes || {})) nodes[d] = { entries, loading: false, error: '', stale: true }
+    for (const d of kept.open || []) if (nodes[d]) open[d] = true
+    status.value = kept.status || {}
+    repo.value = !!kept.repo
+    selected.value = kept.selected || null
+  }
+  const top = kept ? kept.scrollTop || 0 : 0
+  scrollTop.value = top
+  if (treeEl.value) treeEl.value.scrollTop = top
+  if (kept) nextTick(() => {
+    if (treeEl.value && shownRoot === root) treeEl.value.scrollTop = top
+  })
+  if (!readable) return
   api().watch(props.root)
-  await Promise.all([loadDir(props.root), loadSparse()])
+  if (kept) await Promise.all([loadDirs(openDirs(), { background: true }), loadSparse()])
+  else await Promise.all([loadDir(props.root), loadSparse()])
   if (!stillCurrent(revision, root)) return
   loadStatus()
   runSearch()
@@ -1065,6 +1143,8 @@ onMounted(() => {
   window.addEventListener('resize', measure)
 })
 onBeforeUnmount(() => {
+  // Kept for the next panel (a host connected again remounts it).
+  rememberTree()
   disposed = true
   if (stopChanged) stopChanged()
   clearTimeout(changedTimer)
@@ -1395,6 +1475,7 @@ function rowTitle(e) {
             </template>
           </span>
           <span v-else class="explorer-name">{{ row.name }}</span>
+          <span v-if="row.dir && row.open && refreshing[row.path]" class="explorer-spinner explorer-row-spinner" role="status" :aria-label="t('explorer.loading', 'Loading…')" data-test="explorer-dir-refreshing"></span>
           <span v-if="!ignoredOf(row.path) && letterOf(row.entry)" class="explorer-git">{{ row.dir ? '•' : letterOf(row.entry) }}</span>
         </div>
         <div v-else-if="kind === 'row'" class="explorer-edit" :style="{ paddingLeft: rowPadding(row.depth) + 22 + 'px' }">

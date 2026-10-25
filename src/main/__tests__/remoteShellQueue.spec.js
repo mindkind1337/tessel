@@ -104,6 +104,37 @@ describe('remote session queue', () => {
     await Promise.all(waiting)
   })
 
+  it('a session keeps its own queue bounds and wait (a guest\'s lane)', async () => {
+    const { s } = await ready({ maxQueued: 1, queueWait: 20 })
+    s.run('__t_nop', []).catch(() => {})
+    const second = s.run('__t_nop', ['second'])
+    await expect(s.run('__t_nop', ['third'])).rejects.toMatchObject({ code: 'busy' })
+    // Its own wait, not the module's 90 s.
+    await expect(second).rejects.toMatchObject({ code: 'busy' })
+    s.close('cancelled')
+  })
+
+  it('says what held the session: a slow request (wait and run) and one given up as busy', async () => {
+    let now = 1000
+    const said = []
+    const { s, child } = await ready({ clock: () => now, onSlow: (i) => said.push(i), maxQueued: 1 })
+    const first = s.run('__t_fp', [])
+    const second = s.run('__t_tread', [])
+    // The queue is full: refused at once, with what runs and what waits.
+    await expect(s.run('__t_agents', [])).rejects.toMatchObject({ code: 'busy' })
+    expect(said[0]).toMatchObject({ kind: 'busy', fn: '__t_agents', why: 'full', running: { fn: '__t_fp', ms: 0 }, waiting: 1, queued: '__t_tread' })
+    now += 9000
+    answer(child, idOf(child.stdin.written.find((l) => l.includes('__t_fp'))))
+    await first
+    expect(said[1]).toMatchObject({ kind: 'slow', fn: '__t_fp', runMs: 9000, waitMs: 0, rc: 0 })
+    now += 100
+    answer(child, idOf(child.stdin.written.find((l) => l.includes('__t_tread'))))
+    await second
+    // It waited 9 s, ran 0.1 s: slow too (its wait).
+    expect(said[2]).toMatchObject({ kind: 'slow', fn: '__t_tread', waitMs: 9000, runMs: 100 })
+    expect(said).toHaveLength(3)
+  })
+
   it('an aborted request is dropped while it waits', async () => {
     const { s, child } = await ready()
     const first = s.run('__t_nop', [])

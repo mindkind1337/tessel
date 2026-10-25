@@ -29,6 +29,7 @@ import { createScm } from './sourceControl'
 import { looksBinary, MAX_EDIT_BYTES, MAX_HEAD_BYTES } from './editorFiles'
 import { cleanEnv } from './cleanEnv'
 import { RISKY_CONFIG_ARGS, GUEST_FIXED_ARGS, parseRisky, hookEntries, neutralize, gitTrust } from './gitSafety'
+import { codexDayHint } from './remoteAgent/codexDayHint'
 import { parseRemotePath, remoteRoot, relativeTo, childPath, isRemotePath } from '../shared/remotePath'
 import { fileKind, extOf, IMAGE_MIME } from '../shared/fileKinds'
 import { sortEntries } from '../shared/explorerSort'
@@ -76,13 +77,45 @@ export const REMOTE_UNTRACKED_COUNTS = 200
 // Paths of one terminal link batch looked up on a host (statLinks).
 export const MAX_LINK_STATS = 50
 
-// A Live Share guest's calls (shareRemoteFiles.js): behind the host's own
-// requests in the session's queue, never a sign-in (a dropped session says
-// "not connected"), never run again after a drop, and bounded in time.
-const GUEST_TIMEOUT_MS = 15_000
 // How long a cancelled sign-in is left alone by what runs on its own.
 export const AUTH_CANCEL_COOLDOWN_MS = 60_000
-const GUEST_SEARCH_MS = 8_000
+
+// Lanes. The host's session runs one command at a time, and the Files panel
+// of a big project (a git status, a search, the change poll over the whole
+// tree) can hold it for many seconds: what must never wait behind it runs on
+// a session of its own over the same signed-in ssh2 connection (one more
+// exec channel each, opened when needed and closed when idle):
+// - 'pane': what a terminal opening on the host waits for (the shim install,
+//   the agent check, whether its conversation is there, its account folder).
+//   A connection not signed in yet, or a host on the system ssh: in the host's
+//   session as before, first in its turn.
+// - 'guest': a Live Share guest's requests (liveShare/shareRemoteFiles.js,
+//   the chat views guests watch). Never in the host's session, whatever
+//   happens: guests can never hold it. A small queue of its own, every
+//   request bounded on the host, never a sign-in (an ssh2 connection that is
+//   signed in, or with the system ssh a second connection that may ask
+//   nothing, only while the host's own session is up).
+// - 'bg': the host's own background work (the Files panel's git status for
+//   its colours and its refreshes after a change, the change poll, the
+//   readers of agent conversations and sub-agents): never in front of what
+//   you click. Not available: in the host's session, behind your requests,
+//   as before.
+// Lanes never show in the remote badge (it says what YOU wait for).
+export const LANES = Object.freeze({
+  pane: Object.freeze({ idleMs: 60_000, maxQueued: 8, maxBgQueued: 8, queueWait: 20_000 }),
+  guest: Object.freeze({ idleMs: 90_000, maxQueued: 6, maxBgQueued: 6, queueWait: 10_000 }),
+  bg: Object.freeze({ idleMs: 120_000, maxQueued: 32, maxBgQueued: 32, queueWait: 30_000 })
+})
+const LANE_READY_MS = 15_000
+// A guest's requests, bounded on the host (its watchdog ends them).
+export const GUEST_MS = Object.freeze({ list: 8000, stat: 5000, read: 10_000, write: 15_000, check: 8000, hooks: 8000, search: 8000 })
+// Search results a guest's search checks at most (links, nested
+// repositories, what git ignores).
+export const GUEST_CHECK_MAX = 2000
+// The guest functions' exit codes -> a guest answer's code.
+const GUEST_RC = { 90: 'refused', 91: 'missing', 92: 'not-file', 93: 'too-large', 95: 'conflict', 96: 'is-folder', 97: 'unknown', 124: 'busy' }
+// A slow / busy line about the same function on the same lane, at most this often.
+const SLOW_LOG_EVERY_MS = 30_000
 
 const arg = (path) => rawArg(remotePathArg(path))
 const joinPath = (base, rel) => (rel ? (base.endsWith('/') ? `${base}${rel}` : `${base}/${rel}`) : base)
@@ -505,18 +538,43 @@ export function createRemoteFs({
       return false
     }
   }
-  // noSignIn (a guest's call): only an open session, or the host's shared
-  // ssh2 connection that is signed in already; never a new sign-in.
-  function open(hostId, { noSignIn = false } = {}) {
+  const sharedNow = (hostId) => {
+    try {
+      return !!(hosts.sharedConnected && hosts.sharedConnected(hostId))
+    } catch {
+      return false
+    }
+  }
+  // What held a host's session: a request that waited or ran 5 s or more, or
+  // one given up as busy, with what ran and what waited (remoteShell.js
+  // onSlow). One line per function and lane every 30 s at most.
+  const slowSaid = new Map() // hostId|lane|kind|fn -> time
+  const secs = (ms) => `${(Math.max(0, ms || 0) / 1000).toFixed(1)} s`
+  function slowLog(hostId, lane) {
+    return (i) => {
+      const key = `${hostId}|${lane}|${i.kind}|${i.fn}`
+      const at = now()
+      if (at - (slowSaid.get(key) || 0) < SLOW_LOG_EVERY_MS) return
+      if (slowSaid.size > 500) slowSaid.clear()
+      slowSaid.set(key, at)
+      const running = i.running ? `${i.running.fn} for ${secs(i.running.ms)}` : 'nothing'
+      const waiting = i.waiting ? `${i.waiting} waiting (${i.queued})` : 'nothing waiting'
+      if (i.kind === 'busy')
+        warn(`busy on ${hostId} (${lane}): ${i.fn} given up ${i.why === 'full' ? 'at once, the queue is full' : `after ${secs(i.waitMs)} in the queue`}; running ${running}; ${waiting}`) // i18n-ignore log line
+      else warn(`slow on ${hostId} (${lane}): ${i.fn} waited ${secs(i.waitMs)}, ran ${secs(i.runMs)} (exit ${i.rc}); ${waiting}`) // i18n-ignore log line
+    }
+  }
+
+  function open(hostId) {
     const existing = sessions.get(hostId)
     if (existing && !existing.closed) return existing.ready
-    if (!noSignIn && cancelCoolingDown(hostId)) {
+    if (cancelCoolingDown(hostId)) {
       // Said as "not connected" (the Files panel then offers Connect), not as
       // a sign-in error nobody can act on.
       activity(hostId, null, { needsConnect: true })
       return Promise.reject(Object.assign(new Error('not connected'), { code: 'not-connected' })) // i18n-ignore internal, replaced by sessionErrorText
     }
-    if (noSignIn ? !(hosts.sharedConnected && hosts.sharedConnected(hostId)) : !mayOpen(hostId)) {
+    if (!mayOpen(hostId)) {
       activity(hostId, null, { needsConnect: true })
       return Promise.reject(Object.assign(new Error('not connected'), { code: 'not-connected' })) // i18n-ignore internal
     }
@@ -529,11 +587,8 @@ export function createRemoteFs({
       const target = ssh ? hosts.get(hostId) : null
       if (ssh && !target) throw Object.assign(new Error(t('main.remote.notFound', 'This remote host is no longer saved in Tessel.')), { code: 'host' })
       const mode = target ? await ssh.modeFor(target) : { mode: 'system' }
-      if (noSignIn && mode.mode !== 'ssh2') throw Object.assign(new Error('not connected'), { code: 'not-connected' }) // i18n-ignore internal
       if (entry.closed) throw Object.assign(new Error('cancelled'), { code: 'cancelled' }) // i18n-ignore internal
       if (mode.mode === 'ssh2') {
-        // The connection may have dropped while the mode was looked up: a guest's call never signs in.
-        if (noSignIn && !(hosts.sharedConnected && hosts.sharedConnected(hostId))) throw Object.assign(new Error('not connected'), { code: 'not-connected' }) // i18n-ignore internal
         activity(hostId, entry)
         const session = createRemoteSession({
           file: 'ssh2',
@@ -543,6 +598,7 @@ export function createRemoteFs({
           timers,
           // The sign-in may ask a host key and a password (2 minutes each).
           readyTimeoutMs: 6 * 60 * 1000,
+          onSlow: slowLog(hostId, 'files'),
           onExit: (reason) => ended(hostId, entry, reason)
         })
         entry.session = session
@@ -568,6 +624,7 @@ export function createRemoteFs({
         env: { ...cleanEnv(env), ...(ready ? lease.env : {}) },
         ...(spawnImpl ? { spawnImpl } : {}),
         timers,
+        onSlow: slowLog(hostId, 'files'),
         onExit: (reason) => ended(hostId, entry, reason)
       })
       entry.session = session
@@ -585,22 +642,97 @@ export function createRemoteFs({
     return entry.ready
   }
 
-  // A guest does not wait for a session that is still connecting (the host
-  // may be answering a password question): not connected, for now.
-  function untilGuestTimeout(promise) {
-    return new Promise((resolve, reject) => {
-      const timer = timers.setTimeout(() => reject(Object.assign(new Error('not connected'), { code: 'not-connected' })), GUEST_TIMEOUT_MS) // i18n-ignore internal
-      promise.then(
-        (v) => {
-          timers.clearTimeout(timer)
-          resolve(v)
-        },
-        (e) => {
-          timers.clearTimeout(timer)
-          reject(e)
-        }
-      )
-    })
+  // --- Lanes (see LANES) ------------------------------------------------------------
+  const lanes = new Map() // hostId\nlane -> { hostId, lane, key, closed, session, ready, idleTimer }
+  const laneError = (code) => Object.assign(new Error(`lane ${code}`), { code }) // i18n-ignore internal, replaced by sessionErrorText
+  function openLane(hostId, lane) {
+    const conf = LANES[lane]
+    if (!conf) return Promise.reject(laneError('no-lane'))
+    const key = `${hostId}\n${lane}`
+    const existing = lanes.get(key)
+    if (existing && !existing.closed) return existing.ready
+    const entry = { hostId, lane, key, closed: false, session: null, idleTimer: null }
+    lanes.set(key, entry)
+    entry.ready = (async () => {
+      const target = ssh ? hosts.get(hostId) : null
+      const mode = target ? await ssh.modeFor(target) : { mode: 'system' }
+      if (entry.closed) throw laneError('cancelled')
+      const common = {
+        timers,
+        readyTimeoutMs: LANE_READY_MS,
+        maxQueued: conf.maxQueued,
+        maxBgQueued: conf.maxBgQueued,
+        queueWait: conf.queueWait,
+        onSlow: slowLog(hostId, lane),
+        onExit: (reason) => laneEnded(entry, reason)
+      }
+      let session
+      if (mode.mode === 'ssh2') {
+        // Only over a connection signed in already: a lane never asks
+        // anything (onlyLive: the terminal host opens no connection for it).
+        if (!sharedNow(hostId)) throw laneError('not-connected')
+        session = createRemoteSession({ file: 'ssh2', args: [], env: {}, spawnImpl: ssh.spawnFor(hostId, mode.spec, { onlyLive: true }), ...common })
+      } else if (lane === 'guest') {
+        // The system ssh: a second connection that may ask nothing (keys or
+        // an agent only), while the host's own session is up.
+        const main = sessions.get(hostId)
+        if (!(main && !main.closed && main.session && main.session.state === 'ready')) throw laneError('not-connected')
+        const launch = hosts.launchFor(hostId)
+        if (!launch || !launch.ok) throw laneError('not-connected')
+        session = createRemoteSession({ file: launch.file, args: sessionArgs(launch.args, { batch: true }), env: cleanEnv(env), ...(spawnImpl ? { spawnImpl } : {}), ...common })
+      } else throw laneError('no-lane')
+      entry.session = session
+      await session.start()
+      if (entry.closed) throw laneError('cancelled')
+      return session
+    })()
+    entry.ready.catch((err) => laneEnded(entry, (err && err.code) || 'connect'))
+    return entry.ready
+  }
+  function laneEnded(entry, reason) {
+    if (entry.closed) return
+    entry.closed = true
+    if (entry.idleTimer) timers.clearTimeout(entry.idleTimer)
+    entry.idleTimer = null
+    if (lanes.get(entry.key) === entry) lanes.delete(entry.key)
+    if (entry.session && entry.session.state !== 'closed') entry.session.close(reason)
+    if (!['cancelled', 'idle', 'shutdown', 'not-connected', 'no-lane'].includes(reason)) warn(`remote ${entry.lane} lane for ${entry.hostId} ended: ${reason}`)
+  }
+  // Closed after LANES[lane].idleMs with nothing asked of it (its channel freed).
+  function armLaneIdle(entry) {
+    if (entry.idleTimer) timers.clearTimeout(entry.idleTimer)
+    entry.idleTimer = timers.setTimeout(() => {
+      entry.idleTimer = null
+      if (entry.closed) return
+      if (entry.session && entry.session.busy) armLaneIdle(entry)
+      else laneEnded(entry, 'idle')
+    }, LANES[entry.lane].idleMs)
+    if (entry.idleTimer && entry.idleTimer.unref) entry.idleTimer.unref()
+  }
+  function closeLanes(hostId, reason) {
+    for (const entry of [...lanes.values()]) if (hostId === null || entry.hostId === hostId) laneEnded(entry, reason)
+  }
+  // One request on a lane. -> like callOnce; laneFailed: the lane could not
+  // be opened (nothing was sent).
+  async function laneCall(hostId, lane, fn, args, { cap, timeoutMs, upload } = {}) {
+    let session
+    try {
+      session = await openLane(hostId, lane)
+    } catch (err) {
+      return { error: sessionErrorText(hostId, err), code: (err && err.code) || 'failed', laneFailed: true, notSent: true }
+    }
+    const entry = lanes.get(`${hostId}\n${lane}`)
+    if (entry && entry.idleTimer) {
+      timers.clearTimeout(entry.idleTimer)
+      entry.idleTimer = null
+    }
+    try {
+      return await session.run(fn, args, { ...(cap ? { cap } : {}), ...(timeoutMs ? { timeoutMs } : {}), ...(upload ? { upload } : {}) })
+    } catch (err) {
+      return { error: sessionErrorText(hostId, err), code: (err && err.code) || 'failed', ...(err && err.notSent ? { notSent: true } : {}) }
+    } finally {
+      if (entry && !entry.closed) armLaneIdle(entry)
+    }
   }
 
   function ended(hostId, entry, reason) {
@@ -631,6 +763,7 @@ export function createRemoteFs({
 
   // Ends a host's session (Disconnect, cancel, a sign-in cancelled).
   function closeHost(hostId, reason = 'cancelled') {
+    closeLanes(hostId, reason)
     const entry = sessions.get(hostId)
     if (!entry) return false
     if (entry.session) entry.session.close(reason)
@@ -682,9 +815,21 @@ export function createRemoteFs({
     }
     return res
   }
-  async function callOnce(hostId, fn, args, { cap, timeoutMs: askedMs, upload, op = '', quiet = false, ifOpen = false, background: bg = false, first = false, guest = false } = {}) {
-    const background = bg || guest
-    const timeoutMs = guest ? Math.min(askedMs || GUEST_TIMEOUT_MS, GUEST_TIMEOUT_MS) : askedMs
+  // lane: 'pane' | 'guest' | 'bg' (see LANES). A guest's call is always on
+  // its lane; a background one (a poll, a refresh, a reader) on the 'bg' lane
+  // when the host has one.
+  async function callOnce(hostId, fn, args, opts = {}) {
+    const { cap, timeoutMs, upload, op = '', ifOpen = false, background = false, first = false, guest = false } = opts
+    let { quiet = false } = opts
+    const lane = guest ? 'guest' : opts.lane || ((background || quiet || ifOpen) && !opts.noLane ? 'bg' : null)
+    if (lane) {
+      const res = await laneCall(hostId, lane, fn, args, { cap, timeoutMs, upload })
+      // The pane's or the background lane cannot be had (a connection not
+      // signed in yet, the system ssh, a channel refused): in the host's
+      // session as before (the pane's first in its turn). Never a guest's.
+      if (res && res.laneFailed && (lane === 'pane' || lane === 'bg')) return callOnce(hostId, fn, args, { ...opts, lane: null, noLane: true, ...(lane === 'pane' ? { first: true } : {}) })
+      return res
+    }
     let session
     const entry0 = sessions.get(hostId)
     if (ifOpen) quiet = true
@@ -693,7 +838,7 @@ export function createRemoteFs({
       session = entry0.session
     } else {
       try {
-        session = await (guest ? untilGuestTimeout(open(hostId, { noSignIn: true })) : open(hostId))
+        session = await open(hostId)
       } catch (err) {
         return { error: sessionErrorText(hostId, err), code: (err && err.code) || 'failed' }
       }
@@ -701,7 +846,10 @@ export function createRemoteFs({
     const entry = sessions.get(hostId)
     let slowTimer = null
     let slowCounted = false
-    if (!quiet && entry) {
+    // The badge says what you wait for: background work (a refresh, the git
+    // colours, a reader) is never "busy" or "slow to answer" there.
+    const shown = !quiet && !background
+    if (shown && entry) {
       entry.busy++
       entry.op = op
       activity(hostId, entry)
@@ -722,14 +870,14 @@ export function createRemoteFs({
         ...(upload ? { upload } : {}),
         ...(ifOpen ? { touch: false } : {}),
         ...(quiet || background ? { background: true } : {}),
-        ...(first && !guest ? { first: true } : {})
+        ...(first ? { first: true } : {})
       })
     } catch (err) {
       return { error: sessionErrorText(hostId, err), code: (err && err.code) || 'failed', ...(err && err.notSent ? { notSent: true } : {}) }
     } finally {
       if (slowTimer) timers.clearTimeout(slowTimer)
       if (slowCounted) entry.slow = Math.max(0, entry.slow - 1)
-      if (!quiet && entry && !entry.closed) {
+      if (shown && entry && !entry.closed) {
         entry.busy = Math.max(0, entry.busy - 1)
         if (!entry.busy) entry.op = ''
         activity(hostId, entry)
@@ -800,15 +948,12 @@ export function createRemoteFs({
   // arguments its git calls get (gitSafety.js: the repository's own settings
   // that run programs stay off until the user trusts it).
   // -> { realRoot, top | null, gitArgs } | { error } | { missing }
-  // guest: a Live Share guest's request: no dialog is ever shown for it (a
-  // repository whose settings run programs and the host has not decided on
-  // is unreadable for guests), and its git calls get the guest's fixed
-  // arguments too.
-  function repoInfo(loc, { guest = false } = {}) {
-    const key = `${loc.hostId}\n${loc.root.path}${guest ? '\nguest' : ''}`
-    const g = guest ? { guest: true } : {}
+  // background: asked for the Files panel's colours: on the background lane.
+  function repoInfo(loc, { background = false } = {}) {
+    const bg = background ? { background: true } : {}
+    const key = `${loc.hostId}\n${loc.root.path}`
     if (!repoInfos.has(key)) {
-      const p = call(loc.hostId, '__t_top', [arg(loc.root.path)], { cap: 64 * 1024, op: 'status', retry: true, ...g }).then(async (res) => {
+      const p = call(loc.hostId, '__t_top', [arg(loc.root.path)], { cap: 64 * 1024, op: 'status', retry: true, ...bg }).then(async (res) => {
         if (res.error) return { error: res.error }
         const lines = res.out.toString('utf8').split('\n')
         if (res.rc === RC.NOT_REPO) {
@@ -818,10 +963,10 @@ export function createRemoteFs({
         if (res.rc === RC.MISSING) return { missing: true }
         if (res.rc !== 0 || !lines[0] || !lines[1]) return { error: rcText(res, t('main.scm.statusFailed', 'Git status failed.')) }
         loc.root.real = lines[0]
-        const cfg = await call(loc.hostId, '__t_gitin', [arg(loc.root.path), arg(lines[1]), ...RISKY_CONFIG_ARGS], { cap: 256 * 1024, op: 'status', retry: true, ...g })
+        const cfg = await call(loc.hostId, '__t_gitin', [arg(loc.root.path), arg(lines[1]), ...RISKY_CONFIG_ARGS], { cap: 256 * 1024, op: 'status', retry: true, ...bg })
         if (cfg.error) return { error: cfg.error }
         // Its runnable hooks ($GIT_DIR/hooks, not the *.sample ones) count too.
-        const hooks = await call(loc.hostId, '__t_hooks', [arg(loc.root.path), arg(lines[1])], { cap: 64 * 1024, op: 'status', retry: true, ...g })
+        const hooks = await call(loc.hostId, '__t_hooks', [arg(loc.root.path), arg(lines[1])], { cap: 64 * 1024, op: 'status', retry: true, ...bg })
         if (hooks.error) return { error: hooks.error }
         // Exit 1: none of them set. Unreadable: everything they could be stays off.
         const risky = [
@@ -830,16 +975,12 @@ export function createRemoteFs({
         ]
         let gitArgs = []
         if ((cfg.rc !== 0 && cfg.rc !== 1) || hooks.rc !== 0) {
-          if (guest) return { error: t('main.remoteFs.untrusted', 'This repository’s settings have not been checked on this computer.') }
           gitArgs = neutralize([], { hooksDir: NO_HOOKS })
         } else if (risky.length) {
-          const trusted = await trust().decide(`${loc.hostId}:${lines[1]}`, risky, { name: lines[1], where: hostLabel(loc.hostId), mayAsk: !guest })
-          if (!trusted) {
-            if (guest) return { error: t('main.remoteFs.untrusted', 'This repository’s settings have not been checked on this computer.') }
-            gitArgs = neutralize(risky, { hooksDir: NO_HOOKS })
-          }
+          const trusted = await trust().decide(`${loc.hostId}:${lines[1]}`, risky, { name: lines[1], where: hostLabel(loc.hostId) })
+          if (!trusted) gitArgs = neutralize(risky, { hooksDir: NO_HOOKS })
         }
-        return { realRoot: lines[0], top: lines[1], gitArgs: guest ? [...gitArgs, ...GUEST_FIXED_ARGS] : gitArgs }
+        return { realRoot: lines[0], top: lines[1], gitArgs }
       })
       repoInfos.set(key, p)
       p.then((info) => {
@@ -864,17 +1005,19 @@ export function createRemoteFs({
   }
 
   function listDir(q = {}) {
-    return shared(`ls${q.guest === true ? 'g' : ''}
+    // (A click never joins a background refresh: that one may wait behind
+    // the git status on the background lane.)
+    return shared(`ls${q.background === true ? 'b' : ''}
 ${q.root}
 ${q.dir || ''}
 ${q.dotfiles !== false}`, () => listDirNow(q))
   }
   // background: a refresh of what is shown (after a change notice), behind
   // the user's own requests; a folder opened by the user is not.
-  async function listDirNow({ root, dir, dotfiles = true, background = false, guest = false } = {}) {
+  async function listDirNow({ root, dir, dotfiles = true, background = false } = {}) {
     const loc = under(root, dir || root)
     if (!loc) return { ok: false, error: t('main.explorer.outside', 'Outside the project.') }
-    const res = await call(loc.hostId, '__t_ls', [arg(loc.root.path), arg(loc.path), String(MAX_ENTRIES + 1)], { cap: 16 * 1024 * 1024, op: 'list', background: background === true, retry: true, ...(guest ? { guest: true } : {}) })
+    const res = await call(loc.hostId, '__t_ls', [arg(loc.root.path), arg(loc.path), String(MAX_ENTRIES + 1)], { cap: 16 * 1024 * 1024, op: 'list', background: background === true, retry: true })
     // transient: the host did not answer (slow, busy, connection lost), the
     // folder itself may be fine: the window keeps what it showed.
     if (res.error) return { ok: false, error: res.error, transient: true }
@@ -892,13 +1035,11 @@ ${q.dotfiles !== false}`, () => listDirNow(q))
   function listEntries(records, base, dotfiles, max) {
     const entries = []
     let count = 0
-    let hasGit = false
     for (const rec of records) {
       const m = /^([dfLlo]) (.+)$/s.exec(rec)
       if (!m) continue
       count++
       const name = m[2]
-      if (name === '.git') hasGit = true
       // Not addressable (a backslash or a control character in the name) or hidden.
       if (CONTROL.test(name) || name.includes('\\') || name === '.git') continue
       if (!dotfiles && name.startsWith('.')) continue
@@ -906,8 +1047,7 @@ ${q.dotfiles !== false}`, () => listDirNow(q))
       entries.push({ name, path: childPath(base, name), dir: m[1] === 'd' || m[1] === 'L', ...(m[1] === 'L' || m[1] === 'l' ? { link: true } : {}) })
     }
     sortEntries(entries)
-    // hasGit: the folder holds a .git (a nested repository for guests).
-    return { ok: true, entries, truncated: count > max, hasGit }
+    return { ok: true, entries, truncated: count > max }
   }
 
   // Several folders in one round trip (a refresh of the open ones, a
@@ -918,14 +1058,14 @@ ${q.dotfiles !== false}`, () => listDirNow(q))
   // A folder the answer did not reach (cut at its size) is left out.
   function listMany(q = {}) {
     const dirs = Array.isArray(q.dirs) ? q.dirs.filter((d) => typeof d === 'string').slice(0, MAX_LIST_MANY) : []
-    return shared(`lm${q.guest === true ? 'g' : ''}
+    return shared(`lm${q.background === true ? 'b' : ''}
 ${q.root}
 ${dirs.join('\n')}
 ${q.dotfiles !== false}
 ${!!q.chain}
 ${q.max || ''}`, () => listManyNow({ ...q, dirs }))
   }
-  async function listManyNow({ root, dirs, dotfiles = true, chain = false, background = false, max = MAX_ENTRIES, guest = false } = {}) {
+  async function listManyNow({ root, dirs, dotfiles = true, chain = false, background = false, max = MAX_ENTRIES } = {}) {
     const top = under(root, root)
     if (!top) return { ok: false, error: t('main.explorer.outside', 'Outside the project.') }
     const limit = Number.isInteger(max) && max > 0 ? Math.min(max, MAX_ENTRIES) : MAX_ENTRIES
@@ -942,8 +1082,7 @@ ${q.max || ''}`, () => listManyNow({ ...q, dirs }))
       timeoutMs: 60000,
       op: 'list',
       background: background === true,
-      retry: true,
-      ...(guest ? { guest: true } : {})
+      retry: true
     })
     if (res.error) return { ok: false, error: res.error, transient: true }
     const sections = []
@@ -976,27 +1115,31 @@ ${q.max || ''}`, () => listManyNow({ ...q, dirs }))
 
   // The explorer's letters, keyed by the files' virtual paths.
   function projectStatus(q = {}) {
-    return shared(`st${q.guest === true ? 'g' : ''}
+    return shared(`st
 ${q.root}
 ${!!q.ignored}`, () => projectStatusNow(q))
   }
-  async function projectStatusNow({ root, ignored = false, background = false, guest = false } = {}) {
+  async function projectStatusNow({ root, ignored = false, background = false } = {}) {
     const loc = under(root, root)
     if (!loc) return { ok: false, error: t('main.explorer.invalidFolder', 'Invalid folder.') }
-    const info = await repoInfo(loc, { guest })
+    const info = await repoInfo(loc, { background: background === true })
     if (info.error) return { ok: false, error: info.error }
     if (info.missing || !info.top) return { ok: true, files: {}, repo: false }
     const args = ['status', '--porcelain=v1', '-z', '--untracked-files=all', ...(ignored ? ['--ignored=matching'] : [])]
-    const res = await call(loc.hostId, '__t_gitin', [arg(loc.root.path), arg(info.top), ...info.gitArgs, ...args], { cap: 32 * 1024 * 1024, timeoutMs: 30000, op: 'status', background: background === true, retry: true, ...(guest ? { guest: true } : {}) })
-    if (res.error) return { ok: false, error: res.error }
-    if (res.rc !== 0) return { ok: false, error: rcText(res, t('main.scm.statusFailed', 'Git status failed.')) }
+    // The Files panel's colours (background): bounded tighter, and how long
+    // it took is said (ms) so the panel asks less often for a big project.
+    const t0 = now()
+    const res = await call(loc.hostId, '__t_gitin', [arg(loc.root.path), arg(info.top), ...info.gitArgs, ...args], { cap: 32 * 1024 * 1024, timeoutMs: background === true ? 20000 : 30000, op: 'status', background: background === true, retry: true })
+    const ms = now() - t0
+    if (res.error) return { ok: false, error: res.error, ms }
+    if (res.rc !== 0) return { ok: false, error: rcText(res, t('main.scm.statusFailed', 'Git status failed.')), ms }
     const files = {}
     for (const [p, letter] of porcelainLetters(res.out.toString('utf8'))) {
       const rel = relativeTo(info.realRoot, joinPath(info.top, p))
       if (rel === null || !rel || CONTROL.test(rel) || rel.includes('\\')) continue
       files[childPath(root, rel)] = letter
     }
-    return { ok: true, files, repo: true }
+    return { ok: true, files, repo: true, ms }
   }
 
   // The folders a sparse checkout keeps below the project (explorer.js
@@ -1009,10 +1152,12 @@ ${q.root}`, () => sparseInfoNow(q))
     const loc = under(root, root)
     if (!loc) return { ok: false, error: t('main.explorer.invalidFolder', 'Invalid folder.') }
     const none = { ok: true, sparse: false, dirs: [] }
-    const info = await repoInfo(loc)
+    // Asked by the Files panel by itself (each time it shows the project):
+    // background work, never in front of a click.
+    const info = await repoInfo(loc, { background: true })
     if (info.error) return { ok: false, error: info.error }
     if (info.missing || !info.top) return none
-    const res = await call(loc.hostId, '__t_gitin', [arg(loc.root.path), arg(info.top), ...info.gitArgs, '-c', 'core.quotePath=false', 'sparse-checkout', 'list'], { cap: 1024 * 1024, timeoutMs: 15000, op: 'status', retry: true })
+    const res = await call(loc.hostId, '__t_gitin', [arg(loc.root.path), arg(info.top), ...info.gitArgs, '-c', 'core.quotePath=false', 'sparse-checkout', 'list'], { cap: 1024 * 1024, timeoutMs: 15000, op: 'status', retry: true, background: true })
     if (res.error) return { ok: false, error: res.error }
     // Exit 128 ("this worktree is not sparse") or an old git: not sparse.
     if (res.rc !== 0) return none
@@ -1026,7 +1171,7 @@ ${q.root}`, () => sparseInfoNow(q))
 
   // `dir`: only names below that folder of the project (the tree's root
   // when it shows one sparse folder).
-  async function searchNames({ root, dir, query, dotfiles = true, limit = SEARCH_LIMIT, guest = false } = {}) {
+  async function searchNames({ root, dir, query, dotfiles = true, limit = SEARCH_LIMIT } = {}) {
     const loc = under(root, root)
     if (!loc) return { ok: false, error: t('main.explorer.invalidFolder', 'Invalid folder.') }
     const scope = dir ? under(root, dir) : loc
@@ -1039,7 +1184,7 @@ ${q.root}`, () => sparseInfoNow(q))
     const results = []
     let truncated = false
     for (const kind of ['d', 'f']) {
-      const res = await call(loc.hostId, '__t_findn', [arg(loc.root.path), findPattern(q), kind], { cap: 1024 * 1024, timeoutMs: guest ? GUEST_SEARCH_MS : 20000, op: 'search', ...(guest ? { guest: true } : {}) })
+      const res = await call(loc.hostId, '__t_findn', [arg(loc.root.path), findPattern(q), kind], { cap: 1024 * 1024, timeoutMs: 20000, op: 'search' })
       if (res.error) return { ok: false, error: res.error }
       if (res.rc !== 0 && res.rc !== RC.PIPE && !res.truncated && res.rc !== 1) return { ok: false, error: rcText(res, t('main.remoteFs.searchFailed', 'The search failed.')) }
       if (res.truncated || res.rc === RC.PIPE) truncated = true
@@ -1070,34 +1215,19 @@ ${q.root}`, () => sparseInfoNow(q))
     return (start > 0 ? '…' : '') + s.slice(start, start + 240) + (start + 240 < s.length ? '…' : '')
   }
 
-  async function searchContent({ root, query, limit = SEARCH_LIMIT, guest = false } = {}) {
-    const loc = under(root, root)
-    if (!loc) return { ok: false, error: t('main.explorer.invalidFolder', 'Invalid folder.') }
-    const max = Number.isInteger(limit) && limit > 0 ? Math.min(limit, SEARCH_LIMIT) : SEARCH_LIMIT
-    const q = String(query || '')
-    if (!q.trim()) return { ok: true, results: [], truncated: false }
-    if (CONTROL.test(q) || q.length > 1000) return { ok: true, results: [], truncated: false }
-    const info = await repoInfo(loc, { guest })
-    if (info.error) return { ok: false, error: info.error }
-    const git = !!info.top
-    const args = git
-      ? [
-          arg(loc.root.path), 'git',
-          ...(guest ? info.gitArgs : []),
-          '-c', 'grep.fullName=false', '-c', 'grep.lineNumber=true', '-c', 'grep.column=false', '-c', 'grep.patternType=fixed',
-          '-c', 'grep.extendedRegexp=false', '-c', 'color.grep=never',
-          'grep', '-n', '-I', '-z', '-i', '-F', '--untracked', '--no-color', '-e', q, '--', '.',
-          ...HEAVY.map((h) => `:(exclude,glob)**/${h}/**`)
-        ]
-      : [arg(loc.root.path), 'plain', q]
-    const res = await call(loc.hostId, '__t_grep', args, { cap: SEARCH_OUTPUT + 1, timeoutMs: guest ? GUEST_SEARCH_MS : 30000, op: 'search', ...(guest ? { guest: true } : {}) })
-    if (res.error) return { ok: false, error: res.error }
-    // 0: matches, 1: none, 141: cut at the cap; anything else is a failure.
-    if (res.rc !== 0 && res.rc !== 1 && res.rc !== RC.PIPE) return { ok: false, error: rcText(res, t('main.explorer.grepFailed', 'The search failed (git grep).')) }
-    const lower = q.toLowerCase()
+  // git grep's arguments for a fixed, case-blind text (paths as given, a
+  // line number, NUL after the path and the number; the heavy folders left out).
+  const gitGrepArgs = (q) => [
+    '-c', 'grep.fullName=false', '-c', 'grep.lineNumber=true', '-c', 'grep.column=false', '-c', 'grep.patternType=fixed',
+    '-c', 'grep.extendedRegexp=false', '-c', 'color.grep=never',
+    'grep', '-n', '-I', '-z', '-i', '-F', '--untracked', '--no-color', '-e', q, '--', '.',
+    ...HEAVY.map((h) => `:(exclude,glob)**/${h}/**`)
+  ]
+  // git grep's (-z) or grep's lines -> { results: [{ rel, line, text }], truncated }
+  function grepRecords(out, git, max, lower) {
     const results = []
-    let truncated = !!res.truncated || res.rc === RC.PIPE
-    for (const rec of res.out.toString('utf8').split('\n')) {
+    let truncated = false
+    for (const rec of out.split('\n')) {
       let relRaw
       let line
       let text
@@ -1121,9 +1251,28 @@ ${q.root}`, () => sparseInfoNow(q))
         truncated = true
         break
       }
-      results.push({ path: childPath(root, rel), rel, line, text: clip(text, lower) })
+      results.push({ rel, line, text: clip(text, lower) })
     }
-    return { ok: true, results, truncated }
+    return { results, truncated }
+  }
+
+  async function searchContent({ root, query, limit = SEARCH_LIMIT } = {}) {
+    const loc = under(root, root)
+    if (!loc) return { ok: false, error: t('main.explorer.invalidFolder', 'Invalid folder.') }
+    const max = Number.isInteger(limit) && limit > 0 ? Math.min(limit, SEARCH_LIMIT) : SEARCH_LIMIT
+    const q = String(query || '')
+    if (!q.trim()) return { ok: true, results: [], truncated: false }
+    if (CONTROL.test(q) || q.length > 1000) return { ok: true, results: [], truncated: false }
+    const info = await repoInfo(loc)
+    if (info.error) return { ok: false, error: info.error }
+    const git = !!info.top
+    const args = git ? [arg(loc.root.path), 'git', ...gitGrepArgs(q)] : [arg(loc.root.path), 'plain', q]
+    const res = await call(loc.hostId, '__t_grep', args, { cap: SEARCH_OUTPUT + 1, timeoutMs: 30000, op: 'search' })
+    if (res.error) return { ok: false, error: res.error }
+    // 0: matches, 1: none, 141: cut at the cap; anything else is a failure.
+    if (res.rc !== 0 && res.rc !== 1 && res.rc !== RC.PIPE) return { ok: false, error: rcText(res, t('main.explorer.grepFailed', 'The search failed (git grep).')) }
+    const found = grepRecords(res.out.toString('utf8'), git, max, q.toLowerCase())
+    return { ok: true, results: found.results.map((r) => ({ path: childPath(root, r.rel), ...r })), truncated: !!res.truncated || res.rc === RC.PIPE || found.truncated }
   }
 
   async function create({ root, dir, name, folder = false } = {}) {
@@ -1182,68 +1331,267 @@ ${q.root}`, () => sparseInfoNow(q))
     return trashAt(loc.hostId, loc.root.path, loc.path, joinPath(info.realRoot, loc.rel))
   }
 
-  // The folder core.hooksPath names, relative to the project, lower case
-  // (['' for the project itself), for the files a guest may not write (they
-  // run when the host commits). Read without the repository's own overrides.
-  // -> { ok: true, rels } | { ok: false } (unreadable: the caller refuses).
-  async function hooksPathOf({ root, guest = false } = {}) {
-    const loc = under(root, root)
-    if (!loc) return { ok: false }
-    // Not through repoInfo: reading one setting runs no program of the
-    // repository, so a repository the host has not decided on still tells.
-    const found = await call(loc.hostId, '__t_top', [arg(loc.root.path)], { cap: 64 * 1024, timeoutMs: 15000, op: 'status', retry: true, ...(guest ? { guest: true } : {}) })
-    if (found.error) return { ok: false }
-    if (found.rc === RC.NOT_REPO) return { ok: true, rels: [] }
-    const lines = found.rc === 0 ? found.out.toString('utf8').split('\n') : []
-    if (!lines[0] || !lines[1]) return { ok: false }
-    const info = { realRoot: lines[0], top: lines[1] }
-    const res = await call(loc.hostId, '__t_gitin', [arg(loc.root.path), arg(info.top), '-c', 'core.fsmonitor=false', 'config', '--get', 'core.hooksPath'], {
-      cap: 8192,
-      timeoutMs: 15000,
-      op: 'status',
-      retry: true,
-      ...(guest ? { guest: true } : {})
+  // --- A Live Share guest's requests (liveShare/shareRemoteFiles.js) -----------------
+  // On the guest's lane only (never the host's session), each one bounded on
+  // the host (GUEST_MS), never a sign-in. Paths are relative to a saved
+  // project ('' for the project itself). On the host every request checks its
+  // path first (remoteShell.js __t_gp: no link, no nested repository below
+  // the project) and, with ignore, asks git which of its own paths it ignores
+  // (git check-ignore: never a scan of the project). Answers carry codes,
+  // never the host's words: { ok: false, code: 'not-connected' | 'busy' |
+  // 'refused' | 'missing' | 'not-file' | 'is-folder' | 'too-large' |
+  // 'conflict' | 'unknown' | 'failed' } ('unknown': what git ignores could
+  // not be read there, so nothing is given: it fails closed).
+  const LANE_DOWN = new Set(['not-connected', 'host', 'connect', 'connect-timeout', 'ssh', 'closed', 'auth-cancelled', 'no-lane', 'spawn', 'cancelled', 'shutdown'])
+  function guestFail(res) {
+    if (res && res.error) return { ok: false, code: res.code === 'busy' || res.code === 'timeout' ? 'busy' : LANE_DOWN.has(res.code) ? 'not-connected' : 'failed' }
+    return { ok: false, code: (res && GUEST_RC[res.rc]) || 'failed' }
+  }
+  const guestCall = (hostId, fn, args, ms, extra = {}) => call(hostId, fn, args, { guest: true, timeoutMs: ms, op: 'guest', ...extra })
+  const relOk = (rel) => rel === '' || (typeof rel === 'string' && rel.length <= 4096 && cleanRel(rel) === rel && !rel.includes('\\'))
+  const hostPathOf = (top, rel) => (rel ? joinPath(top.root.path, rel) : top.root.path)
+  const flag = (on) => (on ? '1' : '0')
+  // The ignore part of an answer, from records[at] (the paths asked: `asked`).
+  // -> { ok: true, ignored: Set } | { ok: false }: git failed there, the
+  // answer was cut, or it named a path that was not asked (fail closed).
+  function ignoreSection(records, at, asked) {
+    if (records[at] === '/@@I n') return { ok: true, ignored: new Set() }
+    if (records[at] !== '/@@I y') return { ok: false }
+    const ignored = new Set()
+    for (let i = at + 1; i < records.length; i++) {
+      const r = records[i]
+      if (r === '/@@I e') return { ok: true, ignored }
+      const p = r.startsWith('./') ? r.slice(2) : r
+      if (!asked.has(p)) return { ok: false }
+      ignored.add(p)
+    }
+    return { ok: false }
+  }
+
+  // Folders of the project, in one request. -> { ok: true, results: [{ rel,
+  // ok: true, entries: [{ name, kind }], truncated, ignored: Set of names |
+  // null (not asked) } | { rel, ok: false, code }] } | { ok: false, code }
+  // kind: d folder, f file, o other, l a link, r a folder holding a .git (a
+  // nested repository).
+  async function guestList({ root, dirs, ignore = true, max = MAX_ENTRIES } = {}) {
+    const top = under(root, root)
+    if (!top) return { ok: false, code: 'refused' }
+    const limit = Number.isInteger(max) && max > 0 ? Math.min(max, MAX_ENTRIES) : MAX_ENTRIES
+    const results = []
+    const asked = []
+    for (const rel of Array.isArray(dirs) ? dirs.slice(0, MAX_LIST_MANY) : []) {
+      if (relOk(rel)) asked.push(rel)
+      else results.push({ rel, ok: false, code: 'refused' })
+    }
+    if (!asked.length) return { ok: true, results }
+    const res = await guestCall(top.hostId, '__t_glsm', [arg(top.root.path), String(limit + 1), flag(ignore), ...asked.map((rel) => arg(hostPathOf(top, rel)))], GUEST_MS.list, { cap: 16 * 1024 * 1024 })
+    if (res.error || (res.rc !== 0 && res.rc !== RC.PIPE)) return guestFail(res)
+    const sections = []
+    let cur = null
+    for (const r of res.out.toString('utf8').split('\0')) {
+      const h = /^\/@@D (\d+)$/.exec(r)
+      if (h) sections.push((cur = { rc: Number(h[1]), recs: [] }))
+      else if (cur) cur.recs.push(r)
+    }
+    // Cut at its size: the last folder may be incomplete.
+    if ((res.truncated || res.rc === RC.PIPE) && sections.length) sections.pop()
+    sections.slice(0, asked.length).forEach((sec, i) => {
+      const rel = asked[i]
+      if (sec.rc !== 0) return results.push({ rel, ok: false, code: GUEST_RC[sec.rc] || 'failed' })
+      const entries = []
+      // The folder itself is asked too (one inside an ignored folder is hidden).
+      const sent = new Set(rel ? [rel] : [])
+      let count = 0
+      let at = 0
+      for (; at < sec.recs.length; at++) {
+        const m = /^([dflor]) (.+)$/s.exec(sec.recs[at])
+        if (!m) break
+        count++
+        if (m[1] !== 'l' && m[1] !== 'r' && m[2] !== '.git') sent.add(rel ? `${rel}/${m[2]}` : m[2])
+        if (entries.length < limit) entries.push({ name: m[2], kind: m[1] })
+      }
+      let ignored = null
+      if (ignore) {
+        const part = ignoreSection(sec.recs, at, sent)
+        if (!part.ok) return results.push({ rel, ok: false, code: 'unknown' })
+        if (rel && part.ignored.has(rel)) return results.push({ rel, ok: false, code: 'missing' })
+        ignored = new Set([...part.ignored].map((p) => (rel ? p.slice(rel.length + 1) : p)))
+      }
+      results.push({ rel, ok: true, entries, truncated: count > limit, ignored })
     })
-    if (res.error) return { ok: false }
-    if (res.rc === 1) return { ok: true, rels: [] }
-    if (res.rc !== 0) return { ok: false }
-    const where = res.out.toString('utf8').split('\n')[0].trim()
-    if (!where) return { ok: true, rels: [] }
-    // A home-relative or odd value cannot be placed: unreadable.
-    if (where.startsWith('~') || CONTROL.test(where)) return { ok: false }
+    for (const rel of asked.slice(sections.length)) results.push({ rel, ok: false, code: 'too-large' })
+    return { ok: true, results }
+  }
+
+  // -> { ok: true, exists, size?, mtimeMs?, sig? } | { ok: false, code }
+  async function guestStat({ root, rel, ignore = true } = {}) {
+    const top = under(root, root)
+    if (!top || !rel || !relOk(rel)) return { ok: false, code: 'refused' }
+    const res = await guestCall(top.hostId, '__t_gst', [arg(top.root.path), arg(hostPathOf(top, rel)), flag(ignore)], GUEST_MS.stat, { cap: 4096 })
+    if (res.error || res.rc !== 0) return guestFail(res)
+    const st = parseStat(res.out.toString('latin1'))
+    return st ? { ok: true, exists: true, ...st } : { ok: true, exists: false }
+  }
+
+  // A file's bytes, max at most (the host cuts its read there).
+  // -> { ok: true, buf, size, mtimeMs, sig, hostHash } | { ok: false, code }
+  async function guestRead({ root, rel, max, ignore = true } = {}) {
+    const top = under(root, root)
+    if (!top || !rel || !relOk(rel) || !(Number.isInteger(max) && max > 0 && max <= MAX_EDIT_BYTES)) return { ok: false, code: 'refused' }
+    const res = await guestCall(top.hostId, '__t_grd', [arg(top.root.path), arg(hostPathOf(top, rel)), String(max), flag(ignore)], GUEST_MS.read, { cap: max + HEADER_SLACK })
+    if (res.error || res.rc !== 0) return guestFail(res)
+    if (res.truncated) return { ok: false, code: 'too-large' }
+    const nl = res.out.indexOf(0x0a)
+    const head = nl < 0 ? '' : res.out.subarray(0, nl).toString('latin1')
+    const st = parseStat(head)
+    if (!st) return { ok: false, code: 'failed' }
+    const buf = res.out.subarray(nl + 1)
+    if (buf.length > max) return { ok: false, code: 'too-large' }
+    const hash = head.split(' ')[4] || ''
+    return { ok: true, buf, size: buf.length, mtimeMs: st.mtimeMs, sig: st.sig, hostHash: HASH_RE.test(hash) ? hash : '' }
+  }
+
+  // Saves a file: one that is there only while it is still the version
+  // expectHash names (the host's hash, compared right before the rename),
+  // a new one only when nothing is there (createOnly).
+  // -> { ok: true, size, mtimeMs, sig, hostHash } | { ok: false, code }
+  async function guestWrite({ root, rel, data, expectHash = '', createOnly = false, ignore = true } = {}) {
+    const top = under(root, root)
+    if (!top || !rel || !relOk(rel) || !Buffer.isBuffer(data) || data.length > MAX_EDIT_BYTES) return { ok: false, code: 'refused' }
+    const hash = typeof expectHash === 'string' && HASH_RE.test(expectHash) ? expectHash : ''
+    if (!hash && !createOnly) return { ok: false, code: 'refused' }
+    const ms = GUEST_MS.write + Math.ceil(data.length / (512 * 1024)) * 1000
+    const res = await guestCall(top.hostId, '__t_gwr', [arg(top.root.path), arg(hostPathOf(top, rel)), createOnly ? '' : hash, '', createOnly ? 'new' : '', flag(ignore)], ms, { cap: 64 * 1024, upload: data })
+    if (res.error || res.rc !== 0) return guestFail(res)
+    const line = res.out.toString('latin1').trim()
+    const st = parseStat(line)
+    if (!st) return { ok: false, code: 'failed' }
+    const fresh = line.split(' ')[4] || ''
+    return { ok: true, size: st.size, mtimeMs: st.mtimeMs, sig: st.sig, hostHash: HASH_RE.test(fresh) ? fresh : '' }
+  }
+
+  // Of these paths (search results), the ones a guest may name: below real
+  // folders only (no link, no nested repository) and, with ignore, not
+  // ignored by git. -> { ok: true, good: Set } | { ok: false, code }
+  async function guestCheck({ root, rels, ignore = true } = {}) {
+    const top = under(root, root)
+    if (!top) return { ok: false, code: 'refused' }
+    const list = [...new Set((Array.isArray(rels) ? rels : []).filter((r) => r && relOk(r)))].slice(0, GUEST_CHECK_MAX)
+    if (!list.length) return { ok: true, good: new Set() }
+    const res = await guestCall(top.hostId, '__t_gchk', [arg(top.root.path), flag(ignore)], GUEST_MS.check, { cap: 4 * 1024 * 1024, upload: Buffer.from(`${list.join('\n')}\n`, 'utf8') })
+    if (res.error || res.rc !== 0) return guestFail(res)
+    if (res.truncated) return { ok: false, code: 'too-large' }
+    const recs = res.out.toString('utf8').split('\0')
+    const end = recs.indexOf('/@@C')
+    if (end < 0) return { ok: false, code: 'failed' }
+    const asked = new Set(list)
+    const passed = recs.slice(0, end).filter((r) => asked.has(r))
+    if (!ignore) return { ok: true, good: new Set(passed) }
+    const part = ignoreSection(recs, end + 1, new Set(passed))
+    if (!part.ok) return { ok: false, code: 'unknown' }
+    return { ok: true, good: new Set(passed.filter((r) => !part.ignored.has(r))) }
+  }
+
+  // The project folder's real path (links resolved: a link to a broad folder
+  // must not pass for a project) and the folders its git runs hooks from
+  // (core.hooksPath), relative to it, lower case ('' for the project itself,
+  // its real place too when it is a link): a guest never writes there.
+  // hooks null: it cannot be told (a guest writes nothing).
+  // -> { ok: true, real, hooks: string[] | null } | { ok: false, code }
+  async function guestInfo({ root } = {}) {
+    const top = under(root, root)
+    if (!top) return { ok: false, code: 'refused' }
+    const res = await guestCall(top.hostId, '__t_ghk', [arg(top.root.path)], GUEST_MS.hooks, { cap: 64 * 1024 })
+    if (res.error) return guestFail(res)
+    const lines = res.out.toString('utf8').split('\n')
+    if (lines[lines.length - 1] === '') lines.pop()
+    const real = lines[0] && lines[0].startsWith('R /') ? lines[0].slice(2) : null
+    if (!real || CONTROL.test(real)) return guestFail(res.rc === 0 ? { rc: 98 } : res)
+    return { ok: true, real, hooks: res.rc === 0 ? hooksFrom(real, lines.slice(1)) : null }
+  }
+  // __t_ghk's lines after the real root -> [rels] | null (cannot be told).
+  function hooksFrom(real, lines) {
+    if (lines.length === 1 && lines[0] === 'N') return []
+    if (!lines.length || lines.some((l) => !/^[THQ] /.test(l))) return null
+    const one = (k) => {
+      const all = lines.filter((l) => l[0] === k)
+      return all.length > 1 ? undefined : all.length ? all[0].slice(2) : null
+    }
+    const top = one('T')
+    const where = one('H')
+    const target = one('Q')
+    if (!top || !top.startsWith('/') || where === undefined || target === undefined) return null
+    if (where === null || where === '') return []
+    // A home-relative value cannot be placed here: nothing is written.
+    if (where.startsWith('~') || CONTROL.test(where)) return null
     const segs = []
-    for (const seg of (where.startsWith('/') ? where : joinPath(info.top, where)).split('/')) {
+    for (const seg of (where.startsWith('/') ? where : joinPath(top, where)).split('/')) {
       if (!seg || seg === '.') continue
       if (seg === '..') segs.pop()
       else segs.push(seg)
     }
-    const abs = `/${segs.join('/')}`
     const rels = new Set()
-    const lexical = relativeTo(info.realRoot, abs)
+    const lexical = relativeTo(real, `/${segs.join('/')}`)
     if (lexical !== null) rels.add(lexical.toLowerCase())
     // Where the folder really is (a link to another folder of the project
     // makes the files there run as hooks too).
-    const real = await call(loc.hostId, '__t_top', [arg(abs)], { cap: 64 * 1024, timeoutMs: 15000, op: 'status', retry: true, ...(guest ? { guest: true } : {}) })
-    if (real.error) return { ok: false }
-    if (real.rc === 0 || real.rc === RC.NOT_REPO) {
-      const target = real.out.toString('utf8').split('\n')[0]
-      const rr = target.startsWith('/') ? relativeTo(info.realRoot, target) : null
-      if (rr !== null) rels.add(rr.toLowerCase())
-    } else if (real.rc !== RC.MISSING) return { ok: false }
-    return { ok: true, rels: [...rels] }
+    const really = target && target.startsWith('/') ? relativeTo(real, target) : null
+    if (really !== null) rels.add(really.toLowerCase())
+    return [...rels]
   }
 
-  // The project folder's real path on the host (links resolved), for the
-  // checks that must not be fooled by a link to a broad folder.
-  // -> { ok: true, real } | { ok: false, error? }
-  async function realRootOf({ root, guest = false } = {}) {
-    const loc = under(root, root)
-    if (!loc) return { ok: false }
-    const res = await call(loc.hostId, '__t_top', [arg(loc.root.path)], { cap: 64 * 1024, timeoutMs: 15000, op: 'status', retry: true, ...(guest ? { guest: true } : {}) })
-    if (res.error) return { ok: false, error: res.error, code: res.code }
-    if (res.rc !== 0 && res.rc !== RC.NOT_REPO) return { ok: false }
-    const real = res.out.toString('utf8').split('\n')[0]
-    return real.startsWith('/') ? { ok: true, real } : { ok: false }
+  // A name search (folders, then files). -> { ok: true, results: [{ rel,
+  // dir }], truncated } | { ok: false, code }
+  async function guestSearchNames({ root, query, limit = SEARCH_LIMIT } = {}) {
+    const top = under(root, root)
+    if (!top) return { ok: false, code: 'refused' }
+    const max = Number.isInteger(limit) && limit > 0 ? Math.min(limit, SEARCH_LIMIT) : SEARCH_LIMIT
+    const q = String(query || '').trim()
+    if (!q || CONTROL.test(q) || q.length > 500) return { ok: true, results: [], truncated: false }
+    const res = await guestCall(top.hostId, '__t_gfind', [arg(top.root.path), findPattern(q)], GUEST_MS.search, { cap: 1024 * 1024 })
+    if (res.error) return guestFail(res)
+    const cut = !!res.truncated || res.rc === RC.PIPE
+    if (!cut && res.rc !== 0 && res.rc !== 1) return guestFail(res)
+    const results = []
+    let truncated = cut
+    let dir = true
+    for (const rec of res.out.toString('utf8').split('\0')) {
+      if (rec === '/@@F') {
+        dir = false
+        continue
+      }
+      const at = rec.indexOf('/./')
+      if (at < 0) continue
+      const rel = cleanRel(rec.slice(at + 3))
+      if (!rel || rel.includes('\\')) continue
+      if (results.length >= max) {
+        truncated = true
+        break
+      }
+      results.push({ rel, dir })
+    }
+    return { ok: true, results, truncated }
+  }
+
+  // A text search (git grep in a repository: what git ignores is not
+  // searched; plain grep elsewhere). -> { ok: true, results: [{ rel, line,
+  // text }], truncated } | { ok: false, code }
+  async function guestSearchContent({ root, query, limit = SEARCH_LIMIT } = {}) {
+    const top = under(root, root)
+    if (!top) return { ok: false, code: 'refused' }
+    const max = Number.isInteger(limit) && limit > 0 ? Math.min(limit, SEARCH_LIMIT) : SEARCH_LIMIT
+    const q = String(query || '')
+    if (!q.trim() || CONTROL.test(q) || q.length > 1000) return { ok: true, results: [], truncated: false }
+    const res = await guestCall(top.hostId, '__t_ggrep', [arg(top.root.path), q, ...GUEST_FIXED_ARGS, ...gitGrepArgs(q)], GUEST_MS.search, { cap: SEARCH_OUTPUT + 1 })
+    if (res.error) return guestFail(res)
+    const cut = !!res.truncated || res.rc === RC.PIPE
+    if (!cut && res.rc !== 0 && res.rc !== 1) return guestFail(res)
+    const text = res.out.toString('utf8')
+    const nl = text.indexOf('\n')
+    const mode = nl < 0 ? '' : text.slice(0, nl)
+    if (mode !== 'G' && mode !== 'P') return { ok: false, code: 'failed' }
+    const found = grepRecords(text.slice(nl + 1), mode === 'G', max, q.toLowerCase())
+    return { ok: true, results: found.results, truncated: cut || found.truncated }
   }
 
   // --- Editor ----------------------------------------------------------------------------
@@ -1254,15 +1602,14 @@ ${q.root}`, () => sparseInfoNow(q))
   const notInProject = () => t('main.remoteFs.noProject', 'This remote file is not in an open remote project.')
 
   // -> { ok, text, bom, size, mtimeMs, sig, hash } | { ok: false, error, code }
-  async function readForEdit(file, { guest = false } = {}) {
+  async function readForEdit(file) {
     const loc = locateFile(file)
     if (!loc) return { ok: false, error: notInProject(), code: 'error' }
     const res = await call(loc.hostId, '__t_read', [arg(loc.root.path), arg(loc.path), String(MAX_EDIT_BYTES)], {
       cap: MAX_EDIT_BYTES + HEADER_SLACK,
       timeoutMs: 120000,
       op: 'read',
-      retry: true,
-      ...(guest ? { guest: true } : {})
+      retry: true
     })
     if (res.error) return { ok: false, error: res.error, code: 'error' }
     if (res.rc === RC.MISSING) return { ok: false, error: t('main.editor.notFound', 'The file was not found.'), code: 'missing' }
@@ -1288,10 +1635,10 @@ ${q.root}`, () => sparseInfoNow(q))
     return { ok: true, text, bom, size: buf.length, mtimeMs: st.mtimeMs, sig: st.sig, hash: HASH_RE.test(hash) ? hash : undefined }
   }
 
-  async function statForEdit(file, { guest = false } = {}) {
+  async function statForEdit(file) {
     const loc = locateFile(file)
     if (!loc) return { ok: false, error: notInProject() }
-    const res = await call(loc.hostId, '__t_stats', [arg(loc.root.path), arg(loc.path)], { cap: 4096, op: 'read', retry: true, ...(guest ? { guest: true } : {}) })
+    const res = await call(loc.hostId, '__t_stats', [arg(loc.root.path), arg(loc.path)], { cap: 4096, op: 'read', retry: true })
     if (res.error) return { ok: false, error: res.error }
     const st = res.rc === 0 ? parseStat(res.out.toString('latin1')) : null
     return st ? { ok: true, exists: true, ...st } : { ok: true, exists: false, sig: null }
@@ -1338,15 +1685,14 @@ ${q.root}`, () => sparseInfoNow(q))
   // { file, text, bom, expectSig, expectHash } -> like editorFiles.writeForEdit.
   // privateNew: a file created by this write is readable by its owner only
   // (0600; an automation's prompt).
-  async function writeForEdit({ file, text, bom = false, expectSig, expectHash, privateNew = false, createOnly = false, guest = false } = {}) {
+  async function writeForEdit({ file, text, bom = false, expectSig, expectHash, privateNew = false } = {}) {
     const loc = locateFile(file)
     if (!loc) return { ok: false, error: notInProject() }
     if (typeof text !== 'string') return { ok: false, error: t('main.editor.nothingToWrite', 'Nothing to write.') }
     const data = bom ? Buffer.concat([BOM, Buffer.from(text, 'utf8')]) : Buffer.from(text, 'utf8')
     if (data.length > MAX_EDIT_BYTES) return { ok: false, error: t('main.editor.textTooLarge', 'The text is too large to save (over 50 MB).') }
     const hash = typeof expectHash === 'string' && HASH_RE.test(expectHash) ? expectHash : ''
-    const res = await call(loc.hostId, '__t_write', [arg(loc.root.path), arg(loc.path), hash, hash ? '' : sigForHost(expectSig), privateNew ? '600' : '', createOnly ? 'new' : ''], {
-      ...(guest ? { guest: true } : {}),
+    const res = await call(loc.hostId, '__t_write', [arg(loc.root.path), arg(loc.path), hash, hash ? '' : sigForHost(expectSig), privateNew ? '600' : '', ''], {
       cap: 64 * 1024,
       upload: data,
       timeoutMs: 30000 + Math.ceil(data.length / (512 * 1024)) * 1000,
@@ -1401,11 +1747,11 @@ ${q.root}`, () => sparseInfoNow(q))
   }
 
   // An image (Markdown pictures, the image view) as a data URL.
-  async function readImage(file, { guest = false } = {}) {
+  async function readImage(file) {
     if (fileKind(file) !== 'image') return { ok: false, error: t('main.file.notImage', 'Not an image.') }
     const loc = locateFile(file)
     if (!loc) return { ok: false, error: notInProject() }
-    const res = await call(loc.hostId, '__t_read', [arg(loc.root.path), arg(loc.path), String(MAX_IMAGE)], { cap: MAX_IMAGE + HEADER_SLACK, timeoutMs: 120000, op: 'read', retry: true, ...(guest ? { guest: true } : {}) })
+    const res = await call(loc.hostId, '__t_read', [arg(loc.root.path), arg(loc.path), String(MAX_IMAGE)], { cap: MAX_IMAGE + HEADER_SLACK, timeoutMs: 120000, op: 'read', retry: true })
     if (res.error) return { ok: false, error: res.error }
     if (res.rc === RC.TOO_LARGE) return { ok: false, kind: 'image', error: t('main.file.imageTooLarge', 'This image is too large to show here.') }
     if (res.rc !== 0 || res.truncated) return { ok: false, error: rcText(res, t('main.file.notFound', 'The file was not found.')) }
@@ -1461,7 +1807,6 @@ ${q.root}`, () => sparseInfoNow(q))
           const rels = change.rels
           if (!rels || rels.some((r) => r === '.git' || /^\.git\/(config|hooks|commondir|worktrees)/.test(r))) {
             repoInfos.delete(`${w.hostId}\n${w.root.path}`)
-            repoInfos.delete(`${w.hostId}\n${w.root.path}\nguest`)
           }
           for (const fn of [...changeListeners]) {
             try {
@@ -1549,11 +1894,12 @@ ${q.root}`, () => sparseInfoNow(q))
     }
   }
   const READ_ONLY_GIT = new Set(['status', 'diff', 'remote', 'log', 'show', 'rev-parse', 'for-each-ref', 'symbolic-ref', 'ls-files', 'cat-file', 'merge-base', 'rev-list'])
-  const scmBackend = {
+  // bg: { background: true } for the reads made by themselves (scmBg below).
+  const makeScmBackend = (bg = {}) => ({
     async repoOf(root) {
       const loc = isRemotePath(root) && rootOf(root) ? locate(root, root) : null
       if (!loc) return { error: t('main.scm.invalidFolder', 'Invalid folder.') }
-      const info = await repoInfo(loc)
+      const info = await repoInfo(loc, bg)
       if (info.error) return { error: info.error }
       if (info.missing) return { error: t('main.scm.folderMissing', 'The folder is missing.') }
       if (!info.top) return { error: t('main.scm.notRepo', 'This folder is not in a git repository.'), notRepo: true }
@@ -1578,7 +1924,8 @@ ${q.root}`, () => sparseInfoNow(q))
         upload,
         op: slow ? list[0] === '-F' ? 'commit' : list[0] : 'git',
         // A read (nothing changes on the host): run again after a dropped connection.
-        retry: READ_ONLY_GIT.has(list[0])
+        retry: READ_ONLY_GIT.has(list[0]),
+        ...bg
       })
       return gitResult(res, maxBuffer)
     },
@@ -1599,7 +1946,7 @@ ${q.root}`, () => sparseInfoNow(q))
     present: (top) => top.virtual,
     fullPath: (top, rel) => childPath(top.virtual, rel),
     async operation(top) {
-      const res = await call(top.hostId, '__t_gitop', [arg(top.rootPath), arg(top.real)], { cap: 1024, op: 'status' })
+      const res = await call(top.hostId, '__t_gitop', [arg(top.rootPath), arg(top.real)], { cap: 1024, op: 'status', ...bg })
       const op = !res.error && res.rc === 0 ? res.out.toString('latin1').trim() : ''
       return ['rebase', 'merge', 'cherry-pick'].includes(op) ? op : null
     },
@@ -1608,7 +1955,7 @@ ${q.root}`, () => sparseInfoNow(q))
       const list = (rels || []).filter((r) => typeof r === 'string' && r && !CONTROL.test(r)).slice(0, REMOTE_UNTRACKED_COUNTS)
       for (let i = 0; i < list.length; i += 200) {
         const chunk = list.slice(i, i + 200)
-        const res = await call(top.hostId, '__t_wcl', [arg(top.rootPath), arg(top.real), ...chunk], { cap: 256 * 1024, timeoutMs: 30000, op: 'status' })
+        const res = await call(top.hostId, '__t_wcl', [arg(top.rootPath), arg(top.real), ...chunk], { cap: 256 * 1024, timeoutMs: 30000, op: 'status', ...bg })
         if (res.error || res.rc !== 0) break
         const lines = res.out.toString('latin1').split('\n')
         chunk.forEach((rel, j) => {
@@ -1645,8 +1992,13 @@ ${q.root}`, () => sparseInfoNow(q))
       const nl = res.out.indexOf(0x0a)
       return { exists: true, version: { text: res.out.subarray(nl + 1).toString('utf8') } }
     }
-  }
+  })
+  const scmBackend = makeScmBackend()
   const scm = createScm(scmBackend)
+  // The Changes count read by itself (a change notice, the panel shown):
+  // the same reads as background work, never in front of a click and never
+  // "busy" in the badge.
+  const scmBg = createScm(makeScmBackend({ background: true }))
   const remoteOnly = () => ({ ok: false, error: t('main.remoteFs.localOnly', 'Not available for a project on a remote host.') })
 
   // The window's view of a host's session.
@@ -1766,7 +2118,9 @@ ${root}`, () => gitWorktreesNow(root))
     if (!hostIdOk(hostId)) return { error: t('main.remote.notFound', 'This remote host is no longer saved in Tessel.') }
     if (typeof version !== 'string' || !/^[0-9A-Za-z.-]{1,40}$/.test(version)) return { error: 'bad shim version' } // i18n-ignore internal
     allow(hostId)
-    return call(hostId, '__t_ragent', [version], { cap: 64 * 1024, timeoutMs: 60_000, upload: Buffer.from(String(source || ''), 'utf8'), op: 'agent' })
+    // A terminal opening there waits for it: on the pane's lane (never behind
+    // the Files panel or a guest).
+    return call(hostId, '__t_ragent', [version], { cap: 64 * 1024, timeoutMs: 60_000, upload: Buffer.from(String(source || ''), 'utf8'), op: 'agent', lane: 'pane' })
   }
 
   // The agents installed on this host (__t_agents): their paths, never run,
@@ -1793,13 +2147,13 @@ ${root}`, () => gitWorktreesNow(root))
 
   // bins: the command names looked for (each agent's), else Claude Code's
   // and Codex's.
-  // first: asked for a terminal that is opening: it goes before Live Share
-  // guests' reads in the session's queue (it starved behind them: "still busy
-  // with earlier operations", 2026-10-24).
+  // first: asked for a terminal that is opening: on the pane's lane, never
+  // behind the host's Files session (its agent check waited 20 s there behind
+  // the host's own work and gave up as "still busy", 2026-10-24).
   async function agentTools(hostId, bins = null, { first = false } = {}) {
     if (!hostIdOk(hostId)) return { error: t('main.remote.notFound', 'This remote host is no longer saved in Tessel.') }
     const names = Array.isArray(bins) ? [...new Set(bins.filter((b) => typeof b === 'string' && BIN_NAME.test(b)))].slice(0, 128) : []
-    const res = await call(hostId, '__t_agents', names, { cap: 64 * 1024, timeoutMs: 30_000, op: 'agents', background: true, ...(first ? { first: true } : {}) })
+    const res = await call(hostId, '__t_agents', names, { cap: 64 * 1024, timeoutMs: 30_000, op: 'agents', background: true, ...(first ? { first: true, lane: 'pane' } : {}) })
     if (!res || res.error) return { error: (res && res.error) || 'failed' }
     if (res.rc !== 0) return { error: rcText(res, `rc ${res.rc}`) }
     return parseAgentTools(Buffer.isBuffer(res.out) ? res.out.toString('utf8') : String(res.out || ''))
@@ -1846,8 +2200,10 @@ ${root}`, () => gitWorktreesNow(root))
   // from that byte on. Never a sign-in, like listAgentSessions.
   // sub: one of a Claude session's sub-agent transcripts instead (its name
   // without .jsonl, from listSubagentFiles; __t_sread).
+  // lane: 'pane' (a terminal opening waits for it), 'guest' (a Live Share
+  // guest's chat view): on that lane (see LANES), not in the host's session.
   // -> { ok: true, size, data: Buffer } | { ok: false, missing? , notConnected?, error }
-  async function readAgentFile(hostId, { agent, id, offset = null, cap = 4 * 1024 * 1024, sub = null } = {}) {
+  async function readAgentFile(hostId, { agent, id, offset = null, cap = 4 * 1024 * 1024, sub = null, lane = null } = {}) {
     if (!hostIdOk(hostId)) return { ok: false, error: t('main.remote.notFound', 'This remote host is no longer saved in Tessel.') }
     if ((agent !== 'claude' && agent !== 'codex') || typeof id !== 'string' || !/^[0-9A-Za-z-]{8,100}$/.test(id)) return { ok: false, error: 'invalid' }
     if (sub !== null && sub !== undefined && (agent !== 'claude' || !SUBAGENT_NAME.test(sub))) return { ok: false, error: 'invalid' }
@@ -1857,9 +2213,11 @@ ${root}`, () => gitWorktreesNow(root))
     const entry = sessions.get(hostId)
     const open = !!(entry && !entry.closed && entry.session && entry.session.state === 'ready')
     const where = offset === null ? '-' : String(offset)
+    const how = lane === 'pane' || lane === 'guest' ? { lane, ...(lane === 'guest' ? { guest: true } : {}) } : open ? { ifOpen: true } : {}
+    const timeoutMs = lane === 'guest' ? 15_000 : 30_000
     const res = sub
-      ? await call(hostId, '__t_sread', [id, `${sub}.jsonl`, where, String(max)], { cap: max + 64, timeoutMs: 30_000, op: 'read', background: true, ...(open ? { ifOpen: true } : {}) })
-      : await call(hostId, '__t_tread', [agent, id, where, String(max)], { cap: max + 64, timeoutMs: 30_000, op: 'read', background: true, ...(open ? { ifOpen: true } : {}) })
+      ? await call(hostId, '__t_sread', [id, `${sub}.jsonl`, where, String(max)], { cap: max + 64, timeoutMs, op: 'read', background: true, ...how })
+      : await call(hostId, '__t_tread', [agent, id, where, String(max), agent === 'codex' ? codexDayHint(id) : ''], { cap: max + 64, timeoutMs, op: 'read', background: true, ...how })
     if (!res || res.skipped) return { ok: false, notConnected: true, error: t('main.remoteFs.notConnected', '{{host}} is not connected. Use Connect to sign in.', { host: hostLabel(hostId) }) }
     if (res.error) return { ok: false, error: res.error }
     if (res.rc === RC.MISSING) return { ok: false, missing: true, error: 'missing' }
@@ -1958,14 +2316,15 @@ ${root}`, () => gitWorktreesNow(root))
   // functions only. A read runs in the background on a host already signed
   // in (never a sign-in). user: something you asked for (a pane started on an
   // account, a folder made or removed), in your turn, signing in like a
-  // terminal opened there would. -> { rc, out } | { error, notConnected? }
+  // terminal opened there would (on the pane's lane: a pane starting on an
+  // account waits for it). -> { rc, out } | { error, notConnected? }
   async function accountCall(hostId, fn, args, { cap = 64 * 1024, timeoutMs = 25_000, user = false } = {}) {
     if (!hostIdOk(hostId)) return { error: t('main.remote.notFound', 'This remote host is no longer saved in Tessel.') }
     if (!ACCOUNT_FUNCTIONS.includes(fn) || !Array.isArray(args) || args.some((a) => typeof a !== 'string')) return { error: 'invalid' }
     const notConnected = () => ({ notConnected: true, error: t('main.remoteFs.notConnected', '{{host}} is not connected. Use Connect to sign in.', { host: hostLabel(hostId) }) })
     if (user) {
       allow(hostId)
-      return call(hostId, fn, args, { cap, timeoutMs, op: 'accounts' })
+      return call(hostId, fn, args, { cap, timeoutMs, op: 'accounts', lane: 'pane' })
     }
     if (!connectedQuietly(hostId)) return notConnected()
     const entry = sessions.get(hostId)
@@ -2063,6 +2422,7 @@ ${root}`, () => gitWorktreesNow(root))
 
   function close() {
     for (const hostId of [...sessions.keys()]) closeHost(hostId, 'shutdown')
+    closeLanes(null, 'shutdown')
     watchedRoots.clear()
     watchedFiles.clear()
     stopPollIfIdle()
@@ -2076,7 +2436,6 @@ ${root}`, () => gitWorktreesNow(root))
     allowPath,
     setRoots,
     hasRoot: (virtual) => !!rootOf(virtual),
-    realRootOf,
     onChange: (fn) => {
       changeListeners.add(fn)
       return () => changeListeners.delete(fn)
@@ -2087,7 +2446,17 @@ ${root}`, () => gitWorktreesNow(root))
     sparseInfo,
     searchNames,
     searchContent,
-    hooksPathOf,
+    // A Live Share guest's requests (on the guest's lane, checked on the host).
+    guest: {
+      list: guestList,
+      stat: guestStat,
+      read: guestRead,
+      write: guestWrite,
+      check: guestCheck,
+      info: guestInfo,
+      searchNames: guestSearchNames,
+      searchContent: guestSearchContent
+    },
     create,
     rename,
     trash,
@@ -2101,8 +2470,9 @@ ${root}`, () => gitWorktreesNow(root))
     unwatchRoots,
     watchFiles,
     // Discard sends untracked files to the host's trash (no Recycle Bin here).
-    scm: { ...scm, scmStatus: (q = {}) => shared(`scm
-${q && q.root}`, () => scm.scmStatus(q)), scmDiscard: (q) => scm.scmDiscard(q) },
+    // q.background: read by itself (the Changes count after a change notice).
+    scm: { ...scm, scmStatus: (q = {}) => shared(`scm${q && q.background === true ? 'b' : ''}
+${q && q.root}`, () => (q && q.background === true ? scmBg : scm).scmStatus(q)), scmDiscard: (q) => scm.scmDiscard(q) },
     remoteOnly,
     gitWorktrees,
     githubContext,
@@ -2125,6 +2495,8 @@ ${q && q.root}`, () => scm.scmStatus(q)), scmDiscard: (q) => scm.scmDiscard(q) }
     closeHost,
     closePane,
     snapshot,
+    // The lanes open now (tests, diagnostics): ["hostId lane"].
+    lanesOpen: () => [...lanes.values()].filter((e) => !e.closed).map((e) => `${e.hostId} ${e.lane}`),
     close,
     poll
   }

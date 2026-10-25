@@ -146,8 +146,10 @@ const badge = computed(() => (changes.value > 99 ? '99+' : String(changes.value)
 const explorer = () => window.shellApi && window.shellApi.explorer
 let stop = null
 let timer = 0
+// The Changes count, read by itself: background work (never "busy" in a
+// remote project's badge, never in front of a click).
 function reload() {
-  if (props.root && window.shellApi && window.shellApi.scm) refreshStatus(props.root)
+  if (props.root && window.shellApi && window.shellApi.scm) refreshStatus(props.root, { background: true })
 }
 watch(
   () => props.root,

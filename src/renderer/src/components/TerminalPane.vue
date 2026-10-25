@@ -4575,7 +4575,13 @@ const paneMenuBindings = computed(() => ({
       />
     </div>
 
-    <div v-if="node.remoteToolsNote && !node.failed" class="root-note tools-note" data-test="remote-tools-note" role="alert" @mousedown.stop>
+    <!-- An agent starting again on an SSH host: what it is doing (App.vue restartInPlace). -->
+    <div v-if="node.startNote && !node.failed" class="root-note start-note" data-test="remote-start-note" role="status" aria-live="polite" @mousedown.stop>
+      <span class="start-note-dot" aria-hidden="true"></span>
+      <span class="root-note-text">{{ node.startNote }}</span>
+    </div>
+
+    <div v-if="node.remoteToolsNote && !node.failed && !node.startNote" class="root-note tools-note" data-test="remote-tools-note" role="alert" @mousedown.stop>
       <span class="root-note-text">{{ node.remoteToolsNote }}</span>
       <button class="exit-btn primary" data-test="remote-tools-retry" @click="retryRemoteTools">{{ t('pane.retry', 'Retry') }}</button>
       <button class="pane-nav-btn" data-test="remote-tools-close" :title="t('pane.rootNoYolo.close', 'Close')" :aria-label="t('pane.rootNoYolo.close', 'Close')" @click="dismissRemoteToolsNote">
@@ -4585,7 +4591,7 @@ const paneMenuBindings = computed(() => ({
       </button>
     </div>
 
-    <div v-if="node.rootNoYoloNote && !node.failed" :class="['root-note', { 'below-tools-note': !!node.remoteToolsNote }]" data-test="root-no-yolo-note" role="status" @mousedown.stop>
+    <div v-if="node.rootNoYoloNote && !node.failed && !node.startNote" :class="['root-note', { 'below-tools-note': !!node.remoteToolsNote }]" data-test="root-no-yolo-note" role="status" @mousedown.stop>
       <span class="root-note-text">{{ node.rootNoYoloNote }}</span>
       <button class="pane-nav-btn" data-test="root-no-yolo-close" :title="t('pane.rootNoYolo.close', 'Close')" :aria-label="t('pane.rootNoYolo.close', 'Close')" @click="dismissRootNote">
         <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true">

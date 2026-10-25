@@ -258,15 +258,18 @@ export function createSshManager({
   }
 
   // kind: 'exec' ({ command, pty? }) | 'shell' ({ pty }) | 'sftp'
+  // opts.onlyLive: on a connection that is up only (never a new connection,
+  // so never a question): refused otherwise.
   // -> Promise<{ stream, release, client }>; rejects with an sshError.
   async function open(hostId, spec, kind, opts = {}) {
     const e = entryFor(hostId, spec)
+    if (opts.onlyLive && !liveConns(e).length) throw Object.assign(new Error('ssh not connected'), { code: 'channel', params: { detail: 'not connected' } }) // i18n-ignore internal: translated by code
     const conn = await ensure(e)
     try {
       return track(e, conn, await openOn(conn, kind, opts))
     } catch (err) {
       // Refused on a busy connection: a second one (kept credentials).
-      if (conn.channels > 0 && liveConns(e).length < MAX_CONNECTIONS_PER_HOST && !conn.closed) {
+      if (!opts.onlyLive && conn.channels > 0 && liveConns(e).length < MAX_CONNECTIONS_PER_HOST && !conn.closed) {
         const client = await connectWithRetry(e)
         const extra = adopt(e, client, { spare: true })
         try {

@@ -221,9 +221,10 @@ export function createRemoteAgentCheck({ ensureShim, agentTools, agentBins = [],
     const kept = codexDaemon.get(hostId)
     if (kept && kept.path === status.codex && kept.version && kept.version === host.codexVersion) host.codexNoDaemon = kept.noDaemon
   }
+  // The shim and the agents are asked at once: neither needs the other (on
+  // the host's pane lane they follow each other with no gap; a pane opening
+  // waits for both).
   async function run(hostId) {
-    // Asked together: each waits its turn on the host's session, and the look
-    // for the agents (asked first) does not wait behind the shim's install.
     const [shim, tools] = await Promise.all([
       Promise.resolve()
         .then(() => ensureShim(hostId))
@@ -266,7 +267,8 @@ export function createRemoteAgentCheck({ ensureShim, agentTools, agentBins = [],
     if (typeof hostId !== 'string' || !hostId) return Promise.resolve(null)
     let p = done.get(hostId)
     if (p) return p
-    p = ask(hostId).then((status) => {
+    // A check already running (asked for a pane while it opened): that one.
+    p = (running.get(hostId) || ask(hostId)).then((status) => {
       // Not reached, or only partly (too slow): the next terminal there tries again.
       if ((status.error || status.partial) && done.get(hostId) === p) done.delete(hostId)
       try {

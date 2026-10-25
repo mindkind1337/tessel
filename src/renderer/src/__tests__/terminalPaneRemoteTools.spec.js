@@ -115,5 +115,22 @@ describe('a pane whose agent on an SSH host has no Tessel tools', () => {
   it('none without a note', () => {
     mountPane()
     expect(wrapper.find('[data-test="remote-tools-note"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="remote-start-note"]').exists()).toBe(false)
+  })
+
+  it('while it starts again on its host: what it is doing, in place of its other notes', async () => {
+    const node = reactive({ id: 'pane-t1', type: 'leaf', kind: 'agent', agentId: 'codex', agentCommand: 'codex', title: 'Codex', remoteHostId: 'ssh-box', remoteToolsNote: 'Tessel tools are not connected on Box: x.', startNote: 'Starting on Box… setting up tools' })
+    wrapper = mount(TerminalPane, { props: { node }, global: { provide: { panelCtx: ctx } } })
+    const note = wrapper.get('[data-test="remote-start-note"]')
+    expect(note.text()).toBe('Starting on Box… setting up tools')
+    expect(note.attributes('role')).toBe('status')
+    expect(wrapper.find('[data-test="remote-tools-note"]').exists()).toBe(false)
+    node.startNote = 'Starting on Box… starting Codex'
+    await wrapper.vm.$nextTick()
+    expect(wrapper.get('[data-test="remote-start-note"]').text()).toBe('Starting on Box… starting Codex')
+    delete node.startNote
+    await wrapper.vm.$nextTick()
+    expect(wrapper.find('[data-test="remote-start-note"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="remote-tools-note"]').exists()).toBe(true)
   })
 })
