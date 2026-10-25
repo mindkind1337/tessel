@@ -9,6 +9,7 @@ import os from 'os'
 import { join } from 'path'
 import { execFileSync } from 'child_process'
 import { createRemoteFs } from '../remoteFs'
+import { prelude } from '../remoteShell'
 import { hashOf } from '../editorFiles'
 import { remoteRoot } from '../../shared/remotePath'
 import { gitSh, fakeSpawn, posixPath } from './fixtures/fakeSsh'
@@ -109,11 +110,11 @@ describe.skipIf(!gitSh())('a guest\'s requests on a fake host (real sh, real git
     fs.rmSync(base, { recursive: true, force: true })
   })
 
-  it('runs on a lane of its own (a second connection that may ask nothing), never in the host\'s session', async () => {
+  it('a host on the system ssh: in its open session (never a second connection)', async () => {
     const res = await rfs.guest.list({ root, dirs: [''] })
     expect(res.ok).toBe(true)
-    expect(spawned).toEqual(['files', 'guest'])
-    expect(rfs.lanesOpen()).toEqual([`${HOST} guest`])
+    expect(spawned).toEqual(['files'])
+    expect(rfs.lanesOpen()).toEqual([])
   }, 30000)
 
   it('lists a folder with what git ignores (the folder\'s own names), links and nested repositories marked', async () => {
@@ -123,7 +124,8 @@ describe.skipIf(!gitSh())('a guest\'s requests on a fake host (real sh, real git
     const [top, src] = res.results
     expect(top.ok).toBe(true)
     const kinds = Object.fromEntries(top.entries.map((e) => [e.name, e.kind]))
-    expect(kinds).toMatchObject({ 'a.txt': 'f', src: 'd', build: 'd', '[dev]': 'd', nested: 'r', '.git': 'd' })
+    // .git: a repository's own folder (HEAD, objects/, refs/), marked like one.
+    expect(kinds).toMatchObject({ 'a.txt': 'f', src: 'd', build: 'd', '[dev]': 'd', nested: 'r', '.git': 'r' })
     if (linked) expect(kinds['link.txt']).toBe('l')
     expect([...top.ignored].sort()).toEqual(['build', 'secret-dir'])
     expect([...src.ignored]).toEqual(['debug.log'])
@@ -265,11 +267,125 @@ describe.skipIf(!gitSh())('a guest\'s requests on a fake host (real sh, real git
     }
   }, 30000)
 
-  it('the guest\'s lane stays one connection while it is used; the host\'s own session carried nothing of it', async () => {
-    expect(spawned).toEqual(['files', 'guest'])
-    expect([...ran.files]).toEqual(['__t_ls'])
-    expect([...ran.guest].every((fn) => /^__t_g[a-z]+$/.test(fn))).toBe(true)
+  it('names are paths, never patterns: x[1].log is ignored even with x1.log tracked (check-ignore --no-index)', async () => {
+    fs.writeFileSync(join(proj, 'src', 'x1.log'), 'tracked\n')
+    g('add', '-f', 'src/x1.log')
+    fs.writeFileSync(join(proj, 'src', 'x[1].log'), 'secret\n')
+    const res = await rfs.guest.list({ root, dirs: ['src'] })
+    expect([...res.results[0].ignored]).toContain('x[1].log')
+    // A tracked file its rules ignore is hidden too (like a local share).
+    expect([...res.results[0].ignored]).toContain('x1.log')
+    expect(await rfs.guest.read({ root, rel: 'src/x[1].log', max: 1024 })).toEqual({ ok: false, code: 'missing' })
+    g('rm', '-q', '--cached', 'src/x1.log')
+  }, 30000)
+
+  it('search results must be there; a save never makes or touches a .git part, nor replaces without a version', async () => {
+    expect((await rfs.guest.check({ root, rels: ['nope.txt', 'a.txt'] })).good).toEqual(new Set(['a.txt']))
+    fs.mkdirSync(join(proj, 'sub'))
+    expect(await rfs.guest.write({ root, rel: 'sub/.GIT', data: Buffer.from('x'), createOnly: true })).toEqual({ ok: false, code: 'refused' })
+    expect(fs.readdirSync(join(proj, 'sub'))).toEqual([])
+  }, 30000)
+
+  it('the hooks folder cannot be told when git refuses the repository: nothing is written (fail closed); $HOME is said', async () => {
+    fs.renameSync(join(proj, '.git', 'HEAD'), join(proj, '.git', 'HEAD.away'))
+    try {
+      const info = await rfs.guest.info({ root })
+      expect(info.ok).toBe(true)
+      expect(info.hooks).toBe(null)
+      expect(info.home).toBe(posixPath(home))
+    } finally {
+      fs.renameSync(join(proj, '.git', 'HEAD.away'), join(proj, '.git', 'HEAD'))
+    }
+  }, 30000)
+
+  it('the guest requests went in the host\'s open session (system ssh), one connection only', async () => {
+    expect(spawned).toEqual(['files'])
+    expect([...ran.files].some((fn) => /^__t_g[a-z]+$/.test(fn))).toBe(true)
   })
+})
+
+describe.skipIf(!gitSh())('a repository kept under another name than .git (real sh)', () => {
+  let base
+  let rfs
+  let root
+  beforeAll(async () => {
+    base = fs.mkdtempSync(join(os.tmpdir(), 'tessel-rfs-bare-'))
+    const wt = join(base, 'wt')
+    fs.mkdirSync(wt)
+    execFileSync('git', ['init', '-q', `--separate-git-dir=${join(wt, '.bare')}`, wt], { stdio: 'pipe' })
+    fs.writeFileSync(join(wt, 'a.txt'), 'a\n')
+    root = remoteRoot(HOST, posixPath(wt))
+    rfs = createRemoteFs({ hosts: stubHosts(), spawnImpl: fakeSpawn({ home: base }) })
+    rfs.setRoots([root])
+    await rfs.listDir({ root })
+  }, 60000)
+  afterAll(() => {
+    rfs.close()
+    fs.rmSync(base, { recursive: true, force: true })
+  })
+  it('is named: a guest never sees it', async () => {
+    const info = await rfs.guest.info({ root })
+    expect(info.ok).toBe(true)
+    expect(info.gitDirs).toContain('.bare')
+  }, 30000)
+
+  it('and is refused on the host whatever the share\'s settings (it looks like a git folder)', async () => {
+    const res = await rfs.guest.list({ root, dirs: [''], ignore: false })
+    expect(res.results[0].entries.find((e) => e.name === '.bare').kind).toBe('r')
+    expect(await rfs.guest.read({ root, rel: '.bare/config', max: 4096, ignore: false })).toEqual({ ok: false, code: 'refused' })
+  }, 30000)
+})
+
+describe.skipIf(!gitSh())('bare repositories (real sh)', () => {
+  let base
+  let rfs
+  let proj
+  let bare
+  let rootProj
+  let rootBare
+  beforeAll(async () => {
+    base = fs.mkdtempSync(join(os.tmpdir(), 'tessel-rfs-bare2-'))
+    proj = join(base, 'proj')
+    fs.mkdirSync(proj)
+    fs.writeFileSync(join(proj, 'a.txt'), 'a\n')
+    // A bare repository inside a project that is not a repository.
+    execFileSync('git', ['init', '-q', '--bare', join(proj, 'inner.git')], { stdio: 'pipe' })
+    fs.writeFileSync(join(proj, 'inner.git', 'hooks', 'post-update'), '#!/bin/sh\necho hi\n')
+    // A project that is a bare repository itself.
+    bare = join(base, 'whole.git')
+    execFileSync('git', ['init', '-q', '--bare', bare], { stdio: 'pipe' })
+    rootProj = remoteRoot(HOST, posixPath(proj))
+    rootBare = remoteRoot(HOST, posixPath(bare))
+    rfs = createRemoteFs({ hosts: stubHosts(), spawnImpl: fakeSpawn({ home: base }) })
+    rfs.setRoots([rootProj, rootBare])
+    await rfs.listDir({ root: rootProj })
+  }, 60000)
+  afterAll(() => {
+    rfs.close()
+    fs.rmSync(base, { recursive: true, force: true })
+  })
+
+  it('a bare repository inside a project: left out of listings, never read or written (its hooks run on a push)', async () => {
+    const res = await rfs.guest.list({ root: rootProj, dirs: [''], ignore: false })
+    expect(res.results[0].entries.find((e) => e.name === 'inner.git').kind).toBe('r')
+    expect(await rfs.guest.read({ root: rootProj, rel: 'inner.git/config', max: 4096, ignore: false })).toEqual({ ok: false, code: 'refused' })
+    const read = await rfs.guest.write({ root: rootProj, rel: 'inner.git/hooks/post-update', data: Buffer.from('#!/bin/sh\nevil\n'), expectHash: 'sha256:' + '0'.repeat(64), ignore: false })
+    expect(read).toEqual({ ok: false, code: 'refused' })
+    expect(fs.readFileSync(join(proj, 'inner.git', 'hooks', 'post-update'), 'utf8')).toBe('#!/bin/sh\necho hi\n')
+    expect((await rfs.guest.check({ root: rootProj, rels: ['a.txt', 'inner.git/config'], ignore: false })).good).toEqual(new Set(['a.txt']))
+  }, 30000)
+
+  it('a project that is a bare repository: said (nothing of it is shared), its hooks cannot be told', async () => {
+    const info = await rfs.guest.info({ root: rootBare })
+    expect(info.ok).toBe(true)
+    expect(info.rootIsGitDir).toBe(true)
+    expect(info.hooks).toBe(null)
+  }, 30000)
+
+  it('$HOME is said as set and by its real path', async () => {
+    const info = await rfs.guest.info({ root: rootProj })
+    expect(info.homes).toContain(posixPath(base))
+  }, 30000)
 })
 
 describe.skipIf(!gitSh())('a Codex conversation found by its day folder first (real sh)', () => {
@@ -335,6 +451,7 @@ describe('a guest\'s lane: never a sign-in, never the host\'s session', () => {
         connected = false // dropped while the mode was looked up
         return { mode: 'ssh2', spec: {} }
       },
+      onlyLiveSupported: () => true,
       spawnFor: (...a) => {
         asked.push(a)
         throw new Error('must not be reached')
@@ -358,4 +475,36 @@ describe('a guest\'s lane: never a sign-in, never the host\'s session', () => {
     expect((await rfs.guest.list({ root, dirs: ['../up'] })).results).toEqual([{ rel: '../up', ok: false, code: 'refused' }])
     rfs.close()
   })
+})
+
+describe.skipIf(!gitSh())('a guest save stopped half way (real sh)', () => {
+  it('its temporary file goes (the host watchdog, the connection ending), and a save that fails leaves none', () => {
+    const base = fs.mkdtempSync(join(os.tmpdir(), 'tessel-rfs-trap-'))
+    try {
+      const D = posixPath(base)
+      const script = [
+        prelude('0'.repeat(32)),
+        '__t_gp() { return 0; }',
+        '__t_gone() { return 0; }',
+        // Stopped while the file is on its way (only builtins: the signal is seen at once).
+        `__t_write() { __tmp="${D}/.f.tessel-abc123"; : >"$__tmp"; : >"${D}/ready"; while :; do :; done; }`,
+        `( __t_gwr "${D}" "${D}/f" "sha256:x" "" "" 0 ) &`,
+        'p=$!',
+        `while [ ! -e "${D}/ready" ]; do sleep 0.1; done`,
+        'kill -TERM "$p"',
+        'wait "$p"; echo "rc=$?"',
+        `__t_write() { __tmp="${D}/.g.tessel-def456"; : >"$__tmp"; return 98; }`,
+        `( __t_gwr "${D}" "${D}/g" "sha256:x" "" "" 0 ); echo "rc2=$?"`,
+        ''
+      ].join('\n')
+      const file = join(base, 'run.sh')
+      fs.writeFileSync(file, script)
+      const out = execFileSync(gitSh(), [posixPath(file)], { stdio: 'pipe', timeout: 30000 }).toString()
+      expect(out).toMatch(/rc=124/)
+      expect(out).toMatch(/rc2=98/)
+      expect(fs.readdirSync(base).filter((n) => n.includes('.tessel-'))).toEqual([])
+    } finally {
+      fs.rmSync(base, { recursive: true, force: true })
+    }
+  }, 40000)
 })

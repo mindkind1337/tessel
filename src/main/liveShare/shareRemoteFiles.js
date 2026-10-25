@@ -48,7 +48,7 @@
 import { cleanRel, segmentOk, LSHARE_LIMITS as L } from '../../shared/liveSharePath'
 import { fileKind, extOf, IMAGE_MIME } from '../../shared/fileKinds'
 import { parseRemotePath } from '../../shared/remotePath'
-import { remoteRootTooBroad } from '../../shared/remoteRootPolicy'
+import { remoteRootTooBroad, remoteRootTooBroadForHome } from '../../shared/remoteRootPolicy'
 import { hashOf, signatureOf, looksBinary } from '../editorFiles'
 import { parseOpArgs, mayRun } from './shareRequests'
 import { assertNoHostPaths, hiddenByName as nameHidden, hidesPrivate, writeAllowed, touchesSpecial } from './shareScope'
@@ -134,6 +134,11 @@ export function createRemoteShareFiles({ remote, log = null, now = () => Date.no
   // anything else: 'failed'.
   function codeOf(svc, st, code, missing = 'not-found') {
     if (code === 'not-connected') return svc.connectedQuietly(st.hostId) ? 'busy' : 'host-offline'
+    // No guests' lane to the server now (the host's own session is never
+    // used for guests): as if not connected.
+    if (code === 'no-lane') return 'host-offline'
+    // git on the server too old to tell what it ignores: nothing is given.
+    if (code === 'old-git') return 'unavailable'
     if (code === 'busy') return 'busy'
     if (code === 'missing' || code === 'refused') return missing
     if (code === 'too-large' || code === 'not-file' || code === 'is-folder' || code === 'conflict') return code
@@ -141,18 +146,29 @@ export function createRemoteShareFiles({ remote, log = null, now = () => Date.no
   }
   // A read: a folder is "not a file" (as for a local project).
   const readCode = (svc, st, code) => (code === 'is-folder' ? 'not-file' : codeOf(svc, st, code))
+  // Hidden from a guest: by its name (shareScope.js), or inside the
+  // repository's own folder kept under another name than .git (st.gitDirs,
+  // from infoOf: a worktree's .bare, a --separate-git-dir).
+  function hiddenFor(st, rel, settings) {
+    if (hiddenByName(rel, settings)) return true
+    const low = String(rel || '').toLowerCase()
+    return (st.gitDirs || []).some((d) => low === d || low.startsWith(`${d}/`))
+  }
 
-  // The project folder's real path (checked: not a broad folder, not in a
-  // git folder) and its hooks folder, kept INFO_TTL_MS.
-  // -> { hooks: string[] | null } | { code }
+  // The project folder's real path (checked: not a broad folder, not the
+  // host's home or above it, not in a git folder), its hooks folder and its
+  // repository's own folders inside it, kept INFO_TTL_MS.
+  // -> { hooks: string[] | null, gitDirs: string[] } | { code }
   function infoOf(svc, st) {
     const hit = infos.get(st.root)
     if (hit && now() - hit.at < INFO_TTL_MS) return hit.promise
     const promise = Promise.resolve(svc.guest.info({ root: st.root })).then(
       (r) => {
         if (!r || !r.ok) return { code: codeOf(svc, st, r && r.code) }
-        if (remoteRootTooBroad(r.real) || inGitFolder(r.real)) return { code: 'remote-project' }
-        return { hooks: Array.isArray(r.hooks) ? r.hooks : null }
+        // $HOME as set and its real path: either one counts.
+        const homes = Array.isArray(r.homes) && r.homes.length ? r.homes : [r.home]
+        if (remoteRootTooBroad(r.real) || inGitFolder(r.real) || r.rootIsGitDir || homes.some((h) => remoteRootTooBroadForHome(r.real, h))) return { code: 'remote-project' }
+        return { hooks: Array.isArray(r.hooks) ? r.hooks : null, gitDirs: Array.isArray(r.gitDirs) ? r.gitDirs : [] }
       },
       () => ({ code: 'failed' })
     )
@@ -165,7 +181,7 @@ export function createRemoteShareFiles({ remote, log = null, now = () => Date.no
   }
 
   // What a guest may see of a folder the host listed. -> { entries, hidden }
-  function visible(one, dirRel, settings, dotfiles = true) {
+  function visible(st, one, dirRel, settings, dotfiles = true) {
     const entries = []
     let hidden = 0
     for (const e of one.entries) {
@@ -174,7 +190,7 @@ export function createRemoteShareFiles({ remote, log = null, now = () => Date.no
       const shown =
         segmentOk(e.name) &&
         (e.kind === 'd' || e.kind === 'f' || e.kind === 'o') &&
-        !hiddenByName(rel, settings) &&
+        !hiddenFor(st, rel, settings) &&
         !(one.ignored && one.ignored.has(e.name))
       if (shown) entries.push({ name: e.name, dir: e.kind === 'd' })
       else hidden++
@@ -184,12 +200,12 @@ export function createRemoteShareFiles({ remote, log = null, now = () => Date.no
 
   // --- The ops --------------------------------------------------------------------
   async function opList(svc, a, st, settings) {
-    if (a.dir && hiddenByName(a.dir, settings)) return fail('not-found')
+    if (a.dir && hiddenFor(st, a.dir, settings)) return fail('not-found')
     const res = await svc.guest.list({ root: st.root, dirs: [a.dir], ignore: hidesPrivate(settings) })
     if (!res || !res.ok) return fail(codeOf(svc, st, res && res.code))
     const one = res.results.find((r) => r.rel === a.dir)
     if (!one || !one.ok) return fail(codeOf(svc, st, one ? one.code : 'failed'))
-    const { entries, hidden } = visible(one, a.dir, settings, a.dotfiles !== false)
+    const { entries, hidden } = visible(st, one, a.dir, settings, a.dotfiles !== false)
     return done({ entries: entries.slice(0, L.entries), truncated: one.truncated || entries.length > L.entries, hidden })
   }
 
@@ -200,7 +216,7 @@ export function createRemoteShareFiles({ remote, log = null, now = () => Date.no
     const results = []
     let round = []
     for (const rel of a.dirs) {
-      if (rel && hiddenByName(rel, settings)) results.push({ dir: rel, ok: false, code: 'not-found' })
+      if (rel && hiddenFor(st, rel, settings)) results.push({ dir: rel, ok: false, code: 'not-found' })
       else round.push(rel)
     }
     const seen = new Set(round)
@@ -223,12 +239,12 @@ export function createRemoteShareFiles({ remote, log = null, now = () => Date.no
           results.push({ dir: one.rel, ok: false, code: 'too-large' })
           continue
         }
-        const { entries, hidden } = visible(one, one.rel, settings, a.dotfiles !== false)
+        const { entries, hidden } = visible(st, one, one.rel, settings, a.dotfiles !== false)
         total += entries.length
         results.push({ dir: one.rel, ok: true, entries, truncated: one.truncated, hidden })
         if (a.chain && !one.truncated && entries.length === 1 && entries[0].dir) {
           const sub = join2(one.rel, entries[0].name)
-          if (!seen.has(sub) && !hiddenByName(sub, settings)) {
+          if (!seen.has(sub) && !hiddenFor(st, sub, settings)) {
             seen.add(sub)
             next.push(sub)
           }
@@ -241,7 +257,7 @@ export function createRemoteShareFiles({ remote, log = null, now = () => Date.no
 
   async function opStat(svc, a, st, settings) {
     const none = done({ exists: false, sig: null })
-    if (hiddenByName(a.path, settings)) return none
+    if (hiddenFor(st, a.path, settings)) return none
     const res = await svc.guest.stat({ root: st.root, rel: a.path, ignore: hidesPrivate(settings) })
     if (!res || !res.ok) {
       const code = codeOf(svc, st, res && res.code)
@@ -271,7 +287,7 @@ export function createRemoteShareFiles({ remote, log = null, now = () => Date.no
   }
 
   async function opRead(svc, a, st, settings, rights) {
-    if (hiddenByName(a.path, settings)) return fail('not-found')
+    if (hiddenFor(st, a.path, settings)) return fail('not-found')
     const got = await readText(svc, st, a.path, settings)
     if (got.code) return fail(got.code)
     const info = rights.edit === true ? await infoOf(svc, st) : null
@@ -289,7 +305,7 @@ export function createRemoteShareFiles({ remote, log = null, now = () => Date.no
   async function opImage(svc, a, st, settings) {
     const mime = fileKind(a.path) === 'image' ? IMAGE_MIME[extOf(a.path)] : null
     if (!mime) return fail('not-file')
-    if (hiddenByName(a.path, settings)) return fail('not-found')
+    if (hiddenFor(st, a.path, settings)) return fail('not-found')
     const res = await svc.guest.read({ root: st.root, rel: a.path, max: L.imageBytes, ignore: hidesPrivate(settings) })
     if (!res || !res.ok) return fail(readCode(svc, st, res && res.code))
     return done({ size: res.buf.length, dataUrl: `data:${mime};base64,${res.buf.toString('base64')}` })
@@ -301,7 +317,7 @@ export function createRemoteShareFiles({ remote, log = null, now = () => Date.no
   async function opWrite(svc, a, st, settings, rights, ctx) {
     const data = Buffer.concat([a.bom ? BOM : Buffer.alloc(0), Buffer.from(a.text, 'utf8')])
     if (data.length > L.writeBytes) return fail('too-large')
-    if (hiddenByName(a.path, settings) || rights.edit !== true) return fail('not-allowed')
+    if (hiddenFor(st, a.path, settings) || rights.edit !== true) return fail('not-allowed')
     const info = await infoOf(svc, st)
     if (info.code) return fail(info.code)
     if (!canWrite(rights, a.path, info.hooks)) return fail('not-allowed')
@@ -347,14 +363,14 @@ export function createRemoteShareFiles({ remote, log = null, now = () => Date.no
   }
 
   async function opSearchNames(svc, a, st, settings) {
-    if (a.dir && hiddenByName(a.dir, settings)) return fail('not-found')
+    if (a.dir && hiddenFor(st, a.dir, settings)) return fail('not-found')
     const res = await svc.guest.searchNames({ root: st.root, query: a.query })
     if (!res || !res.ok) return fail(codeOf(svc, st, res && res.code, 'failed'))
     const within = a.dir ? `${a.dir}/` : ''
     const found = []
     for (const r of res.results) {
       const rel = cleanRel(r.rel)
-      if (!rel || hiddenByName(rel, settings)) continue
+      if (!rel || hiddenFor(st, rel, settings)) continue
       if (within && !rel.startsWith(within)) continue
       if (a.dotfiles === false && rel.split('/').some((s) => s.startsWith('.'))) continue
       found.push({ rel, dir: !!r.dir })
@@ -377,7 +393,7 @@ export function createRemoteShareFiles({ remote, log = null, now = () => Date.no
     const found = []
     for (const r of res.results) {
       const rel = cleanRel(r.rel)
-      if (rel && !hiddenByName(rel, settings)) found.push({ rel, line: r.line, text: String(r.text || '').slice(0, 1000) })
+      if (rel && !hiddenFor(st, rel, settings)) found.push({ rel, line: r.line, text: String(r.text || '').slice(0, 1000) })
     }
     const ok = await checked(svc, st, [...new Set(found.map((r) => r.rel))], settings)
     if (ok.code) return fail(ok.code)
@@ -436,6 +452,7 @@ export function createRemoteShareFiles({ remote, log = null, now = () => Date.no
       // nothing is given.
       const info = await infoOf(svc, st)
       if (info.code) return fail(info.code)
+      st.gitDirs = info.gitDirs || []
       res = await RUN[name](svc, a, st, { settings, rights, recheck: ctx.recheck })
     } catch (err) {
       // (log.warn(text): liveShare.js tags it with its area.)

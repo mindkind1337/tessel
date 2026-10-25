@@ -518,6 +518,186 @@ __t_fp() {
   if [ -s "$__T_D/fpl" ]; then printf 'changed\\000'; cat "$__T_D/fpl"; else echo same; fi
   rm -f "$__T_D/fpl"
 }
+__t_gd() { [ -f "$1/HEAD" ] && [ -d "$1/objects" ] && [ -d "$1/refs" ]; }
+__t_gw() {
+  __gc=$1
+  __go=$IFS; IFS=/; set -f; set -- $2; IFS=$__go; set +f
+  [ $# -gt 0 ] || return 90
+  while [ $# -gt 0 ]; do
+    case $1 in ''|.|..) return 90 ;; esac
+    __gc=$__gc/$1
+    [ -L "$__gc" ] && return 90
+    if [ -d "$__gc" ]; then
+      if [ -e "$__gc/.git" ] || [ -L "$__gc/.git" ]; then return 90; fi
+      __t_gd "$__gc" && return 90
+    elif [ $# -gt 1 ]; then return 91
+    fi
+    shift
+  done
+  return 0
+}
+__t_gp() {
+  __t_root "$1" || return $?
+  __gb=\${1%/}
+  [ "$2" = "$1" ] || [ "$2" = "$__gb" ] && return 0
+  case $2 in "$__gb"/*) ;; *) return 90 ;; esac
+  __t_gw "$__gb" "\${2#"$__gb"/}"
+}
+__t_grel() { __gb=\${1%/}; __gq=; [ "$2" = "$1" ] || [ "$2" = "$__gb" ] || __gq=\${2#"$__gb"/}; }
+__t_gup() {
+  __gu=$1
+  while [ -n "$__gu" ]; do
+    if [ -e "$__gu/.git" ] || [ -L "$__gu/.git" ]; then return 0; fi
+    case $__gu in */*) __gu=\${__gu%/*} ;; *) __gu= ;; esac
+  done
+  [ -e /.git ]
+}
+__t_gign() {
+  __gt=
+  command -v git >/dev/null 2>&1 && __gt=$(__t_git "$1" rev-parse --is-inside-work-tree 2>/dev/null)
+  if [ "$__gt" = true ]; then
+    printf '/@@I y\\000'
+    __t_git "$1" check-ignore --no-index -z --stdin 2>"$__T_D/ge"; __gr=$?
+    if [ "$__gr" -le 1 ] && [ ! -s "$__T_D/ge" ]; then printf '/@@I e\\000'
+    elif [ "$__gr" = 129 ] || grep -q -e 'not a git command' -e 'unknown option' "$__T_D/ge" 2>/dev/null; then printf '/@@I o\\000'
+    fi
+    rm -f "$__T_D/ge"
+    return 0
+  fi
+  if __t_gup "$1"; then printf '/@@I x\\000'; else printf '/@@I n\\000'; fi
+}
+__t_gone() {
+  [ "$3" = 1 ] || return 0
+  __t_grel "$1" "$2"
+  [ -n "$__gq" ] || return 0
+  printf './%s\\000' "$__gq" | __t_gign "$__R" | tr '\\000' '\\n' >"$__T_D/gi"
+  read -r __gs <"$__T_D/gi" || __gs=
+  case $__gs in
+    '/@@I n') return 0 ;;
+    '/@@I y')
+      grep -q -x -F -e '/@@I o' "$__T_D/gi" && return 87
+      grep -q -x -F -e '/@@I e' "$__T_D/gi" || return 97
+      grep -q -x -F -e "./$__gq" "$__T_D/gi" && return 91
+      grep -q -x -F -e "$__gq" "$__T_D/gi" && return 91
+      return 0 ;;
+  esac
+  return 97
+}
+__t_gls() {
+  __t_gp "$1" "$2" || return $?
+  __t_grel "$1" "$2"
+  __P=$__R; [ -z "$__gq" ] || __P="\${__R%/}/$__gq"
+  [ -d "$__P" ] || return 92
+  : >"$__T_D/gn"
+  [ -z "$__gq" ] || { printf './%s\\000' "$__gq" >>"$__T_D/gn"; __gq="$__gq/"; }
+  __n=0
+  for __f in "$__P"/* "$__P"/.[!.]* "$__P"/..?*; do
+    [ -e "$__f" ] || [ -L "$__f" ] || continue
+    __n=$((__n+1)); [ "$__n" -gt "$3" ] && break
+    __b=\${__f##*/}
+    if [ -L "$__f" ]; then __k=l
+    elif [ -d "$__f" ]; then if [ -e "$__f/.git" ] || [ -L "$__f/.git" ] || __t_gd "$__f"; then __k=r; else __k=d; fi
+    elif [ -f "$__f" ]; then __k=f; else __k=o; fi
+    printf '%s %s\\000' "$__k" "$__b"
+    case $__k$__b in l*|r*|?.git) ;; *) printf './%s%s\\000' "$__gq" "$__b" >>"$__T_D/gn" ;; esac
+  done
+  [ "$4" = 1 ] && __t_gign "$__R" <"$__T_D/gn"
+  rm -f "$__T_D/gn"
+  return 0
+}
+__t_glsm() {
+  __lr=$1; __lmx=$2; __lig=$3; shift 3
+  for __ld in "$@"; do
+    __t_gls "$__lr" "$__ld" "$__lmx" "$__lig" >"$__T_D/gm"; __lrc=$?
+    printf '/@@D %s\\000' "$__lrc"
+    [ "$__lrc" = 0 ] && cat "$__T_D/gm"
+  done
+  rm -f "$__T_D/gm"
+  return 0
+}
+__t_gst() { __t_gp "$1" "$2" || return $?; __t_gone "$1" "$2" "$3" || return $?; __t_stats "$1" "$2"; }
+__t_grd() { __t_gp "$1" "$2" || return $?; __t_gone "$1" "$2" "$4" || return $?; __t_read "$1" "$2" "$3"; }
+__t_gwr() {
+  __t_gp "$1" "$2" || return $?
+  __t_grel "$1" "$2"
+  case "/$(printf '%s' "$__gq" | LC_ALL=C tr 'A-Z' 'a-z')/" in */.git/*) return 90 ;; esac
+  [ -n "$3" ] || [ "$5" = new ] || return 90
+  __tmp=
+  trap '[ -n "$__tmp" ] && rm -f "$__tmp"' EXIT
+  trap '[ -n "$__tmp" ] && rm -f "$__tmp"; exit 124' HUP TERM PIPE
+  __t_gone "$1" "$2" "$6" || return $?
+  __t_write "$1" "$2" "$3" "$4" '' "$5"
+}
+__t_gchk() {
+  __t_root "$1" || return $?
+  __gb=\${1%/}
+  __t_b64d <"$__T_D/u" >"$__T_D/m" || return 98
+  : >"$__T_D/gk"
+  while IFS= read -r __gl || [ -n "$__gl" ]; do
+    [ -n "$__gl" ] || continue
+    __t_gw "$__gb" "$__gl" || continue
+    [ -e "$__gb/$__gl" ] && [ ! -L "$__gb/$__gl" ] || continue
+    printf '%s\\000' "$__gl"
+    printf './%s\\000' "$__gl" >>"$__T_D/gk"
+  done <"$__T_D/m"
+  printf '/@@C\\000'
+  [ "$2" = 1 ] && __t_gign "$__R" <"$__T_D/gk"
+  rm -f "$__T_D/gk" "$__T_D/m"
+  return 0
+}
+__t_gabs() { case $1 in -*|'') return 1 ;; esac; __q=$(cd "$__R" 2>/dev/null && __t_real "$1") && [ -n "$__q" ]; }
+__t_ghk() {
+  __t_root "$1" || return $?
+  printf 'R %s\\n' "$__R"
+  printf 'M %s\\n' "$HOME"
+  __q=$(cd -P "$HOME" 2>/dev/null && pwd -P) && [ -n "$__q" ] && printf 'P %s\\n' "$__q"
+  __t=
+  command -v git >/dev/null 2>&1 && __t=$(__t_git "$__R" rev-parse --show-toplevel 2>/dev/null)
+  if [ -z "$__t" ]; then
+    __gd=
+    command -v git >/dev/null 2>&1 && __gd=$(__t_git "$__R" rev-parse --git-dir 2>/dev/null)
+    if [ -n "$__gd" ] && __t_gabs "$__gd"; then printf 'G %s\\nX\\n' "$__q"; return 0; fi
+    if __t_gup "$__R"; then printf 'X\\n'; else printf 'N\\n'; fi
+    return 0
+  fi
+  __t=$(__t_real "$__t") || return 91
+  printf 'T %s\\n' "$__t"
+  __gd=$(__t_git "$__R" rev-parse --git-dir 2>/dev/null) && __t_gabs "$__gd" && printf 'G %s\\n' "$__q"
+  __gd=$(__t_git "$__R" rev-parse --git-common-dir 2>/dev/null) && __t_gabs "$__gd" && printf 'C %s\\n' "$__q"
+  __h=$(__t_git "$__R" config --get core.hooksPath 2>/dev/null); __hr=$?
+  [ "$__hr" = 1 ] && return 0
+  [ "$__hr" = 0 ] || return 98
+  printf 'H %s\\n' "$__h"
+  case $__h in '') return 0 ;; '~'*) return 0 ;; /*) __a=$__h ;; *) __a="\${__t%/}/$__h" ;; esac
+  __q=$(__t_real "$__a" 2>/dev/null) && [ -n "$__q" ] && printf 'Q %s\\n' "$__q"
+  return 0
+}
+__t_gfind() {
+  __t_findn "$1" "$2" d
+  printf '/@@F\\000'
+  __t_findn "$1" "$2" f
+}
+__t_ggrep() {
+  __t_root "$1" || return $?
+  __gq=$2; shift 2
+  cd "$__R" || return 91
+  if command -v git >/dev/null 2>&1 && [ "$(__t_git "$__R" rev-parse --is-inside-work-tree 2>/dev/null)" = true ]; then
+    printf 'G\\n'
+    __t_git "$__R" "$@"
+  elif printf 'x\\n' | grep --null -n -e x >/dev/null 2>&1; then
+    printf 'P\\n'
+    set -- -rnIiF --null
+    [ -n "$__T_GD" ] && set -- "$@" -D skip
+    LC_ALL=C grep "$@" --exclude-dir=.git --exclude-dir=node_modules --exclude-dir=dist --exclude-dir=build --exclude-dir=out --exclude-dir=.next --exclude-dir=.cache --exclude-dir=target --exclude-dir=.venv --exclude-dir=__pycache__ -e "$__gq" .
+  else
+    printf 'L\\n'
+    LC_ALL=C grep -rliF -e "$__gq" . 2>/dev/null | head -n 500 | while IFS= read -r __gf; do
+      [ -f "$__gf" ] || continue
+      printf '/@@F %s\\n' "$__gf"
+      LC_ALL=C grep -niF -e "$__gq" -- "$__gf" 2>/dev/null | head -n 50
+    done
+  fi
+}
 __t_wtl() {
   __t_root "$1" || return $?
   case $2 in ''|*[!0-9]*) return 90 ;; esac
@@ -541,146 +721,6 @@ __t_wtl() {
       esac
     done
   }
-}
-__t_gw() {
-  __gc=$1
-  __go=$IFS; IFS=/; set -f; set -- $2; IFS=$__go; set +f
-  [ $# -gt 0 ] || return 90
-  while [ $# -gt 0 ]; do
-    case $1 in ''|.|..) return 90 ;; esac
-    __gc=$__gc/$1
-    [ -L "$__gc" ] && return 90
-    if [ -d "$__gc" ]; then
-      if [ -e "$__gc/.git" ] || [ -L "$__gc/.git" ]; then return 90; fi
-    elif [ $# -gt 1 ]; then return 91
-    fi
-    shift
-  done
-  return 0
-}
-__t_gp() {
-  __t_root "$1" || return $?
-  __gb=\${1%/}
-  [ "$2" = "$1" ] || [ "$2" = "$__gb" ] && return 0
-  case $2 in "$__gb"/*) ;; *) return 90 ;; esac
-  __t_gw "$__gb" "\${2#"$__gb"/}"
-}
-__t_grel() { __gb=\${1%/}; __gq=; [ "$2" = "$1" ] || [ "$2" = "$__gb" ] || __gq=\${2#"$__gb"/}; }
-__t_gign() {
-  __gt=
-  command -v git >/dev/null 2>&1 && __gt=$(__t_git "$1" rev-parse --is-inside-work-tree 2>/dev/null)
-  if [ "$__gt" = true ]; then
-    printf '/@@I y\\000'
-    __t_git "$1" check-ignore -z --stdin
-    [ $? -le 1 ] && printf '/@@I e\\000'
-    return 0
-  fi
-  __gu=$1
-  while [ -n "$__gu" ]; do
-    if [ -e "$__gu/.git" ] || [ -L "$__gu/.git" ]; then printf '/@@I x\\000'; return 0; fi
-    case $__gu in */*) __gu=\${__gu%/*} ;; *) __gu= ;; esac
-  done
-  if [ -e /.git ]; then printf '/@@I x\\000'; return 0; fi
-  printf '/@@I n\\000'
-}
-__t_gone() {
-  [ "$3" = 1 ] || return 0
-  __t_grel "$1" "$2"
-  [ -n "$__gq" ] || return 0
-  printf './%s\\000' "$__gq" | __t_gign "$__R" | tr '\\000' '\\n' >"$__T_D/gi"
-  read -r __gs <"$__T_D/gi" || __gs=
-  case $__gs in
-    '/@@I n') return 0 ;;
-    '/@@I y')
-      grep -q -x -F -e '/@@I e' "$__T_D/gi" || return 97
-      grep -q -x -F -e "./$__gq" "$__T_D/gi" && return 91
-      grep -q -x -F -e "$__gq" "$__T_D/gi" && return 91
-      return 0 ;;
-  esac
-  return 97
-}
-__t_gls() {
-  __t_gp "$1" "$2" || return $?
-  __t_grel "$1" "$2"
-  __P=$__R; [ -z "$__gq" ] || __P="\${__R%/}/$__gq"
-  [ -d "$__P" ] || return 92
-  : >"$__T_D/gn"
-  [ -z "$__gq" ] || { printf './%s\\000' "$__gq" >>"$__T_D/gn"; __gq="$__gq/"; }
-  __n=0
-  for __f in "$__P"/* "$__P"/.[!.]* "$__P"/..?*; do
-    [ -e "$__f" ] || [ -L "$__f" ] || continue
-    __n=$((__n+1)); [ "$__n" -gt "$3" ] && break
-    __b=\${__f##*/}
-    if [ -L "$__f" ]; then __k=l
-    elif [ -d "$__f" ]; then if [ -e "$__f/.git" ] || [ -L "$__f/.git" ]; then __k=r; else __k=d; fi
-    elif [ -f "$__f" ]; then __k=f; else __k=o; fi
-    printf '%s %s\\000' "$__k" "$__b"
-    case $__k$__b in l*|r*|?.git) ;; *) printf './%s%s\\000' "$__gq" "$__b" >>"$__T_D/gn" ;; esac
-  done
-  [ "$4" = 1 ] && __t_gign "$__R" <"$__T_D/gn"
-  rm -f "$__T_D/gn"
-  return 0
-}
-__t_glsm() {
-  __lr=$1; __lmx=$2; __lig=$3; shift 3
-  for __ld in "$@"; do
-    __t_gls "$__lr" "$__ld" "$__lmx" "$__lig" >"$__T_D/gm"; __lrc=$?
-    printf '/@@D %s\\000' "$__lrc"
-    [ "$__lrc" = 0 ] && cat "$__T_D/gm"
-  done
-  rm -f "$__T_D/gm"
-  return 0
-}
-__t_gst() { __t_gp "$1" "$2" || return $?; __t_gone "$1" "$2" "$3" || return $?; __t_stats "$1" "$2"; }
-__t_grd() { __t_gp "$1" "$2" || return $?; __t_gone "$1" "$2" "$4" || return $?; __t_read "$1" "$2" "$3"; }
-__t_gwr() { __t_gp "$1" "$2" || return $?; __t_gone "$1" "$2" "$6" || return $?; __t_write "$1" "$2" "$3" "$4" '' "$5"; }
-__t_gchk() {
-  __t_root "$1" || return $?
-  __gb=\${1%/}
-  __t_b64d <"$__T_D/u" >"$__T_D/m" || return 98
-  : >"$__T_D/gk"
-  while IFS= read -r __gl || [ -n "$__gl" ]; do
-    [ -n "$__gl" ] || continue
-    __t_gw "$__gb" "$__gl" || continue
-    printf '%s\\000' "$__gl"
-    printf './%s\\000' "$__gl" >>"$__T_D/gk"
-  done <"$__T_D/m"
-  printf '/@@C\\000'
-  [ "$2" = 1 ] && __t_gign "$__R" <"$__T_D/gk"
-  rm -f "$__T_D/gk" "$__T_D/m"
-  return 0
-}
-__t_ghk() {
-  __t_root "$1" || return $?
-  printf 'R %s\\n' "$__R"
-  command -v git >/dev/null 2>&1 || { printf 'N\\n'; return 0; }
-  __t=$(__t_git "$__R" rev-parse --show-toplevel 2>/dev/null) || { printf 'N\\n'; return 0; }
-  __t=$(__t_real "$__t") || return 91
-  printf 'T %s\\n' "$__t"
-  __h=$(__t_git "$__R" config --get core.hooksPath 2>/dev/null); __hr=$?
-  [ "$__hr" = 1 ] && return 0
-  [ "$__hr" = 0 ] || return 98
-  printf 'H %s\\n' "$__h"
-  case $__h in '') return 0 ;; '~'*) return 0 ;; /*) __a=$__h ;; *) __a="\${__t%/}/$__h" ;; esac
-  __q=$(__t_real "$__a" 2>/dev/null) && [ -n "$__q" ] && printf 'Q %s\\n' "$__q"
-  return 0
-}
-__t_gfind() {
-  __t_findn "$1" "$2" d
-  printf '/@@F\\000'
-  __t_findn "$1" "$2" f
-}
-__t_ggrep() {
-  __t_root "$1" || return $?
-  __gq=$2; shift 2
-  cd "$__R" || return 91
-  if command -v git >/dev/null 2>&1 && [ "$(__t_git "$__R" rev-parse --is-inside-work-tree 2>/dev/null)" = true ]; then
-    printf 'G\\n'
-    __t_git "$__R" "$@"
-  else
-    printf 'P\\n'
-    __t_grep "$__R" plain "$__gq"
-  fi
 }
 __t_dir() { [ -d "$1" ] || return 91; __PD=$(cd -P "$1" 2>/dev/null && pwd -P) || return 89; [ -n "$__PD" ] || return 91; }
 __t_browse() {

@@ -326,8 +326,13 @@ async function loadStatus() {
   if (!api() || !props.root) return
   const revision = viewRevision, root = props.root, request = ++statusRequest
   const res = await api().status({ root, ignored: true, background: true }).catch(() => null)
+  // (An answer for a project no longer shown says nothing of this one.)
+  if (!stillCurrent(revision, root)) return
   if (res && Number.isFinite(res.ms)) statusCost = res.ms
-  if (!stillCurrent(revision, root) || request !== statusRequest) return
+  // One that failed (ran out of time on a huge repository): the next waits
+  // twice as long each time, not a new one every minute.
+  statusFails = res && res.ok ? 0 : Math.min(statusFails + 1, 6)
+  if (request !== statusRequest) return
   if (res && !res.ok && stateOfAnswer(res) === 'no-access') noteAnswer(res)
   if (!res || !res.ok) return
   const out = {}
@@ -356,7 +361,11 @@ let statusLast = 0
 // On a remote host, a status that takes long (a big project) is asked less
 // often: at most a quarter of the time on it (3x its own time between runs).
 let statusCost = 0
-const statusGap = () => (remote.value ? Math.max(4000, Math.min(60000, statusCost * 3)) : 1000)
+let statusFails = 0
+const statusGap = () => {
+  const base = remote.value ? Math.max(4000, Math.min(60000, statusCost * 3)) : 1000
+  return statusFails ? Math.min(10 * 60000, Math.max(base, remote.value ? 60000 : 5000) * 2 ** (statusFails - 1)) : base
+}
 function requestStatus() {
   if (statusBusy) {
     statusAgain = true
@@ -830,6 +839,10 @@ const rootLoading = computed(() => {
   const n = props.root ? nodes[displayRoot.value] : null
   return !!props.root && !!api() && (!n || (n.loading && !n.entries.length && !n.error))
 })
+// Rows kept from the last time and not read again yet (explorerTreeCache.js):
+// dimmed, and the header says so.
+const staleOf = (dir) => !!(dir && nodes[dir] && nodes[dir].stale)
+const staleShown = computed(() => !!props.root && (staleOf(displayRoot.value) || Object.keys(open).some((d) => open[d] && staleOf(d))))
 function selectRow(i) {
   const list = rows.value
   if (!list.length) return
@@ -1070,6 +1083,8 @@ async function doTrash() {
 }
 
 // --- The project shown -------------------------------------------------------------
+// A tree kept longer ago than this: its project's folder is read in your turn.
+const KEPT_FOREGROUND_MS = 10 * 60 * 1000
 let stopChanged = null
 let changedTimer = 0
 async function showRoot() {
@@ -1087,6 +1102,7 @@ async function showRoot() {
   pendingChange = { all: false, paths: new Set(), renamed: new Set(), renamedKnown: true }
   resetStatusRuns()
   statusCost = 0
+  statusFails = 0
   loadBatch = null
   for (const k of Object.keys(nodes)) delete nodes[k]
   for (const k of Object.keys(open)) delete open[k]
@@ -1120,7 +1136,11 @@ async function showRoot() {
   })
   if (!readable) return
   api().watch(props.root)
-  if (kept) await Promise.all([loadDirs(openDirs(), { background: true }), loadSparse()])
+  // Kept a long while ago: the project's own folder is read in your turn
+  // (its rows stay meanwhile), the open ones behind it.
+  const old = kept && Date.now() - (kept.at || 0) > KEPT_FOREGROUND_MS
+  if (kept && old) await Promise.all([loadDir(props.root), loadDirs(openDirs().filter((d) => d !== props.root), { background: true }), loadSparse()])
+  else if (kept) await Promise.all([loadDirs(openDirs(), { background: true }), loadSparse()])
   else await Promise.all([loadDir(props.root), loadSparse()])
   if (!stillCurrent(revision, root)) return
   loadStatus()
@@ -1279,6 +1299,7 @@ function rowTitle(e) {
       <span class="explorer-twistie" :class="{ open: folderShown }" aria-hidden="true"><svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M10.072 8.024L5.715 3.667l.618-.62L11 7.716v.618L6.333 13l-.618-.619 4.357-4.357z" /></svg></span>
       <span class="explorer-title explorer-section-title" :title="root || ''">{{ folderTitle }}</span>
       <span v-if="backgroundLoads > 0 && !rootLoading" class="explorer-spinner explorer-head-spinner" role="status" :aria-label="t('explorer.loading', 'Loading…')" data-test="explorer-reloading"></span>
+      <span v-if="staleShown" class="explorer-stale-note" role="status" :title="t('explorer.staleHint', 'These are the files shown last time: they are read again in the background and updated in place.')" data-test="explorer-stale">{{ t('explorer.staleNote', 'Last known files, updating…') }}</span>
       <span v-if="readOnly && lshare && !accessState" class="explorer-badge explorer-readonly" :title="t('explorer.readOnly', 'Read-only: the host has not let you edit files here.')" data-test="explorer-read-only">{{ t('explorer.readOnlyTag', 'Read-only') }}</span>
       <span class="explorer-actions" @click.stop>
         <button v-if="!readOnly" class="tb-icon" :title="t('explorer.newFile', 'New file')" :aria-label="t('explorer.newFile', 'New file')" data-test="explorer-head-new-file" :disabled="!root" @click="newFromHead(false)">
@@ -1445,6 +1466,7 @@ function rowTitle(e) {
             dir: row.dir,
             open: row.open,
             compact: row.chain.length > 1,
+            stale: staleOf(row.parent),
             ignored: ignoredOf(row.path),
             ['git-' + (letterOf(row.entry) || 'none')]: true
           }"

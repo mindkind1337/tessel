@@ -431,6 +431,8 @@
     },
     "readFailed": "Impossible de le lire.",
     "loading": "Chargement…",
+    "staleNote": "Derniers fichiers connus, mise à jour…",
+    "staleHint": "Ces fichiers sont ceux affichés la dernière fois : ils sont relus en arrière-plan et mis à jour sur place.",
     "retry": "Réessayer",
     "copied": "Copié.",
     "editFailed": "L'opération n'a pas pu être effectuée.",

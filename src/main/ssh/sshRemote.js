@@ -323,5 +323,10 @@ export function createSshRemote({ host, hosts, send = () => {}, log = null, t, s
 
   const isPane = (paneId) => typeof paneId === 'string' && paneId.startsWith(PANE_PREFIX)
 
-  return { modeFor, terminalRequest, spawnFor, testConnection, disconnect, submit, isPane, onEvent, onConnected, onLost, errorText, clearCache: () => resolve.clear && resolve.clear() }
+  // Whether the running terminal host keeps an exec channel to a live
+  // connection (ssh-exec onlyLive) and gives its slot to a terminal: a
+  // terminal host started by an older Tessel does not (remoteFs.js opens no
+  // lane on it).
+  const onlyLiveSupported = () => !!(host.features && host.features.onlyLive)
+  return { modeFor, terminalRequest, spawnFor, onlyLiveSupported, testConnection, disconnect, submit, isPane, onEvent, onConnected, onLost, errorText, clearCache: () => resolve.clear && resolve.clear() }
 }

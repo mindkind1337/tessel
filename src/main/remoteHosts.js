@@ -473,7 +473,9 @@ export function createRemoteHosts({
 // ssh (optional, ssh/sshRemote.js): the shared ssh2 connections — Test signs
 // in through them, Disconnect and Remove close them and forget the host's
 // kept password / passphrases.
-export function registerRemoteHosts({ ipcMain, service, killPane, ssh = null }) {
+// closeFiles(hostId, reason): the host's Files session and its lanes end
+// (remoteFs.js closeHost), even when the Files session itself is gone.
+export function registerRemoteHosts({ ipcMain, service, killPane, ssh = null, closeFiles = null }) {
   const guard = (fn) => async (_evt, arg) => {
     try {
       return await fn(arg || {})
@@ -489,6 +491,7 @@ export function registerRemoteHosts({ ipcMain, service, killPane, ssh = null }) 
     const hostId = String(id || '')
     service.markDisconnecting(hostId)
     for (const p of service.panesOf(hostId)) killPane(p)
+    if (closeFiles) closeFiles(hostId, 'removed')
     if (ssh) ssh.disconnect(hostId)
     return service.remove(hostId)
   }))
@@ -506,6 +509,7 @@ export function registerRemoteHosts({ ipcMain, service, killPane, ssh = null }) 
     service.markDisconnecting(hostId)
     const ids = service.panesOf(hostId)
     for (const p of ids) killPane(p)
+    if (closeFiles) closeFiles(hostId, 'disconnect')
     if (ssh) ssh.disconnect(hostId)
     return { ok: true, closed: ids.length }
   }))

@@ -438,6 +438,9 @@ function wakeSandbox(over = {}) {
     wakeLaunchArgs,
     // createLeaf's Claude permission mode (a chat continued in a terminal): none here.
     permissionMode: null,
+    // createLeaf's host agent check asked early (an agent started again in
+    // place, opts.restart): none here, the launch block asks it itself.
+    earlyCommand: null,
     // Claude Code's Yolo as root (remoteAgentLaunch.js): no root host here.
     hasClaudeYoloFlag,
     rootSafeClaudeArgs,
