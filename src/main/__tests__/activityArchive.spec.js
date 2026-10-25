@@ -49,7 +49,7 @@ describe('activity archive', () => {
   it('removes the days older than the log keeps', async () => {
     const a = createActivityArchive(dir)
     const now = Date.UTC(2026, 9, 20, 12)
-    await a.append([ev(now - 40 * DAY, 1), ev(now - 29 * DAY, 2), ev(now - DAY, 3)])
+    await a.append([ev(now - 40 * DAY, 1), ev(now - 29 * DAY, 2), ev(now - DAY, 3)], now)
     expect(parseActivityLines(await a.read(now)).map((e) => e.n)).toEqual([2, 3])
     await new Promise((r) => setTimeout(r, 50))
     expect(fs.readdirSync(a.dir)).toHaveLength(2)
@@ -75,6 +75,69 @@ describe('activity archive', () => {
     spy.mockRestore()
     expect(await a.append([ev(Date.UTC(2026, 9, 18), 2)])).toMatchObject({ ok: true })
     expect(warn).toHaveBeenCalled()
+  })
+
+  it('an event sent again is stored once, also by a later process (the window resending, a save cut off)', async () => {
+    const t = Date.UTC(2026, 9, 18, 10)
+    const a = createActivityArchive(dir)
+    await a.append([ev(t, 1), ev(t + 1, 2)], t)
+    expect(await a.append([ev(t, 1), ev(t + 1, 2), ev(t + 2, 3), ev(t + 2, 3)], t)).toMatchObject({ ok: true, count: 1 })
+    const b = createActivityArchive(dir) // Tessel restarted
+    expect(await b.append([ev(t, 1), ev(t + 2, 3)], t)).toMatchObject({ ok: true, count: 0 })
+    const lines = fs.readFileSync(join(a.dir, '2026-10-18.jsonl'), 'utf8').split('\n').filter(Boolean)
+    expect(lines).toHaveLength(3)
+  })
+
+  it('a team message is stored once per status, whatever else its copies say', async () => {
+    const t = Date.UTC(2026, 9, 18, 10)
+    const msg = (status, title) => ({ t, type: 'message', msgId: 'm-1', status, agent: { title } })
+    const a = createActivityArchive(dir)
+    await a.append([msg('unread', 'Ada')], t)
+    expect(await a.append([msg('unread', 'Ada (renamed)')], t)).toMatchObject({ count: 0 })
+    expect(await a.append([msg('read', 'Ada')], t)).toMatchObject({ count: 1 })
+    expect(await createActivityArchive(dir).append([msg('read', 'Ada again')], t)).toMatchObject({ count: 0 })
+    const back = mergeSavedActivity('[]', await a.read(t), t)
+    expect(back.events).toHaveLength(1)
+    expect(back.events[0].status).toBe('read')
+  })
+
+  it('read: exact copies (left by earlier versions) are read once, count once toward the limit, and leave the file', async () => {
+    const warn = vi.fn()
+    const a = createActivityArchive(dir, { warn })
+    const now = Date.UTC(2026, 9, 20, 12)
+    fs.mkdirSync(a.dir, { recursive: true })
+    // Two days of 12,000 events each, the newest stored five times over.
+    const day = (d, n) => Array.from({ length: n }, (_, i) => JSON.stringify(ev(now - d * DAY + i, `${d}-${i}`)))
+    const newest = day(0, 12000)
+    fs.writeFileSync(join(a.dir, '2026-10-20.jsonl'), '\n' + [...newest, ...newest, ...newest, ...newest, ...newest].join('\n') + '\n')
+    fs.writeFileSync(join(a.dir, '2026-10-19.jsonl'), '\n' + day(1, 12000).join('\n') + '\n')
+    const events = parseActivityLines(await a.read(now))
+    // Both days are read (24,000 different events), each once.
+    expect(events).toHaveLength(24000)
+    expect(new Set(events.map((e) => e.n)).size).toBe(24000)
+    // The copies leave the file (in turn with the appends: one made meanwhile is kept).
+    await a.append([ev(now + 5, 'new')], now)
+    const lines = fs.readFileSync(join(a.dir, '2026-10-20.jsonl'), 'utf8').split('\n').filter(Boolean)
+    expect(lines).toHaveLength(12001)
+    expect(new Set(lines).size).toBe(12001)
+    expect(JSON.parse(lines.at(-1)).n).toBe('new')
+    expect(warn).toHaveBeenCalledWith('activity', expect.stringMatching(/48000 copies removed/))
+    // The file with no copies is left as it was.
+    expect(fs.readFileSync(join(a.dir, '2026-10-19.jsonl'), 'utf8').split('\n').filter(Boolean)).toHaveLength(12000)
+  })
+
+  it('an append made while a day loses its copies is not lost', async () => {
+    const a = createActivityArchive(dir)
+    const now = Date.UTC(2026, 9, 20, 12)
+    await a.append([ev(now - 10, 1)], now)
+    fs.appendFileSync(join(a.dir, '2026-10-20.jsonl'), JSON.stringify(ev(now - 10, 1)) + '\n') // an exact copy
+    const reading = a.read(now)
+    const appending = a.append([ev(now - 5, 2)], now)
+    await Promise.all([reading, appending])
+    await a.append([], now)
+    await new Promise((r) => setTimeout(r, 20))
+    const after = parseActivityLines(fs.readFileSync(join(a.dir, '2026-10-20.jsonl'), 'utf8')).map((e) => e.n)
+    expect(after).toEqual([1, 2])
   })
 
   it('a missing archive reads as empty', async () => {

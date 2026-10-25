@@ -48,10 +48,24 @@ export function isActivityText(text) {
 // Two real events are never identical in every field (time to the
 // millisecond, kind, pane, text...). The full comparison runs only for events
 // with the same time, kind and pane.
+// A message between agents (msgId) is one event whatever its copies say: it
+// may have been logged again with other details (by a Tessel that did not
+// have it in memory), or stored unread, then read. One copy is kept, in the
+// place of the first: the first one read, else the first.
 export function dedupeEvents(events) {
   const seen = new Map() // "t|type|paneId" -> [JSON of the events kept]
+  const messages = new Map() // msgId -> index in out of the copy kept
   const out = []
   for (const e of events) {
+    const id = messageId(e)
+    if (id) {
+      const at = messages.get(id)
+      if (at === undefined) {
+        messages.set(id, out.length)
+        out.push(e)
+      } else if (e.status === 'read' && out[at].status !== 'read') out[at] = e
+      continue
+    }
     const key = `${e.t}|${e.type}|${e.paneId || ''}` // i18n-ignore
     const json = JSON.stringify(e)
     const same = seen.get(key)
@@ -82,13 +96,21 @@ export function activityText(events, now = Date.now()) {
   return JSON.stringify(trimEvents(events.filter(isEvent), now))
 }
 
+// The id of a message between agents (team chat), logged once per message.
+export function messageId(e) {
+  return e && e.type === 'message' && typeof e.msgId === 'string' && e.msgId ? e.msgId : null
+}
+
 // --- Stored in pieces ----------------------------------------------------------
 // The whole log (up to 8 MB) was written again every 15 s while agents worked.
 // Now only the recent events are in activity.json (the live file): an event
-// settles SETTLE_MS after it was recorded (the few that change afterwards do
-// so within minutes, see activityChanged), and the settled ones are appended
+// settles SETTLE_MS after its time and after it was last recorded or changed
+// in the window, and the settled ones are appended
 // once, one line each, to activity-archive/<day>.jsonl (src/main/activityArchive.js).
-// The window still holds the whole log: it reads both at start.
+// The window still holds the whole log: it reads both at start, and knows
+// event by event which ones the archive holds (activityStore.js): an event's
+// time says neither when it was recorded (a team message is logged with the
+// time it was sent) nor whether it was archived.
 export const SETTLE_MS = 60 * 60 * 1000
 export const ARCHIVE_BATCH = 3000
 
@@ -97,14 +119,13 @@ export function archiveDay(t) {
   return new Date(t).toISOString().slice(0, 10)
 }
 
-// The events to archive next: from index `from`, those recorded more than
-// SETTLE_MS ago, at most `max` (a batch never ends between two events with
-// the same time, so a later batch starts at a new time).
-export function settledBatch(events, from, now = Date.now(), max = ARCHIVE_BATCH) {
-  let end = from
-  while (end < events.length && now - events[end].t >= SETTLE_MS && end - from < max) end++
-  while (end > from && end < events.length && now - events[end].t >= SETTLE_MS && events[end].t === events[end - 1].t) end++
-  return events.slice(from, end)
+// What makes an archived line the same event as another, for the archive's
+// own check that it holds each event once (src/main/activityArchive.js): a
+// team message by its id and status (read later, it is stored once more,
+// read), anything else by its whole line. -> the key, or null: the line.
+export function archiveKey(e) {
+  const id = messageId(e)
+  return id ? `m:${id}:${e.status || ''}` : null
 }
 
 // Events of a JSON-lines text (one event per line; a line cut by a kill or
@@ -124,9 +145,12 @@ export function parseActivityLines(text) {
   return out
 }
 
-// What was stored -> { events, archived }: the archive's events then the live
-// file's, checked, without copies and bounded like parseActivityText; archived
-// is how many of the first events came from the archive (they need no archiving).
+// What was stored -> { events, inArchive, archived }: the archive's events and
+// the live file's, checked, without copies, in time order and bounded like
+// parseActivityText. inArchive: the events (of `events`) that came from the
+// archive, which need no archiving; archived: how many they are. An event in
+// both (the live file written while its archiving was on the way) is the
+// archive's.
 // text: the live file (a JSON list; the older single file is the same);
 // archive: the archive's lines.
 export function mergeSavedActivity(liveText, archiveText, now = Date.now()) {
@@ -141,19 +165,17 @@ export function mergeSavedActivity(liveText, archiveText, now = Date.now()) {
     }
   }
   const merged = dedupeEvents([...old, ...live])
-  const keptOld = new Set(old)
   // In time order (the archive is read by day, and an event recorded with an
   // older time than the ones before it sits in its own day): a stable sort,
   // only when something is out of order.
   let ordered = true
   for (let i = 1; i < merged.length && ordered; i++) if (merged[i].t < merged[i - 1].t) ordered = false
   const all = ordered ? merged : [...merged].sort((a, b) => a.t - b.t)
-  let fromArchive = 0
-  while (fromArchive < all.length && keptOld.has(all[fromArchive])) fromArchive++
   const fresh = all.filter((e) => e && Number.isFinite(e.t) && now - e.t <= MAX_AGE_MS)
-  const dropped = all.length - fresh.length
-  const cut = fresh.length > MAX_EVENTS ? fresh.length - MAX_EVENTS : 0
-  return { events: cut ? fresh.slice(cut) : fresh, archived: Math.max(0, fromArchive - dropped - cut) }
+  const events = fresh.length > MAX_EVENTS ? fresh.slice(fresh.length - MAX_EVENTS) : fresh
+  const fromArchive = new Set(old)
+  const inArchive = new Set(events.filter((e) => fromArchive.has(e)))
+  return { events, inArchive, archived: inArchive.size }
 }
 
 function median(list) {

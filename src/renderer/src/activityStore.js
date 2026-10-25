@@ -2,15 +2,23 @@
 // and the maths). App records events here; the main process keeps them in
 // activity.json, saved a moment after each change.
 import { reactive, toRaw } from 'vue'
-import { MAX_EVENTS, parseActivityText, activityText, mergeSavedActivity, settledBatch } from '../../shared/activity'
+import { MAX_EVENTS, ARCHIVE_BATCH, SETTLE_MS, parseActivityText, activityText, mergeSavedActivity, messageId } from '../../shared/activity'
 
 export const activity = reactive([])
 
 let loaded = false
 let saveTimer = null
-// How many of the first events are in the archive already (settled: see
-// "Stored in pieces" in shared/activity.js). activity.json holds the rest.
-let archived = 0
+// The events the archive holds (settled: see "Stored in pieces" in
+// shared/activity.js), as the objects of the log: activity.json holds the
+// others. Known event by event, not as "the first n": the log is not in the
+// order the events were recorded (a team message is logged with the time it
+// was sent, a log read back is sorted by time), and counting a prefix sent
+// thousands of archived events to the archive again at each start.
+const inArchive = new WeakSet()
+// When an event was recorded or last changed in this window: it settles
+// SETTLE_MS after that as well as after its own time, so a message logged
+// long after it was sent can still be marked read in activity.json.
+const touchedAt = new WeakMap()
 // The live file's text as last saved: an unchanged log is not sent again.
 let lastSaved = null
 // Goes up each time old events leave the log (App's indexes of it rebuild).
@@ -18,18 +26,31 @@ let trimmed = 0
 export const trimCount = () => trimmed
 
 export function recordActivity(event) {
-  activity.push({ t: Date.now(), ...event })
+  const e = { t: Date.now(), ...event }
+  touchedAt.set(e, Date.now())
+  activity.push(e)
   if (activity.length > MAX_EVENTS + 500) {
-    const cut = activity.length - MAX_EVENTS
-    activity.splice(0, cut)
-    archived = Math.max(0, archived - cut)
+    activity.splice(0, activity.length - MAX_EVENTS)
     trimmed++
   }
   scheduleSave()
 }
 
-// An event already in the log was changed in place: save it.
-export function activityChanged() {
+// Events already in the log were changed in place: save them. A team message
+// the archive holds already (read long after it was logged) is stored again,
+// read (the archive keeps each message once per status, and reading it back
+// keeps the read copy).
+export function activityChanged(...events) {
+  const now = Date.now()
+  for (const ev of events) {
+    const e = ev && typeof ev === 'object' ? toRaw(ev) : null
+    if (!e) continue
+    if (inArchive.has(e)) {
+      if (!messageId(e)) continue
+      inArchive.delete(e)
+    }
+    touchedAt.set(e, now)
+  }
   scheduleSave()
 }
 
@@ -48,16 +69,20 @@ async function readSavedActivity() {
   try {
     const res = window.shellApi.activity ? await window.shellApi.activity.load({ text: true }) : []
     let saved = res
+    let archivedOnes = null
     if (res && typeof res.text === 'string') {
       if (typeof res.archive === 'string' && res.archive) {
         const merged = mergeSavedActivity(res.text, res.archive)
         saved = merged.events
-        archived = merged.archived
+        archivedOnes = merged.inArchive
       } else {
         saved = parseActivityText(res.text)
       }
     }
-    if (Array.isArray(saved) && saved.length) activity.splice(0, 0, ...saved)
+    if (Array.isArray(saved) && saved.length) {
+      if (archivedOnes) for (const e of archivedOnes) inArchive.add(e)
+      activity.splice(0, 0, ...saved)
+    }
   } catch {
     /* start with what is recorded from now on */
   }
@@ -98,6 +123,8 @@ export function saveActivityNow(opts = {}) {
   return p
 }
 
+const settled = (e, now) => now - Math.max(e.t, touchedAt.get(e) || 0) >= SETTLE_MS
+
 async function doSave({ closing = false } = {}) {
   const api = window.shellApi.activity
   if (!loaded || !api) return
@@ -105,19 +132,19 @@ async function doSave({ closing = false } = {}) {
     const raw = toRaw(activity)
     // The settled events go to the archive first, a batch at a time; they
     // leave activity.json only once the main process has stored them (a
-    // failure keeps them in it, so nothing is lost).
+    // failure keeps them in it, so nothing is lost; the archive ignores an
+    // event it holds already, so sending one twice stores it once).
     if (!closing && typeof api.archive === 'function') {
-      for (;;) {
-        const batch = settledBatch(raw, archived)
-        if (!batch.length) break
+      const now = Date.now()
+      const due = raw.filter((e) => !inArchive.has(e) && settled(e, now))
+      for (let i = 0; i < due.length; i += ARCHIVE_BATCH) {
+        const batch = due.slice(i, i + ARCHIVE_BATCH)
         const res = await api.archive(JSON.stringify(batch))
         if (!res || res.ok !== true) break
-        // The log may have been cut at the front meanwhile: counted from the batch's last event.
-        const at = raw.lastIndexOf(batch[batch.length - 1])
-        archived = at < 0 ? 0 : at + 1
+        for (const e of batch) inArchive.add(e)
       }
     }
-    const text = activityText(raw.slice(archived))
+    const text = activityText(raw.filter((e) => !inArchive.has(e)))
     if (text === lastSaved) return { ok: true, unchanged: true }
     const res = await api.save(text)
     if (res && res.ok !== false) lastSaved = text

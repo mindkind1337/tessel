@@ -2,26 +2,10 @@
 // settled events go to the archive once, activity.json holds the recent ones,
 // both are read back whole.
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { mergeSavedActivity, settledBatch, parseActivityLines, SETTLE_MS, MAX_EVENTS, MAX_AGE_MS } from '../../../shared/activity'
+import { mergeSavedActivity, parseActivityLines, MAX_EVENTS, MAX_AGE_MS } from '../../../shared/activity'
 
 const HOUR = 3600 * 1000
 const ev = (t, extra = {}) => ({ t, type: 'task', action: 'x', ...extra })
-
-describe('settledBatch', () => {
-  it('takes the events recorded more than SETTLE_MS ago, from the first not archived', () => {
-    const now = 100 * HOUR
-    const list = [ev(1 * HOUR), ev(2 * HOUR), ev(now - SETTLE_MS - 1), ev(now - SETTLE_MS + 5), ev(now)]
-    expect(settledBatch(list, 0, now)).toEqual(list.slice(0, 3))
-    expect(settledBatch(list, 2, now)).toEqual(list.slice(2, 3))
-    expect(settledBatch(list, 3, now)).toEqual([])
-  })
-
-  it('a batch of at most max never ends between two events with the same time', () => {
-    const now = 100 * HOUR
-    const list = [ev(1), ev(2), ev(2, { n: 1 }), ev(2, { n: 2 }), ev(3)]
-    expect(settledBatch(list, 0, now, 2).map((e) => e.t)).toEqual([1, 2, 2, 2])
-  })
-})
 
 describe('mergeSavedActivity', () => {
   const now = Date.now()
@@ -32,6 +16,30 @@ describe('mergeSavedActivity', () => {
     const out = mergeSavedActivity(JSON.stringify(live), archive, now)
     expect(out.events.map((e) => e.n)).toEqual([1, 2, 3])
     expect(out.archived).toBe(2)
+  })
+
+  it('inArchive: the events that came from the archive, whatever their time order with the live ones', () => {
+    // A team message logged late carries the time it was sent: it sorts
+    // among archived events but is not archived itself.
+    const a = [ev(now - 50 * HOUR, { n: 1 }), ev(now - 40 * HOUR, { n: 2 })]
+    const live = [ev(now - 10 * 60000, { n: 3 }), ev(now - 45 * HOUR, { n: 4 })]
+    const out = mergeSavedActivity(JSON.stringify(live), a.map((e) => JSON.stringify(e)).join('\n'), now)
+    expect(out.events.map((e) => e.n)).toEqual([1, 4, 2, 3])
+    expect(out.events.filter((e) => out.inArchive.has(e)).map((e) => e.n)).toEqual([1, 2])
+    expect(out.archived).toBe(2)
+  })
+
+  it('a team message stored twice (logged again, or unread then read) is one event, read if a copy is', () => {
+    const msg = (status, title) => ev(now - 30 * HOUR, { type: 'message', msgId: 'm-1', status, agent: { title } })
+    const archive = [msg('unread', 'Ada'), msg('unread', 'Ada (renamed)')].map((e) => JSON.stringify(e)).join('\n')
+    const out = mergeSavedActivity(JSON.stringify([msg('read', 'Ada')]), archive, now)
+    expect(out.events).toHaveLength(1)
+    expect(out.events[0].status).toBe('read')
+    // The read copy is the live file's: not in the archive yet, so archived (read) later.
+    expect(out.inArchive.has(out.events[0])).toBe(false)
+    const both = mergeSavedActivity('[]', [msg('unread', 'Ada'), msg('read', 'Ada')].map((e) => JSON.stringify(e)).join('\n'), now)
+    expect(both.events.map((e) => e.status)).toEqual(['read'])
+    expect(both.inArchive.has(both.events[0])).toBe(true)
   })
 
   it('lines cut by a kill and unreadable live files are skipped', () => {
@@ -138,6 +146,74 @@ describe('saving through activityStore', () => {
     await store.loadActivity()
     await store.saveActivityNow()
     expect(JSON.parse(shell.save.mock.calls[0][0])).toHaveLength(1)
+  })
+
+  it('events logged with an old time after the archived ones: a start archives those only, never the archive again', async () => {
+    const now = Date.now()
+    const arch = Array.from({ length: 50 }, (_, i) => ev(now - 50 * HOUR + i * 60000, { n: i }))
+    // Recent events, then team messages logged late with the time they were sent.
+    const live = [ev(now - 5 * 60000, { n: 100 }), ev(now - 50 * HOUR + 10.5 * 60000, { n: 101, type: 'message', msgId: 'a', status: 'read' }), ev(now - 2 * 60000, { n: 102 })]
+    const shell = api({ load: vi.fn(async () => ({ text: JSON.stringify(live), archive: arch.map((e) => JSON.stringify(e)).join('\n') })) })
+    window.shellApi = { activity: shell }
+    const store = await import('../activityStore')
+    await store.loadActivity()
+    await store.saveActivityNow()
+    const sent = shell.archive.mock.calls.flatMap(([text]) => JSON.parse(text).map((e) => e.n))
+    expect(sent).toEqual([101])
+    expect(JSON.parse(shell.save.mock.calls[0][0]).map((e) => e.n).sort()).toEqual([100, 102])
+    expect(store.activity).toHaveLength(53)
+  })
+
+  it('an event recorded now with an old time stays in activity.json for an hour, then is archived', async () => {
+    const now = Date.now()
+    window.shellApi = { activity: api() }
+    const shell = window.shellApi.activity
+    const store = await import('../activityStore')
+    await store.loadActivity()
+    store.recordActivity({ t: now - 30 * HOUR, type: 'message', msgId: 'late', status: 'unread' })
+    await store.saveActivityNow()
+    expect(shell.archive).not.toHaveBeenCalled()
+    expect(JSON.parse(shell.save.mock.calls[0][0]).map((e) => e.msgId)).toEqual(['late'])
+    vi.setSystemTime(now + HOUR + 1000)
+    await store.saveActivityNow()
+    expect(JSON.parse(shell.archive.mock.calls[0][0]).map((e) => e.msgId)).toEqual(['late'])
+    expect(JSON.parse(shell.save.mock.calls[1][0])).toEqual([])
+  })
+
+  it('a team message read after it was archived is stored again, read; another archived event changed is not', async () => {
+    const now = Date.now()
+    const arch = [ev(now - 9 * HOUR, { type: 'message', msgId: 'm', status: 'unread' }), ev(now - 8 * HOUR, { type: 'agent.state', paneId: 'p', since: 1 })]
+    const shell = api({ load: vi.fn(async () => ({ text: '[]', archive: arch.map((e) => JSON.stringify(e)).join('\n') })) })
+    window.shellApi = { activity: shell }
+    const store = await import('../activityStore')
+    await store.loadActivity()
+    const [msg, state] = store.activity
+    msg.status = 'read'
+    state.since = 2
+    store.activityChanged(msg, state)
+    await store.saveActivityNow()
+    // In activity.json meanwhile (changed a moment ago), then archived again, read.
+    expect(JSON.parse(shell.save.mock.calls[0][0]).map((e) => e.status)).toEqual(['read'])
+    vi.setSystemTime(now + HOUR + 1000)
+    await store.saveActivityNow()
+    expect(shell.archive).toHaveBeenCalledTimes(1)
+    expect(JSON.parse(shell.archive.mock.calls[0][0])).toEqual([expect.objectContaining({ msgId: 'm', status: 'read' })])
+  })
+
+  it('an archive that answers ok marks only what it was sent; the rest is sent at the next save', async () => {
+    const now = Date.now()
+    const saved = Array.from({ length: 3001 }, (_, i) => ev(now - 5 * HOUR + i, { n: i }))
+    let calls = 0
+    const shell = api({ load: vi.fn(async () => ({ text: JSON.stringify(saved), archive: '' })), archive: vi.fn(async () => (++calls === 1 ? { ok: true } : { ok: false })) })
+    window.shellApi = { activity: shell }
+    const store = await import('../activityStore')
+    await store.loadActivity()
+    await store.saveActivityNow()
+    expect(JSON.parse(shell.save.mock.calls[0][0]).map((e) => e.n)).toEqual([3000])
+    shell.archive.mockImplementation(async () => ({ ok: true }))
+    await store.saveActivityNow()
+    expect(JSON.parse(shell.archive.mock.calls[2][0]).map((e) => e.n)).toEqual([3000])
+    expect(JSON.parse(shell.save.mock.calls[1][0])).toEqual([])
   })
 
   it('closing the window: two saves at once never archive the same events twice', async () => {

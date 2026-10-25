@@ -135,7 +135,7 @@ import { dropBuffer, exitOf, seedBuffer } from './ptyStore'
 import { prefetchAttaches, terminalLeafIds } from './restoreAttach'
 import { afterStartup, startupBegins, startupFinished } from './startupIdle'
 import { paneOpenLine } from '../../shared/paneTiming'
-import { tasks as boardTasks, setTasks, updateTask, removeTask, addTask, deletedTaskIds, addDeletedTasks, takeDeletedToPurge, cardOnBoard, beginBoardLoad, endBoardLoad, boardWatchState } from './taskBoardStore'
+import { tasks as boardTasks, setTasks, updateTask, removeTask, addTask, deletedTaskIds, addDeletedTasks, takeDeletedToPurge, cardOnBoard, beginBoardLoad, endBoardLoad, watchBoard } from './taskBoardStore'
 import { usageScopeEntries, usageScopeRoots, rememberUsageCopies, loadUsageCopies, saveUsageCopies } from './usageStats'
 import { createSaveScheduler } from './saveScheduler'
 import { taskHistory, historyVersion, createHistorySync, setTaskHistory, backfillHistory, setHistoryDescriber } from './taskHistory'
@@ -3520,13 +3520,31 @@ function boardToSave() {
 }
 
 // Every board save goes here: none while the saved board could not be read
-// (locked at start), so it is never overwritten.
+// (locked at start), so it is never overwritten. A save that failed (the
+// file held by another program, the history refused) is tried again a few
+// seconds later: the change it carried may be the last one before closing.
+// Failing again, it waits twice as long each time, up to a minute.
+let boardRetryMs = 5000
+function boardSaveFailed() {
+  taskSave.retry(boardRetryMs)
+  boardRetryMs = Math.min(60000, boardRetryMs * 2)
+}
 function saveBoard() {
   if (boardLocked) return Promise.resolve({ ok: false, error: t('app.board.lockedAtStart', 'The saved board could not be read at start.') })
   const board = boardToSave()
   const saving = window.shellApi.taskBoard.save(board)
   const sent = board.history ? board.historyVersion : null
-  Promise.resolve(saving).then((res) => historySync.settle(sent, res), () => historySync.settle(sent, null))
+  Promise.resolve(saving).then(
+    (res) => {
+      historySync.settle(sent, res)
+      if (res && res.ok !== false) boardRetryMs = 5000
+      else boardSaveFailed()
+    },
+    () => {
+      historySync.settle(sent, null)
+      boardSaveFailed()
+    }
+  )
   purgePublishedCards()
   return saving
 }
@@ -3554,6 +3572,7 @@ function purgePublishedCards() {
 // waiting (saveScheduler.js).
 const taskSave = createSaveScheduler(() => saveBoard(), { quietMs: 500, maxWaitMs: 5000 })
 const scheduleTaskSave = taskSave.schedule
+let stopBoardWatch = null // the board's watchers, set up once it is loaded
 
 // --- Updates ------------------------------------------------------------------
 // The main process downloads new versions in the background (updater.js); the
@@ -7269,7 +7288,7 @@ function restoreSince(id) {
     t.sinceStart = false
     if (lastStateEvent[id]) {
       lastStateEvent[id].since = t.since
-      activityChanged()
+      activityChanged(lastStateEvent[id])
     }
   }
 }
@@ -7284,11 +7303,15 @@ const clockTimer = setInterval(() => {
   const now = Date.now()
   const slept = now - lastTick - 20000
   if (slept > 60000) {
+    const moved = []
     for (const [id, t] of Object.entries(trackedState)) {
       t.since += slept
-      if (lastStateEvent[id]) lastStateEvent[id].since = t.since
+      if (lastStateEvent[id]) {
+        lastStateEvent[id].since = t.since
+        moved.push(lastStateEvent[id])
+      }
     }
-    activityChanged()
+    activityChanged(...moved)
     // The time on a task does not grow while asleep either.
     for (const t of boardTasks) if (t.column === 'doing' && t.doingSince) t.doingSince += slept
   }
@@ -9120,7 +9143,9 @@ async function publishCurrentTeams({ strict = false } = {}) {
     const sig = JSON.stringify([byDir[dir] || {}, liveTeamIds])
     const seen = publishedTeams.get(dir)
     if (!strict && seen && seen.sig === sig && Date.now() - seen.at < PUBLISH_AGAIN_MS) continue
-    publishedTeams.set(dir, { sig, at: Date.now() })
+    // Remembered only once written (a failure or an error writes again next round).
+    publishedTeams.delete(dir)
+    const at = Date.now()
     const cur = await window.shellApi.team.current({ dir, panes: byDir[dir] || {} })
     if (strict && !cur?.ok) throw new CliRequestError('failed', cur?.error || t('app.cli.teamMapFailed', 'The team map could not be saved.'))
     // Retired by another Tessel window that did not know about it yet: set
@@ -9132,7 +9157,7 @@ async function publishCurrentTeams({ strict = false } = {}) {
     const res = await window.shellApi.team.retire({ dir, liveTeamIds: teams.value.filter((t) => channelDir(t) === dir).map((t) => t.id) })
     if (strict && !res?.ok) throw new CliRequestError('failed', res?.error || t('app.cli.teamMapFailed', 'The team map could not be saved.'))
     // Anything lost, retired or failed: the next round writes again.
-    if (!cur?.ok || !res?.ok || (cur.lost || []).length || (res.retired || []).length) publishedTeams.delete(dir)
+    if (cur?.ok && res?.ok && !(cur.lost || []).length && !(res.retired || []).length) publishedTeams.set(dir, { sig, at })
     // A retired channel is set up again from scratch if its team comes back
     // (Undo after Ungroup): forget what this session knew about it.
     for (const id of (res && res.retired) || []) {
@@ -10829,7 +10854,7 @@ function logTeamMessages(team, res) {
     const p = (res.participants || []).find((x) => x.id === id)
     return p ? p.paneName || p.title || t('app.pane.agent', 'Agent') : t('app.task.anAgent', 'An agent')
   }
-  let changed = false
+  const changed = []
   for (const m of res.history) {
     if (!m || !m.id || typeof m.text !== 'string' || m.fromId === 'tessel') continue
     const read = m.status === 'delivered'
@@ -10837,7 +10862,7 @@ function logTeamMessages(team, res) {
     if (known) {
       if (read && known.status !== 'read') {
         known.status = 'read'
-        changed = true
+        changed.push(known)
       }
       continue
     }
@@ -10868,7 +10893,7 @@ function logTeamMessages(team, res) {
     recordActivity(event)
     teamMsgEvents.set(m.id, activity[activity.length - 1])
   }
-  if (changed) activityChanged()
+  if (changed.length) activityChanged(...changed)
 }
 
 // The task board for the agents of a team (team_tasks / team_task_add /
@@ -12177,7 +12202,7 @@ async function refreshOldUnread(team, dir, history, round = teamRound) {
   const ids = []
   for (const [id, e] of teamMsgEvents) if (e.status === 'unread' && e.teamId === team.id && !recent.has(id)) ids.push(id)
   if (!ids.length) return
-  let changed = false
+  const changed = []
   // All of them, 500 per look-up.
   for (let i = 0; i < ids.length; i += 500) {
     const part = ids.slice(i, i + 500)
@@ -12186,12 +12211,13 @@ async function refreshOldUnread(team, dir, history, round = teamRound) {
     for (const id of part) {
       // 'gone': the channel keeps only so many read messages.
       if (res.statuses[id] === 'delivered' || res.statuses[id] === 'gone') {
-        teamMsgEvents.get(id).status = 'read'
-        changed = true
+        const e = teamMsgEvents.get(id)
+        e.status = 'read'
+        changed.push(e)
       }
     }
   }
-  if (changed) activityChanged()
+  if (changed.length) activityChanged(...changed)
 }
 
 async function deliverChannel(team, members, round = teamRound) {
@@ -13759,20 +13785,17 @@ onMounted(async () => {
     historySync.markStored()
     if (!boardLocked) backfillHistory(boardTasks)
     reconcileTaskPanes()
-    // The board is not watched deeply as a whole: that tracked about 60,000
-    // values (1,400 cards, 1,700 history records) and cost 80 ms at each card
-    // change. The cards in play are watched deeply (a few hundred values);
-    // a finished card (most of the board) by the few fields that can still
-    // change; the history by its version counter (taskHistory.js).
+    // Any change of a card, however deep, saves: each card has its own
+    // watcher (taskBoardStore.js watchBoard; one deep watcher of the whole
+    // board and history re-read about 80,000 values at every change). The
+    // history saves on its version counter (taskHistory.js).
     if (!boardLocked) {
-      watch(
-        [
-          () => boardWatchState(boardTasks),
-          historyVersion
-        ],
-        scheduleTaskSave,
-        { deep: true }
-      )
+      const stopCards = watchBoard(scheduleTaskSave, boardTasks)
+      const stopHistory = watch(historyVersion, scheduleTaskSave)
+      stopBoardWatch = () => {
+        stopCards()
+        stopHistory()
+      }
     }
     teamsReady = true
     // Scheduled automations start only now: panes, agents and the board are
@@ -13859,6 +13882,9 @@ onBeforeUnmount(() => {
   if (unsubEditorClose) unsubEditorClose()
   if (unsubUpdate) unsubUpdate()
   flushSaves()
+  // Its watchers outlive the start that set them up (after an await): ended
+  // here, so a reload of the interface does not leave a second set saving.
+  if (stopBoardWatch) stopBoardWatch()
   window.removeEventListener('beforeunload', flushSaves)
   window.removeEventListener('pagehide', flushSaves)
   window.removeEventListener('keydown', onKey)
