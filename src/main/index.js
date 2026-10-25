@@ -1587,6 +1587,18 @@ const terminalConversations = createTerminalConversations({
   readAgentFile: (hostId, q) => (remoteHosts.get(hostId) ? remoteFs.readAgentFile(hostId, q) : { ok: false, error: 'unknown host' }) // i18n-ignore
 })
 terminalConversations.register(ipcMain)
+// The same reader for Live Share guests (their history of a shared pane): a
+// host's file on the guests' lane (remoteFs.js LANES), never in the host's
+// own session.
+const guestTerminalConversations = createTerminalConversations({
+  log,
+  homes: async (agent, accountId) => {
+    const r = await accountSessions.roots({ agent, accountId })
+    return (r && r[agent]) || null
+  },
+  sessionsDir: () => sessionsDir(),
+  readAgentFile: (hostId, q) => (remoteHosts.get(hostId) ? remoteFs.readAgentFile(hostId, { ...q, lane: 'guest' }) : { ok: false, error: 'unknown host' }) // i18n-ignore
+})
 // The skills a terminal agent's chat view lists ("/" menu): its project's
 // (its open view's folder), the user's and its account's.
 createTerminalSkills({
@@ -1892,10 +1904,20 @@ const remoteChildren = createRemoteChildren({
   readAgentFile: onHost((h, q) => remoteFs.readAgentFile(h, q)),
   listCodexChildren: onHost((h, q) => remoteFs.listCodexChildren(h, q))
 })
+// The same for a Live Share guest's header: on the guests' lane of the host
+// (remoteFs.js LANES), never in the host's own session.
+const guestOnHost = (fn) => onHost((h, q) => fn(h, { ...q, lane: 'guest' }))
+const guestRemoteChildren = createRemoteChildren({
+  listSubagentFiles: guestOnHost((h, q) => remoteFs.listSubagentFiles(h, q)),
+  readSubagentMetas: guestOnHost((h, q) => remoteFs.readSubagentMetas(h, q)),
+  readAgentFile: guestOnHost((h, q) => remoteFs.readAgentFile(h, q)),
+  listCodexChildren: guestOnHost((h, q) => remoteFs.listCodexChildren(h, q))
+})
 // A pane's sub-agents: on its SSH host when it runs there (remoteHostId),
 // else in this PC's files (in the home its conversation came from).
-function agentChildrenOf(q = {}) {
-  if (q && q.remoteHostId != null) return remoteChildren.children({ hostId: q.remoteHostId, agent: q.agent, sessionId: q.sessionId })
+// guest: asked for a Live Share guest.
+function agentChildrenOf(q = {}, { guest = false } = {}) {
+  if (q && q.remoteHostId != null) return (guest ? guestRemoteChildren : remoteChildren).children({ hostId: q.remoteHostId, agent: q.agent, sessionId: q.sessionId })
   return accountSessions.children(q)
 }
 
@@ -2097,7 +2119,8 @@ const sshRemote = createSshRemote({
 registerRemoteHosts({
   ipcMain,
   service: remoteHosts,
-  killPane: (id) => (isRemoteFsPane(id) ? remoteFs.closePane(id) : host.send('kill', { id })),
+  // (Disconnect or a removed host: the Files session and its lanes end.)
+  killPane: (id) => (isRemoteFsPane(id) ? remoteFs.closePane(id, 'disconnect') : host.send('kill', { id })),
   ssh: sshRemote
 })
 // Its passwords, passphrases and host key questions come through OpenSSH's
@@ -4427,7 +4450,7 @@ liveShare = registerLiveShare({
   // Phase 2b: the host's usage (with the right), a pane's sub-agents, a
   // finished task's figures, the editor's Local History, for guests.
   usage: shareUsage,
-  agentChildren: (q) => agentChildrenOf(q),
+  agentChildren: (q) => agentChildrenOf(q, { guest: true }),
   cardCosts: (ids) => jobCost.forCards(ids),
   localHistory,
   // A shared SSH project's files for guests, through this computer's SSH session.
@@ -4452,7 +4475,7 @@ liveShare = registerLiveShare({
   // its terminal agents said, and its browser pages (any of the browser's
   // sessions: the host's window lists them, checked against the share).
   sessionHistory: { list: (q) => accountSessions.list(q), details: (q) => accountSessions.details(q) },
-  readTerminal: (q) => terminalConversations.read(q),
+  readTerminal: (q) => guestTerminalConversations.read(q),
   pageById: (id) => browserGuests.pageById(id),
   // The conversations guests watch (read only): a reader of their own, never
   // the window's chat views; no images or files (liveShare/shareChat.js).

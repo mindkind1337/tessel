@@ -8,7 +8,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import ExplorerPanel from '../components/ExplorerPanel.vue'
-import { saveTree, loadTree, forgetTree, clearTreeCache, DISK_MAX_ENTRIES } from '../explorerTreeCache'
+import { saveTree, loadTree, forgetTree, forgetHostTrees, clearTreeCache, DISK_MAX_ENTRIES, DISK_MAX_BYTES } from '../explorerTreeCache'
 
 const ROOT = 'C:\\proj'
 const OTHER = 'C:\\other'
@@ -102,9 +102,14 @@ describe('a project shown again', () => {
     expect(api.listMany).toHaveBeenCalledTimes(1)
     expect(api.listMany.mock.calls[0][0]).toMatchObject({ dirs: [ROOT, P('src')], background: true })
     expect(w.find('[data-test="explorer-dir-refreshing"]').exists()).toBe(true)
+    // Kept rows are dimmed and the header says so until they are read again.
+    expect(row(P('src\\a.lua')).classes()).toContain('stale')
+    expect(w.find('[data-test="explorer-stale"]').exists()).toBe(true)
     held.release()
     await flushPromises()
     expect(names()).toEqual(['src', 'a.lua', 'b.lua', 'server.cfg'])
+    expect(row(P('src\\a.lua')).classes()).not.toContain('stale')
+    expect(w.find('[data-test="explorer-stale"]').exists()).toBe(false)
     expect(row(P('src\\a.lua')).classes()).toContain('selected')
     expect(w.find('[data-test="explorer-dir-refreshing"]').exists()).toBe(false)
   })
@@ -185,5 +190,69 @@ describe('kept on disk for an SSH project', () => {
     expect(loadTree('lshare://p1')).toBe(null)
     expect(loadTree(ROOT)).toBe(null)
     expect(Object.keys(localStorage).some((k) => k.includes('lshare') || k.includes('proj'))).toBe(false)
+  })
+
+  it('too many bytes for one project: not kept on disk, and an older copy goes', () => {
+    saveTree(SSH, { nodes: { [SSH]: [{ name: 'small', path: S('small'), dir: false }] }, open: [] })
+    const long = 'n'.repeat(400)
+    const fat = Array.from({ length: Math.ceil(DISK_MAX_BYTES / 400) + 10 }, (_, i) => ({ name: `${long}${i}`, path: S(`${long}${i}`), dir: false }))
+    saveTree(SSH, { nodes: { [SSH]: fat }, open: [] })
+    clearTreeCache()
+    expect(loadTree(SSH, {})).toBe(null)
+  })
+
+  it('an SSH path is matched exactly (POSIX names have case)', () => {
+    saveTree('ssh://ssh-h/srv/App', { nodes: { 'ssh://ssh-h/srv/App': [] }, open: [] }, 'o')
+    expect(loadTree('ssh://ssh-h/srv/app', 'o')).toBe(null)
+    expect(loadTree('ssh://ssh-h/srv/App', 'o')).toBeTruthy()
+    clearTreeCache()
+    expect(loadTree('ssh://ssh-h/srv/app', {})).toBe(null)
+  })
+
+  it('the storage full (another user): the oldest of its own copies go, never another key', () => {
+    localStorage.setItem('other.app', 'keep me')
+    const A = 'ssh://ssh-h/srv/a'
+    const B = 'ssh://ssh-h/srv/b'
+    const C = 'ssh://ssh-h/srv/c'
+    const one = (r) => ({ nodes: { [r]: [{ name: 'x', path: `${r}\\x`, dir: false }] }, open: [] })
+    saveTree(A, one(A))
+    saveTree(B, one(B))
+    const real = Storage.prototype.setItem
+    let refused = 0
+    const spy = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(function (k, v) {
+      if (k.includes('/srv/c') && !refused++) throw new DOMException('full', 'QuotaExceededError')
+      return real.call(this, k, v)
+    })
+    saveTree(C, one(C))
+    spy.mockRestore()
+    clearTreeCache()
+    expect(loadTree(A, {})).toBe(null)
+    expect(loadTree(B, {})).toBeTruthy()
+    expect(loadTree(C, {})).toBeTruthy()
+    expect(localStorage.getItem('other.app')).toBe('keep me')
+  })
+
+  it('a host removed takes its projects\' trees along', () => {
+    const H1 = 'ssh://ssh-one/srv/a'
+    const H2 = 'ssh://ssh-two/srv/b'
+    saveTree(H1, { nodes: { [H1]: [] }, open: [] })
+    saveTree(H2, { nodes: { [H2]: [] }, open: [] })
+    forgetHostTrees('ssh-one')
+    clearTreeCache()
+    expect(loadTree(H1, {})).toBe(null)
+    expect(loadTree(H2, {})).toBeTruthy()
+  })
+})
+
+describe('a tree kept a long while ago', () => {
+  it('its project\'s folder is read in your turn (the rows stay meanwhile), the open ones behind it', async () => {
+    const entries = { [ROOT]: [d('src')], [P('src')]: [f('src\\a.lua')] }
+    const api = makeApi(entries)
+    saveTree(ROOT, { nodes: { [ROOT]: entries[ROOT], [P('src')]: entries[P('src')] }, open: [P('src')], selected: null, scrollTop: 0, status: {}, repo: false }, api, Date.now() - 11 * 60 * 1000)
+    w = mount(ExplorerPanel, { props: { root: ROOT } })
+    await flushPromises()
+    expect(api.list).toHaveBeenCalledWith(expect.objectContaining({ dir: ROOT }))
+    expect(api.list.mock.calls.find(([q]) => q.dir === ROOT)[0].background).toBeUndefined()
+    expect(names()).toEqual(['src', 'a.lua'])
   })
 })

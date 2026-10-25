@@ -34,6 +34,9 @@ function fakeRemote(tree) {
     real: '/home/me/app',
     hooks: [],
     hashKind: 'sha256',
+    home: '/home/me',
+    gitDirs: [],
+    noLane: false,
     written: null,
     tree
   }
@@ -64,6 +67,7 @@ function fakeRemote(tree) {
     state.maxInflight = Math.max(state.maxInflight, state.inflight)
     try {
       if (state.delay) await new Promise((r) => setTimeout(r, state.delay))
+      if (state.noLane) return { ok: false, code: 'no-lane' }
       if (state.laneDown || !state.connected) return { ok: false, code: 'not-connected' }
       return fn()
     } finally {
@@ -121,7 +125,7 @@ function fakeRemote(tree) {
         if (ignore && state.ignoreFails) return { ok: false, code: 'unknown' }
         return { ok: true, good: new Set(rels.filter((r) => !check(r, ignore))) }
       }),
-    info: () => run('info', () => ({ ok: true, real: state.real, hooks: state.hooks })),
+    info: () => run('info', () => ({ ok: true, real: state.real, hooks: state.hooks, home: state.home, gitDirs: state.gitDirs })),
     searchNames: ({ query }) =>
       run('names', () => ({
         ok: true,
@@ -321,6 +325,39 @@ describe('the project and its arguments', () => {
       expect((await ask('fs.list', {})).code, real).toBe('remote-project')
       expect(remote.state.calls.at(-1)).toBe('info')
     }
+  })
+
+  it('the host\'s own $HOME, a folder holding it or one of its secret folders shares nothing (wherever $HOME is)', async () => {
+    for (const [real, home] of [
+      ['/opt/fivem', '/opt/fivem'],
+      ['/opt', '/opt/fivem'],
+      ['/opt/fivem/.ssh/keys', '/opt/fivem'],
+      ['/srv/app/.config', '/srv/app']
+    ]) {
+      rig.reset()
+      remote.state.real = real
+      remote.state.home = home
+      expect((await ask('fs.list', {})).code, real).toBe('remote-project')
+    }
+    rig.reset()
+    remote.state.real = '/opt/fivem/server'
+    remote.state.home = '/opt/fivem'
+    expect((await ask('fs.list', {})).ok).toBe(true)
+  })
+
+  it('the repository\'s own folder under another name (.bare, a separate git dir) is hidden like .git', async () => {
+    remote.state.tree['.bare'] = { dir: true }
+    remote.state.tree['.bare/config'] = { text: '[remote] url = https://token@host/x' }
+    remote.state.gitDirs = ['.bare']
+    expect((await ask('fs.list', {})).data.entries.map((e) => e.name)).not.toContain('.bare')
+    expect((await ask('fs.read', { path: '.bare/config' })).code).toBe('not-found')
+    expect((await ask('fs.searchNames', { query: 'config' })).data.results.map((r) => r.rel)).not.toContain('.bare/config')
+    expect((await ask('fs.write', { path: '.bare/config', text: 'x' }, { rights: { edit: true, type: true }, ...OK })).code).toBe('not-allowed')
+  })
+
+  it('no guests\' lane to the server (an older terminal host, no slot): as if not connected', async () => {
+    remote.state.noLane = true
+    expect((await ask('fs.list', {})).code).toBe('host-offline')
   })
 
   it('the real path is read again after a while; not known: nothing is given', async () => {

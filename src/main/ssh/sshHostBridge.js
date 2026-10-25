@@ -44,6 +44,10 @@ export const SSH_FEATURE = 1
 // Agents on an SSH host (remoteAgent/remoteAgentTunnel.js): main checks it, since
 // a terminal host started by an older Tessel keeps running without it.
 export const REMOTE_AGENT_FEATURE = 1
+// ssh-exec onlyLive (remoteFs.js lanes): an exec channel only on a live
+// connection, never a new connection or a question; it yields its slot to
+// a terminal. Main opens lanes only on a host that says it.
+export const ONLY_LIVE_FEATURE = 1
 export const CREDENTIAL_TIMEOUT_MS = 120_000
 export const FILES_COMMAND = 'exec /bin/sh'
 export const RECONNECT_DELAYS_MS = [1000, 2000, 5000, 5000, 10000, 10000, 10000, 30000, 30000]
@@ -631,5 +635,5 @@ export function createSshHostBridge({
     manager.closeAll()
   }
 
-  return { handle, createPty, sockClosed, shutdown, manager, tunnel, hello: () => ({ ssh: SSH_FEATURE, remoteAgent: REMOTE_AGENT_FEATURE }) }
+  return { handle, createPty, sockClosed, shutdown, manager, tunnel, hello: () => ({ ssh: SSH_FEATURE, remoteAgent: REMOTE_AGENT_FEATURE, onlyLive: ONLY_LIVE_FEATURE }) }
 }

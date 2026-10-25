@@ -36,6 +36,18 @@ const HOME_SECRETS = new Set([
 ])
 export const isBareRemoteHome = (path) => /^\/(home|users)\/[^/]+\/?$/i.test(String(path || ''))
 
+// A project folder's real path against the host's own $HOME (wherever it
+// is: /var/lib/fivem, /opt/app...): the home itself, a folder holding it, or
+// one of its secret folders (and below) is too broad to share.
+export function remoteRootTooBroadForHome(real, home) {
+  const r = String(real || '').replace(/\/+$/, '') || '/'
+  const h = String(home || '').replace(/\/+$/, '') || '/'
+  if (!real || !home || !h.startsWith('/') || !r.startsWith('/')) return false
+  if (r === h || r === '/' || h.startsWith(`${r}/`)) return true
+  if (r.startsWith(`${h}/`)) return HOME_SECRETS.has(r.slice(h.length + 1).split('/')[0].toLowerCase())
+  return false
+}
+
 export function remoteRootTooBroad(path) {
   const raw = String(path || '').trim()
   if (!raw) return true

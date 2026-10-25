@@ -109,11 +109,11 @@ describe.skipIf(!gitSh())('a guest\'s requests on a fake host (real sh, real git
     fs.rmSync(base, { recursive: true, force: true })
   })
 
-  it('runs on a lane of its own (a second connection that may ask nothing), never in the host\'s session', async () => {
+  it('a host on the system ssh: in its open session (never a second connection)', async () => {
     const res = await rfs.guest.list({ root, dirs: [''] })
     expect(res.ok).toBe(true)
-    expect(spawned).toEqual(['files', 'guest'])
-    expect(rfs.lanesOpen()).toEqual([`${HOST} guest`])
+    expect(spawned).toEqual(['files'])
+    expect(rfs.lanesOpen()).toEqual([])
   }, 30000)
 
   it('lists a folder with what git ignores (the folder\'s own names), links and nested repositories marked', async () => {
@@ -265,11 +265,67 @@ describe.skipIf(!gitSh())('a guest\'s requests on a fake host (real sh, real git
     }
   }, 30000)
 
-  it('the guest\'s lane stays one connection while it is used; the host\'s own session carried nothing of it', async () => {
-    expect(spawned).toEqual(['files', 'guest'])
-    expect([...ran.files]).toEqual(['__t_ls'])
-    expect([...ran.guest].every((fn) => /^__t_g[a-z]+$/.test(fn))).toBe(true)
+  it('names are paths, never patterns: x[1].log is ignored even with x1.log tracked (check-ignore --no-index)', async () => {
+    fs.writeFileSync(join(proj, 'src', 'x1.log'), 'tracked\n')
+    g('add', '-f', 'src/x1.log')
+    fs.writeFileSync(join(proj, 'src', 'x[1].log'), 'secret\n')
+    const res = await rfs.guest.list({ root, dirs: ['src'] })
+    expect([...res.results[0].ignored]).toContain('x[1].log')
+    // A tracked file its rules ignore is hidden too (like a local share).
+    expect([...res.results[0].ignored]).toContain('x1.log')
+    expect(await rfs.guest.read({ root, rel: 'src/x[1].log', max: 1024 })).toEqual({ ok: false, code: 'missing' })
+    g('rm', '-q', '--cached', 'src/x1.log')
+  }, 30000)
+
+  it('search results must be there; a save never makes or touches a .git part, nor replaces without a version', async () => {
+    expect((await rfs.guest.check({ root, rels: ['nope.txt', 'a.txt'] })).good).toEqual(new Set(['a.txt']))
+    fs.mkdirSync(join(proj, 'sub'))
+    expect(await rfs.guest.write({ root, rel: 'sub/.GIT', data: Buffer.from('x'), createOnly: true })).toEqual({ ok: false, code: 'refused' })
+    expect(fs.readdirSync(join(proj, 'sub'))).toEqual([])
+  }, 30000)
+
+  it('the hooks folder cannot be told when git refuses the repository: nothing is written (fail closed); $HOME is said', async () => {
+    fs.renameSync(join(proj, '.git', 'HEAD'), join(proj, '.git', 'HEAD.away'))
+    try {
+      const info = await rfs.guest.info({ root })
+      expect(info.ok).toBe(true)
+      expect(info.hooks).toBe(null)
+      expect(info.home).toBe(posixPath(home))
+    } finally {
+      fs.renameSync(join(proj, '.git', 'HEAD.away'), join(proj, '.git', 'HEAD'))
+    }
+  }, 30000)
+
+  it('the guest requests went in the host\'s open session (system ssh), one connection only', async () => {
+    expect(spawned).toEqual(['files'])
+    expect([...ran.files].some((fn) => /^__t_g[a-z]+$/.test(fn))).toBe(true)
   })
+})
+
+describe.skipIf(!gitSh())('a repository kept under another name than .git (real sh)', () => {
+  let base
+  let rfs
+  let root
+  beforeAll(async () => {
+    base = fs.mkdtempSync(join(os.tmpdir(), 'tessel-rfs-bare-'))
+    const wt = join(base, 'wt')
+    fs.mkdirSync(wt)
+    execFileSync('git', ['init', '-q', `--separate-git-dir=${join(wt, '.bare')}`, wt], { stdio: 'pipe' })
+    fs.writeFileSync(join(wt, 'a.txt'), 'a\n')
+    root = remoteRoot(HOST, posixPath(wt))
+    rfs = createRemoteFs({ hosts: stubHosts(), spawnImpl: fakeSpawn({ home: base }) })
+    rfs.setRoots([root])
+    await rfs.listDir({ root })
+  }, 60000)
+  afterAll(() => {
+    rfs.close()
+    fs.rmSync(base, { recursive: true, force: true })
+  })
+  it('is named: a guest never sees it', async () => {
+    const info = await rfs.guest.info({ root })
+    expect(info.ok).toBe(true)
+    expect(info.gitDirs).toContain('.bare')
+  }, 30000)
 })
 
 describe.skipIf(!gitSh())('a Codex conversation found by its day folder first (real sh)', () => {
@@ -335,6 +391,7 @@ describe('a guest\'s lane: never a sign-in, never the host\'s session', () => {
         connected = false // dropped while the mode was looked up
         return { mode: 'ssh2', spec: {} }
       },
+      onlyLiveSupported: () => true,
       spawnFor: (...a) => {
         asked.push(a)
         throw new Error('must not be reached')

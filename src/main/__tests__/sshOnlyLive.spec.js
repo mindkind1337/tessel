@@ -2,7 +2,7 @@
 // A remote Files lane's channel (remoteFs.js LANES, ssh-exec onlyLive): only
 // on a connection that is up, never a new connection, so never a question
 // (a guest's request can never make the host's computer ask a password).
-import { describe, it, expect, afterEach } from 'vitest'
+import { describe, it, expect, afterEach, vi } from 'vitest'
 import fs from 'fs'
 import os from 'os'
 import { join } from 'path'
@@ -47,8 +47,30 @@ describe('an exec channel on a live connection only (onlyLive)', () => {
     // Without it (the host's own session): a spare connection, as before.
     const spare = await m.open('h', spec(srv.port), 'exec', { command: 'exec /bin/sh' })
     expect(srv.events.connections).toBe(2)
+    // A slot free again on the first: used before any third connection.
     first.stream.close()
+    await new Promise((r) => setTimeout(r, 100))
+    const again = await m.open('h', spec(srv.port), 'exec', { command: 'exec /bin/sh' })
+    expect(srv.events.connections).toBe(2)
+    again.stream.close()
     spare.stream.close()
+    m.closeAll()
+  }, 30000)
+
+  it('a terminal always wins: a lane\'s channel gives its slot up, no new connection', async () => {
+    dir = fs.mkdtempSync(join(os.tmpdir(), 'tessel-live-'))
+    srv = await startSshServer({ auth: { password: PASSWORD, methods: ['password'] }, maxSessions: 2, onExec: () => {} })
+    const m = createSshManager({ ask: async (_h, p) => (p.kind === 'hostkey' ? 'yes' : PASSWORD) })
+    const files = await m.open('h', spec(srv.port), 'exec', { command: 'exec /bin/sh' })
+    const lane = await m.open('h', spec(srv.port), 'exec', { command: 'exec /bin/sh', onlyLive: true })
+    const gaveWay = vi.spyOn(lane.stream, 'close')
+    // Full: the terminal's channel is opened after the lane gives way.
+    const term = await m.open('h', spec(srv.port), 'exec', { command: 'exec /bin/sh' })
+    expect(term.stream).toBeTruthy()
+    expect(gaveWay).toHaveBeenCalled()
+    expect(srv.events.connections).toBe(1)
+    files.stream.close()
+    term.stream.close()
     m.closeAll()
   }, 30000)
 })

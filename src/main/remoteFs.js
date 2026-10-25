@@ -84,29 +84,39 @@ export const AUTH_CANCEL_COOLDOWN_MS = 60_000
 // of a big project (a git status, a search, the change poll over the whole
 // tree) can hold it for many seconds: what must never wait behind it runs on
 // a session of its own over the same signed-in ssh2 connection (one more
-// exec channel each, opened when needed and closed when idle):
+// exec channel each, opened when needed and closed when idle). A lane's
+// channel is only ever opened on a live connection (never a new connection,
+// never a question), only on a terminal host that keeps that promise (its
+// onlyLive feature), and gives its slot up to a terminal that needs it (the
+// server's MaxSessions): terminals and the Files session always win. A lane
+// that cannot be opened is not tried again for LANE_RETRY_MS.
 // - 'pane': what a terminal opening on the host waits for (the shim install,
-//   the agent check, whether its conversation is there, its account folder).
-//   A connection not signed in yet, or a host on the system ssh: in the host's
+//   the agent check, whether its conversation is there, its account folder),
+//   closed a moment after (PANE idleMs). Not available or full: in the host's
 //   session as before, first in its turn.
 // - 'guest': a Live Share guest's requests (liveShare/shareRemoteFiles.js,
-//   the chat views guests watch). Never in the host's session, whatever
-//   happens: guests can never hold it. A small queue of its own, every
-//   request bounded on the host, never a sign-in (an ssh2 connection that is
-//   signed in, or with the system ssh a second connection that may ask
-//   nothing, only while the host's own session is up).
+//   the chat views and histories guests read). On an ssh2 host never in the
+//   host's session: guests can never hold it (no lane: the host is "not
+//   connected" for them). A host on the system ssh keeps them in its open
+//   session, behind the host's own requests, as before (never a second
+//   connection, never a sign-in).
 // - 'bg': the host's own background work (the Files panel's git status for
 //   its colours and its refreshes after a change, the change poll, the
 //   readers of agent conversations and sub-agents): never in front of what
 //   you click. Not available: in the host's session, behind your requests,
 //   as before.
-// Lanes never show in the remote badge (it says what YOU wait for).
+// Lanes never show in the remote badge (it says what YOU wait for). The
+// Files session's idle close and the badge's Cancel leave them alone; only
+// Disconnect, a removed host and Tessel closing end them.
 export const LANES = Object.freeze({
-  pane: Object.freeze({ idleMs: 60_000, maxQueued: 8, maxBgQueued: 8, queueWait: 20_000 }),
+  pane: Object.freeze({ idleMs: 5_000, maxQueued: 16, maxBgQueued: 16, queueWait: 20_000 }),
   guest: Object.freeze({ idleMs: 90_000, maxQueued: 6, maxBgQueued: 6, queueWait: 10_000 }),
   bg: Object.freeze({ idleMs: 120_000, maxQueued: 32, maxBgQueued: 32, queueWait: 30_000 })
 })
 const LANE_READY_MS = 15_000
+export const LANE_RETRY_MS = 45_000
+// What ends the lanes too (else only the Files session ends).
+const LANE_ENDS = new Set(['disconnect', 'removed', 'shutdown'])
 // A guest's requests, bounded on the host (its watchdog ends them).
 export const GUEST_MS = Object.freeze({ list: 8000, stat: 5000, read: 10_000, write: 15_000, check: 8000, hooks: 8000, search: 8000 })
 // Search results a guest's search checks at most (links, nested
@@ -644,20 +654,40 @@ export function createRemoteFs({
 
   // --- Lanes (see LANES) ------------------------------------------------------------
   const lanes = new Map() // hostId\nlane -> { hostId, lane, key, closed, session, ready, idleTimer }
+  const laneRetryAt = new Map() // hostId\nlane -> time before which it is not tried again
   const laneError = (code) => Object.assign(new Error(`lane ${code}`), { code }) // i18n-ignore internal, replaced by sessionErrorText
+  // Whether a lane can be had on this host now: an ssh2 connection signed
+  // in, on a terminal host that keeps an exec channel to it (onlyLive).
+  // -> 'ok' | 'system' (the system ssh) | 'none'
+  async function laneMode(hostId) {
+    const target = ssh ? hosts.get(hostId) : null
+    if (!target) return { kind: 'system' }
+    const mode = await ssh.modeFor(target)
+    if (mode.mode !== 'ssh2') return { kind: 'system' }
+    if (typeof ssh.onlyLiveSupported !== 'function' || !ssh.onlyLiveSupported()) return { kind: 'none', why: 'old-host' }
+    if (!sharedNow(hostId)) return { kind: 'none', why: 'not-connected' }
+    return { kind: 'ok', spec: mode.spec }
+  }
   function openLane(hostId, lane) {
     const conf = LANES[lane]
     if (!conf) return Promise.reject(laneError('no-lane'))
     const key = `${hostId}\n${lane}`
     const existing = lanes.get(key)
     if (existing && !existing.closed) return existing.ready
+    // Could not be had a moment ago: not tried again yet (no retry storm).
+    if ((laneRetryAt.get(key) || 0) > now()) return Promise.reject(laneError('no-lane'))
     const entry = { hostId, lane, key, closed: false, session: null, idleTimer: null }
     lanes.set(key, entry)
     entry.ready = (async () => {
-      const target = ssh ? hosts.get(hostId) : null
-      const mode = target ? await ssh.modeFor(target) : { mode: 'system' }
+      const mode = await laneMode(hostId)
       if (entry.closed) throw laneError('cancelled')
-      const common = {
+      if (mode.kind === 'system') throw laneError('system')
+      if (mode.kind !== 'ok') throw laneError(mode.why === 'not-connected' ? 'not-connected' : 'no-lane')
+      const session = createRemoteSession({
+        file: 'ssh2',
+        args: [],
+        env: {},
+        spawnImpl: ssh.spawnFor(hostId, mode.spec, { onlyLive: true }),
         timers,
         readyTimeoutMs: LANE_READY_MS,
         maxQueued: conf.maxQueued,
@@ -665,30 +695,20 @@ export function createRemoteFs({
         queueWait: conf.queueWait,
         onSlow: slowLog(hostId, lane),
         onExit: (reason) => laneEnded(entry, reason)
-      }
-      let session
-      if (mode.mode === 'ssh2') {
-        // Only over a connection signed in already: a lane never asks
-        // anything (onlyLive: the terminal host opens no connection for it).
-        if (!sharedNow(hostId)) throw laneError('not-connected')
-        session = createRemoteSession({ file: 'ssh2', args: [], env: {}, spawnImpl: ssh.spawnFor(hostId, mode.spec, { onlyLive: true }), ...common })
-      } else if (lane === 'guest') {
-        // The system ssh: a second connection that may ask nothing (keys or
-        // an agent only), while the host's own session is up.
-        const main = sessions.get(hostId)
-        if (!(main && !main.closed && main.session && main.session.state === 'ready')) throw laneError('not-connected')
-        const launch = hosts.launchFor(hostId)
-        if (!launch || !launch.ok) throw laneError('not-connected')
-        session = createRemoteSession({ file: launch.file, args: sessionArgs(launch.args, { batch: true }), env: cleanEnv(env), ...(spawnImpl ? { spawnImpl } : {}), ...common })
-      } else throw laneError('no-lane')
+      })
       entry.session = session
       await session.start()
       if (entry.closed) throw laneError('cancelled')
+      entry.opened = true
       return session
     })()
     entry.ready.catch((err) => laneEnded(entry, (err && err.code) || 'connect'))
     return entry.ready
   }
+  // Ends that say nothing about the lane itself (it is opened again when
+  // needed); the others (refused, dropped, given up to a terminal) leave it
+  // alone for LANE_RETRY_MS, said once.
+  const LANE_QUIET = new Set(['cancelled', 'idle', 'shutdown', 'disconnect', 'removed', 'not-connected', 'no-lane', 'system'])
   function laneEnded(entry, reason) {
     if (entry.closed) return
     entry.closed = true
@@ -696,7 +716,10 @@ export function createRemoteFs({
     entry.idleTimer = null
     if (lanes.get(entry.key) === entry) lanes.delete(entry.key)
     if (entry.session && entry.session.state !== 'closed') entry.session.close(reason)
-    if (!['cancelled', 'idle', 'shutdown', 'not-connected', 'no-lane'].includes(reason)) warn(`remote ${entry.lane} lane for ${entry.hostId} ended: ${reason}`)
+    if (LANE_QUIET.has(reason)) return
+    const again = (laneRetryAt.get(entry.key) || 0) > now()
+    laneRetryAt.set(entry.key, now() + LANE_RETRY_MS)
+    if (!again) warn(`remote ${entry.lane} lane for ${entry.hostId} ${entry.opened ? 'ended' : 'could not open'}: ${reason} (not tried again for ${LANE_RETRY_MS / 1000} s)`) // i18n-ignore log line
   }
   // Closed after LANES[lane].idleMs with nothing asked of it (its channel freed).
   function armLaneIdle(entry) {
@@ -711,9 +734,10 @@ export function createRemoteFs({
   }
   function closeLanes(hostId, reason) {
     for (const entry of [...lanes.values()]) if (hostId === null || entry.hostId === hostId) laneEnded(entry, reason)
+    for (const k of [...laneRetryAt.keys()]) if (hostId === null || k.startsWith(`${hostId}\n`)) laneRetryAt.delete(k)
   }
   // One request on a lane. -> like callOnce; laneFailed: the lane could not
-  // be opened (nothing was sent).
+  // be had (nothing was sent); code 'system': the host is on the system ssh.
   async function laneCall(hostId, lane, fn, args, { cap, timeoutMs, upload } = {}) {
     let session
     try {
@@ -757,13 +781,16 @@ export function createRemoteFs({
       /* gone */
     }
     if (entry.session && entry.session.state !== 'closed') entry.session.close(reason)
-    if (reason !== 'cancelled' && reason !== 'idle' && reason !== 'shutdown') warn(`remote session for ${hostId} ended: ${reason}`)
+    if (!['cancelled', 'idle', 'shutdown', 'disconnect', 'removed'].includes(reason)) warn(`remote session for ${hostId} ended: ${reason}`)
     activity(hostId, null)
   }
 
-  // Ends a host's session (Disconnect, cancel, a sign-in cancelled).
+  // Ends a host's session (Disconnect, cancel, a sign-in cancelled, idle).
+  // Its lanes only with Disconnect, a removed host or Tessel closing
+  // (LANE_ENDS): a guest's save or a background read on its way is not cut
+  // by the Files session's idle close or the badge's Cancel.
   function closeHost(hostId, reason = 'cancelled') {
-    closeLanes(hostId, reason)
+    if (LANE_ENDS.has(reason)) closeLanes(hostId, reason)
     const entry = sessions.get(hostId)
     if (!entry) return false
     if (entry.session) entry.session.close(reason)
@@ -824,10 +851,20 @@ export function createRemoteFs({
     const lane = guest ? 'guest' : opts.lane || ((background || quiet || ifOpen) && !opts.noLane ? 'bg' : null)
     if (lane) {
       const res = await laneCall(hostId, lane, fn, args, { cap, timeoutMs, upload })
+      const inSession = { ...opts, lane: null, noLane: true }
       // The pane's or the background lane cannot be had (a connection not
-      // signed in yet, the system ssh, a channel refused): in the host's
-      // session as before (the pane's first in its turn). Never a guest's.
-      if (res && res.laneFailed && (lane === 'pane' || lane === 'bg')) return callOnce(hostId, fn, args, { ...opts, lane: null, noLane: true, ...(lane === 'pane' ? { first: true } : {}) })
+      // signed in yet, the system ssh, an older terminal host, no slot, not
+      // tried again yet), or the pane's is full: in the host's session as
+      // before, the pane's first in its turn (a pane never fails to start
+      // because of a busy lane).
+      if (res && ((res.laneFailed && (lane === 'pane' || lane === 'bg')) || (lane === 'pane' && res.code === 'busy')))
+        return callOnce(hostId, fn, args, { ...inSession, ...(lane === 'pane' ? { first: true } : {}) })
+      // A guest on a host with the system ssh: in its open session, behind the
+      // host's own requests, as before; never a new connection or a sign-in.
+      if (res && res.laneFailed && lane === 'guest' && res.code === 'system') {
+        const r = await callOnce(hostId, fn, args, { ...inSession, guest: false, ifOpen: true, background: true })
+        return r && r.skipped ? { error: sessionErrorText(hostId, laneError('not-connected')), code: 'not-connected' } : r
+      }
       return res
     }
     let session
@@ -1126,10 +1163,10 @@ ${!!q.ignored}`, () => projectStatusNow(q))
     if (info.error) return { ok: false, error: info.error }
     if (info.missing || !info.top) return { ok: true, files: {}, repo: false }
     const args = ['status', '--porcelain=v1', '-z', '--untracked-files=all', ...(ignored ? ['--ignored=matching'] : [])]
-    // The Files panel's colours (background): bounded tighter, and how long
-    // it took is said (ms) so the panel asks less often for a big project.
+    // How long it took is said (ms): the Files panel asks less often for a
+    // big project, and backs off after one that ran out of time.
     const t0 = now()
-    const res = await call(loc.hostId, '__t_gitin', [arg(loc.root.path), arg(info.top), ...info.gitArgs, ...args], { cap: 32 * 1024 * 1024, timeoutMs: background === true ? 20000 : 30000, op: 'status', background: background === true, retry: true })
+    const res = await call(loc.hostId, '__t_gitin', [arg(loc.root.path), arg(info.top), ...info.gitArgs, ...args], { cap: 32 * 1024 * 1024, timeoutMs: 30000, op: 'status', background: background === true, retry: true })
     const ms = now() - t0
     if (res.error) return { ok: false, error: res.error, ms }
     if (res.rc !== 0) return { ok: false, error: rcText(res, t('main.scm.statusFailed', 'Git status failed.')), ms }
@@ -1344,6 +1381,9 @@ ${q.root}`, () => sparseInfoNow(q))
   // not be read there, so nothing is given: it fails closed).
   const LANE_DOWN = new Set(['not-connected', 'host', 'connect', 'connect-timeout', 'ssh', 'closed', 'auth-cancelled', 'no-lane', 'spawn', 'cancelled', 'shutdown'])
   function guestFail(res) {
+    // No guests' lane on this host now (an older terminal host, no slot, not
+    // tried again yet): 'no-lane' (the host's own session is never used).
+    if (res && res.error && res.laneFailed && res.code === 'no-lane') return { ok: false, code: 'no-lane' }
     if (res && res.error) return { ok: false, code: res.code === 'busy' || res.code === 'timeout' ? 'busy' : LANE_DOWN.has(res.code) ? 'not-connected' : 'failed' }
     return { ok: false, code: (res && GUEST_RC[res.rc]) || 'failed' }
   }
@@ -1493,11 +1533,16 @@ ${q.root}`, () => sparseInfoNow(q))
   }
 
   // The project folder's real path (links resolved: a link to a broad folder
-  // must not pass for a project) and the folders its git runs hooks from
-  // (core.hooksPath), relative to it, lower case ('' for the project itself,
-  // its real place too when it is a link): a guest never writes there.
-  // hooks null: it cannot be told (a guest writes nothing).
-  // -> { ok: true, real, hooks: string[] | null } | { ok: false, code }
+  // must not pass for a project), the host's $HOME (a project that is the
+  // home folder, or holds it, is no project to share), the folders its git
+  // runs hooks from (core.hooksPath), relative to it, lower case ('' for the
+  // project itself, its real place too when it is a link): a guest never
+  // writes there; and its repository's own folders when they are inside the
+  // project under another name than .git (a worktree's .bare, a
+  // --separate-git-dir): hidden from guests like .git.
+  // hooks null: it cannot be told (git missing, or refusing a repository
+  // that is there): a guest writes nothing.
+  // -> { ok: true, real, home, hooks: string[] | null, gitDirs: string[] } | { ok: false, code }
   async function guestInfo({ root } = {}) {
     const top = under(root, root)
     if (!top) return { ok: false, code: 'refused' }
@@ -1507,9 +1552,18 @@ ${q.root}`, () => sparseInfoNow(q))
     if (lines[lines.length - 1] === '') lines.pop()
     const real = lines[0] && lines[0].startsWith('R /') ? lines[0].slice(2) : null
     if (!real || CONTROL.test(real)) return guestFail(res.rc === 0 ? { rc: 98 } : res)
-    return { ok: true, real, hooks: res.rc === 0 ? hooksFrom(real, lines.slice(1)) : null }
+    const homeLine = lines[1] && lines[1].startsWith('M ') ? lines[1].slice(2) : null
+    const home = homeLine && homeLine.startsWith('/') && !CONTROL.test(homeLine) ? homeLine.replace(/(.)\/+$/, '$1') : null
+    const rest = lines.slice(homeLine === null ? 1 : 2)
+    const gitDirs = []
+    for (const l of rest) {
+      if (!/^[GC] \//.test(l)) continue
+      const rel = relativeTo(real, l.slice(2))
+      if (rel !== null && rel && !CONTROL.test(rel)) gitDirs.push(rel.toLowerCase())
+    }
+    return { ok: true, real, home, hooks: res.rc === 0 ? hooksFrom(real, rest.filter((l) => !/^[GC] /.test(l))) : null, gitDirs: [...new Set(gitDirs)] }
   }
-  // __t_ghk's lines after the real root -> [rels] | null (cannot be told).
+  // __t_ghk's lines after the real root and $HOME -> [rels] | null (cannot be told).
   function hooksFrom(real, lines) {
     if (lines.length === 1 && lines[0] === 'N') return []
     if (!lines.length || lines.some((l) => !/^[THQ] /.test(l))) return null
@@ -1539,6 +1593,7 @@ ${q.root}`, () => sparseInfoNow(q))
     if (really !== null) rels.add(really.toLowerCase())
     return [...rels]
   }
+
 
   // A name search (folders, then files). -> { ok: true, results: [{ rel,
   // dir }], truncated } | { ok: false, code }
@@ -1590,8 +1645,30 @@ ${q.root}`, () => sparseInfoNow(q))
     const nl = text.indexOf('\n')
     const mode = nl < 0 ? '' : text.slice(0, nl)
     if (mode !== 'G' && mode !== 'P') return { ok: false, code: 'failed' }
-    const found = grepRecords(text.slice(nl + 1), mode === 'G', max, q.toLowerCase())
+    const found = mode === 'G' ? grepRecords(text.slice(nl + 1), true, max, q.toLowerCase()) : nulGrepRecords(text.slice(nl + 1), max, q.toLowerCase())
     return { ok: true, results: found.results, truncated: cut || found.truncated }
+  }
+  // grep --null's lines ("./<path>" NUL "<line>:<text>"), read strictly: a
+  // file name is never guessed from a ":" (a line whose text looks like one
+  // could name another file). -> { results, truncated }
+  function nulGrepRecords(out, max, lower) {
+    const results = []
+    let truncated = false
+    for (const rec of out.split('\n')) {
+      const z = rec.indexOf('\0')
+      if (z < 2 || !rec.startsWith('./')) continue
+      const m = /^(\d+):(.*)$/s.exec(rec.slice(z + 1))
+      if (!m) continue
+      const rel = cleanRel(rec.slice(2, z))
+      const line = Number(m[1])
+      if (!rel || rel.includes('\\') || !Number.isInteger(line) || line < 1) continue
+      if (results.length >= max) {
+        truncated = true
+        break
+      }
+      results.push({ rel, line, text: clip(m[2], lower) })
+    }
+    return { results, truncated }
   }
 
   // --- Editor ----------------------------------------------------------------------------
@@ -2159,6 +2236,11 @@ ${root}`, () => gitWorktreesNow(root))
     return parseAgentTools(Buffer.isBuffer(res.out) ? res.out.toString('utf8') : String(res.out || ''))
   }
 
+  // A reader's call options: a Live Share guest's (lane 'guest': on the
+  // guests' lane, see LANES), else the host's own background read (the
+  // open session's turn when it is up).
+  const guestOr = (lane, open) => (lane === 'guest' ? { lane: 'guest', guest: true } : open ? { ifOpen: true } : {})
+
   // Whether a request can run on the host without any sign-in: its
   // session is up, or its shared ssh2 connection is signed in already.
   function connectedQuietly(hostId) {
@@ -2213,7 +2295,7 @@ ${root}`, () => gitWorktreesNow(root))
     const entry = sessions.get(hostId)
     const open = !!(entry && !entry.closed && entry.session && entry.session.state === 'ready')
     const where = offset === null ? '-' : String(offset)
-    const how = lane === 'pane' || lane === 'guest' ? { lane, ...(lane === 'guest' ? { guest: true } : {}) } : open ? { ifOpen: true } : {}
+    const how = lane === 'pane' ? { lane } : guestOr(lane, open)
     const timeoutMs = lane === 'guest' ? 15_000 : 30_000
     const res = sub
       ? await call(hostId, '__t_sread', [id, `${sub}.jsonl`, where, String(max)], { cap: max + 64, timeoutMs, op: 'read', background: true, ...how })
@@ -2237,14 +2319,14 @@ ${root}`, () => gitWorktreesNow(root))
   // most `limit`: their names (without .jsonl), sizes and change times, never
   // their contents. Never a sign-in.
   // -> { ok: true, files: [{ name, size, mtimeMs }] } | { ok: false, missing?, notConnected?, error }
-  async function listSubagentFiles(hostId, { id, limit = MAX_SUBAGENT_FILES } = {}) {
+  async function listSubagentFiles(hostId, { id, limit = MAX_SUBAGENT_FILES, lane = null } = {}) {
     if (!hostIdOk(hostId)) return { ok: false, error: t('main.remote.notFound', 'This remote host is no longer saved in Tessel.') }
     if (typeof id !== 'string' || !/^[0-9A-Za-z-]{8,100}$/.test(id)) return { ok: false, error: 'invalid' }
     const n = Number.isSafeInteger(limit) && limit > 0 ? Math.min(limit, MAX_SUBAGENT_FILES) : MAX_SUBAGENT_FILES
     if (!connectedQuietly(hostId)) return { ok: false, notConnected: true, error: t('main.remoteFs.notConnected', '{{host}} is not connected. Use Connect to sign in.', { host: hostLabel(hostId) }) }
     const entry = sessions.get(hostId)
     const open = !!(entry && !entry.closed && entry.session && entry.session.state === 'ready')
-    const res = await call(hostId, '__t_subs', [id, String(n)], { cap: 64 * 1024, timeoutMs: 20_000, op: 'read', background: true, ...(open ? { ifOpen: true } : {}) })
+    const res = await call(hostId, '__t_subs', [id, String(n)], { cap: 64 * 1024, timeoutMs: 20_000, op: 'read', background: true, ...guestOr(lane, open) })
     if (!res || res.skipped) return { ok: false, notConnected: true, error: t('main.remoteFs.notConnected', '{{host}} is not connected. Use Connect to sign in.', { host: hostLabel(hostId) }) }
     if (res.error) return { ok: false, error: res.error }
     if (res.rc === RC.MISSING) return { ok: false, missing: true, error: 'missing' }
@@ -2257,7 +2339,7 @@ ${root}`, () => gitWorktreesNow(root))
   // their names from listSubagentFiles. Never a sign-in.
   // -> { ok: true, metas: { name: object } } (a name without one is left out)
   //    | { ok: false, missing?, notConnected?, error }
-  async function readSubagentMetas(hostId, { id, names } = {}) {
+  async function readSubagentMetas(hostId, { id, names, lane = null } = {}) {
     if (!hostIdOk(hostId)) return { ok: false, error: t('main.remote.notFound', 'This remote host is no longer saved in Tessel.') }
     if (typeof id !== 'string' || !/^[0-9A-Za-z-]{8,100}$/.test(id)) return { ok: false, error: 'invalid' }
     const list = Array.isArray(names) ? [...new Set(names.filter((n) => typeof n === 'string' && SUBAGENT_NAME.test(n)))].slice(0, MAX_SUBAGENT_FILES) : []
@@ -2265,7 +2347,7 @@ ${root}`, () => gitWorktreesNow(root))
     if (!connectedQuietly(hostId)) return { ok: false, notConnected: true, error: t('main.remoteFs.notConnected', '{{host}} is not connected. Use Connect to sign in.', { host: hostLabel(hostId) }) }
     const entry = sessions.get(hostId)
     const open = !!(entry && !entry.closed && entry.session && entry.session.state === 'ready')
-    const res = await call(hostId, '__t_smeta', [id, ...list], { cap: 512 * 1024, timeoutMs: 20_000, op: 'read', background: true, ...(open ? { ifOpen: true } : {}) })
+    const res = await call(hostId, '__t_smeta', [id, ...list], { cap: 512 * 1024, timeoutMs: 20_000, op: 'read', background: true, ...guestOr(lane, open) })
     if (!res || res.skipped) return { ok: false, notConnected: true, error: t('main.remoteFs.notConnected', '{{host}} is not connected. Use Connect to sign in.', { host: hostLabel(hostId) }) }
     if (res.error) return { ok: false, error: res.error }
     if (res.rc === RC.MISSING) return { ok: false, missing: true, error: 'missing' }
@@ -2278,14 +2360,14 @@ ${root}`, () => gitWorktreesNow(root))
   // `limit`: names (rollout-<time>-<id>, without .jsonl), sizes and change
   // times. Each one is then read by its id (readAgentFile). Never a sign-in.
   // -> { ok: true, files: [{ name, size, mtimeMs }] } | { ok: false, notConnected?, error }
-  async function listCodexChildren(hostId, { id, limit = MAX_SUBAGENT_FILES } = {}) {
+  async function listCodexChildren(hostId, { id, limit = MAX_SUBAGENT_FILES, lane = null } = {}) {
     if (!hostIdOk(hostId)) return { ok: false, error: t('main.remote.notFound', 'This remote host is no longer saved in Tessel.') }
     if (typeof id !== 'string' || !/^[0-9A-Za-z-]{8,100}$/.test(id)) return { ok: false, error: 'invalid' }
     const n = Number.isSafeInteger(limit) && limit > 0 ? Math.min(limit, MAX_SUBAGENT_FILES) : MAX_SUBAGENT_FILES
     if (!connectedQuietly(hostId)) return { ok: false, notConnected: true, error: t('main.remoteFs.notConnected', '{{host}} is not connected. Use Connect to sign in.', { host: hostLabel(hostId) }) }
     const entry = sessions.get(hostId)
     const open = !!(entry && !entry.closed && entry.session && entry.session.state === 'ready')
-    const res = await call(hostId, '__t_cxkids', [id, String(n)], { cap: 64 * 1024, timeoutMs: 30_000, op: 'read', background: true, ...(open ? { ifOpen: true } : {}) })
+    const res = await call(hostId, '__t_cxkids', [id, String(n)], { cap: 64 * 1024, timeoutMs: lane === 'guest' ? 15_000 : 30_000, op: 'read', background: true, ...guestOr(lane, open) })
     if (!res || res.skipped) return { ok: false, notConnected: true, error: t('main.remoteFs.notConnected', '{{host}} is not connected. Use Connect to sign in.', { host: hostLabel(hostId) }) }
     if (res.error) return { ok: false, error: res.error }
     if (res.rc !== 0 && res.rc !== RC.PIPE && !res.truncated) return { ok: false, error: rcText(res, `rc ${res.rc}`) }

@@ -9,6 +9,7 @@ import ConfirmDialog from '../ConfirmDialog.vue'
 import RemoteHostForm from './RemoteHostForm.vue'
 import PanelState from '../ui/PanelState.vue'
 import { t } from '../../i18n'
+import { forgetHostTrees } from '../../explorerTreeCache'
 import {
   remoteHostsState,
   syncRemoteHosts,
@@ -192,6 +193,8 @@ async function onRemoveAnswer(answer) {
   if (!answer || !target || !api()) return
   await run(target, 'remove', async () => {
     const res = await api().remove(target.id).catch(() => null)
+    // Its projects' Files trees kept on this computer go with it.
+    if (res && res.ok) forgetHostTrees(target.id)
     if (!alive) return
     if (res && res.ok) say(t('remote.pane.removed', 'Target removed'), 'ok')
     else say(remoteErrorText(res && res.error, t('remote.pane.removeFailed', 'Failed to remove target')), 'bad')

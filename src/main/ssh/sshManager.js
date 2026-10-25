@@ -236,8 +236,11 @@ export function createSshManager({
     })
   }
 
-  function track(e, conn, stream) {
+  // lane: a channel opened with onlyLive (remoteFs.js lanes): kept on its
+  // connection's list, to give its slot up to a terminal (open below).
+  function track(e, conn, stream, lane = false) {
     conn.channels++
+    if (lane) (conn.lanes || (conn.lanes = new Set())).add(stream)
     if (e.idleTimer) {
       timers.clearTimeout(e.idleTimer)
       e.idleTimer = null
@@ -246,6 +249,7 @@ export function createSshManager({
     const release = () => {
       if (released) return
       released = true
+      if (conn.lanes) conn.lanes.delete(stream)
       if (!conn.closed) conn.channels = Math.max(0, conn.channels - 1)
       armIdle(e)
     }
@@ -257,30 +261,82 @@ export function createSshManager({
     return { stream, release, client: conn.client, connectionAlive: () => !conn.closed }
   }
 
+  const channelError = (err) => Object.assign(new Error('ssh channel'), { code: 'channel', params: { detail: String((err && err.message) || err || '').slice(0, 200) } }) // i18n-ignore internal: translated by code
+  // A lane's channels on a connection closed, waited for (their slots are
+  // the server's again once the close is done; LANE_YIELD_MS at most).
+  const LANE_YIELD_MS = 2000
+  function yieldLanes(conn) {
+    const streams = conn.lanes ? [...conn.lanes] : []
+    if (!streams.length) return Promise.resolve(false)
+    return Promise.all(
+      streams.map(
+        (s) =>
+          new Promise((resolve) => {
+            if (s.tesselClosed) return resolve()
+            const timer = timers.setTimeout(resolve, LANE_YIELD_MS)
+            s.once('close', () => {
+              timers.clearTimeout(timer)
+              resolve()
+            })
+            try {
+              s.close()
+            } catch {
+              resolve()
+            }
+          })
+      )
+    ).then(() => true)
+  }
+
   // kind: 'exec' ({ command, pty? }) | 'shell' ({ pty }) | 'sftp'
-  // opts.onlyLive: on a connection that is up only (never a new connection,
-  // so never a question): refused otherwise.
+  // opts.onlyLive: a lane's channel (remoteFs.js): on a connection that is up
+  // only (never a new connection, so never a question), refused otherwise,
+  // and given up to a terminal that needs its slot.
+  // The live connections are tried the least loaded first (a spare one with
+  // room before any new connection). Refused everywhere: the lanes' channels
+  // give their slots up (terminals and the Files session always win), then a
+  // spare connection with the kept credentials.
   // -> Promise<{ stream, release, client }>; rejects with an sshError.
   async function open(hostId, spec, kind, opts = {}) {
     const e = entryFor(hostId, spec)
-    if (opts.onlyLive && !liveConns(e).length) throw Object.assign(new Error('ssh not connected'), { code: 'channel', params: { detail: 'not connected' } }) // i18n-ignore internal: translated by code
-    const conn = await ensure(e)
-    try {
-      return track(e, conn, await openOn(conn, kind, opts))
-    } catch (err) {
-      // Refused on a busy connection: a second one (kept credentials).
-      if (!opts.onlyLive && conn.channels > 0 && liveConns(e).length < MAX_CONNECTIONS_PER_HOST && !conn.closed) {
-        const client = await connectWithRetry(e)
-        const extra = adopt(e, client, { spare: true })
-        try {
-          return track(e, extra, await openOn(extra, kind, opts))
-        } catch (err2) {
-          closeConn(extra)
-          throw Object.assign(new Error('ssh channel'), { code: 'channel', params: { detail: String((err2 && err2.message) || '').slice(0, 200) } }) // i18n-ignore internal: translated by code
-        }
+    const lane = opts.onlyLive === true
+    if (lane && !liveConns(e).length) throw channelError('not connected')
+    await ensure(e)
+    const tried = new Set()
+    let lastErr = null
+    for (;;) {
+      const conn = liveConns(e)
+        .filter((c) => !tried.has(c))
+        .sort((a, b) => a.channels - b.channels)[0]
+      if (!conn) break
+      tried.add(conn)
+      try {
+        return track(e, conn, await openOn(conn, kind, opts), lane)
+      } catch (err) {
+        lastErr = err
       }
-      throw Object.assign(new Error('ssh channel'), { code: 'channel', params: { detail: String((err && err.message) || '').slice(0, 200) } }) // i18n-ignore internal: translated by code
     }
+    if (lane) throw channelError(lastErr)
+    for (const conn of liveConns(e)) {
+      if (!(await yieldLanes(conn)) || conn.closed) continue
+      try {
+        return track(e, conn, await openOn(conn, kind, opts))
+      } catch (err) {
+        lastErr = err
+      }
+    }
+    // A second connection (kept credentials), when a busy one refused it.
+    if (liveConns(e).some((c) => c.channels > 0) && liveConns(e).length < MAX_CONNECTIONS_PER_HOST) {
+      const client = await connectWithRetry(e)
+      const extra = adopt(e, client, { spare: true })
+      try {
+        return track(e, extra, await openOn(extra, kind, opts))
+      } catch (err2) {
+        closeConn(extra)
+        throw channelError(err2)
+      }
+    }
+    throw channelError(lastErr)
   }
 
   // Signed in (a connection test). -> Promise<void>

@@ -517,30 +517,6 @@ __t_fp() {
   if [ -s "$__T_D/fpl" ]; then printf 'changed\\000'; cat "$__T_D/fpl"; else echo same; fi
   rm -f "$__T_D/fpl"
 }
-__t_wtl() {
-  __t_root "$1" || return $?
-  case $2 in ''|*[!0-9]*) return 90 ;; esac
-  command -v git >/dev/null 2>&1 || return 81
-  __t=$(__t_git "$__R" -c core.hooksPath=/nonexistent-tessel-no-hooks rev-parse --show-toplevel 2>/dev/null) || return 80
-  __q=$(__t_real "$__t") && [ -n "$__q" ] && __t=$__q
-  __b=$(__t_git "$__R" -c core.hooksPath=/nonexistent-tessel-no-hooks symbolic-ref -q --short HEAD 2>/dev/null) || __b=
-  __h=$(__t_git "$__R" -c core.hooksPath=/nonexistent-tessel-no-hooks rev-parse -q --verify HEAD 2>/dev/null) || __h=
-  printf 'tessel-wtl 1\\nroot %s\\ntop %s\\nbranch %s\\nhead %s\\n\\n' "$__R" "$__t" "$__b" "$__h"
-  __t_git "$__R" -c core.hooksPath=/nonexistent-tessel-no-hooks -c protocol.ext.allow=never worktree list --porcelain | {
-    __n=0
-    while IFS= read -r __l; do
-      case $__l in
-        'worktree '*)
-          __n=$((__n+1)); [ "$__n" -gt "$2" ] && break
-          __w=\${__l#worktree }
-          __q=$(cd -P "$__w" 2>/dev/null && pwd -P) || __q=
-          [ -n "$__q" ] || __q=$__w
-          printf 'worktree %s\\n' "$__q" ;;
-        *) printf '%s\\n' "$__l" ;;
-      esac
-    done
-  }
-}
 __t_gw() {
   __gc=$1
   __go=$IFS; IFS=/; set -f; set -- $2; IFS=$__go; set +f
@@ -570,7 +546,7 @@ __t_gign() {
   command -v git >/dev/null 2>&1 && __gt=$(__t_git "$1" rev-parse --is-inside-work-tree 2>/dev/null)
   if [ "$__gt" = true ]; then
     printf '/@@I y\\000'
-    __t_git "$1" check-ignore -z --stdin
+    __t_git "$1" check-ignore --no-index -z --stdin
     [ $? -le 1 ] && printf '/@@I e\\000'
     return 0
   fi
@@ -632,7 +608,14 @@ __t_glsm() {
 }
 __t_gst() { __t_gp "$1" "$2" || return $?; __t_gone "$1" "$2" "$3" || return $?; __t_stats "$1" "$2"; }
 __t_grd() { __t_gp "$1" "$2" || return $?; __t_gone "$1" "$2" "$4" || return $?; __t_read "$1" "$2" "$3"; }
-__t_gwr() { __t_gp "$1" "$2" || return $?; __t_gone "$1" "$2" "$6" || return $?; __t_write "$1" "$2" "$3" "$4" '' "$5"; }
+__t_gwr() {
+  __t_gp "$1" "$2" || return $?
+  __t_grel "$1" "$2"
+  case "/$(printf '%s' "$__gq" | tr 'A-Z' 'a-z')/" in */.git/*) return 90 ;; esac
+  [ -n "$3" ] || [ "$5" = new ] || return 90
+  __t_gone "$1" "$2" "$6" || return $?
+  __t_write "$1" "$2" "$3" "$4" '' "$5"
+}
 __t_gchk() {
   __t_root "$1" || return $?
   __gb=\${1%/}
@@ -641,6 +624,7 @@ __t_gchk() {
   while IFS= read -r __gl || [ -n "$__gl" ]; do
     [ -n "$__gl" ] || continue
     __t_gw "$__gb" "$__gl" || continue
+    [ -e "$__gb/$__gl" ] && [ ! -L "$__gb/$__gl" ] || continue
     printf '%s\\000' "$__gl"
     printf './%s\\000' "$__gl" >>"$__T_D/gk"
   done <"$__T_D/m"
@@ -652,10 +636,22 @@ __t_gchk() {
 __t_ghk() {
   __t_root "$1" || return $?
   printf 'R %s\\n' "$__R"
-  command -v git >/dev/null 2>&1 || { printf 'N\\n'; return 0; }
-  __t=$(__t_git "$__R" rev-parse --show-toplevel 2>/dev/null) || { printf 'N\\n'; return 0; }
+  printf 'M %s\\n' "$HOME"
+  __t=
+  command -v git >/dev/null 2>&1 && __t=$(__t_git "$__R" rev-parse --show-toplevel 2>/dev/null)
+  if [ -z "$__t" ]; then
+    __gu=$__R
+    while [ -n "$__gu" ]; do
+      if [ -e "$__gu/.git" ] || [ -L "$__gu/.git" ]; then printf 'X\\n'; return 0; fi
+      case $__gu in */*) __gu=\${__gu%/*} ;; *) __gu= ;; esac
+    done
+    printf 'N\\n'
+    return 0
+  fi
   __t=$(__t_real "$__t") || return 91
   printf 'T %s\\n' "$__t"
+  __gd=$(__t_git "$__R" rev-parse --absolute-git-dir 2>/dev/null) && [ -n "$__gd" ] && __q=$(__t_real "$__gd") && [ -n "$__q" ] && printf 'G %s\\n' "$__q"
+  __gd=$(__t_git "$__R" rev-parse --git-common-dir 2>/dev/null) && [ -n "$__gd" ] && { case $__gd in /*) ;; *) __gd="\${__R%/}/$__gd" ;; esac; __q=$(__t_real "$__gd") && [ -n "$__q" ] && printf 'C %s\\n' "$__q"; }
   __h=$(__t_git "$__R" config --get core.hooksPath 2>/dev/null); __hr=$?
   [ "$__hr" = 1 ] && return 0
   [ "$__hr" = 0 ] || return 98
@@ -678,8 +674,34 @@ __t_ggrep() {
     __t_git "$__R" "$@"
   else
     printf 'P\\n'
-    __t_grep "$__R" plain "$__gq"
+    set -- -rnIiF --null
+    [ -n "$__T_GD" ] && set -- "$@" -D skip
+    LC_ALL=C grep "$@" --exclude-dir=.git --exclude-dir=node_modules --exclude-dir=dist --exclude-dir=build --exclude-dir=out --exclude-dir=.next --exclude-dir=.cache --exclude-dir=target --exclude-dir=.venv --exclude-dir=__pycache__ -e "$__gq" .
   fi
+}
+__t_wtl() {
+  __t_root "$1" || return $?
+  case $2 in ''|*[!0-9]*) return 90 ;; esac
+  command -v git >/dev/null 2>&1 || return 81
+  __t=$(__t_git "$__R" -c core.hooksPath=/nonexistent-tessel-no-hooks rev-parse --show-toplevel 2>/dev/null) || return 80
+  __q=$(__t_real "$__t") && [ -n "$__q" ] && __t=$__q
+  __b=$(__t_git "$__R" -c core.hooksPath=/nonexistent-tessel-no-hooks symbolic-ref -q --short HEAD 2>/dev/null) || __b=
+  __h=$(__t_git "$__R" -c core.hooksPath=/nonexistent-tessel-no-hooks rev-parse -q --verify HEAD 2>/dev/null) || __h=
+  printf 'tessel-wtl 1\\nroot %s\\ntop %s\\nbranch %s\\nhead %s\\n\\n' "$__R" "$__t" "$__b" "$__h"
+  __t_git "$__R" -c core.hooksPath=/nonexistent-tessel-no-hooks -c protocol.ext.allow=never worktree list --porcelain | {
+    __n=0
+    while IFS= read -r __l; do
+      case $__l in
+        'worktree '*)
+          __n=$((__n+1)); [ "$__n" -gt "$2" ] && break
+          __w=\${__l#worktree }
+          __q=$(cd -P "$__w" 2>/dev/null && pwd -P) || __q=
+          [ -n "$__q" ] || __q=$__w
+          printf 'worktree %s\\n' "$__q" ;;
+        *) printf '%s\\n' "$__l" ;;
+      esac
+    done
+  }
 }
 __t_dir() { [ -d "$1" ] || return 91; __PD=$(cd -P "$1" 2>/dev/null && pwd -P) || return 89; [ -n "$__PD" ] || return 91; }
 __t_browse() {
