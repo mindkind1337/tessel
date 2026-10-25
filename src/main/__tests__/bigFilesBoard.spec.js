@@ -89,6 +89,16 @@ describe('saveTasks on a big board', () => {
     saveTasks(dir, [card(1), card(2), card(3), card(4)], [], [])
     expect(JSON.parse(fs.readFileSync(bak, 'utf8')).tasks).toHaveLength(3)
   })
+
+  it('a .bak dated in the future (the clock set back since) is renewed, not kept for ever', () => {
+    saveTasks(dir, [card(1)], [], [])
+    saveTasks(dir, [card(1), card(2)], [], [])
+    const bak = `${file()}.bak`
+    const future = new Date(Date.now() + 24 * 3600 * 1000)
+    fs.utimesSync(bak, future, future)
+    saveTasks(dir, [card(1), card(2), card(3)], [], [])
+    expect(JSON.parse(fs.readFileSync(bak, 'utf8')).tasks).toHaveLength(2)
+  })
 })
 
 describe('a board written by the previous version', () => {

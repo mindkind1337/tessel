@@ -17,6 +17,11 @@ const props = defineProps({
   agents: { type: Array, default: () => [] },
   defaultShell: { type: String, default: null },
   placement: { type: String, default: 'right' }, // 'left' | 'right' | 'down'
+  // Settings > Terminal, "Tile new panes in a grid", for this project: 'grid'
+  // (the panes tile again), 'largest' (arranged by hand: the pane with the
+  // most room splits), '' (off here). Then Auto comes first and is the
+  // default; a side picked is made as asked for this pane.
+  autoPlace: { type: String, default: '' },
   // Title of the pane the new one will open next to (null = empty workspace).
   targetTitle: { type: String, default: null },
   // { available: bool, reason: string|null, checking: bool }
@@ -52,8 +57,20 @@ const rootEl = ref(null)
 const pos = ref({ left: props.x, top: props.y })
 
 // Where the new pane goes, next to the pane in use. (A new workspace has its
-// own button in the sidebar.) The icon shades the side it opens on.
+// own button in the sidebar.) The icon shades the side it opens on; Auto's
+// is a grid.
 const placements = computed(() => [
+  ...(props.autoPlace
+    ? [
+        {
+          id: 'auto',
+          label: t('pane.launch.auto', 'Auto'),
+          title: t('pane.launch.autoTitle', 'Into the grid with the other panes (Settings > Terminal)'),
+          shade: null,
+          line: 'M8 2.5v11M1.5 8h13'
+        }
+      ]
+    : []),
   {
     id: 'left',
     label: t('pane.launch.left', 'Left'),
@@ -80,11 +97,25 @@ const placements = computed(() => [
 const hostAgents = computed(() => (props.hostMenu && Array.isArray(props.hostMenu.agents) ? props.hostMenu.agents : []))
 const hostName = computed(() => (props.hostMenu && props.hostMenu.host) || '?')
 
+// The place picked in this menu (null: Auto when it is there, else the
+// placement kept from last time). Sent with the launch as `side`.
+const picked = ref(null)
+const where = computed(() => picked.value || (props.autoPlace ? 'auto' : props.placement))
+function pickPlace(id) {
+  picked.value = id
+  // A side is also kept for next time (and for when Auto is off).
+  if (id !== 'auto') emit('placement', id)
+}
 const whereText = computed(() => {
   if (!props.targetTitle) return t('pane.launch.opensHere', 'Opens in this workspace')
   const name = props.targetTitle
-  if (props.placement === 'left') return t('pane.launch.opensLeftOf', 'Opens to the left of {{name}}', { name })
-  if (props.placement === 'down') return t('pane.launch.opensBelow', 'Opens below {{name}}', { name })
+  if (where.value === 'auto') {
+    return props.autoPlace === 'largest'
+      ? t('pane.launch.opensLargest', 'Splits the pane with the most room (laid out by hand)')
+      : t('pane.launch.opensGrid', 'Joins the grid: the panes are tiled again, the new one last')
+  }
+  if (where.value === 'left') return t('pane.launch.opensLeftOf', 'Opens to the left of {{name}}', { name })
+  if (where.value === 'down') return t('pane.launch.opensBelow', 'Opens below {{name}}', { name })
   return t('pane.launch.opensRightOf', 'Opens to the right of {{name}}', { name })
 })
 
@@ -110,7 +141,7 @@ const accountOf = (id) => (accountRows.value.some((row) => row.id === id) ? { ac
 
 function launch(kind, item) {
   if (kind === 'agent' && !item.available) return
-  emit('launch', { kind, id: item.id, ...(kind === 'agent' ? accountOf(item.id) : {}) })
+  emit('launch', { kind, id: item.id, ...(kind === 'agent' ? accountOf(item.id) : {}), ...(picked.value ? { side: picked.value } : {}) })
 }
 function launchChat(id) {
   emit('launch', { kind: 'chat', id, ...accountOf(id) })
@@ -199,14 +230,15 @@ onMounted(async () => {
           v-for="p in placements"
           :key="p.id"
           class="launch-seg-btn"
-          :class="{ on: placement === p.id }"
+          :class="{ on: where === p.id }"
           role="radio"
-          :aria-checked="placement === p.id"
+          :aria-checked="where === p.id"
           :title="p.title"
-          @click="emit('placement', p.id)"
+          :data-test="'launch-place-' + p.id"
+          @click="pickPlace(p.id)"
         >
           <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-            <rect :x="p.shade.x" :y="p.shade.y" :width="p.shade.w" :height="p.shade.h" rx="1" fill="currentColor" opacity="0.35" />
+            <rect v-if="p.shade" :x="p.shade.x" :y="p.shade.y" :width="p.shade.w" :height="p.shade.h" rx="1" fill="currentColor" opacity="0.35" />
             <rect x="1.5" y="2.5" width="13" height="11" rx="2" stroke="currentColor" stroke-width="1.3" />
             <path :d="p.line" stroke="currentColor" stroke-width="1.3" />
           </svg>
@@ -304,7 +336,7 @@ onMounted(async () => {
         role="menuitem"
         :data-test="`launch-host-install-${agent.id}`"
         :title="t('pane.launch.installOnHostHint', '{{name}} is not installed on this host: install it there', { name: agent.name })"
-        @click="emit('launch', { kind: 'install', id: agent.id })"
+        @click="emit('launch', { kind: 'install', id: agent.id, ...(picked ? { side: picked } : {}) })"
       >
         <BrandIcon :kind="agent.id" :accent="agent.accent" :label="agent.name" :size="16" />
         <span class="launch-name">{{ installLabel(agent) }}</span>

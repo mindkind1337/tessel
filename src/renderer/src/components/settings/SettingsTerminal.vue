@@ -365,7 +365,7 @@ function resetScrollSpeed() {
         <label class="set-row">
           <div class="set-label">
             {{ t('settings.terminal.tileNewPanes', 'Tile new panes in a grid') }}
-            <span class="set-hint">{{ t('settings.terminal.tileNewPanesHint', 'A new pane re-arranges the panes of the project into equal cells, as square as the room allows. A layout you resized or moved by hand is kept until you choose Arrange panes in a grid.') }}</span>
+            <span class="set-hint">{{ t('settings.terminal.tileNewPanesHint', 'A new pane re-arranges the panes of its grid into equal cells, as square as the room allows. Split right, Split down and a side picked in the + menu are made as asked; a layout you resized or moved by hand is kept until you choose Arrange panes in a grid.') }}</span>
           </div>
           <input v-model="settings.tileNewPanes" type="checkbox" class="set-switch" />
         </label>

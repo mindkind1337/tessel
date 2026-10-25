@@ -203,7 +203,9 @@ describe('floating terminal in App.vue', () => {
   const src = fs.readFileSync(join(process.cwd(), 'src', 'renderer', 'src', 'App.vue'), 'utf8')
   it('is rendered outside the grid and its leaf never enters a tree', () => {
     expect(src).toMatch(/<FloatingTerminal :ctl="floating"/)
-    const grid = src.slice(src.indexOf('<SplitNode :node="view.tree" />') - 400, src.indexOf('<SplitNode :node="view.tree" />'))
+    const at = src.indexOf('<PaneGrid v-if="view.grid"')
+    expect(at).toBeGreaterThan(0)
+    const grid = src.slice(at - 400, at)
     expect(grid).not.toMatch(/FloatingTerminal/)
     // Nothing assigns its leaf into a tree or a workspace.
     expect(src).not.toMatch(/floating\.state\.leaf/)

@@ -135,6 +135,7 @@ import { cleanRoots } from './liveShare/shareChat.js'
 import { createRemoteShareFiles } from './liveShare/shareRemoteFiles.js'
 import { remoteRoot } from '../shared/remotePath.js'
 import { remoteRootTooBroad } from '../shared/remoteRootPolicy.js'
+import { localRootTooBroad } from '../shared/projectRootPolicy.js'
 import { createGuestFs } from './liveShare/guestFs.js'
 import { TASK_OPS, taskArgs, guestTasks, checkTasks, isTaskId } from './liveShare/shareTasks.js'
 import { PANEL_OPS, HISTORY_LIMITS, guestPanes, createAgentsFeed, guestChildren, checkPanes, checkChildren, hostHistory, guestHistory, checkHistory, needsFigures, checkUsage, hostTaskCopies, checkReviewInfo, checkReviewDiff } from './liveShare/sharePanels.js'
@@ -209,7 +210,11 @@ export function cleanRoot(root) {
   if (typeof root !== 'string' || !root || root.length > 1024 || /^[a-z][a-z0-9+.-]*:\/\//i.test(root)) return null
   // eslint-disable-next-line no-control-regex -- control characters are what it refuses
   if (/[\u0000-\u001f]/.test(root)) return null
-  return /^[a-zA-Z]:[\\/]/.test(root) || root.startsWith('/') || /^\\\\[^\\?.]/.test(root) ? root : null
+  if (!(/^[a-zA-Z]:[\\/]/.test(root) || root.startsWith('/') || /^\\\\[^\\?.]/.test(root))) return null
+  // A drive, a system folder, the folder of all homes, an admin share, a
+  // WSL drive mount: never shared with guests, whatever the window says (its
+  // real path is checked again: liveShare/shareScope.js rootInfo).
+  return localRootTooBroad(root) ? null : root
 }
 
 // A shared SSH project's folder as the host's window gives it ({ hostId,
@@ -1063,7 +1068,13 @@ export function registerLiveShare({
   // A project's folder changed (the window said another one): its watch
   // starts again, its files are found again.
   function rootsChanged(before) {
-    for (const [project, w] of folderWatches) if (before.get(project) !== roots.get(project)) startFolder(project, w)
+    for (const [project, w] of folderWatches) {
+      if (before.get(project) === roots.get(project)) continue
+      startFolder(project, w)
+      // Guests' Files and Changes read the new folder again.
+      w.git = true
+      folderChanged(project, w, null)
+    }
     for (const e of [...fileWanted.values()]) if (before.get(e.project) !== roots.get(e.project)) watchFile(e.s, e.project, e.rel, true)
     for (const [project, root] of before) if (roots.get(project) !== root) scope.invalidate(root)
   }
@@ -3202,9 +3213,17 @@ export function registerLiveShare({
     }
     const rootsBefore = roots
     if ([...nextRemote].some(([id, v]) => remoteRoots.get(id) !== v) || nextRemote.size !== remoteRoots.size) remoteShare.reset()
+    // An SSH project moved to another folder of its host.
+    const remoteMoved = [...nextRemote].filter(([id, v]) => remoteRoots.has(id) && remoteRoots.get(id) !== v).map(([id]) => id)
     remoteRoots = nextRemote
     roots = nextRoots
     rootsChanged(rootsBefore)
+    // Its guests' Files and Changes read the new folder again.
+    if (sharing && sharing.server)
+      for (const id of remoteMoved) {
+        sharing.server.push('fs', id, null, { paths: null })
+        sharing.server.push('scm', id, null, {})
+      }
     const before = sharing ? new Map(homes(sharing)) : new Map()
     const chatsBefore = sharing ? new Map(chatHomes(sharing)) : new Map()
     layouts = next

@@ -16,10 +16,15 @@ describe('paneViews', () => {
     expect(viewKey(leaf('d', { viewPath: 'C:\\Tessel-codex\\stabilize' }), 'C:\\Tessel')).toBe('c:/tessel-codex/stabilize')
   })
 
-  it('lists the main view first, then each copy as met', () => {
+  it('lists the main view first, then each copy by its folder, whatever the tree’s order', () => {
     const tree = split('s', 'row', [leaf('w', copy('C:\\wt')), leaf('a'), leaf('b')])
     const views = treeViews(tree, 'C:\\Tessel')
     expect(views.map((v) => v.key)).toEqual(['', 'c:/wt'])
+    // The copies' layers are keyed in the page: a tree laid out again never reorders them.
+    const k = leaf('k', copy('C:\\copies\\k'))
+    const j = leaf('j', copy('C:\\copies\\j'))
+    expect(treeViews(split('s', 'row', [k, leaf('a'), j]), 'C:\\Tessel').map((v) => v.key)).toEqual(['', 'c:/copies/j', 'c:/copies/k'])
+    expect(treeViews(split('s', 'row', [j, k, leaf('a')]), 'C:\\Tessel').map((v) => v.key)).toEqual(['', 'c:/copies/j', 'c:/copies/k'])
     expect([...views[0].ids]).toEqual(['a', 'b'])
     expect(activeViewKey(views, 'w')).toBe('c:/wt')
     expect(activeViewKey(views, 'gone')).toBe('')

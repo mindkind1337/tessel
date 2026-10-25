@@ -159,6 +159,7 @@
       "openInExplorer": "Ouvrir dans l'explorateur de fichiers",
       "copyPath": "Copier le chemin",
       "copyName": "Copier le nom du worktree",
+      "renameProject": "Renommer le projet…",
       "menuMarkRead": "Marquer comme lu",
       "menuMarkUnread": "Marquer comme non lu",
       "review": "Examiner les changements…",
@@ -425,6 +426,10 @@
       "quietFor": "silencieux depuis {{time}}"
     },
     "launch": {
+      "auto": "Auto",
+      "autoTitle": "Dans la grille avec les autres panneaux (Paramètres > Terminal)",
+      "opensGrid": "Rejoint la grille : les panneaux sont réorganisés",
+      "opensLargest": "Divise le plus grand panneau (disposition manuelle)",
       "left": "Gauche",
       "splitLeft": "Diviser vers la gauche",
       "right": "Droite",
