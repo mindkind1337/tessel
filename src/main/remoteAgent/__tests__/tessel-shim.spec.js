@@ -76,7 +76,9 @@ describe('mergeCodexToml', () => {
     expect(r.text).toBe(
       '[mcp_servers.tessel-team]\ncommand = "node"\nargs = ["/home/u/.tessel-server/bin/tessel-shim.cjs", "mcp"]\n' +
         'env_vars = ["TESSEL_PANE_ID", "TESSEL_REMOTE_SOCK", "TESSEL_REMOTE_TOKEN", "TESSEL_AGENT_PROVIDER"]\n' +
-        'default_tools_approval_mode = "approve"\n'
+        'default_tools_approval_mode = "approve"\n' +
+        'startup_timeout_sec = 60\n' +
+        'tool_timeout_sec = 1200\n'
     )
   })
   it('replaces only its own table (and sub-tables), and is idempotent', () => {

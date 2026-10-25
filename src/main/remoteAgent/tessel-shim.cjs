@@ -16,7 +16,7 @@ const os = require('os')
 const net = require('net')
 const path = require('path')
 
-const VERSION = '1.4.1'
+const VERSION = '1.4.2'
 const PROTOCOL = 1
 const SERVER_NAME = 'tessel-team'
 const SHIM_NAME = 'tessel-shim.cjs'
@@ -133,7 +133,7 @@ function emptyServer(reason) {
         capabilities: { tools: {} },
         serverInfo: { name: SERVER_NAME, version: VERSION }
       }
-      if (reason) result.instructions = `Tessel's team tools are not reachable right now (${reason}).`
+      if (reason) result.instructions = `Tessel's team tools, including its browser (a real Chromium on the user's computer), are not reachable right now (${reason}). Do not fall back to curl or a headless browser on this server for web pages: tell the user the Tessel tools are not connected and that they can restart this agent from Tessel (right-click its pane, Restart) or click Retry in the pane.`
       return write({ jsonrpc: '2.0', id, result })
     }
     if (method === 'tools/list') return write({ jsonrpc: '2.0', id, result: { tools: [] } })
@@ -559,7 +559,12 @@ function codexTable(shimPath, node) {
     `args = [${tomlString(shimPath)}, "mcp"]\n` +
     `env_vars = [${ENV_VARS.map(tomlString).join(', ')}]\n` +
     // Only the team tools run without asking, as on the PC.
-    `default_tools_approval_mode = "approve"\n`
+    `default_tools_approval_mode = "approve"\n` +
+    // The server starts through sshd, Tessel and a node on the PC: past
+    // Codex's 10 s default it was marked failed and its tools were silently
+    // missing. Tool calls wait for the user or a teammate, as on the PC.
+    `startup_timeout_sec = 60\n` +
+    `tool_timeout_sec = 1200\n`
   )
 }
 

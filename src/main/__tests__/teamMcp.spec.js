@@ -1231,6 +1231,11 @@ describe('an agent on an SSH host (TESSEL_REMOTE=1)', () => {
     expect(instructions).toMatch(/browser_snapshot/)
     expect(instructions).toMatch(/run_in_terminal/)
     expect(instructions).toMatch(/You run on an SSH host/)
+    // Web pages go to Tessel's browser on the user's computer, not to curl or
+    // Playwright on the server; a missing tool is said, not worked around.
+    expect(instructions).toMatch(/Do NOT start curl, Playwright, Puppeteer/)
+    expect(instructions).toMatch(/USER'S COMPUTER/)
+    expect(instructions).toMatch(/say so plainly and tell the user how to fix it/)
     // The same wording on when a terminal helps.
     expect(instructions).toContain('For quick shell commands, use your own shell tool.')
     expect(instructions).toContain("or a command on your project's SSH host when you are not on it")

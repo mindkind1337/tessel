@@ -9213,6 +9213,7 @@ let teamToolsReady = false
 // team with no such sign for a minute after it started gets a warning on its
 // row and a message once; both go when the tools are back.
 const MCP_AGENT_IDS = ['claude', 'codex', 'gemini', 'qwen', 'copilot', 'opencode', 'cline', 'antigravity', 'muse']
+const REMOTE_TOOLS_AGENTS = ['claude', 'codex']
 const toolsDown = reactive({}) // paneId -> true
 const toolsWarned = new Set()
 let toolsCheckAt = 0
@@ -9264,6 +9265,53 @@ async function checkTeamTools(round) {
   }
   // Not in a team any more: no warning.
   for (const id of Object.keys(toolsDown)) if (!inTeam.has(id)) delete toolsDown[id]
+  await checkRemoteAgentTools(round)
+}
+
+// An agent on an SSH host whose tessel-team server never connected, or was
+// lost (Codex's startup timeout, a stale shim, a closed tunnel): every such
+// pane, in a team or not, gets the pane's note with Retry, since the agent
+// would otherwise silently fall back to curl or Playwright on the server
+// instead of Tessel's browser. Two checks in a row (about 40 s) before the
+// note, so a slow start is not reported.
+const remoteToolsMisses = {} // paneId -> consecutive checks without its tools
+async function checkRemoteAgentTools(round) {
+  const byDir = {}
+  const seen = new Set()
+  forEachWsLeaf((l) => {
+    if (l.kind !== 'agent' || !l.remoteHostId || !REMOTE_TOOLS_AGENTS.includes(l.agentId)) return
+    if (l.sleeping || l.notConnected || l.failed || l.detected) return
+    if (l.teamTools && l.toolsVersion !== teamToolsVersion) return // older tools: cannot tell
+    if (Date.now() - (l.restartedAt || l.launchedAt || 0) < 60000) return
+    const dir = wsDataDir(wsOfLeaf(l.id))
+    if (!dir) return
+    seen.add(l.id)
+    ;(byDir[dir] = byDir[dir] || []).push(l.id)
+  })
+  const alive = new Set()
+  for (const [dir, ids] of Object.entries(byDir)) {
+    const res = await window.shellApi.team.toolsAlive({ dir, ids })
+    if (roundGone(round)) return
+    for (const [id, a] of Object.entries((res && res.ok && res.alive) || {})) if (a) alive.add(id)
+  }
+  for (const id of Object.keys(remoteToolsMisses)) if (!seen.has(id)) delete remoteToolsMisses[id]
+  for (const id of seen) {
+    const leaf = findLeaf(id)
+    if (!leaf) continue
+    if (alive.has(id)) {
+      delete remoteToolsMisses[id]
+      continue
+    }
+    remoteToolsMisses[id] = (remoteToolsMisses[id] || 0) + 1
+    if (remoteToolsMisses[id] < 2 || leaf.remoteToolsNote) continue
+    const host = remoteHostLabel(leaf.remoteHostId)
+    leaf.remoteToolsNote = t(
+      'app.remoteAgents.toolsNotRunning',
+      'Tessel tools are not connected on {{host}}: this agent has no Tessel browser or team tools, so it may use the server for web pages instead. Retry restarts it with them.',
+      { host }
+    )
+    if (window.shellApi.log) window.shellApi.log('warn', `pane ${id}: tessel-team not connected on ${leaf.remoteHostId} (no proof of life), note shown`)
+  }
 }
 
 // Agents started by hand in a shell pane (`claude` typed in PowerShell):
