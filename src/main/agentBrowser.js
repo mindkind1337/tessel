@@ -38,11 +38,34 @@ import crypto from 'crypto'
 import { CliError } from './cliServer'
 import { allowedBrowserUrl, normalizeBrowserInput, BLANK_URL } from '../shared/browserUrl'
 import { buildSnapshot, MAX_SNAPSHOT_CHARS, MAX_FRAMES } from './agentBrowserSnapshot'
-import { BrowserInputError, resolveRef, click, putText, pressKey, wheel, elementCenter, frameElementCenter, focusedField, navigationKey, parseKeyCombo, isolatedWorld, rememberSecrets } from './agentBrowserInput'
-import { shortcutOf } from './browserGuest'
+import {
+  BrowserInputError,
+  resolveRef,
+  click,
+  putText,
+  pressKey,
+  wheel,
+  elementCenter,
+  frameElementCenter,
+  elementBox,
+  frameElementBox,
+  focusedField,
+  navigationKey,
+  parseKeyCombo,
+  isolatedWorld,
+  rememberSecrets,
+  mouseButton,
+  viewportPoint,
+  pointInBox,
+  dragEvents,
+  keyTiming,
+  moveSoon,
+  BUTTON_BITS
+} from './agentBrowserInput'
+import { shortcutOf, quietContextMenu } from './browserGuest'
 import { leaseDebugger } from './pageDebugger'
 
-export const AGENT_OPS = ['pages', 'open', 'navigate', 'snapshot', 'click', 'fill', 'type', 'press', 'scroll', 'screenshot', 'console', 'wait']
+export const AGENT_OPS = ['pages', 'open', 'navigate', 'snapshot', 'click', 'mouse', 'fill', 'type', 'press', 'scroll', 'screenshot', 'console', 'wait']
 // An answer's text, at most (characters).
 export const MAX_RESULT_CHARS = 64000
 // A screenshot sent back as an image, at most (base64 characters); larger
@@ -60,6 +83,19 @@ const NAV_TIMEOUT_MS = 30 * 1000
 // A page address in an answer, at most (longer: shortened).
 const MAX_SHOWN_URL = 2000
 const CAPTURE_TIMEOUT_MS = 5000
+// A page on screen is captured at once; one out of sight fails at once or
+// never answers: this long at first, then the window draws it unseen
+// (pageHost.js revealPage) and the capture is tried again for up to
+// PAINTED_CAPTURE_MS (harness, 2026-10-25: a drawn page answers in ~80 ms).
+export const FIRST_CAPTURE_MS = 1500
+export const PAINTED_CAPTURE_MS = 4000
+const CAPTURE_RETRY_MS = 60
+// A screenshot scaled to CSS pixels is at most this many pixels a side.
+const MAX_SHOT_SIDE = 8192
+// Between the moves of a drag.
+const DRAG_STEP_MS = 16
+// A browser_press (holds and repeats) ends before the command's own time does.
+const PRESS_BUDGET_MS = COMMAND_TIMEOUT_MS - 5000
 export const WAIT_DEFAULT_MS = 10000
 export const WAIT_MAX_MS = 30000
 const MAX_URL = 4000
@@ -163,8 +199,9 @@ export function consoleEntry(args) {
 //   ask(method, params)        the window (cliBridge): 'browserTarget'
 //   guestById(id) -> webContents | null   (browserGuest.js: only the browser's pages)
 //   send(channel, payload)     to the window: 'browser:agentControl'
+//   windowState() -> { minimized, visible } | null   Tessel's window (for the answer when a capture fails)
 //   nativeImage, screenshotDir, log
-export function createAgentBrowser({ verify, enabled = () => true, ask, guestById, send = () => {}, nativeImage = null, screenshotDir = null, log = null }) {
+export function createAgentBrowser({ verify, enabled = () => true, ask, guestById, send = () => {}, windowState = () => null, nativeImage = null, screenshotDir = null, log = null }) {
   // guest id -> { refMap, navKey, queue, idle, agent, console: [], attached, listener }
   const pages = new Map()
   const revoked = new Set() // guest ids the user stopped
@@ -177,7 +214,7 @@ export function createAgentBrowser({ verify, enabled = () => true, ask, guestByI
   function stateOf(guest) {
     let s = pages.get(guest.id)
     if (!s) {
-      s = { refMap: null, navKey: null, queue: Promise.resolve(), idle: null, agent: null, console: [], attached: false, lease: null, listener: null, world: null, secretIds: new Set(), frames: new Map() }
+      s = { refMap: null, navKey: null, queue: Promise.resolve(), idle: null, agent: null, console: [], attached: false, lease: null, listener: null, world: null, secretIds: new Set(), frames: new Map(), guest, throttle: undefined, mouse: null }
       pages.set(guest.id, s)
       guest.once('destroyed', () => forget(guest.id))
     }
@@ -278,6 +315,9 @@ export function createAgentBrowser({ verify, enabled = () => true, ask, guestByI
           s.world = null
         }
         if (method === 'Runtime.executionContextsCleared') s.world = null
+        // A drag the agent started in the page: kept here instead of an
+        // operating system drag (which would follow the user's own mouse).
+        if (method === 'Input.dragIntercepted') s.drag = { data: (params && params.data) || { items: [], dragOperationsMask: 1 }, entered: false }
         // An unanswered dialog blocks every command: an alert is closed, a
         // confirm or prompt refused (never accepted for the agent).
         if (method === 'Page.javascriptDialogOpening') {
@@ -297,6 +337,11 @@ export function createAgentBrowser({ verify, enabled = () => true, ask, guestByI
       // window, a grid out of sight) still takes the agent's typing: it
       // behaves as focused while the agent drives it (undone on detach).
       await cdp('Emulation.setFocusEmulationEnabled', { enabled: true }).catch(() => {})
+      // A drag in the page (an image, a link, selected text, a draggable
+      // element) never starts the operating system's drag: Chromium hands
+      // it over (Input.dragIntercepted) and browser_mouse plays it inside
+      // the page (Input.dispatchDragEvent). Undone on detach.
+      await cdp('Input.setInterceptDrags', { enabled: true }).catch(() => {})
       s.attached = true
     }
     return sender(guest)
@@ -311,6 +356,7 @@ export function createAgentBrowser({ verify, enabled = () => true, ask, guestByI
       s.lease = null
       if (lease.active && !lease.alone && guest && !guest.isDestroyed()) {
         lease.send('Emulation.setFocusEmulationEnabled', { enabled: false }).catch(() => {})
+        lease.send('Input.setInterceptDrags', { enabled: false }).catch(() => {})
         lease.send('Target.setAutoAttach', { autoAttach: false, waitForDebuggerOnStart: false, flatten: true }).catch(() => {})
         for (const sessionId of s.frames.keys()) lease.send('Target.detachFromTarget', { sessionId }).catch(() => {})
       }
@@ -328,19 +374,85 @@ export function createAgentBrowser({ verify, enabled = () => true, ask, guestByI
     }
   }
 
+  // --- A page out of sight keeps running ------------------------------------------
+  // Out of sight (another project or tab shown, a pane maximized over it, the
+  // window minimized or behind others) a page is not drawn: no
+  // requestAnimationFrame, its animations stopped, and a mouse move sent to it
+  // never arrives (bare Electron 42 harness, 2026-10-25: rAF 0/s and
+  // Input.dispatchMouseEvent mouseMoved unanswered). While an agent drives it,
+  // it runs as if on screen: with Electron's background throttling off its
+  // view keeps drawing (rAF 60/s, timers on time, input delivered), whatever
+  // the window shows. Set again at each command (a navigation can bring a new
+  // view); the page's own setting comes back when the agent lets it go.
+  function keepRunning(guest, s) {
+    if (typeof guest.setBackgroundThrottling !== 'function') return
+    try {
+      if (s.throttle === undefined) s.throttle = typeof guest.getBackgroundThrottling === 'function' ? guest.getBackgroundThrottling() !== false : true
+      guest.setBackgroundThrottling(false)
+    } catch (err) {
+      warn(`background throttling not changed: ${err && err.message}`)
+    }
+  }
+  // Only a page that throttled before is set back (setting "off" again would
+  // change nothing).
+  function letRest(s) {
+    const was = s.throttle
+    s.throttle = undefined
+    const guest = s.guest
+    if (was !== true || !guest || guest.isDestroyed() || typeof guest.setBackgroundThrottling !== 'function') return
+    try {
+      guest.setBackgroundThrottling(true)
+    } catch {
+      // gone
+    }
+  }
+
   // --- The badge on the page ("Agent controlling · Stop") ---------------------------
   function controlled(guest, s, agent) {
     if (s.idle) clearTimeout(s.idle)
     else send('browser:agentControl', { webContentsId: guest.id, active: true, agent })
     s.agent = agent
+    keepRunning(guest, s)
     s.idle = setTimeout(() => release(guest.id), IDLE_MS)
+  }
+  // A button the agent still held down (browser_mouse "down"), or a drag it
+  // started in the page: let go before the debugger goes, so the page is not
+  // left in the middle of a drag. -> the sends, or null when nothing was held.
+  function letGoOfPointer(s) {
+    const m = s.mouse
+    const drag = s.drag
+    s.mouse = null
+    s.drag = null
+    const lease = s.lease
+    if (!lease || !lease.active || (!drag && !(m && m.buttons))) return null
+    const x = m && m.x != null ? m.x : 0
+    const y = m && m.y != null ? m.y : 0
+    const sends = []
+    if (drag) sends.push(lease.send('Input.dispatchDragEvent', { type: 'dragCancel', x, y, data: drag.data }).catch(() => {}))
+    let buttons = m ? m.buttons : 0
+    for (const [button, bit] of Object.entries(BUTTON_BITS)) {
+      if (!(buttons & bit)) continue
+      buttons &= ~bit
+      sends.push(lease.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x, y, button, buttons, clickCount: 1 }).catch(() => {}))
+    }
+    return withTimeout(Promise.all(sends), 1000, () => null).catch(() => null)
   }
   function release(id, { stopped = false } = {}) {
     const s = pages.get(id)
     if (s && s.idle) clearTimeout(s.idle)
     if (s) s.idle = null
-    // The lease goes even when the window no longer names the page.
-    if (s) detach(guestById(id) || null, s)
+    if (s) letRest(s)
+    // The lease goes even when the window no longer names the page (after
+    // the agent's held button or drag is let go).
+    if (s) {
+      const pending = letGoOfPointer(s)
+      if (!pending) detach(guestById(id) || null, s)
+      else
+        pending.then(() => {
+          // Driven again meanwhile (a new command): the debugger stays.
+          if (!s.idle) detach(guestById(id) || null, s)
+        })
+    }
     send('browser:agentControl', { webContentsId: id, active: false, ...(stopped ? { stopped: true } : {}) })
   }
 
@@ -444,20 +556,139 @@ export function createAgentBrowser({ verify, enabled = () => true, ask, guestByI
     return { text: `Page: ${title || '(no title)'} — ${url}\n${result.snapshot || '(nothing readable on this page yet)'}` }
   }
 
-  async function screenshot(guest) {
-    let img = await withTimeout(Promise.resolve(guest.capturePage()), CAPTURE_TIMEOUT_MS, () => null).catch(() => null)
-    if (!img || img.isEmpty()) {
-      // A page out of sight may not paint: the debugger's own capture.
-      try {
-        const s = stateOf(guest)
-        const cdp = await attach(guest, s)
-        const r = await withTimeout(cdp('Page.captureScreenshot', { format: 'png' }), CAPTURE_TIMEOUT_MS, () => null)
-        if (r && r.data && nativeImage) img = nativeImage.createFromBuffer(Buffer.from(r.data, 'base64'))
-      } catch {
-        img = null
+  // The page's viewport, CSS pixels: { width, height, dpr, scrollX, scrollY }
+  // (read in Tessel's isolated world: the page's scripts cannot change it).
+  async function viewportOf(cdp, s) {
+    // Never the page's own world (its scripts could make up these numbers).
+    let contextId = null
+    try {
+      contextId = await isolatedWorld(cdp, s)
+    } catch {
+      contextId = null
+    }
+    if (!contextId) throw new BrowserInputError('page_error', 'Tessel could not read the page\'s viewport (no frame yet?): try again in a moment.')
+    const r = await cdp('Runtime.evaluate', { expression: '[innerWidth, innerHeight, devicePixelRatio, scrollX, scrollY]', contextId, returnByValue: true })
+    const v = r && r.result && Array.isArray(r.result.value) ? r.result.value.map(Number) : []
+    if (!(v[0] > 0 && v[1] > 0 && v[0] < 100000 && v[1] < 100000)) throw new BrowserInputError('not_laid_out', 'The page has no viewport yet (still loading?): try again in a moment.')
+    return { width: Math.round(v[0]), height: Math.round(v[1]), dpr: v[2] > 0 && v[2] < 20 ? v[2] : 1, scrollX: Math.round(v[3]) || 0, scrollY: Math.round(v[4]) || 0 }
+  }
+
+  const usable = (img) => !!img && typeof img.isEmpty === 'function' && !img.isEmpty()
+  const capturePage = (guest, ms) =>
+    withTimeout(
+      Promise.resolve().then(() => guest.capturePage()),
+      ms,
+      () => null
+    ).catch(() => null)
+  async function debuggerCapture(guest, s) {
+    try {
+      const cdp = await attach(guest, s)
+      const r = await withTimeout(cdp('Page.captureScreenshot', { format: 'png' }), CAPTURE_TIMEOUT_MS, () => null)
+      return r && r.data && nativeImage ? nativeImage.createFromBuffer(Buffer.from(r.data, 'base64')) : null
+    } catch {
+      return null
+    }
+  }
+  // The page as it is drawn. Out of sight it is not drawn and no capture
+  // answers (bare Electron 42 harness, 2026-10-25: capturePage rejects
+  // "UnknownVizError" or never answers, the debugger's Page.captureScreenshot
+  // never answers, for a page in a hidden project or tab, under a maximized
+  // pane, of no size or with the window minimized; background throttling off
+  // does not change it). So the window draws it, unseen, for the moment of
+  // the capture (pageHost.js revealPage): then both answer, even minimized.
+  // -> { img, painted } (painted: the window's answer, if it was asked)
+  const windowHidden = () => {
+    try {
+      const w = windowState()
+      return !!w && (!!w.minimized || w.visible === false)
+    } catch {
+      return false
+    }
+  }
+  async function capturePageImage(guest, s, pane) {
+    // The window minimized: nothing is drawn, the window draws it for the capture at once.
+    let img = windowHidden() ? null : await capturePage(guest, FIRST_CAPTURE_MS)
+    if (usable(img)) return { img, painted: null }
+    let painted = null
+    // This capture's own name: the window ends it by it (and on its own after
+    // a while if the end never comes, pageHost.js CAPTURE_TTL_MS).
+    const token = crypto.randomBytes(9).toString('base64url')
+    try {
+      painted = (await ask('browserTarget', { agent: pane, op: 'paint', page: s.page, on: true, token })) || {}
+    } catch (err) {
+      painted = { error: String((err && err.message) || err).slice(0, 200) }
+    }
+    try {
+      const until = Date.now() + PAINTED_CAPTURE_MS
+      for (;;) {
+        allowed(guest)
+        img = await capturePage(guest, Math.max(200, Math.min(1000, until - Date.now())))
+        if (usable(img)) return { img, painted }
+        if (Date.now() >= until) break
+        await sleep(CAPTURE_RETRY_MS)
+      }
+      img = await debuggerCapture(guest, s)
+      return { img: usable(img) ? img : null, painted }
+    } finally {
+      // Put back as it was, before the answer (the next command finds it
+      // so): always, even when the window's answer was lost or refused.
+      await withTimeout(
+        Promise.resolve().then(() => ask('browserTarget', { agent: pane, op: 'paint', page: s.page, on: false, token })),
+        CAPTURE_TIMEOUT_MS,
+        () => null
+      ).catch(() => {})
+    }
+  }
+
+  // Why no capture came, and what the user or the agent can do.
+  function captureFailure(painted) {
+    let win = null
+    try {
+      win = windowState() || null
+    } catch {
+      win = null
+    }
+    const why = painted && painted.why
+    const where =
+      why === 'layer'
+        ? `The page is out of sight (its project${painted.project ? ` "${painted.project}"` : ''} or its tab is not the one shown)`
+        : why === 'covered'
+          ? 'The page is out of sight (another pane is maximized over it)'
+          : why
+            ? 'The page is out of sight'
+            : null
+    if (win && (win.minimized || win.visible === false))
+      return `${where ? `${where}, and ` : ''}Tessel's window is ${win.minimized ? 'minimized' : 'hidden'}: Windows did not let it draw the page for the capture. Restore Tessel's window (it may stay behind other windows, the page need not be shown) and call browser_screenshot again; browser_snapshot reads the page meanwhile.`
+    if (painted && painted.error) return `${where ? `${where}. ` : ''}Tessel's window did not draw it for the capture (${painted.error}). Try again in a moment; browser_snapshot reads the page meanwhile.`
+    return `${where ? `${where}. Tessel drew it unseen for the capture, but ` : ''}the page gave no picture (it may be frozen by a long script, or crashed). Try again in a moment, or read it with browser_snapshot.`
+  }
+
+  async function screenshot(guest, s, pane) {
+    // Its viewport first (CSS pixels): coordinates an agent reads on the
+    // screenshot are those browser_click / browser_mouse take.
+    let vp = null
+    try {
+      vp = await viewportOf(await attach(guest, s), s)
+    } catch {
+      // Its debugger taken (devtools open): the capture alone.
+      vp = null
+    }
+    const { img: shot, painted } = await capturePageImage(guest, s, pane)
+    if (!shot) throw fail('capture_failed', captureFailure(painted))
+    let img = shot
+    // One image pixel per CSS pixel (a HiDPI screen or the page's zoom give
+    // more): only ever made smaller, to a size it can be.
+    const raw = img.getSize()
+    // Image pixels per CSS pixel: 1 once scaled (else said in the answer).
+    let perCss = vp ? vp.dpr : null
+    if (vp && vp.dpr > 1 && typeof img.resize === 'function') {
+      const width = Math.round(raw.width / vp.dpr)
+      const height = Math.round(raw.height / vp.dpr)
+      if (width >= 1 && height >= 1 && width < raw.width && height < raw.height && width <= MAX_SHOT_SIDE && height <= MAX_SHOT_SIDE) {
+        img = img.resize({ width, height, quality: 'best' })
+        perCss = 1
       }
     }
-    if (!img || img.isEmpty()) throw fail('capture_failed', 'The page could not be captured (is Tessel\'s window minimized?).')
     const png = img.toPNG()
     if (png.length > MAX_SCREENSHOT_BYTES) throw fail('too_large', 'The screenshot is too large.')
     let file = null
@@ -474,6 +705,7 @@ export function createAgentBrowser({ verify, enabled = () => true, ask, guestByI
     }
     const size = img.getSize()
     let image = { data: png.toString('base64'), mimeType: 'image/png' }
+    let shownWidth = size.width
     if (image.data.length > MAX_IMAGE_B64) {
       // Smaller: half the width at most twice, as JPEG.
       let small = img
@@ -481,12 +713,27 @@ export function createAgentBrowser({ verify, enabled = () => true, ask, guestByI
       for (let i = 0; i < 3 && !image; i++) {
         small = small.resize({ width: Math.max(320, Math.round(small.getSize().width * (i === 0 ? 1 : 0.6))) })
         const jpg = small.toJPEG(70).toString('base64')
-        if (jpg.length <= MAX_IMAGE_B64) image = { data: jpg, mimeType: 'image/jpeg' }
+        if (jpg.length <= MAX_IMAGE_B64) {
+          image = { data: jpg, mimeType: 'image/jpeg' }
+          shownWidth = small.getSize().width
+        }
       }
     }
     const { url } = where(guest)
+    // The coordinate system, for a canvas or a game clicked by x/y.
+    let coords = ''
+    if (vp && perCss) {
+      const round = (n) => Math.round(n * 100) / 100
+      const at = `devicePixelRatio ${round(vp.dpr)}, scrolled to ${vp.scrollX},${vp.scrollY}`
+      coords =
+        perCss === 1
+          ? ` ${size.width}x${size.height} pixels = the page's viewport in CSS pixels (${at}): a point (x, y) on it is browser_click / browser_mouse {x, y}.`
+          : ` ${size.width}x${size.height} pixels = the page's viewport at ${round(perCss)} image pixels per CSS pixel (${at}): divide a point read on it by ${round(perCss)} for browser_click / browser_mouse {x, y}.`
+      const k = shownWidth / size.width
+      if (image && Math.abs(k - 1) > 0.01) coords += ` The image shown here is scaled to ${Math.round(k * 100)}%: divide what you read on it by ${Math.round(k * 1000) / 1000} (the saved file is full size).`
+    } else coords = ` ${size.width}x${size.height} pixels (the page's scale could not be read: divide by the page's devicePixelRatio to get CSS pixels).`
     return {
-      text: `Screenshot of ${url} (${size.width}x${size.height})${file ? `, saved to ${file}` : ''}${image ? '' : ' (too large to show here: read the file)'}.`,
+      text: `Screenshot of ${url}.${coords}${file ? ` Saved to ${file}.` : ''}${image ? '' : ' It is too large to show here: read the file.'}`,
       ...(image ? { image } : {}),
       ...(file ? { file } : {})
     }
@@ -574,6 +821,19 @@ export function createAgentBrowser({ verify, enabled = () => true, ask, guestByI
       const f = frameOf(s, entry)
       return f ? frameElementCenter(cdp, f, entry.backendDOMNodeId) : elementCenter(cdp, entry.backendDOMNodeId)
     }
+    const boxOf = (cdp, entry) => {
+      const f = frameOf(s, entry)
+      return f ? frameElementBox(cdp, f, entry.backendDOMNodeId) : elementBox(cdp, entry.backendDOMNodeId)
+    }
+    // The pointer as the page last saw it from the agent (a button held down by browser_mouse "down").
+    const mouse = () => s.mouse || (s.mouse = { x: null, y: null, buttons: 0, button: 'none' })
+    const pointerText = (at, button) => `(${at.x}, ${at.y})${button !== 'left' ? ` with the ${button} button` : ''}`
+    // An agent's right-click is for the page (a game's own menu): Tessel's page
+    // menu stays closed for it, once, at that point (set right before each
+    // right press and release: Windows opens the menu on the release).
+    const quietRight = (ev) => {
+      if (ev && ev.button === 'right' && (ev.type === 'mousePressed' || ev.type === 'mouseReleased')) quietContextMenu(guest.id, { x: ev.x, y: ev.y })
+    }
     // A ref is this agent's only if its own snapshot gave it (two agents on
     // one page: the other's snapshot listed other elements under the same refs).
     if (args.ref != null && s.refMap && s.refOwner !== pane) {
@@ -585,17 +845,101 @@ export function createAgentBrowser({ verify, enabled = () => true, ask, guestByI
       case 'navigate':
         return navigate(guest, s, args)
       case 'screenshot':
-        return screenshot(guest)
+        return screenshot(guest, s, pane)
       case 'console':
         return consoleText(s, args)
       case 'wait':
         return waitFor(guest, args)
       case 'click': {
+        const button = mouseButton(args.button)
+        const point = args.x != null || args.y != null
+        if (args.ref == null && !point) throw new BrowserInputError('invalid_argument', 'Give a "ref" from browser_snapshot, or "x" and "y" (CSS pixels of the page\'s viewport, as on browser_screenshot).')
         const cdp = await attach(guest, s)
+        const clickCount = args.double ? 2 : 1
+        if (args.ref == null) {
+          const at = viewportPoint(args.x, args.y, await viewportOf(cdp, s))
+          await click(cdp, null, { button, clickCount, at: async () => at, before: quietRight })
+          Object.assign(mouse(), { x: at.x, y: at.y })
+          await sleep(150)
+          return { text: `Clicked at ${pointerText(at, button)}${clickCount > 1 ? ' twice' : ''}. If the page changed, take a browser_screenshot or browser_snapshot again.` }
+        }
         const entry = await resolveRef(cdp, s, args.ref, sendOf)
-        await click(cdp, entry.backendDOMNodeId, { clickCount: args.double ? 2 : 1, at: () => centerOf(cdp, entry) })
+        const at = point ? pointInBox(await boxOf(cdp, entry), args.x, args.y, await viewportOf(cdp, s)) : null
+        await click(cdp, entry.backendDOMNodeId, { button, clickCount, at: at ? async () => at : () => centerOf(cdp, entry), before: quietRight })
         await sleep(150)
-        return { text: `Clicked ${args.ref} (${entry.role} "${entry.name}"). If the page changed, call browser_snapshot again.` }
+        return { text: `Clicked ${args.ref} (${entry.role} "${entry.name}")${at ? ` at ${pointerText(at, button)}` : button !== 'left' ? ` with the ${button} button` : ''}. If the page changed, call browser_snapshot again.` }
+      }
+      case 'mouse': {
+        const action = String(args.action || '').toLowerCase()
+        if (!['move', 'down', 'up', 'drag'].includes(action)) throw new BrowserInputError('invalid_argument', '"action" must be move, down, up or drag.')
+        const button = mouseButton(args.button)
+        const cdp = await attach(guest, s)
+        const vp = await viewportOf(cdp, s)
+        const m = mouse()
+        // down / up without x and y: where the pointer is.
+        const at = args.x == null && args.y == null && action !== 'drag' && action !== 'move' && m.x != null ? { x: m.x, y: m.y } : viewportPoint(args.x, args.y, vp)
+        // Moves: not waited for longer than a moment (moveSoon), presses and
+        // releases fully (a right one keeps Tessel's page menu closed for it).
+        // A drag the page started (s.drag, intercepted): played on inside the
+        // page at each move, dropped at the release.
+        const dragOver = async (pt) => {
+          const d = s.drag
+          if (!d) return
+          const type = d.entered ? 'dragOver' : 'dragEnter'
+          d.entered = true
+          await cdp('Input.dispatchDragEvent', { type, x: pt.x, y: pt.y, data: d.data }).catch(() => {})
+        }
+        const dispatch = async (ev, ms = 250) => {
+          if (ev.type === 'mouseMoved') {
+            await moveSoon(cdp, ev, ms)
+            if (ev.buttons) await dragOver(ev)
+            return
+          }
+          if (ev.type === 'mouseReleased' && s.drag) {
+            await dragOver(ev)
+            const d = s.drag
+            s.drag = null
+            await cdp('Input.dispatchDragEvent', { type: 'drop', x: ev.x, y: ev.y, data: d.data }).catch(() => {})
+          }
+          quietRight(ev)
+          await cdp('Input.dispatchMouseEvent', ev)
+        }
+        if (action === 'drag') {
+          const to = viewportPoint(args.to_x, args.to_y, vp, ['to_x', 'to_y'])
+          const events = dragEvents(at, to, { button, steps: args.steps })
+          let dropped = false
+          for (const ev of events) {
+            allowed(guest)
+            if (ev.type === 'mouseReleased') {
+              // The page's drag starts on a move: given a moment to be handed over.
+              await sleep(DRAG_STEP_MS)
+              dropped = !!s.drag
+            }
+            await dispatch(ev, 50)
+            if (ev.type === 'mouseMoved') await sleep(DRAG_STEP_MS)
+          }
+          Object.assign(m, { x: to.x, y: to.y, buttons: 0, button: 'none' })
+          await sleep(100)
+          return { text: `Dragged from (${at.x}, ${at.y}) to (${to.x}, ${to.y}) in ${events.length - 3} steps${button !== 'left' ? ` with the ${button} button` : ''}${dropped ? ' (the page took it as a drag and drop)' : ''}.` }
+        }
+        if (action === 'move') {
+          await dispatch({ type: 'mouseMoved', x: at.x, y: at.y, button: m.buttons ? m.button : 'none', buttons: m.buttons })
+          Object.assign(m, { x: at.x, y: at.y })
+          return { text: `Moved the pointer to (${at.x}, ${at.y})${m.buttons ? ` with the ${m.button} button held` : ''}.` }
+        }
+        if (action === 'down') {
+          if (m.x !== at.x || m.y !== at.y) await dispatch({ type: 'mouseMoved', x: at.x, y: at.y, button: m.buttons ? m.button : 'none', buttons: m.buttons })
+          const buttons = m.buttons | BUTTON_BITS[button]
+          await dispatch({ type: 'mousePressed', x: at.x, y: at.y, button, buttons, clickCount: 1 })
+          Object.assign(m, { x: at.x, y: at.y, buttons, button })
+          return { text: `Pressed the ${button} button at (${at.x}, ${at.y}); browser_mouse "move" drags with it held, "up" releases it.` }
+        }
+        if (m.x !== at.x || m.y !== at.y) await dispatch({ type: 'mouseMoved', x: at.x, y: at.y, button: m.buttons ? m.button : 'none', buttons: m.buttons })
+        const buttons = m.buttons & ~BUTTON_BITS[button]
+        await dispatch({ type: 'mouseReleased', x: at.x, y: at.y, button, buttons, clickCount: 1 })
+        Object.assign(m, { x: at.x, y: at.y, buttons, button: buttons ? m.button : 'none' })
+        await sleep(100)
+        return { text: `Released the ${button} button at (${at.x}, ${at.y}).` }
       }
       case 'fill':
       case 'type': {
@@ -616,9 +960,18 @@ export function createAgentBrowser({ verify, enabled = () => true, ask, guestByI
         // Keys the browser or Tessel itself would act on (Ctrl+Shift+W closes
         // a pane, Ctrl+R reloads, F12 opens devtools...): never from an agent.
         if (reservedKey(args.key)) throw fail('reserved_key', `${String(args.key).slice(0, 40)} is a Tessel or browser shortcut, or paste: agents cannot press it.`)
+        const timing = keyTiming(args.hold_ms, args.repeat)
         const cdp = await attach(guest, s)
-        const key = await pressKey(cdp, args.key, typeof guest.sendInputEvent === 'function' ? (ev) => guest.sendInputEvent(ev) : null, s, frameList(s))
-        return { text: `Pressed ${String(args.key).slice(0, 40) || key}.` }
+        // The user's Stop, the setting turned off or the command's time up end
+        // a long press at once (its key let up), never overlapping the next command.
+        const deadline = Date.now() + PRESS_BUDGET_MS
+        const check = () => {
+          allowed(guest)
+          if (Date.now() > deadline) throw fail('timeout', 'The key presses took too long and were stopped.')
+        }
+        const key = await pressKey(cdp, args.key, typeof guest.sendInputEvent === 'function' ? (ev) => guest.sendInputEvent(ev) : null, s, frameList(s), timing, check)
+        const how = `${timing.holdMs ? ` held ${timing.holdMs} ms` : ''}${timing.repeat > 1 ? ` ${timing.repeat} times` : ''}`
+        return { text: `Pressed ${String(args.key).slice(0, 40) || key}${how}.` }
       }
       case 'scroll': {
         const cdp = await attach(guest, s)
@@ -686,7 +1039,14 @@ export function createAgentBrowser({ verify, enabled = () => true, ask, guestByI
       return { ...out, text: capText(out.text) }
     } catch (err) {
       if (err instanceof CliError) throw err
-      if (err instanceof BrowserInputError) throw fail(err.code, err.message)
+      if (err instanceof BrowserInputError) {
+        // Keys refused where Tessel cannot see the focus: said once per page in the log.
+        if (err.code === 'field_not_visible' && !s.opaqueLogged) {
+          s.opaqueLogged = true
+          warn(`${op}: refused characters, the keyboard is where Tessel cannot look (a frame it cannot inspect, or a closed component) on ${where(guest).url.slice(0, 200)}`)
+        }
+        throw fail(err.code, err.message)
+      }
       warn(`${op} failed: ${err && err.message}`)
       throw fail('page_error', `The page refused: ${String((err && err.message) || err).slice(0, 300)}`)
     }

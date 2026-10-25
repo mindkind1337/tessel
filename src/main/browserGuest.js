@@ -137,6 +137,35 @@ export function wantsNewPane(disposition, mouse) {
   return !!mouse && (mouse.middle || mouse.ctrl)
 }
 
+// An agent's right-click (agentBrowser.js) goes to the page: Tessel's own
+// page menu stays closed for it (it would open on the user's screen, over
+// whatever they do). Once, for the menu at the agent's point (CSS pixels of
+// the page; the menu's are the page's zoomed pixels), soon after.
+// Page id -> { until, x, y }.
+const quietMenus = new Map()
+export const QUIET_MENU_MS = 1500
+const QUIET_MENU_SLACK = 4
+export function quietContextMenu(id, at = null, ms = QUIET_MENU_MS) {
+  if (quietMenus.size > 100) quietMenus.clear()
+  quietMenus.set(id, { until: Date.now() + ms, x: at && Number.isFinite(at.x) ? at.x : null, y: at && Number.isFinite(at.y) ? at.y : null })
+}
+// params: Electron's context-menu params ({ x, y }); zoom: the page's zoom factor.
+export function contextMenuQuiet(id, params = null, zoom = 1) {
+  const q = quietMenus.get(id)
+  if (!q) return false
+  if (Date.now() > q.until) {
+    quietMenus.delete(id)
+    return false
+  }
+  if (q.x != null && params && Number.isFinite(params.x) && Number.isFinite(params.y)) {
+    const z = zoom > 0 ? zoom : 1
+    const near = (a, b) => Math.abs(a - b) <= QUIET_MENU_SLACK
+    if (!(near(params.x, q.x * z) && near(params.y, q.y * z)) && !(near(params.x, q.x) && near(params.y, q.y))) return false
+  }
+  quietMenus.delete(id)
+  return true
+}
+
 // What a right-click in a page offers (Electron shows no menu of its own):
 // [{ id, label, enabled }] or { type: 'separator' }. params: Electron's
 // context-menu params; nav: { canGoBack, canGoForward }.
@@ -370,7 +399,17 @@ export function createBrowserGuests({ getWindow, send, log = null, screenshotDir
     })
 
     // A right-click: a browser's menu (Electron shows none).
-    guest.on('context-menu', (_event, params) => showContextMenu(guest, params || {}))
+    guest.on('context-menu', (_event, params) => {
+      // An agent's right-click (agentBrowser.js) is for the page, not a menu on the user's screen.
+      let zoom = 1
+      try {
+        zoom = typeof guest.getZoomFactor === 'function' ? guest.getZoomFactor() : 1
+      } catch {
+        zoom = 1
+      }
+      if (contextMenuQuiet(guest.id, params, zoom)) return
+      showContextMenu(guest, params || {})
+    })
 
     // The page starts or stops making sound: the window shows a speaker on
     // its tab (a click mutes it, as in a browser).

@@ -7,6 +7,7 @@ import { createAgentBrowser, agentUrl, capText, consoleEntry, reservedKey, safeS
 import { handleRequestLine, validateParams, CLI_PROTOCOL } from '../cliServer'
 import { setTeamSecret, verifyRequest, _resetTeamAuth } from '../teamAuth'
 import { leaseDebugger, debuggerHolders } from '../pageDebugger'
+import { contextMenuQuiet } from '../browserGuest'
 
 // Run inside a Tessel pane, these tests would sign as that pane.
 delete process.env.TESSEL_TEAM_SECRET
@@ -144,9 +145,13 @@ function signed(op, args = {}) {
   return mcp.browserRequest(op, args)
 }
 
-function setup({ guest = fakeGuest(11, { cdp: pageCdp() }), enabled = true, enabledFn = null, target = {} } = {}) {
+function setup({ guest = fakeGuest(11, { cdp: pageCdp() }), enabled = true, enabledFn = null, target = {}, onAsk = null, windowState = undefined, nativeImage = null } = {}) {
   const sentToWindow = []
   const ask = vi.fn(async (_m, p) => {
+    if (onAsk) {
+      const r = await onAsk(p)
+      if (r !== undefined) return r
+    }
     if (p.op === 'list') return { agent: 'Gauss', pages: [{ page: 'pane-b', url: guest.getURL(), title: 'App', ready: true, current: true }] }
     return { agent: 'Gauss', page: 'pane-b', guestId: guest ? guest.id : null, ...target }
   })
@@ -156,7 +161,8 @@ function setup({ guest = fakeGuest(11, { cdp: pageCdp() }), enabled = true, enab
     ask,
     guestById: (id) => (guest && id === guest.id ? guest : null),
     send: (ch, payload) => sentToWindow.push([ch, payload]),
-    nativeImage: null,
+    ...(windowState ? { windowState } : {}),
+    nativeImage,
     screenshotDir: null
   })
   // As the pipe hands it over: checked by cliServer first.
@@ -949,6 +955,7 @@ describe('browser tools in the MCP server', () => {
       'browser_navigate',
       'browser_snapshot',
       'browser_click',
+      'browser_mouse',
       'browser_fill',
       'browser_type',
       'browser_press',
@@ -958,6 +965,306 @@ describe('browser tools in the MCP server', () => {
       'browser_wait'
     ])
     for (const name of names) expect(mcp.TOOLS.some((t) => t.name === name)).toBe(true)
+  })
+})
+
+describe('agent browser: pages out of sight, canvas and games', () => {
+  beforeEach(() => {
+    _resetTeamAuth()
+    setTeamSecret(PANE, SECRET)
+  })
+  afterEach(() => {
+    vi.useRealTimers()
+    delete process.env.TESSEL_TEAM_SECRET
+    delete process.env.TESSEL_PANE_ID
+    _resetTeamAuth()
+  })
+
+  // A picture as Electron's NativeImage gives it (device pixels).
+  const picture = (width, height) => {
+    const img = {
+      isEmpty: () => false,
+      getSize: () => ({ width, height }),
+      toPNG: () => Buffer.from('iVBORw0KGgo=', 'base64'),
+      toJPEG: () => Buffer.from('x'),
+      resize: vi.fn(({ width: w, height: h }) => picture(w, h))
+    }
+    return img
+  }
+  // The page's viewport, as Tessel's isolated world reads it: 640x480 CSS
+  // pixels at devicePixelRatio 2, scrolled down 340.
+  const viewportCdp = (extra = {}, page = pageModel()) => {
+    const base = pageCdp(extra, page)
+    return { ...base, 'Runtime.evaluate': (p) => (String(p.expression).startsWith('[innerWidth') ? { result: { value: [640, 480, 2, 0, 340] } } : base['Runtime.evaluate'](p)) }
+  }
+  const mouseEvents = (guest) => guest.sent.filter(([m]) => m === 'Input.dispatchMouseEvent').map(([, e]) => e)
+
+  it('a page on screen is captured at once, one image pixel per CSS pixel, with its coordinate system said', async () => {
+    const shot = picture(1280, 960)
+    const guest = fakeGuest(11, { cdp: viewportCdp(), image: shot })
+    const { call, ask } = setup({ guest })
+    const r = await call('screenshot')
+    expect(ask.mock.calls.some(([, p]) => p.op === 'paint')).toBe(false)
+    expect(shot.resize).toHaveBeenCalledWith({ width: 640, height: 480, quality: 'best' })
+    expect(r.text).toContain("640x480 pixels = the page's viewport in CSS pixels (devicePixelRatio 2, scrolled to 0,340)")
+    expect(r.text).toContain('browser_click / browser_mouse {x, y}')
+    expect(r.image.mimeType).toBe('image/png')
+  })
+
+  it('out of sight: the window draws it unseen for the capture, then puts it back', async () => {
+    let painted = false
+    const guest = fakeGuest(11, { cdp: viewportCdp() })
+    // Not drawn: Electron rejects (UnknownVizError); drawn: a picture.
+    guest.capturePage = vi.fn(async () => {
+      if (!painted) throw new Error('UnknownVizError')
+      return picture(1280, 960)
+    })
+    const paints = []
+    const { call } = setup({
+      guest,
+      onAsk: (p) => {
+        if (p.op !== 'paint') return undefined
+        paints.push([p.page, p.on, p.agent, p.token])
+        painted = p.on
+        return { agent: 'Gauss', page: p.page, moved: true, why: 'layer', project: 'Game' }
+      }
+    })
+    const r = await call('screenshot')
+    expect(r.image).toBeTruthy()
+    expect(paints.map((x) => x.slice(0, 3))).toEqual([
+      ['pane-b', true, PANE],
+      ['pane-b', false, PANE]
+    ])
+    // The same capture's name both times (the window ends that capture only).
+    expect(paints[0][3]).toMatch(/^[\w-]{6,}$/)
+    expect(paints[1][3]).toBe(paints[0][3])
+    expect(guest.capturePage.mock.calls.length).toBe(2)
+  })
+
+  it('the end of a capture is always asked for, even when the window refused or lost the start', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] })
+    const guest = fakeGuest(11, { cdp: viewportCdp({ 'Page.captureScreenshot': {} }) })
+    guest.capturePage = vi.fn(async () => null)
+    const paints = []
+    const { call } = setup({
+      guest,
+      onAsk: (p) => {
+        if (p.op !== 'paint') return undefined
+        paints.push([p.on, p.token])
+        if (p.on) throw new Error('The window did not answer in time.')
+        return { page: p.page, moved: true }
+      }
+    })
+    const out = call('screenshot').catch((e) => e)
+    await vi.advanceTimersByTimeAsync(30000)
+    const err = await out
+    expect(err.code).toBe('capture_failed')
+    expect(err.message).toContain('did not draw it for the capture (The window did not answer in time.)')
+    expect(paints.map(([on]) => on)).toEqual([true, false])
+    expect(paints[1][1]).toBe(paints[0][1])
+  })
+
+  it('the viewport is read in Tessel\'s isolated world only, and a screenshot is only ever made smaller', async () => {
+    // No isolated world: no viewport (never the page's own numbers).
+    const noWorld = fakeGuest(11, { cdp: viewportCdp({ 'Page.createIsolatedWorld': () => Promise.reject(new Error('no frame')) }) })
+    const one = setup({ guest: noWorld })
+    await expect(one.call('click', { x: 10, y: 10 })).rejects.toMatchObject({ code: 'page_error' })
+    // A page zoomed out (devicePixelRatio 0.8): not enlarged; the scale is said.
+    const shot = picture(512, 384)
+    const base = viewportCdp()
+    const zoomedOut = fakeGuest(12, { cdp: { ...base, 'Runtime.evaluate': (p) => (String(p.expression).startsWith('[innerWidth') ? { result: { value: [640, 480, 0.8, 0, 0] } } : base['Runtime.evaluate'](p)) }, image: shot })
+    const r = await setup({ guest: zoomedOut }).call('screenshot')
+    expect(shot.resize).not.toHaveBeenCalled()
+    expect(r.text).toContain('at 0.8 image pixels per CSS pixel')
+    expect(r.text).toContain('divide a point read on it by 0.8')
+  })
+
+  it('no picture at all: the debugger is tried too, and the answer says where the page is (no guess about minimizing)', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] })
+    const guest = fakeGuest(11, { cdp: viewportCdp({ 'Page.captureScreenshot': {} }) })
+    guest.capturePage = vi.fn(async () => null)
+    const onAsk = (p) => (p.op === 'paint' ? { agent: 'Gauss', page: p.page, moved: p.on, why: 'layer', project: 'Game' } : undefined)
+    const { call } = setup({ guest, onAsk, windowState: () => ({ minimized: false, visible: true }) })
+    const out = call('screenshot').catch((e) => e)
+    await vi.advanceTimersByTimeAsync(30000)
+    const err = await out
+    expect(err.code).toBe('capture_failed')
+    expect(err.message).toContain('The page is out of sight (its project "Game" or its tab is not the one shown)')
+    expect(err.message).not.toMatch(/minimized/)
+    expect(guest.sent.some(([m]) => m === 'Page.captureScreenshot')).toBe(true)
+    // The window minimized: said, with what the user can do.
+    const g2 = fakeGuest(12, { cdp: viewportCdp({ 'Page.captureScreenshot': {} }) })
+    g2.capturePage = vi.fn(async () => null)
+    const min = setup({ guest: g2, onAsk, windowState: () => ({ minimized: true, visible: false }) })
+    const out2 = min.call('screenshot').catch((e) => e)
+    await vi.advanceTimersByTimeAsync(30000)
+    const err2 = await out2
+    expect(err2.message).toContain("Tessel's window is minimized")
+    expect(err2.message).toContain("Restore Tessel's window")
+  })
+
+  it('click by x/y: at that point of the viewport; a point outside or not a number is refused', async () => {
+    const guest = fakeGuest(11, { cdp: viewportCdp() })
+    const { call } = setup({ guest })
+    const r = await call('click', { x: 170, y: 120 })
+    expect(r.text).toContain('Clicked at (170, 120)')
+    expect(mouseEvents(guest).map((e) => [e.type, e.x, e.y, e.button || null])).toEqual([
+      ['mouseMoved', 170, 120, null],
+      ['mousePressed', 170, 120, 'left'],
+      ['mouseReleased', 170, 120, 'left']
+    ])
+    await expect(call('click', { x: 5000, y: 10 })).rejects.toMatchObject({ code: 'out_of_viewport' })
+    await expect(call('click', { x: 'left', y: 10 })).rejects.toMatchObject({ code: 'invalid_argument' })
+    await expect(call('click', {})).rejects.toMatchObject({ code: 'invalid_argument' })
+    // A pixel past the edge (a scaled screenshot rounds): the edge.
+    await call('click', { x: 641, y: 479.6 })
+    expect(mouseEvents(guest).pop()).toMatchObject({ type: 'mouseReleased', x: 639, y: 479 })
+  })
+
+  it('click by ref and x/y: that point inside the element; double and middle clicks', async () => {
+    const guest = fakeGuest(11, { cdp: viewportCdp() })
+    const { call } = setup({ guest })
+    await call('snapshot')
+    // @e1's box: (10, 20), 100x40 (DOM.getContentQuads of pageCdp).
+    const r = await call('click', { ref: '@e1', x: 5, y: 6, double: true, button: 'middle' })
+    expect(r.text).toContain('at (15, 26) with the middle button')
+    const presses = mouseEvents(guest).filter((e) => e.type === 'mousePressed')
+    expect(presses.map((e) => [e.x, e.y, e.button, e.buttons, e.clickCount])).toEqual([
+      [15, 26, 'middle', 4, 1],
+      [15, 26, 'middle', 4, 2]
+    ])
+    await expect(call('click', { ref: '@e1', x: 500, y: 6 })).rejects.toMatchObject({ code: 'out_of_element' })
+  })
+
+  it("a right-click goes to the page: Tessel's own page menu stays closed for it", async () => {
+    const guest = fakeGuest(31, { cdp: viewportCdp() })
+    const { call } = setup({ guest })
+    expect(contextMenuQuiet(31, { x: 100, y: 100 })).toBe(false)
+    await call('click', { x: 100, y: 100, button: 'right' })
+    // Not for a menu somewhere else (the user's own right-click), once for the agent's point.
+    expect(contextMenuQuiet(31, { x: 300, y: 20 })).toBe(false)
+    expect(contextMenuQuiet(31, { x: 101, y: 99 })).toBe(true)
+    expect(contextMenuQuiet(31, { x: 100, y: 100 })).toBe(false)
+    // The page zoomed in: the menu's point is in zoomed pixels.
+    await call('click', { x: 100, y: 100, button: 'right' })
+    expect(contextMenuQuiet(31, { x: 150, y: 150 }, 1.5)).toBe(true)
+    expect(mouseEvents(guest).find((e) => e.type === 'mousePressed')).toMatchObject({ button: 'right', buttons: 2 })
+  })
+
+  it('Stop during a held key: the key goes up and nothing more is pressed', async () => {
+    const guest = fakeGuest(11, { cdp: viewportCdp() })
+    const events = []
+    guest.sendInputEvent = vi.fn((ev) => events.push(`${ev.type}:${ev.keyCode}`))
+    const { call, ab } = setup({ guest })
+    const pressing = call('press', { key: 'ArrowRight', hold_ms: 5000, repeat: 3 }).catch((e) => e)
+    await new Promise((r) => setTimeout(r, 150))
+    expect(events).toEqual(['keyDown:Right'])
+    ab.stop(11)
+    const err = await pressing
+    expect(err.code).toBe('stopped_by_user')
+    await new Promise((r) => setTimeout(r, 120))
+    expect(events).toEqual(['keyDown:Right', 'keyUp:Right'])
+  })
+
+  it('a button still held when the agent lets go (or the user stops it) is released first', async () => {
+    const guest = fakeGuest(11, { cdp: viewportCdp() })
+    const { call, ab } = setup({ guest })
+    await call('mouse', { action: 'down', x: 30, y: 40 })
+    ab.release(11)
+    await new Promise((r) => setTimeout(r, 10))
+    expect(mouseEvents(guest).at(-1)).toMatchObject({ type: 'mouseReleased', x: 30, y: 40, button: 'left', buttons: 0 })
+  })
+
+  it('a drag the page starts stays in the page (intercepted, played as drag events, dropped at the end)', async () => {
+    const guest = fakeGuest(11, { cdp: viewportCdp() })
+    const { call } = setup({ guest })
+    await call('snapshot')
+    expect(guest.sent).toContainEqual(['Input.setInterceptDrags', { enabled: true }])
+    // The page starts a drag at the first move with the button held.
+    const base = guest.debugger.sendCommand
+    let started = false
+    guest.debugger.sendCommand = async (method, params, sessionId) => {
+      const r = await base.call(guest.debugger, method, params, sessionId)
+      if (method === 'Input.dispatchMouseEvent' && params.type === 'mouseMoved' && params.buttons && !started) {
+        started = true
+        guest.cdpEvent('Input.dragIntercepted', { data: { items: [{ mimeType: 'text/plain', data: 'card' }], dragOperationsMask: 1 } })
+      }
+      return r
+    }
+    const r = await call('mouse', { action: 'drag', x: 20, y: 20, to_x: 220, to_y: 120, steps: 3 })
+    expect(r.text).toContain('the page took it as a drag and drop')
+    const seq = guest.sent.filter(([m]) => m === 'Input.dispatchDragEvent' || m === 'Input.dispatchMouseEvent').map(([m, p]) => `${m === 'Input.dispatchDragEvent' ? 'drag' : 'mouse'}:${p.type}:${p.x},${p.y}`)
+    expect(seq).toContain('drag:dragEnter:87,53')
+    expect(seq.indexOf('drag:dragEnter:87,53')).toBe(seq.indexOf('mouse:mouseMoved:87,53') + 1)
+    expect(seq.at(-2)).toBe('drag:drop:220,120')
+    expect(seq.at(-1)).toBe('mouse:mouseReleased:220,120')
+    expect(seq.filter((x) => x.startsWith('drag:')).map((x) => x.split(':')[1])).toEqual(['dragEnter', 'dragOver', 'dragOver', 'dragOver', 'drop'])
+  })
+
+  it('browser_mouse drag: pointer to the start, press, moves with the button held, release at the end', async () => {
+    const guest = fakeGuest(11, { cdp: viewportCdp() })
+    const { call } = setup({ guest })
+    const r = await call('mouse', { action: 'drag', x: 40, y: 40, to_x: 200, to_y: 150, steps: 4 })
+    expect(r.text).toBe('Dragged from (40, 40) to (200, 150) in 4 steps.')
+    expect(mouseEvents(guest).map((e) => `${e.type}:${e.x},${e.y}:${e.buttons}`)).toEqual([
+      'mouseMoved:40,40:0',
+      'mousePressed:40,40:1',
+      'mouseMoved:80,68:1',
+      'mouseMoved:120,95:1',
+      'mouseMoved:160,123:1',
+      'mouseMoved:200,150:1',
+      'mouseReleased:200,150:0'
+    ])
+    await expect(call('mouse', { action: 'drag', x: 40, y: 40, to_x: 900, to_y: 150 })).rejects.toMatchObject({ code: 'out_of_viewport' })
+    await expect(call('mouse', { action: 'hover', x: 1, y: 1 })).rejects.toMatchObject({ code: 'invalid_argument' })
+  })
+
+  it('browser_mouse down / move / up: the button stays held between commands', async () => {
+    const guest = fakeGuest(11, { cdp: viewportCdp() })
+    const { call } = setup({ guest })
+    await call('mouse', { action: 'down', x: 10, y: 10 })
+    await call('mouse', { action: 'move', x: 60, y: 30 })
+    expect((await call('mouse', { action: 'up' })).text).toBe('Released the left button at (60, 30).')
+    expect(mouseEvents(guest).map((e) => `${e.type}:${e.x},${e.y}:${e.button}:${e.buttons}`)).toEqual([
+      'mouseMoved:10,10:none:0',
+      'mousePressed:10,10:left:1',
+      'mouseMoved:60,30:left:1',
+      'mouseReleased:60,30:left:0'
+    ])
+  })
+
+  it('browser_press: hold_ms and repeat checked', async () => {
+    const guest = fakeGuest(11, { cdp: viewportCdp() })
+    const { call } = setup({ guest })
+    expect((await call('press', { key: 'ArrowUp', repeat: 2 })).text).toBe('Pressed ArrowUp 2 times.')
+    expect((await call('press', { key: 'ArrowUp', hold_ms: 20 })).text).toBe('Pressed ArrowUp held 20 ms.')
+    await expect(call('press', { key: 'ArrowUp', hold_ms: 20000 })).rejects.toMatchObject({ code: 'invalid_argument' })
+    await expect(call('press', { key: 'ArrowUp', repeat: 0 })).rejects.toMatchObject({ code: 'invalid_argument' })
+  })
+
+  it('a page an agent drives runs as if on screen (background throttling off); its own setting comes back at release', async () => {
+    const guest = fakeGuest(11, { cdp: viewportCdp() })
+    guest.getBackgroundThrottling = () => true
+    guest.setBackgroundThrottling = vi.fn()
+    const { call, ab } = setup({ guest })
+    await call('snapshot')
+    await call('snapshot')
+    expect(guest.setBackgroundThrottling.mock.calls).toEqual([[false], [false]])
+    ab.release(11)
+    expect(guest.setBackgroundThrottling.mock.calls.at(-1)).toEqual([true])
+    // A page that did not throttle is left so.
+    const g2 = fakeGuest(12, { cdp: viewportCdp() })
+    g2.getBackgroundThrottling = () => false
+    g2.setBackgroundThrottling = vi.fn()
+    const two = setup({ guest: g2 })
+    await two.call('snapshot')
+    two.ab.release(12)
+    expect(g2.setBackgroundThrottling.mock.calls).toEqual([[false]])
+  })
+
+  it('the pipe takes the new arguments (x, y, to_x, to_y, steps, button, hold_ms, repeat)', () => {
+    expect(validateParams('browser', signed('mouse', { action: 'drag', x: 1, y: 2, to_x: 3, to_y: 4, steps: 5, button: 'left' })).args).toMatchObject({ x: 1, to_y: 4 })
+    expect(validateParams('browser', signed('press', { key: 'a', hold_ms: 100, repeat: 3 })).args).toMatchObject({ hold_ms: 100, repeat: 3 })
   })
 })
 

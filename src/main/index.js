@@ -3773,6 +3773,8 @@ const agentBrowser = createAgentBrowser({
   ask: (method, params) => cliBridge.ask(method, params),
   guestById: (id) => browserGuests.guestById(id),
   send,
+  // Said when a page out of sight cannot be captured.
+  windowState: () => (mainWindow && !mainWindow.isDestroyed() ? { minimized: mainWindow.isMinimized(), visible: mainWindow.isVisible() } : null),
   nativeImage,
   // Its own folder: only the latest agent screenshots are kept there.
   screenshotDir: join(PASTE_DIR, 'agent-browser'),

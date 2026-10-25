@@ -242,7 +242,7 @@ export function validateParams(method, params = {}) {
 // An agent's browser tool (teamMcp/server.cjs): its pane, the operation,
 // flat arguments (strings, numbers, booleans) and the pane's signature.
 // Who may do what is decided by agentBrowser.js.
-const BROWSER_ARG_KEYS = new Set(['page', 'url', 'action', 'ref', 'text', 'key', 'direction', 'amount', 'double', 'limit', 'level', 'selector', 'timeout_ms'])
+const BROWSER_ARG_KEYS = new Set(['page', 'url', 'action', 'ref', 'text', 'key', 'direction', 'amount', 'double', 'limit', 'level', 'selector', 'timeout_ms', 'x', 'y', 'to_x', 'to_y', 'steps', 'button', 'hold_ms', 'repeat'])
 // fill and type take 20,000 characters, of any kind: a control character is
 // 6 bytes in JSON, so 120,000 bytes, and some room.
 export const MAX_BROWSER_ARGS_BYTES = 128 * 1024

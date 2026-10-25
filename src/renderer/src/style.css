@@ -2028,6 +2028,14 @@ html.window-hidden .ws-layer {
   pointer-events: auto;
 }
 
+/* A page drawn unseen for an agent (browser/pageHost.js: laid over the
+   user's view, 1% opaque): nothing in it takes the pointer, not the page and
+   not Tessel's own panels over it, whatever their own rules say. */
+.bp-box.bp-unseen,
+.bp-box.bp-unseen * {
+  pointer-events: none !important;
+}
+
 /* ================= Workspace sidebar ================= */
 .ws-sidebar {
   flex: 0 0 216px;

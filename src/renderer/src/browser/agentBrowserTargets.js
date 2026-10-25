@@ -14,6 +14,8 @@
 //
 // The answers go to the agent: English on purpose.
 
+import { pageOf, revealPage, endCapture } from './pageHost'
+
 export class AgentBrowserTargetError extends Error {
   constructor(code, message) {
     super(message)
@@ -56,8 +58,18 @@ export const MAX_AGENT_PAGES = 5
 //   paneLabel(leaf) -> "Gauss"
 //   openPage({ ws, near, url }) -> the new browser leaf
 //   sleep(ms)
+//   paint(paneId, on, token) -> { moved, why }   its page drawn, unseen, for a
+//                                capture (pageHost.js revealPage / endCapture)
 export function createAgentBrowserTargets(deps) {
   const sleep = deps.sleep || ((ms) => new Promise((r) => setTimeout(r, ms)))
+  const paint =
+    deps.paint ||
+    ((paneId, on, token) => {
+      const page = pageOf(paneId)
+      if (!on) return { moved: endCapture(page, token), why: null }
+      return revealPage(page, token)
+    })
+  const captureToken = (t) => (typeof t === 'string' && /^[\w-]{1,64}$/.test(t) ? t : 'capture')
 
   function findAgent(paneId) {
     for (const ws of deps.workspaces()) {
@@ -105,8 +117,15 @@ export function createAgentBrowserTargets(deps) {
 
   const describe = (l, current) => ({ page: l.id, url: l.url || '', title: String(l.title || '').slice(0, 200), ready: deps.guestOf(l.id) != null, current })
 
-  // { agent, op: 'list' | 'resolve' | 'open', page, last, url }
+  // { agent, op: 'list' | 'resolve' | 'open' | 'paint', page, last, url, on, token }
   async function handle(req = {}) {
+    // The end of a capture puts a page back as it was: always done, whatever
+    // changed meanwhile (the setting turned off, the agent's pane closed).
+    if (req.op === 'paint' && req.on === false) {
+      const id = typeof req.page === 'string' ? req.page.slice(0, 200) : ''
+      const r = (id && paint(id, false, captureToken(req.token))) || {}
+      return { page: id, moved: !!r.moved, why: null }
+    }
     if (!deps.enabled()) throw refuse('disabled', 'The user turned off "Let agents use the browser" (Tessel Settings > Agents).') // i18n-ignore
     const { ws, leaf } = agentOf(req.agent)
     const agent = deps.paneLabel(leaf)
@@ -138,6 +157,16 @@ export function createAgentBrowserTargets(deps) {
       } else page = pages.find((l) => l.id === req.last) || pages[0] || null
       if (!page) throw refuse('no_page', 'No browser page in your project: open one with browser_open.') // i18n-ignore
       return { agent, page: page.id, url: page.url || '', guestId: await waitGuest(page.id) }
+    }
+
+    // A screenshot of a page out of sight: drawn (unseen) for the capture, then
+    // put back (above; a capture never put back ends by itself, pageHost.js).
+    // Only a page the agent may drive.
+    if (req.op === 'paint') {
+      const page = pages.find((l) => l.id === req.page) || null
+      if (!page) throw refuse('page_not_found', `No browser page "${String(req.page || '').slice(0, 80)}" in your project: see browser_pages.`) // i18n-ignore
+      const r = paint(page.id, true, captureToken(req.token)) || {}
+      return { agent, page: page.id, moved: !!r.moved, why: r.why || null, project: String(ws.name || '').slice(0, 80) }
     }
     throw refuse('invalid_argument', 'Unknown request.') // i18n-ignore
   }
