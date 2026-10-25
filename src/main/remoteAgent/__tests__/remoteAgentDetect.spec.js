@@ -45,7 +45,9 @@ describe('parseAgentTools', () => {
       snap: '/usr/bin/snap',
       curl: '/usr/bin/curl',
       wget: null,
-      os: 'Linux'
+      os: 'Linux',
+      codexVersion: null,
+      codexNoDaemon: null
     })
     expect(r.uid).toBe(1001)
     // Nothing said, or something odd: not known.
@@ -58,6 +60,33 @@ describe('parseAgentTools', () => {
   it('a probe that ran out of time (login shell, npm): partial', () => {
     expect(parseAgentTools('agy -\n@partial login npm\n').partial).toBe(true)
     expect(parseAgentTools('agy -\n').partial).toBe(false)
+  })
+})
+
+describe("the host's Codex and its daemon", () => {
+  it('its version and whether its --help has --no-daemon; anything odd is not known', () => {
+    const r = parseAgentTools('codex /home/me/.local/bin/codex\n@codexv 0.164.0\n@codexnd 1\n')
+    expect(r.host).toMatchObject({ codexVersion: '0.164.0', codexNoDaemon: true })
+    expect(parseAgentTools('@codexv 0.150.0\n@codexnd 0\n').host).toMatchObject({ codexVersion: '0.150.0', codexNoDaemon: false })
+    expect(parseAgentTools('@codexv 0.165.0-alpha.1\n').host.codexVersion).toBe('0.165.0-alpha.1')
+    expect(parseAgentTools('@codexv $(rm -rf)\n@codexnd yes\n').host).toMatchObject({ codexVersion: null, codexNoDaemon: null })
+    // Not said (an older Tessel, its Codex too slow): not known.
+    expect(parseAgentTools('codex /usr/bin/codex\n').host).toMatchObject({ codexVersion: null, codexNoDaemon: null })
+  })
+  it('kept per host for its path and version: a check where its Codex did not answer says it again; another version asks anew', async () => {
+    let answer = { codex: '/u/bin/codex', claude: null, vscodeClaude: null, bins: {}, host: { codexVersion: '0.164.0', codexNoDaemon: true } }
+    const check = createRemoteAgentCheck({ ensureShim: async () => ({ ok: true }), agentTools: async () => answer, agentBins: [] })
+    expect((await check.check('h1', { fresh: true })).host.codexNoDaemon).toBe(true)
+    answer = { ...answer, host: { codexVersion: '0.164.0', codexNoDaemon: null } }
+    expect((await check.check('h1', { fresh: true })).host.codexNoDaemon).toBe(true)
+    // Updated there: its new version is asked anew.
+    answer = { ...answer, host: { codexVersion: '0.165.0', codexNoDaemon: null } }
+    expect((await check.check('h1', { fresh: true })).host.codexNoDaemon).toBe(null)
+    // Another Codex (another path): the same.
+    answer = { ...answer, codex: '/opt/codex', host: { codexVersion: '0.164.0', codexNoDaemon: null } }
+    expect((await check.check('h1', { fresh: true })).host.codexNoDaemon).toBe(null)
+    // Each host its own.
+    expect((await check.check('h2', { fresh: true })).host.codexNoDaemon).toBe(null)
   })
 })
 
@@ -275,6 +304,26 @@ describe.skipIf(!gitSh())('__t_agents on a POSIX sh (fake ssh)', () => {
       gemini: null
     })
     expect(out).not.toMatch(/^\.\.\/etc |^-rf /m)
+  }, 60000)
+
+  it('codex there: its --version and whether its --help has --no-daemon (Codex 0.156+), asked of that codex', async () => {
+    dir = fs.mkdtempSync(join(os.tmpdir(), 'tessel-agents-'))
+    const once = async () => {
+      const out = await agentsIn(dir, {}, ['codex'])
+      session.close('done')
+      session = null
+      return out
+    }
+    script(join(dir, '.local', 'bin', 'codex'), 'case "$1" in --version) echo "codex-cli 0.164.0" ;; --help) printf "Usage: codex\n      --no-daemon\n          Run without the shared background server\n" ;; esac')
+    const r = parseAgentTools(await once())
+    expect(r.codex).toBe(`${posixPath(dir)}/.local/bin/codex`)
+    expect(r.host).toMatchObject({ codexVersion: '0.164.0', codexNoDaemon: true })
+    // An older one: no such option.
+    script(join(dir, '.local', 'bin', 'codex'), 'case "$1" in --version) echo "codex-cli 0.150.0" ;; --help) echo "Usage: codex [OPTIONS]" ;; esac')
+    expect(parseAgentTools(await once()).host).toMatchObject({ codexVersion: '0.150.0', codexNoDaemon: false })
+    // No codex there: nothing said.
+    fs.rmSync(join(dir, '.local', 'bin', 'codex'))
+    expect(await once()).not.toMatch(/^@codex/m)
   }, 60000)
 
   it('npm: its folder (where its agents are) and whether it is the user\'s; node and its version', async () => {

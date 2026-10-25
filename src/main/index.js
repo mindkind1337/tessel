@@ -3473,6 +3473,8 @@ if (agentCheckTimer.unref) agentCheckTimer.unref()
 // pane's TESSEL_PANE_ID, and it closes stdio MCP servers right after a session
 // starts ("Transport closed"). Codex started by Tessel runs without it
 // (--no-daemon), when the installed Codex knows that option. Checked once.
+// A Codex on an SSH host: its own --help says (the host's agent check,
+// remoteAgentLaunch.js remoteCodexNoDaemon), never this computer's.
 let codexNoDaemon = null
 function codexSupportsNoDaemon() {
   if (!codexNoDaemon) {

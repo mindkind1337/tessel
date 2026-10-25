@@ -20,7 +20,11 @@ import {
   hostRunsAsRoot,
   hasClaudeYoloFlag,
   rootSafeClaudeArgs,
-  rootRefusalWatcher
+  rootRefusalWatcher,
+  hostCodexNoDaemon,
+  remoteCodexNoDaemon,
+  withoutNoDaemon,
+  codexNoDaemonRefusalWatcher
 } from '../remoteAgentLaunch'
 import { remoteAgentFound } from '../projectLauncher'
 import { effectiveAgent, launchSignature, launchIsYolo, launchSessionValues, launchPermissions } from '../../../shared/agentPrefs'
@@ -47,6 +51,9 @@ function load({ username = 'root', status = { hostId: HOST, claude: '/usr/local/
     killPty: vi.fn(),
     writePty: vi.fn(),
     remoteAgentSessionExists: vi.fn(async () => false),
+    // This computer's Codex: never asked for a pane on a host.
+    codexNoDaemon: vi.fn(async () => true),
+    log: vi.fn(),
     remoteAgents: { check: vi.fn(async () => status) },
     onData: vi.fn((fn) => {
       listeners.push(fn)
@@ -95,6 +102,10 @@ function load({ username = 'root', status = { hostId: HOST, claude: '/usr/local/
     hasClaudeYoloFlag,
     rootSafeClaudeArgs,
     rootRefusalWatcher,
+    hostCodexNoDaemon,
+    remoteCodexNoDaemon,
+    withoutNoDaemon,
+    codexNoDaemonRefusalWatcher,
     claudeStartChoice,
     codexResumes,
     sessionKind: (a) => a && a.id,
@@ -185,6 +196,45 @@ describe('Claude Code in Yolo on a root host', () => {
     expect(env.typed()[0]).toContain('--dangerously-bypass-approvals-and-sandbox')
     expect(leaf.launchYolo).toBe(true)
     expect(leaf.rootNoYolo).toBeUndefined()
+  })
+})
+
+describe("Codex on a host: --no-daemon as the host's Codex knows it", () => {
+  const cx = (host) => ({ hostId: HOST, claude: null, codex: '/home/deploy/.local/bin/codex', ...(host ? { host } : {}) })
+  const deploy = (host) => load({ username: 'deploy', status: cx(host), permissions: 'manual' })
+  it('the host says its Codex knows it: with --no-daemon (this computer\'s Codex never asked)', async () => {
+    const env = deploy({ codexVersion: '0.164.0', codexNoDaemon: true })
+    await env.start(codex)
+    expect(env.typed()).toEqual(["'/home/deploy/.local/bin/codex' --no-daemon -c check_for_update_on_startup=false\r"])
+    expect(env.shellApi.codexNoDaemon).not.toHaveBeenCalled()
+  })
+  it('an older Codex there (no daemon, refuses the flag): without it, nothing watched', async () => {
+    const env = deploy({ codexVersion: '0.150.0', codexNoDaemon: false })
+    await env.start(codex)
+    expect(env.typed()).toEqual(["'/home/deploy/.local/bin/codex' -c check_for_update_on_startup=false\r"])
+    expect(env.listeners).toHaveLength(0)
+  })
+  it('not known (an older check, its Codex too slow): with it; refused there, typed once more without it and known from then on', async () => {
+    const env = deploy({ codexVersion: null, codexNoDaemon: null })
+    await env.start(codex)
+    expect(env.typed()).toEqual(["'/home/deploy/.local/bin/codex' --no-daemon -c check_for_update_on_startup=false\r"])
+    expect(env.listeners).toHaveLength(1)
+    env.emit("\x1b[1m\x1b[31merror:\x1b[0m unexpected argument '\x1b[33m--no-daemon\x1b[0m' found\r\n\r\nUsage: codex [OPTIONS] [PROMPT]\r\n")
+    expect(env.typed()[1]).toBe("'/home/deploy/.local/bin/codex' -c check_for_update_on_startup=false\r")
+    expect(env.ctx.remoteAgentTools[HOST].host.codexNoDaemon).toBe(false)
+    expect(env.listeners).toHaveLength(0)
+    // The next Codex there starts without it.
+    await env.start(codex)
+    expect(env.typed()[2]).toBe("'/home/deploy/.local/bin/codex' -c check_for_update_on_startup=false\r")
+  })
+  it('a resume keeps the flag after its id; output that is not the refusal types nothing more', async () => {
+    const env = deploy({ codexVersion: '0.157.0', codexNoDaemon: true })
+    env.shellApi.remoteAgentSessionExists.mockResolvedValue(true)
+    const leaf = await env.ctx.api.createLeaf('pwsh', codex, null, null, { id: 'pane-1', remoteHostId: HOST, remotePath: '/srv/app', sessionId: SID, resume: true })
+    env.ctx.findLeaf = () => leaf
+    expect(env.typed()).toEqual([`'/home/deploy/.local/bin/codex' resume ${SID} --no-daemon -c check_for_update_on_startup=false\r`])
+    env.emit('error: unexpected argument \'--yolo\' found\r\n')
+    expect(env.typed()).toHaveLength(1)
   })
 })
 

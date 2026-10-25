@@ -132,8 +132,11 @@ export const BIN_NAME = /^[A-Za-z0-9][A-Za-z0-9._+-]{0,63}$/
 const HOST_PATHS = { '@node': 'node', '@npm': 'npm', '@prefix': 'npmPrefix', '@snap': 'snap', '@curl': 'curl', '@wget': 'wget' }
 const absPath = (v) => (v.startsWith('/') && v.length <= 4096 && !/[\u0000-\u001f\u007f]/.test(v) ? v : null)
 const own = (o, k) => Object.prototype.hasOwnProperty.call(o, k)
+// codexVersion / codexNoDaemon: the Codex found there (its --version, and
+// whether its --help has --no-daemon: Codex 0.156+), null when not found or
+// it did not answer in time.
 export function emptyHost() {
-  return { node: null, nodeMajor: null, npm: null, npmPrefix: null, npmWritable: null, snap: null, curl: null, wget: null, os: null }
+  return { node: null, nodeMajor: null, npm: null, npmPrefix: null, npmWritable: null, snap: null, curl: null, wget: null, os: null, codexVersion: null, codexNoDaemon: null }
 }
 export function parseAgentTools(text) {
   const out = { claude: null, codex: null, vscodeClaude: null, bins: {}, host: emptyHost(), uid: null, partial: false }
@@ -157,6 +160,10 @@ export function parseAgentTools(text) {
         if (/^[A-Za-z][\w.-]{0,31}$/.test(value)) out.host.os = value
       } else if (name === '@partial') {
         out.partial = true
+      } else if (name === '@codexv') {
+        if (/^\d{1,4}\.\d{1,4}(?:\.\d{1,6})?(?:[-+.][0-9A-Za-z.]{1,40})?$/.test(value) && out.host.codexVersion == null) out.host.codexVersion = value
+      } else if (name === '@codexnd') {
+        if ((value === '1' || value === '0') && out.host.codexNoDaemon == null) out.host.codexNoDaemon = value === '1'
       }
       continue
     }
@@ -200,6 +207,20 @@ export function createRemoteAgentCheck({ ensureShim, agentTools, agentBins = [],
     for (const { id, bin } of bins) if (own(reported, bin)) agents[id] = reported[bin] || null
     return agents
   }
+  // Whether the host's Codex knows --no-daemon, kept per host for its path and
+  // version: a later check whose Codex did not answer in time (the same path
+  // and version) still says it; another path or version is asked anew.
+  const codexDaemon = new Map() // hostId -> { path, version, noDaemon }
+  function keepCodexDaemon(hostId, status) {
+    const host = status.host
+    if (!host || !status.codex) return
+    if (typeof host.codexNoDaemon === 'boolean') {
+      codexDaemon.set(hostId, { path: status.codex, version: host.codexVersion, noDaemon: host.codexNoDaemon })
+      return
+    }
+    const kept = codexDaemon.get(hostId)
+    if (kept && kept.path === status.codex && kept.version && kept.version === host.codexVersion) host.codexNoDaemon = kept.noDaemon
+  }
   async function run(hostId) {
     // Asked together: each waits its turn on the host's session, and the look
     // for the agents (asked first) does not wait behind the shim's install.
@@ -225,6 +246,7 @@ export function createRemoteAgentCheck({ ensureShim, agentTools, agentBins = [],
       shim: shim && shim.ok ? 'ok' : (shim && shim.reason) || 'failed',
       ...(tools && tools.error ? { error: String(tools.error).slice(0, 500) } : {})
     }
+    keepCodexDaemon(hostId, status)
     if (status.error) log(`remote agent check on ${hostId}: ${status.error}`)
     else if (status.partial) log(`remote agent check on ${hostId}: the login shell or npm ran out of time; agents not found there are unknown`)
     // Neither a failure nor a partial answer is given again: the next asks the host.

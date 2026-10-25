@@ -3,7 +3,7 @@
 // command typed (or none: its install offered; remoteAgentInstalls.spec.js)
 // and the "+" menu's agents.
 import { describe, expect, it } from 'vitest'
-import { claudeStartChoice, codexResumes, hostMenuAgents, hostRunsAsRoot, needsRemoteAgentCheck, remoteAgentLine } from '../remoteAgentLaunch'
+import { claudeStartChoice, codexResumes, hostMenuAgents, hostRunsAsRoot, needsRemoteAgentCheck, remoteAgentLine, hostCodexNoDaemon, remoteCodexNoDaemon, withoutNoDaemon, codexNoDaemonRefusalWatcher } from '../remoteAgentLaunch'
 
 const newId = () => 'new-uuid'
 
@@ -133,5 +133,34 @@ describe('the "+" menu on an SSH project', () => {
       ['grok', false, false],
       ['mine', true, false]
     ])
+  })
+})
+
+describe("Codex's daemon on a host: --no-daemon from the host's own Codex", () => {
+  it('what the host check says: true, false, or null (not checked, failed, its Codex too slow)', () => {
+    expect(hostCodexNoDaemon({ host: { codexNoDaemon: true } })).toBe(true)
+    expect(hostCodexNoDaemon({ host: { codexNoDaemon: false } })).toBe(false)
+    expect(hostCodexNoDaemon({ host: { codexNoDaemon: null } })).toBe(null)
+    expect(hostCodexNoDaemon({ host: {} })).toBe(null)
+    expect(hostCodexNoDaemon({ error: 'x', host: { codexNoDaemon: true } })).toBe(null)
+    expect(hostCodexNoDaemon(null)).toBe(null)
+  })
+  it("the flag unless the host's Codex is known to refuse it", () => {
+    expect(remoteCodexNoDaemon(true)).toBe(true)
+    expect(remoteCodexNoDaemon(null)).toBe(true)
+    expect(remoteCodexNoDaemon(false)).toBe(false)
+  })
+  it('the line again without it', () => {
+    expect(withoutNoDaemon("'/u/codex' resume abc --no-daemon -c check_for_update_on_startup=false")).toBe("'/u/codex' resume abc -c check_for_update_on_startup=false")
+    expect(withoutNoDaemon('codex --no-daemon')).toBe('codex')
+    expect(withoutNoDaemon('codex --no-daemonx')).toBe('codex --no-daemonx')
+  })
+  it("sees an older Codex refusing it (clap's words, colours and a cut chunk), once; nothing else", () => {
+    const w = codexNoDaemonRefusalWatcher()
+    expect(w("\x1b[1m\x1b[31merror:\x1b[0m unexpected argument '\x1b[33m--no-")).toBe(false)
+    expect(w("daemon\x1b[0m' found\r\n")).toBe(true)
+    expect(w("error: unexpected argument '--no-daemon' found")).toBe(false)
+    const other = codexNoDaemonRefusalWatcher()
+    expect(other("error: unexpected argument '--yolo' found\r\nno-daemon in the docs")).toBe(false)
   })
 })

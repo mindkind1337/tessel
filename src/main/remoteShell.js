@@ -669,13 +669,24 @@ __t_agents() {
     __npm=; __pf=
   fi
   [ $# -gt 0 ] || set -- claude codex
+  __cx=
   for __a in "$@"; do
     case $__a in ''|[-.]*|*[!0-9A-Za-z._+-]*) continue ;; esac
     if __t_which "$__a"; then __p=$__w
     elif [ -f "$HOME/.$__a/bin/$__a" ] && [ -x "$HOME/.$__a/bin/$__a" ]; then __p="$HOME/.$__a/bin/$__a"
     else __p=-; fi
     printf '%s %s\\n' "$__a" "$__p"
+    [ "$__a" = codex ] && [ "$__p" != - ] && __cx=$__p
   done
+  if [ -n "$__cx" ]; then
+    __v=$(__t_tmo 8 env PATH="\${__cx%/*}:$PATH" "$__cx" --version | tail -n 1) || __v=
+    __v=\${__v##* }
+    case $__v in [0-9]*.[0-9]*) case $__v in *[!0-9A-Za-z.+-]*) ;; *) printf '@codexv %s\\n' "$__v" ;; esac ;; esac
+    __h=$(__t_tmo 8 env PATH="\${__cx%/*}:$PATH" "$__cx" --help); __hr=$?
+    if [ "$__hr" -eq 0 ] && [ ! -e "$__T_D/tk" ]; then
+      case $__h in *--no-daemon*) printf '@codexnd 1\\n' ;; *) printf '@codexnd 0\\n' ;; esac
+    fi
+  fi
   __p=$(for __c in "$HOME"/.vscode-server/extensions/anthropic.claude-code-*/resources/native-binary/claude; do [ -f "$__c" ] && [ -x "$__c" ] && printf '%s\\n' "$__c"; done | awk '{ v = $0; sub(/.*\\/anthropic\\.claude-code-/, "", v); sub(/\\/.*/, "", v); n = split(v, a, /[.-]/); k = ""; for (i = 1; i <= 4; i++) k = k sprintf("%09d", (i <= n && a[i] ~ /^[0-9]+$/) ? a[i] : 0); if (p == "" || k > b) { b = k; p = $0 } } END { print p }')
   [ -n "$__p" ] || __p=-
   printf 'vscode-claude %s\\n' "$__p"

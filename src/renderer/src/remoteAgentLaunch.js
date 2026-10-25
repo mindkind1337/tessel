@@ -121,6 +121,46 @@ export function rootRefusalWatcher() {
   }
 }
 
+// ---- Codex's shared daemon on a host --------------------------------------------
+// Codex 0.157+ runs its sessions in a shared background server (its daemon,
+// started by the first `codex` of that user there). That server starts the MCP
+// servers itself, with the environment of the pane that started it, and the
+// next Codex joins it and its servers (seen with Codex 0.157 and 0.164 on
+// Linux): tessel-team then runs as another pane, and stops with that pane's
+// link ("Transport closed"). --no-daemon (Codex 0.156+) keeps a Codex and its
+// servers in its own pane; older ones refuse it ("error: unexpected argument
+// '--no-daemon' found") and have no daemon. -c features.daemon_auto_start=false
+// is no way around it: a Codex started so still joins a daemon already running.
+// The host's check says whether the Codex found there knows it
+// (host.codexNoDaemon, from its --help). -> true | false | null (not known)
+export function hostCodexNoDaemon(status) {
+  const host = status && !status.error ? status.host : null
+  return host && typeof host.codexNoDaemon === 'boolean' ? host.codexNoDaemon : null
+}
+// Whether the host's Codex starts with --no-daemon: unless its Codex is known
+// to refuse it. Not known: with it, its refusal watched for
+// (codexNoDaemonRefusalWatcher) and the line typed again without it.
+export function remoteCodexNoDaemon(known) {
+  return known !== false
+}
+export function withoutNoDaemon(line) {
+  return String(line || '').replace(/ --no-daemon(?=\s|$)/, '')
+}
+// The refusal of an older Codex, seen in a pane's output (spaces, line breaks
+// and colours ignored). -> a function fed each chunk; true (once) when it shows.
+const NO_DAEMON_REFUSAL = /unexpectedargument['"‘’`]?--no-daemon/
+export function codexNoDaemonRefusalWatcher() {
+  let tail = ''
+  let seen = false
+  return (data) => {
+    if (seen) return false
+    tail = (tail + String(data || '').replace(ANSI, '').replace(/\s+/g, '')).slice(-600)
+    if (!NO_DAEMON_REFUSAL.test(tail)) return false
+    seen = true
+    return true
+  }
+}
+
 // The "+" menu's agents for a pane on an SSH host, as found there: ready
 // when the host has it; missing, offered as Install… (never as ready):
 // Claude Code, Codex and the agents installed on this computer (the ones
