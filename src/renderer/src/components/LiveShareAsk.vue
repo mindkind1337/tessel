@@ -74,10 +74,13 @@ const ticked = ref(new Set())
 const rights = ref(cleanRights(null))
 const codeChecked = ref(false)
 const trust = ref(false)
-// "Trust next time" waits for the code check: a click on it while it waits
-// takes you to that check and makes it blink, so it is clear what to do.
+// "Trust next time" waits for the code check (trust only someone whose code
+// you checked): its line says so quietly; a click on it while it waits takes
+// you to that check, makes it blink and the line stands out, so it is clear
+// what to do.
 const codeBoxEl = ref(null)
 const nudged = ref(false)
+const trustTried = ref(false)
 let nudgeTimer = 0
 function nudgeCode() {
   if (codeChecked.value) return
@@ -87,9 +90,17 @@ function nudgeCode() {
     const input = box.querySelector('input')
     if (input) input.focus()
   }
+  trustTried.value = true
   nudged.value = true
   clearTimeout(nudgeTimer)
   nudgeTimer = setTimeout(() => (nudged.value = false), 1400)
+}
+// A click on the box (or on its words: the label clicks it): while the code
+// is not checked, it stays unticked and leads to the check.
+function trustClick(e) {
+  if (codeChecked.value) return
+  e.preventDefault()
+  nudgeCode()
 }
 onUnmounted(() => clearTimeout(nudgeTimer))
 const offered = () => {
@@ -158,6 +169,7 @@ function shown() {
   rights.value = cleanRights(props.ask && props.ask.offer ? props.ask.offer.rights : null)
   codeChecked.value = false
   trust.value = false
+  trustTried.value = false
   arm()
   nextTick(() => dialog.value?.focus())
 }
@@ -289,11 +301,14 @@ function trapTab(event) {
           </div>
 
           <div v-if="canTrust" class="ls-ask-section ls-ask-trust" data-test="ls-ask-trust">
-            <label class="ls-ask-check" :class="{ disabled: !codeChecked }" data-test="ls-ask-trust-box" @click="nudgeCode">
-              <input v-model="trust" type="checkbox" :disabled="!codeChecked" />
+            <!-- Not a disabled input while it waits: a disabled control takes
+                 no click at all (on it, nothing happened), so it is only marked
+                 unavailable and a click or Space leads to the code check. -->
+            <label class="ls-ask-check" :class="{ disabled: !codeChecked }" data-test="ls-ask-trust-box">
+              <input v-model="trust" type="checkbox" :aria-disabled="codeChecked ? null : 'true'" @click="trustClick" />
               <span class="ls-ask-check-text">
                 <span>{{ t('liveShare.ask.trust2', 'Trust next time: they get in without asking, with these projects and rights') }}</span>
-                <span v-if="!codeChecked" class="ls-ask-need ls-ask-small" data-test="ls-ask-trust-why">{{ t('liveShare.ask.trustNeedsCode', 'Tick “I checked it with them” above first.') }}</span>
+                <span v-if="!codeChecked" class="ls-ask-small" :class="trustTried ? 'ls-ask-need' : 'ls-ask-dim'" data-test="ls-ask-trust-why">{{ t('liveShare.ask.trustNeedsCode', 'Tick “I checked it with them” above first.') }}</span>
               </span>
             </label>
           </div>
@@ -457,6 +472,9 @@ function trapTab(event) {
 }
 .ls-ask-check.disabled > .ls-ask-check-text > span:first-child {
   color: var(--text-dim);
+}
+.ls-ask-check.disabled > input {
+  opacity: 0.5;
 }
 .ls-ask-check-text {
   display: flex;
