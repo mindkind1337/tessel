@@ -42,6 +42,15 @@ describe('mergeSavedActivity', () => {
     expect(both.inArchive.has(both.events[0])).toBe(true)
   })
 
+  it('past MAX_EVENTS the archived events go first: an event only in the live file is kept', () => {
+    const archive = Array.from({ length: MAX_EVENTS }, (_, i) => JSON.stringify(ev(now - 10 * HOUR + i, { n: i }))).join('\n')
+    const out = mergeSavedActivity(JSON.stringify([ev(now - 20 * HOUR, { n: 'live' })]), archive, now)
+    expect(out.events).toHaveLength(MAX_EVENTS)
+    expect(out.events[0].n).toBe('live')
+    expect(out.events[1].n).toBe(1)
+    expect(out.archived).toBe(MAX_EVENTS - 1)
+  })
+
   it('lines cut by a kill and unreadable live files are skipped', () => {
     const good = ev(now - HOUR, { n: 1 })
     const archive = `${JSON.stringify(good)}\n{"t":123,"ty\n\n${JSON.stringify(ev(now - 1000, { n: 2 }))}\n`
@@ -198,6 +207,21 @@ describe('saving through activityStore', () => {
     await store.saveActivityNow()
     expect(shell.archive).toHaveBeenCalledTimes(1)
     expect(JSON.parse(shell.archive.mock.calls[0][0])).toEqual([expect.objectContaining({ msgId: 'm', status: 'read' })])
+  })
+
+  it('a log past its limit drops archived events first, never one only activity.json holds', async () => {
+    const now = Date.now()
+    const arch = Array.from({ length: MAX_EVENTS - 1 }, (_, i) => JSON.stringify(ev(now - 10 * HOUR + i, { n: i }))).join('\n')
+    const shell = api({ load: vi.fn(async () => ({ text: JSON.stringify([ev(now - 20 * HOUR, { n: 'only-live' })]), archive: arch })) })
+    window.shellApi = { activity: shell }
+    const store = await import('../activityStore')
+    await store.loadActivity()
+    expect(store.activity[0].n).toBe('only-live')
+    for (let i = 0; i < 501; i++) store.recordActivity({ type: 'task', action: 'new', n: `new-${i}` })
+    expect(store.activity).toHaveLength(MAX_EVENTS)
+    expect(store.activity[0].n).toBe('only-live')
+    expect(store.activity.at(-1).n).toBe('new-500')
+    expect(store.trimCount()).toBe(1)
   })
 
   it('an archive that answers ok marks only what it was sent; the rest is sent at the next save', async () => {

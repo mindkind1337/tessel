@@ -172,8 +172,22 @@ export function mergeSavedActivity(liveText, archiveText, now = Date.now()) {
   for (let i = 1; i < merged.length && ordered; i++) if (merged[i].t < merged[i - 1].t) ordered = false
   const all = ordered ? merged : [...merged].sort((a, b) => a.t - b.t)
   const fresh = all.filter((e) => e && Number.isFinite(e.t) && now - e.t <= MAX_AGE_MS)
-  const events = fresh.length > MAX_EVENTS ? fresh.slice(fresh.length - MAX_EVENTS) : fresh
   const fromArchive = new Set(old)
+  // Past MAX_EVENTS the oldest go, those of the archive first: an event only
+  // in the live file (a team message logged late, with an old time) would not
+  // be written anywhere any more.
+  let events = fresh
+  if (fresh.length > MAX_EVENTS) {
+    let over = fresh.length - MAX_EVENTS
+    events = fresh.filter((e) => {
+      if (over > 0 && fromArchive.has(e)) {
+        over--
+        return false
+      }
+      return true
+    })
+    if (over > 0) events = events.slice(over)
+  }
   const inArchive = new Set(events.filter((e) => fromArchive.has(e)))
   return { events, inArchive, archived: inArchive.size }
 }

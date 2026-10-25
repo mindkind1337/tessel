@@ -29,11 +29,25 @@ export function recordActivity(event) {
   const e = { t: Date.now(), ...event }
   touchedAt.set(e, Date.now())
   activity.push(e)
-  if (activity.length > MAX_EVENTS + 500) {
-    activity.splice(0, activity.length - MAX_EVENTS)
-    trimmed++
-  }
+  if (activity.length > MAX_EVENTS + 500) trimLog()
   scheduleSave()
+}
+
+// Back to MAX_EVENTS: the first ones go (the oldest), those the archive holds
+// first; the others are only in activity.json and would be lost.
+function trimLog() {
+  const raw = toRaw(activity)
+  let over = raw.length - MAX_EVENTS
+  let kept = raw.filter((e) => {
+    if (over > 0 && inArchive.has(e)) {
+      over--
+      return false
+    }
+    return true
+  })
+  if (over > 0) kept = kept.slice(over)
+  activity.splice(0, activity.length, ...kept)
+  trimmed++
 }
 
 // Events already in the log were changed in place: save them. A team message
