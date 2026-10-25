@@ -78,6 +78,48 @@ describe('F1: a board file that cannot be read at save time', () => {
   })
 })
 
+describe('the board\'s deletions and history between saves (only Tessel writes the file)', () => {
+  const file = () => taskBoardFilePath(dir)
+
+  it('the board file removed while Tessel runs: the next save keeps the history it knows', () => {
+    saveTasks(dir, [card(1)], [], ['gone-1'], [record(1), record(2)])
+    fs.rmSync(file())
+    fs.rmSync(`${file()}.bak`, { force: true })
+    saveTasks(dir, [card(1)], [], [], null)
+    const back = loadBoard(dir)
+    expect(back.history.map((r) => r.id)).toEqual(['t-1', 't-2'])
+    expect(back.deleted).toEqual(['gone-1'])
+  })
+
+  it('what loadBoard read is what a save keeps: no second read of the file, which may be held by then', () => {
+    fs.writeFileSync(file(), JSON.stringify({ version: 2, tasks: [card(1)], appliedRequests: [], deleted: ['x'], history: [record(7), record(8)] }))
+    expect(loadBoard(dir).history).toHaveLength(2)
+    const real = fs.readFileSync
+    const spy = vi.spyOn(fs, 'readFileSync').mockImplementation((p, ...rest) => {
+      if (String(p) === file()) throw Object.assign(new Error('busy'), { code: 'EBUSY' })
+      return real(p, ...rest)
+    })
+    saveTasks(dir, [card(1), card(2)], [], [], null)
+    spy.mockRestore()
+    const back = loadBoard(dir)
+    expect(back.tasks.map((t) => t.id)).toEqual(['t-1', 't-2'])
+    expect(back.history.map((r) => r.id)).toEqual(['t-7', 't-8'])
+    expect(back.deleted).toEqual(['x'])
+  })
+
+  it('a file that cannot be looked at (not missing) is not taken for none', () => {
+    saveTasks(dir, [card(1)], [], [], [record(1)])
+    const real = fs.statSync
+    const spy = vi.spyOn(fs, 'statSync').mockImplementation((p, ...rest) => {
+      if (String(p) === file()) throw Object.assign(new Error('denied'), { code: 'EPERM' })
+      return real(p, ...rest)
+    })
+    saveTasks(dir, [card(1), card(2)], [], [], null)
+    spy.mockRestore()
+    expect(loadBoard(dir).history.map((r) => r.id)).toEqual(['t-1'])
+  })
+})
+
 describe('F8: caches check the file\'s identity', () => {
   it('writeJsonSafe does not skip a save when the file was replaced by another with the same size and time', () => {
     const f = join(dir, 'x.json')
@@ -140,6 +182,9 @@ describe('F9: the poll cache is bounded; the archive is read async and joins sta
   it('the parse of a team not read for a while is dropped (16 kept)', () => {
     const members = [{ id: 'pane-a', num: 1, title: 'Codex' }]
     for (let i = 1; i <= 20; i++) ensureTeamChannel({ dir, teamId: `team-${i}`, members })
+    // As left a few seconds ago (a file written a moment ago is not kept).
+    const old = new Date(Date.now() - 5000)
+    for (let i = 1; i <= 20; i++) fs.utimesSync(join(dir, '.tessel', 'team-channel', `team-${i}`, 'state.json'), old, old)
     for (let i = 1; i <= 20; i++) pollTeamChannel({ dir, teamId: `team-${i}` })
     const read = vi.spyOn(fs, 'readFileSync')
     pollTeamChannel({ dir, teamId: 'team-20' })

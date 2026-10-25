@@ -61,12 +61,15 @@ export function loadBoard(userDataDir) {
     }
   }
   if (res.data) {
+    // What the window now shows: the saves keep these deletions and this
+    // history unless it sends others (no second read of the file for them).
+    const { deleted, history } = partsOf(res.data)
+    rememberParts(file, deleted, history)
     if (Array.isArray(res.data)) return { tasks: res.data, appliedRequests: [], deleted: [], history: [] }
     const applied = Array.isArray(res.data.appliedRequests)
       ? res.data.appliedRequests.filter((k) => typeof k === 'string')
       : []
-    const deleted = deletedOf(res.data)
-    return { tasks: withoutDeleted(res.data.tasks, deleted), appliedRequests: applied, deleted, history: historyOf(res.data) }
+    return { tasks: withoutDeleted(res.data.tasks, deleted), appliedRequests: applied, deleted, history }
   }
 
   // No good copy at all: empty or an unknown shape opens an empty board;
@@ -89,52 +92,54 @@ function historyOf(data) {
 // parsing the whole 3 MB file for them at each save was most of the save's
 // cost: they are kept from the last load or save and used while the file is
 // as it was left (same size and time); any other change reads the file again.
-const parts = new Map() // file -> { size, mtimeMs, deleted, history }
+const parts = new Map() // file -> { size, mtimeMs, ino, deleted, history }
+// -> { size, mtimeMs, ino }, 'missing' (no file), or null (it could not be
+// looked at: that says nothing about whether it exists).
 function fileStamp(file) {
   try {
     const st = fs.statSync(file)
     return { size: st.size, mtimeMs: st.mtimeMs, ino: st.ino }
-  } catch {
-    return null
+  } catch (err) {
+    return err && err.code === 'ENOENT' ? 'missing' : null
   }
 }
-// The last parts read or written for a file, whatever the file's size and
-// time: used when a read fails (never cached under the file's stamp).
+// The last parts this process read or wrote for a file, whatever its size and
+// time now: Tessel is the board's only writer, so when the file cannot be read
+// they are what it holds (the .bak, renewed once a minute, can be older).
 const lastKnown = new Map()
 function partsOf(data) {
   return { deleted: deletedOf(data), history: historyOf(data) }
 }
-// -> { deleted, history, ok }. ok: false when the file exists but neither it,
-// its .bak nor an earlier read gave them (a file another program holds, a
-// damaged one): the caller must not take "none" for the answer, and nothing
-// failed is cached.
+// -> { deleted, history, ok }. ok: false when the file may exist but neither
+// it, an earlier read or write, nor its .bak gave them (a file another program
+// holds, a damaged one): the caller must not take "none" for the answer, and
+// nothing failed is cached.
 function savedParts(file) {
   const stamp = fileStamp(file)
   const known = parts.get(file)
-  if (stamp && known && known.size === stamp.size && known.mtimeMs === stamp.mtimeMs && known.ino === stamp.ino) return { ...known, ok: true }
-  if (!stamp) return { deleted: [], history: [], ok: true } // no file yet
-  let out = null
-  try {
-    out = partsOf(JSON.parse(fs.readFileSync(file, 'utf8')))
-    parts.set(file, { ...stamp, ...out })
-    lastKnown.set(file, out)
-    return { ...out, ok: true }
-  } catch (err) {
-    if (err.code === 'ENOENT') return { deleted: [], history: [], ok: true }
-  }
-  for (const source of [() => partsOf(JSON.parse(fs.readFileSync(`${file}.bak`, 'utf8'))), () => lastKnown.get(file)]) {
+  if (stamp && stamp !== 'missing' && known && known.size === stamp.size && known.mtimeMs === stamp.mtimeMs && known.ino === stamp.ino) return { ...known, ok: true }
+  if (stamp === 'missing' && !lastKnown.has(file)) return { deleted: [], history: [], ok: true } // no file yet
+  if (stamp && stamp !== 'missing') {
     try {
-      const data = source()
-      if (data) return { ...data, ok: true }
+      const out = partsOf(JSON.parse(fs.readFileSync(file, 'utf8')))
+      parts.set(file, { ...stamp, ...out })
+      lastKnown.set(file, out)
+      return { ...out, ok: true }
     } catch {
-      /* next source */
+      /* held or damaged: below */
     }
   }
-  return { deleted: [], history: [], ok: false }
+  if (lastKnown.has(file)) return { ...lastKnown.get(file), ok: true }
+  try {
+    return { ...partsOf(JSON.parse(fs.readFileSync(`${file}.bak`, 'utf8'))), ok: true }
+  } catch {
+    return { deleted: [], history: [], ok: false }
+  }
 }
 function rememberParts(file, deleted, history) {
   const stamp = fileStamp(file)
-  if (stamp) parts.set(file, { ...stamp, deleted, history })
+  if (stamp && stamp !== 'missing') parts.set(file, { ...stamp, deleted, history })
+  else parts.delete(file)
   lastKnown.set(file, { deleted, history })
 }
 

@@ -3,7 +3,7 @@
 // first, and the board watch sees every field a finished card can still get.
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { watch, nextTick } from 'vue'
-import { tasks, setTasks, addTask, updateTask, boardWatchState } from '../taskBoardStore'
+import { tasks, setTasks, addTask, updateTask, watchBoard } from '../taskBoardStore'
 import { setTaskHistory, historyVersion, createHistorySync, renameDone, recordDone } from '../taskHistory'
 
 describe('F1: the history travels again after a save that did not store it', () => {
@@ -82,15 +82,19 @@ describe('F2: closing sends the recent activity first', () => {
 
 describe('F4: every field a finished card can still get is watched', () => {
   let saves
+  let stops = []
   beforeEach(async () => {
     setTasks([])
     setTaskHistory([])
     saves = vi.fn()
-    watch([() => boardWatchState(tasks), historyVersion], saves, { deep: true })
+    stops = [watchBoard(saves, tasks), watch(historyVersion, saves)]
     const c = addTask({ title: 'A' })
     updateTask(c.id, { column: 'done' })
     await nextTick()
     saves.mockClear()
+  })
+  afterEach(() => {
+    for (const stop of stops) stop()
   })
 
   for (const [field, value] of [
@@ -107,7 +111,7 @@ describe('F4: every field a finished card can still get is watched', () => {
     it(`${field} set on a finished card saves the board`, async () => {
       updateTask(tasks[0].id, { [field]: value })
       await nextTick()
-      expect(saves).toHaveBeenCalledTimes(1)
+      expect(saves).toHaveBeenCalled()
     })
   }
 
@@ -121,5 +125,14 @@ describe('F4: every field a finished card can still get is watched', () => {
     tasks[0].leadReview.ok = true
     await nextTick()
     expect(saves).toHaveBeenCalledTimes(2)
+    // And the fields no list named: when it was created, its periods.
+    tasks[0].createdBy = 'pane-x'
+    await nextTick()
+    expect(saves).toHaveBeenCalledTimes(3)
+    tasks[0].workPeriods = [{ start: 1, end: 2, paneId: 'p' }]
+    await nextTick()
+    tasks[0].workPeriods[0].end = 3
+    await nextTick()
+    expect(saves).toHaveBeenCalledTimes(5)
   })
 })

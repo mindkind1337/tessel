@@ -4,7 +4,7 @@
 // store through setTasks(); the board view (Builders 2/3) renders `tasks` and
 // calls the mutators below.
 
-import { reactive } from 'vue'
+import { reactive, effectScope, toRaw, watch } from 'vue'
 import { COLUMNS, createTask } from '../../shared/taskModel'
 import { recordDone, forgetDone, renameDone } from './taskHistory'
 
@@ -173,18 +173,41 @@ export function setTasks(nextTasks) {
   return tasks
 }
 
-// What App.vue watches to save the board. The whole board is not watched
-// deeply: that tracked about 60,000 values (1,400 cards, 1,700 history
-// records) and cost 80 ms at every card change. The cards in play are
-// returned as they are (watched deeply, a few hundred values), a finished
-// card (most of the board) by the fields that can still change after
-// Done. The history has its own counter (taskHistory.js historyVersion).
-export function boardWatchState(list = tasks) {
-  const active = []
-  const finished = []
-  for (const c of list) {
-    if (c.column === 'done') finished.push(c.id, c.title, c.doneAt, c.paneId, c.wsId, c.report, c.worktree, c.mergedAt, c.mergeSha, c.brief, c.leadReview, c.leadNote, c.gate, c.guestBy, Object.keys(c).length)
-    else active.push(c)
+// App.vue saves the board on this: onChange runs when a card is added,
+// removed or moved in the list, or when any field of any card changes, however
+// deep. Each card has a watcher of its own, so a change re-reads that card
+// only: one deep watcher of the whole board re-read all of it (18,000 values
+// for 1,100 cards, tens of milliseconds) at every change, and watching only
+// some fields of the finished cards missed the others. The history has its
+// own counter (taskHistory.js historyVersion). -> stop()
+export function watchBoard(onChange, list = tasks) {
+  const scope = effectScope(true)
+  const cards = new Map() // raw card -> its watcher's stop
+  const changed = () => onChange()
+  function sync() {
+    const live = new Set()
+    for (let i = 0; i < list.length; i++) {
+      const card = list[i]
+      if (!card || typeof card !== 'object') continue
+      const raw = toRaw(card)
+      live.add(raw)
+      if (!cards.has(raw)) cards.set(raw, scope.run(() => watch(() => card, changed, { deep: true })))
+    }
+    for (const [raw, stop] of cards) {
+      if (live.has(raw)) continue
+      stop()
+      cards.delete(raw)
+    }
   }
-  return { active, finished }
+  scope.run(() =>
+    watch(
+      () => list.slice(),
+      () => {
+        sync()
+        changed()
+      }
+    )
+  )
+  sync()
+  return () => scope.stop()
 }
