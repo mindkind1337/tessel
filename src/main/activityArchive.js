@@ -22,6 +22,8 @@ const SANE_GAP_DAYS = 90
 // The days whose events this process knows (to append each event once), the
 // most recently used kept: today's, and a few older ones a late event went to.
 const MAX_INDEXED_DAYS = 4
+// A temp file of a rewrite older than this was left by a process that died.
+const STALE_TMP_MS = 60 * 1000
 
 // The archive holds each event once: what identifies a line (see archiveKey;
 // a line without a message id by a hash of its text, which takes no parse).
@@ -133,10 +135,11 @@ export function createActivityArchive(userDataDir, log = { warn() {} }) {
         if (lines) lines.push(entry)
         else byDay.set(day, [entry])
       }
-      if (!byDay.size) return { ok: true, count: 0 }
+      if (!byDay.size) return { ok: true, count: 0, rejectedDays: [] }
       await backupOnce()
       await fs.promises.mkdir(dir, { recursive: true })
       let count = 0
+      const rejectedDays = []
       for (const [day, entries] of byDay) {
         const file = join(dir, `${day}.jsonl`)
         const keys = await indexOf(day, file)
@@ -154,8 +157,10 @@ export function createActivityArchive(userDataDir, log = { warn() {} }) {
         } catch {
           /* a new day */
         }
+        // Full: refused, said so (rejectedDays): the window keeps them in activity.json.
         if (size > MAX_DAY_BYTES) {
-          log.warn('activity', `archive of ${day} is full: ${fresh.length} events dropped`)
+          log.warn('activity', `archive of ${day} is full: ${fresh.length} events left in activity.json`)
+          rejectedDays.push(day)
           continue
         }
         // A leading newline: a line cut by a kill never joins the next one.
@@ -163,7 +168,7 @@ export function createActivityArchive(userDataDir, log = { warn() {} }) {
         for (const key of added) keys.add(key)
         count += fresh.length
       }
-      return { ok: true, count }
+      return { ok: true, count, rejectedDays }
     }
     return serial(run).catch((err) => {
       log.warn('activity', `archive failed: ${err.message}`)
@@ -190,13 +195,23 @@ export function createActivityArchive(userDataDir, log = { warn() {} }) {
   // older than the log keeps are deleted, unless the clock looks wrong. Exact
   // copies of a line are left out (and removed from their file). -> text
   async function read(now = Date.now()) {
-    let names
+    let all
     try {
-      names = (await fs.promises.readdir(dir)).filter((n) => /^\d{4}-\d{2}-\d{2}\.jsonl$/.test(n)).sort()
+      all = await fs.promises.readdir(dir)
     } catch (err) {
       if (err.code !== 'ENOENT') log.warn('activity', `archive list failed: ${err.message}`)
       return ''
     }
+    // A rewrite cut by a kill leaves its temp file (<day>.jsonl.<pid>.tmp):
+    // removed once it is surely not being written any more.
+    for (const name of all.filter((n) => /^\d{4}-\d{2}-\d{2}\.jsonl\.\d+\.tmp$/.test(n))) {
+      const file = join(dir, name)
+      fs.promises
+        .stat(file)
+        .then((st) => (now - st.mtimeMs > STALE_TMP_MS ? fs.promises.unlink(file) : null))
+        .catch(() => {})
+    }
+    const names = all.filter((n) => /^\d{4}-\d{2}-\d{2}\.jsonl$/.test(n)).sort()
     const oldest = archiveDay(now - KEEP_DAYS * 86400000)
     const newestTime = names.length ? Date.parse(`${names[names.length - 1].slice(0, 10)}T00:00:00Z`) : NaN
     const clockSane = Number.isFinite(newestTime) && now >= newestTime - 86400000 && now - newestTime <= SANE_GAP_DAYS * 86400000

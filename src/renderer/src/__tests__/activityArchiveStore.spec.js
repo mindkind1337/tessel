@@ -189,7 +189,7 @@ describe('saving through activityStore', () => {
     expect(JSON.parse(shell.save.mock.calls[1][0])).toEqual([])
   })
 
-  it('a team message read after it was archived is stored again, read; another archived event changed is not', async () => {
+  it('a team message read after it was archived is stored again, read; an archived event that never changes is not sent again', async () => {
     const now = Date.now()
     const arch = [ev(now - 9 * HOUR, { type: 'message', msgId: 'm', status: 'unread' }), ev(now - 8 * HOUR, { type: 'agent.state', paneId: 'p', since: 1 })]
     const shell = api({ load: vi.fn(async () => ({ text: '[]', archive: arch.map((e) => JSON.stringify(e)).join('\n') })) })
@@ -202,11 +202,82 @@ describe('saving through activityStore', () => {
     store.activityChanged(msg, state)
     await store.saveActivityNow()
     // In activity.json meanwhile (changed a moment ago), then archived again, read.
-    expect(JSON.parse(shell.save.mock.calls[0][0]).map((e) => e.status)).toEqual(['read'])
+    expect(JSON.parse(shell.save.mock.calls[0][0]).map((e) => e.status || e.since)).toEqual(['read', 2])
     vi.setSystemTime(now + HOUR + 1000)
     await store.saveActivityNow()
     expect(shell.archive).toHaveBeenCalledTimes(1)
-    expect(JSON.parse(shell.archive.mock.calls[0][0])).toEqual([expect.objectContaining({ msgId: 'm', status: 'read' })])
+    expect(JSON.parse(shell.archive.mock.calls[0][0])).toEqual([expect.objectContaining({ msgId: 'm', status: 'read' }), expect.objectContaining({ type: 'agent.state', since: 2 })])
+    // A task event (it never changes) archived, then named as changed: not sent again.
+    store.recordActivity({ t: now - 3 * HOUR, type: 'task', action: 'x', n: 'task' })
+    vi.setSystemTime(now + 3 * HOUR)
+    await store.saveActivityNow()
+    expect(shell.archive).toHaveBeenCalledTimes(2)
+    store.activityChanged(store.activity.at(-1))
+    vi.setSystemTime(now + 5 * HOUR)
+    await store.saveActivityNow()
+    expect(shell.archive).toHaveBeenCalledTimes(2)
+  })
+
+  it('an event changed while its archiving is on the way stays in activity.json, then is archived as it is now', async () => {
+    const now = Date.now()
+    const msg = ev(now - 5 * HOUR, { type: 'message', msgId: 'm', status: 'unread' })
+    let store
+    const shell = api({
+      load: vi.fn(async () => ({ text: JSON.stringify([msg, ev(now - 4 * HOUR, { n: 2 })]), archive: '' })),
+      archive: vi.fn(async () => {
+        // Read by its recipient while the archive writes the unread copy.
+        const m = store.activity.find((e) => e.msgId === 'm')
+        m.status = 'read'
+        store.activityChanged(m)
+        return { ok: true, count: 2, rejectedDays: [] }
+      })
+    })
+    window.shellApi = { activity: shell }
+    store = await import('../activityStore')
+    await store.loadActivity()
+    await store.saveActivityNow()
+    expect(JSON.parse(shell.archive.mock.calls[0][0]).map((e) => e.status || e.n)).toEqual(['unread', 2])
+    expect(JSON.parse(shell.save.mock.calls[0][0])).toEqual([expect.objectContaining({ msgId: 'm', status: 'read' })])
+    shell.archive.mockImplementation(async () => ({ ok: true, count: 1, rejectedDays: [] }))
+    vi.setSystemTime(now + HOUR + 1000)
+    await store.saveActivityNow()
+    expect(JSON.parse(shell.archive.mock.calls[1][0])).toEqual([expect.objectContaining({ msgId: 'm', status: 'read' })])
+    expect(JSON.parse(shell.save.mock.calls[1][0])).toEqual([])
+  })
+
+  it('events of a day whose archive is full stay in activity.json and are not sent again', async () => {
+    const now = Date.UTC(2026, 9, 20, 12)
+    vi.setSystemTime(now)
+    const saved = [ev(now - 30 * HOUR, { n: 'full-day' }), ev(now - 5 * HOUR, { n: 'ok-day' })]
+    const shell = api({
+      load: vi.fn(async () => ({ text: JSON.stringify(saved), archive: '' })),
+      archive: vi.fn(async () => ({ ok: true, count: 1, rejectedDays: ['2026-10-19'] }))
+    })
+    window.shellApi = { activity: shell }
+    const store = await import('../activityStore')
+    await store.loadActivity()
+    await store.saveActivityNow()
+    expect(JSON.parse(shell.save.mock.calls[0][0]).map((e) => e.n)).toEqual(['full-day'])
+    store.recordActivity({ type: 'task', action: 'new', n: 'new' })
+    await store.saveActivityNow()
+    expect(shell.archive).toHaveBeenCalledTimes(1)
+    expect(JSON.parse(shell.save.mock.calls[1][0]).map((e) => e.n)).toEqual(['full-day', 'new'])
+  })
+
+  it('an archived agent state whose start moved (a sleep) is stored again, moved', async () => {
+    const now = Date.now()
+    const arch = [ev(now - 9 * HOUR, { type: 'agent.state', paneId: 'p', state: 'idle', since: 100 })]
+    const shell = api({ load: vi.fn(async () => ({ text: '[]', archive: arch.map((e) => JSON.stringify(e)).join('\n') })) })
+    window.shellApi = { activity: shell }
+    const store = await import('../activityStore')
+    await store.loadActivity()
+    store.activity[0].since = 400
+    store.activityChanged(store.activity[0])
+    await store.saveActivityNow()
+    expect(JSON.parse(shell.save.mock.calls[0][0])).toEqual([expect.objectContaining({ since: 400 })])
+    vi.setSystemTime(now + HOUR + 1000)
+    await store.saveActivityNow()
+    expect(JSON.parse(shell.archive.mock.calls[0][0])).toEqual([expect.objectContaining({ since: 400 })])
   })
 
   it('a log past its limit drops archived events first, never one only activity.json holds', async () => {

@@ -2,7 +2,7 @@
 // and the maths). App records events here; the main process keeps them in
 // activity.json, saved a moment after each change.
 import { reactive, toRaw } from 'vue'
-import { MAX_EVENTS, ARCHIVE_BATCH, SETTLE_MS, parseActivityText, activityText, mergeSavedActivity, messageId } from '../../shared/activity'
+import { MAX_EVENTS, ARCHIVE_BATCH, SETTLE_MS, parseActivityText, activityText, mergeSavedActivity, eventIdentity, archiveDay } from '../../shared/activity'
 
 export const activity = reactive([])
 
@@ -19,6 +19,9 @@ const inArchive = new WeakSet()
 // SETTLE_MS after that as well as after its own time, so a message logged
 // long after it was sent can still be marked read in activity.json.
 const touchedAt = new WeakMap()
+// Events the archive refused (their day's file is full, see activityArchive.js):
+// kept in activity.json, not sent again by this window.
+const refused = new WeakSet()
 // The live file's text as last saved: an unchanged log is not sent again.
 let lastSaved = null
 // Goes up each time old events leave the log (App's indexes of it rebuild).
@@ -50,17 +53,18 @@ function trimLog() {
   trimmed++
 }
 
-// Events already in the log were changed in place: save them. A team message
-// the archive holds already (read long after it was logged) is stored again,
-// read (the archive keeps each message once per status, and reading it back
-// keeps the read copy).
+// Events already in the log were changed in place: save them. One the archive
+// holds already (a team message read long after it was logged, an agent's
+// state whose start moved after a sleep) is stored again as it is now: the
+// archive keeps each version once, and reading it back keeps the newest
+// (dedupeEvents). Only those events change after they are recorded.
 export function activityChanged(...events) {
   const now = Date.now()
   for (const ev of events) {
     const e = ev && typeof ev === 'object' ? toRaw(ev) : null
     if (!e) continue
     if (inArchive.has(e)) {
-      if (!messageId(e)) continue
+      if (!eventIdentity(e)) continue
       inArchive.delete(e)
     }
     touchedAt.set(e, now)
@@ -138,6 +142,13 @@ export function saveActivityNow(opts = {}) {
 }
 
 const settled = (e, now) => now - Math.max(e.t, touchedAt.get(e) || 0) >= SETTLE_MS
+const dayOf = (e) => {
+  try {
+    return archiveDay(e.t)
+  } catch {
+    return null
+  }
+}
 
 async function doSave({ closing = false } = {}) {
   const api = window.shellApi.activity
@@ -150,12 +161,21 @@ async function doSave({ closing = false } = {}) {
     // event it holds already, so sending one twice stores it once).
     if (!closing && typeof api.archive === 'function') {
       const now = Date.now()
-      const due = raw.filter((e) => !inArchive.has(e) && settled(e, now))
+      const due = raw.filter((e) => !inArchive.has(e) && !refused.has(e) && settled(e, now))
       for (let i = 0; i < due.length; i += ARCHIVE_BATCH) {
         const batch = due.slice(i, i + ARCHIVE_BATCH)
-        const res = await api.archive(JSON.stringify(batch))
+        const lines = batch.map((e) => JSON.stringify(e))
+        const res = await api.archive(`[${lines.join(',')}]`)
         if (!res || res.ok !== true) break
-        for (const e of batch) inArchive.add(e)
+        const full = new Set(Array.isArray(res.rejectedDays) ? res.rejectedDays : [])
+        batch.forEach((e, k) => {
+          // Its day's file is full: it stays in activity.json.
+          if (full.size && full.has(dayOf(e))) refused.add(e)
+          // Changed while on its way (a message read meanwhile): the archive
+          // has the copy before; this one stays in activity.json and is
+          // archived later as it is now.
+          else if (JSON.stringify(e) === lines[k]) inArchive.add(e)
+        })
       }
     }
     const text = activityText(raw.filter((e) => !inArchive.has(e)))

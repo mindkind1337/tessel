@@ -140,6 +140,45 @@ describe('activity archive', () => {
     expect(after).toEqual([1, 2])
   })
 
+  it('a full day refuses its events and says which day (the window keeps them); the other days are stored', async () => {
+    const warn = vi.fn()
+    const a = createActivityArchive(dir, { warn })
+    const now = Date.UTC(2026, 9, 20, 12)
+    await a.append([ev(now - DAY, 1)], now)
+    fs.appendFileSync(join(a.dir, '2026-10-19.jsonl'), ' '.repeat(25 * 1024 * 1024))
+    const res = await a.append([ev(now - DAY + 5, 2), ev(now - 5, 3)], now)
+    expect(res).toEqual({ ok: true, count: 1, rejectedDays: ['2026-10-19'] })
+    expect(parseActivityLines(fs.readFileSync(join(a.dir, '2026-10-20.jsonl'), 'utf8')).map((e) => e.n)).toEqual([3])
+    expect(warn).toHaveBeenCalledWith('activity', expect.stringMatching(/left in activity\.json/))
+  })
+
+  it('a temp file left by a rewrite cut by a kill is removed once old; a recent one is left', async () => {
+    const a = createActivityArchive(dir)
+    await a.append([ev(Date.UTC(2026, 9, 18, 10), 1)], Date.UTC(2026, 9, 18, 10))
+    const stale = join(a.dir, '2026-10-18.jsonl.1234.tmp')
+    const recent = join(a.dir, '2026-10-18.jsonl.5678.tmp')
+    fs.writeFileSync(stale, 'cut')
+    fs.writeFileSync(recent, 'being written')
+    const old = new Date(Date.now() - 5 * 60 * 1000)
+    fs.utimesSync(stale, old, old)
+    await a.read(Date.now())
+    await new Promise((r) => setTimeout(r, 50))
+    expect(fs.existsSync(stale)).toBe(false)
+    expect(fs.existsSync(recent)).toBe(true)
+    expect(fs.existsSync(join(a.dir, '2026-10-18.jsonl'))).toBe(true)
+  })
+
+  it('an agent state whose start moved is stored again, and read back as moved', async () => {
+    const t = Date.UTC(2026, 9, 18, 10)
+    const state = (since) => ({ t, type: 'agent.state', paneId: 'p', state: 'idle', since })
+    const a = createActivityArchive(dir)
+    await a.append([state(100)], t)
+    expect(await a.append([state(100)], t)).toMatchObject({ count: 0 })
+    expect(await a.append([state(250)], t)).toMatchObject({ count: 1 })
+    const back = mergeSavedActivity('[]', await a.read(t), t)
+    expect(back.events).toEqual([state(250)])
+  })
+
   it('a missing archive reads as empty', async () => {
     expect(await createActivityArchive(dir).read()).toBe('')
   })

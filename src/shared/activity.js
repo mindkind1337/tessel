@@ -48,22 +48,25 @@ export function isActivityText(text) {
 // Two real events are never identical in every field (time to the
 // millisecond, kind, pane, text...). The full comparison runs only for events
 // with the same time, kind and pane.
-// A message between agents (msgId) is one event whatever its copies say: it
-// may have been logged again with other details (by a Tessel that did not
-// have it in memory), or stored unread, then read. One copy is kept, in the
-// place of the first: the first one read, else the first.
+// The events that change after they are recorded (eventIdentity) are one
+// event whatever their copies say, one copy kept in the place of the first:
+// - a message between agents (msgId): it may have been logged again with
+//   other details (by a Tessel that did not have it in memory), or stored
+//   unread, then read; the first copy read is kept, else the first;
+// - an agent's state: its start (since) is moved after a restart or a sleep,
+//   and the moved copy stored after the first; the last copy is kept.
 export function dedupeEvents(events) {
   const seen = new Map() // "t|type|paneId" -> [JSON of the events kept]
-  const messages = new Map() // msgId -> index in out of the copy kept
+  const versions = new Map() // identity -> index in out of the copy kept
   const out = []
   for (const e of events) {
-    const id = messageId(e)
+    const id = eventIdentity(e)
     if (id) {
-      const at = messages.get(id)
+      const at = versions.get(id)
       if (at === undefined) {
-        messages.set(id, out.length)
+        versions.set(id, out.length)
         out.push(e)
-      } else if (e.status === 'read' && out[at].status !== 'read') out[at] = e
+      } else if (id[0] === 'm' ? e.status === 'read' && out[at].status !== 'read' : JSON.stringify(e) !== JSON.stringify(out[at])) out[at] = e
       continue
     }
     const key = `${e.t}|${e.type}|${e.paneId || ''}` // i18n-ignore
@@ -99,6 +102,17 @@ export function activityText(events, now = Date.now()) {
 // The id of a message between agents (team chat), logged once per message.
 export function messageId(e) {
   return e && e.type === 'message' && typeof e.msgId === 'string' && e.msgId ? e.msgId : null
+}
+
+// What makes two copies of an event that changes after it is recorded the same
+// event (see dedupeEvents): a team message by its id ("m:..."), an agent's
+// state by everything but its start ("s:..."). null: an event that never
+// changes (exact copies only are the same).
+export function eventIdentity(e) {
+  const id = messageId(e)
+  if (id) return `m:${id}`
+  if (e && e.type === 'agent.state') return `s:${JSON.stringify({ ...e, since: undefined })}`
+  return null
 }
 
 // --- Stored in pieces ----------------------------------------------------------
