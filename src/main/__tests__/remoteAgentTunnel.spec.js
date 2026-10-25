@@ -411,6 +411,24 @@ describe('caps', () => {
     expect(await hook()).toBe('{"ok":false,"error":"busy"}')
   })
 
+  it('MCP hellos per second per pane: a token bucket (each starts a node child)', async () => {
+    let clock = 1_000_000
+    const t = makeTunnel({ now: () => clock, limits: { mcpRatePerS: 2, mcpBurst: 3, maxPaneMcp: 50 } })
+    t.registerPane('h1', 'p1', agent())
+    const tryMcp = async () => {
+      const ch = connect(t, hello())
+      await until(() => ch.text().includes('\n'))
+      return ch.lines()[0]
+    }
+    expect(await tryMcp()).toBe('{"ok":true}')
+    expect(await tryMcp()).toBe('{"ok":true}')
+    expect(await tryMcp()).toBe('{"ok":true}')
+    expect(await tryMcp()).toBe('{"ok":false,"error":"busy"}')
+    clock += 500 // one more token
+    expect(await tryMcp()).toBe('{"ok":true}')
+    expect(await tryMcp()).toBe('{"ok":false,"error":"busy"}')
+  })
+
   it('ends an MCP connection idle for mcpIdleMs, not one in use', async () => {
     const t = makeTunnel({ limits: { mcpIdleMs: 250 } })
     t.registerPane('h1', 'p1', agent())

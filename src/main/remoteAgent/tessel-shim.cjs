@@ -16,7 +16,7 @@ const os = require('os')
 const net = require('net')
 const path = require('path')
 
-const VERSION = '1.4.0'
+const VERSION = '1.4.1'
 const PROTOCOL = 1
 const SERVER_NAME = 'tessel-team'
 const SHIM_NAME = 'tessel-shim.cjs'
@@ -29,6 +29,9 @@ const HOOK_WAIT_MS = 40 * 1000
 // sshd accepts on the socket even when the link to the PC is dead: the
 // answer to the hello must come within this time.
 const ANSWER_WAIT_MS = 10 * 1000
+// One MCP line / what waits for a link, at most: a bigger one drops the link (or is refused).
+const MAX_LINE = 4 * 1024 * 1024
+const MAX_QUEUE = 64
 const ENV_VARS = ['TESSEL_PANE_ID', 'TESSEL_REMOTE_SOCK', 'TESSEL_REMOTE_TOKEN', 'TESSEL_AGENT_PROVIDER']
 
 // The same events as Tessel installs on the PC (teamInstall.js).
@@ -164,15 +167,23 @@ function emptyServer(reason) {
 
 // What to tell the agent when the link to Tessel is gone or refused, in words
 // that say what happened and what to do (never "Transport closed").
+// A reason that is safe to show the agent: an error code or one of our own
+// fixed texts, never an OS message (those carry the socket path).
+function safeReason(err) {
+  if (err && typeof err.code === 'string' && /^[A-Z0-9_]{2,30}$/.test(err.code)) return err.code
+  const m = String((err && err.message) || '')
+  return /^(bad-[a-z]+|busy|failed|unknown-pane|Tessel did not answer|Tessel closed the connection|bad answer from Tessel)$/.test(m) ? m : 'no answer'
+}
+
 function linkProblem(err) {
-  const m = String((err && (err.code || err.message)) || err || '')
+  const m = typeof err === 'string' ? err : safeReason(err)
   if (/bad-token|unknown-pane/.test(m)) return 'Tessel no longer knows this agent (Tessel was restarted, or this pane was closed or restarted). Restart this agent from Tessel (right-click its pane, Restart).'
   if (/busy/.test(m)) return 'Tessel has too many tool connections open for this agent. Wait a moment and retry.'
   if (/failed/.test(m)) return 'Tessel could not start its tools for this agent. Retry; if it persists, restart this agent from Tessel.'
   if (/did not answer/.test(m)) return 'Tessel did not answer in time. It may be busy or the SSH link may be stuck. Retry in a moment.'
   if (/ENOENT|ECONNREFUSED|ECONNRESET|EPIPE|closed/.test(m))
     return 'The link from Tessel to this server is down (Tessel is closed or restarting, or the SSH connection dropped). Tessel reconnects by itself when it is back: retry in a few seconds. If it persists, reopen this SSH pane in Tessel.'
-  return `Tessel is not reachable (${m.slice(0, 80) || 'no answer'}). Retry in a few seconds.`
+  return `Tessel is not reachable (${m}). Retry in a few seconds.`
 }
 
 // The MCP stdio, kept alive across the link: the agent's client sees one
@@ -186,13 +197,13 @@ function runMcp(argv, env = process.env) {
   const conn = remoteEnv(env)
   if (conn.error) return emptyServer(null)
   open(conn, 'mcp', [], (err, socket, rest) => {
-    if (err) return emptyServer(String(err.message || 'no answer').slice(0, 120))
+    if (err) return emptyServer(safeReason(err))
     proxyMcp(conn, socket, rest)
   })
 }
 
 function proxyMcp(conn, first, firstRest) {
-  const out = (line) => process.stdout.write(line.endsWith('\n') ? line : line + '\n')
+  const out = (line) => process.stdout.write(line.endsWith('\n') ? line : line + '\n') // false: stdout is full
   const note = (text) => process.stderr.write(`tessel-shim: ${text}\n`)
   let sock = null
   let connecting = false
@@ -201,6 +212,8 @@ function proxyMcp(conn, first, firstRest) {
   let initLine = null // the client's initialize request (parsed)
   let initializedLine = null // its notifications/initialized
   let replays = 0
+  let queued = 0 // bytes in the queue
+  const replayPrefix = `tessel-reinit-${require('crypto').randomBytes(8).toString('hex')}-`
   let queue = [] // { line, msgs } waiting for a link
   const pending = new Map() // id -> method, for requests sent on the current link
   const swallow = new Set() // ids of the replayed initialize
@@ -227,6 +240,7 @@ function proxyMcp(conn, first, firstRest) {
   function attach(s, rest) {
     sock = s
     let buf = Buffer.alloc(0)
+    let waitingDrain = false
     const onBytes = (chunk) => {
       buf = Buffer.concat([buf, chunk])
       let nl
@@ -241,20 +255,37 @@ function proxyMcp(conn, first, firstRest) {
             else pending.delete(m.id)
           }
         }
-        if (!drop) out(line)
+        if (!drop && !out(line) && !waitingDrain) {
+          // stdout is full: stop reading the link until it drains.
+          waitingDrain = true
+          s.pause()
+          process.stdout.once('drain', () => {
+            waitingDrain = false
+            s.resume()
+          })
+        }
+      }
+      if (buf.length > MAX_LINE) {
+        buf = Buffer.alloc(0)
+        lost(new Error('too large'), 'An answer from Tessel was too large for this link: it was closed.')
       }
     }
     let dropped = false
-    const lost = (why) => {
+    const lost = (why, message) => {
       if (dropped) return
       dropped = true
       if (sock === s) sock = null
-      const text = `${linkProblem(why || 'closed')} The call was running when the link dropped: it may or may not have been done, check before repeating it.`
+      try {
+        s.destroy()
+      } catch {
+        // gone
+      }
+      const text = `${message || linkProblem(why || 'closed')} The call was running when the link dropped: it may or may not have been done, check before repeating it.`
       for (const [id, method] of pending) failure(id, method, text)
       pending.clear()
       swallow.clear()
       if (inEnded) exit(0)
-      else note(`link to Tessel closed${why && why.message ? ` (${why.message})` : ''}; the next call reopens it`)
+      else note(`link to Tessel closed${why ? ` (${safeReason(why)})` : ''}; the next call reopens it`)
     }
     s.on('data', onBytes)
     s.on('end', () => lost(null))
@@ -276,25 +307,30 @@ function proxyMcp(conn, first, firstRest) {
     const attempt = () => {
       tries++
       open(conn, 'mcp', [], (err, socket, rest) => {
-        if (err && tries < 2 && !/bad-token|unknown-pane/.test(err.message)) return setTimeout(attempt, 1000)
+        // Not for a refusal that will not change; "busy" (too many hellos) waits longer each time.
+        if (err && tries < 3 && !/bad-token|unknown-pane/.test(err.message)) return setTimeout(attempt, tries * 1000)
         connecting = false
         if (err) {
           const items = queue
           queue = []
+          queued = 0
           for (const { msgs } of items) for (const m of msgs) if (isRequest(m)) failure(m.id, m.method, linkProblem(err))
-          note(`could not reopen the link: ${String(err.message).slice(0, 80)}`)
+          note(`could not reopen the link: ${safeReason(err)}`)
           if (inEnded) exit(0)
           return
         }
         attach(socket, rest)
         if (initLine) {
-          const id = `tessel-reinit-${++replays}`
+          let id
+          do id = `${replayPrefix}${++replays}`
+          while (pending.has(id))
           swallow.add(id)
           sock.write(JSON.stringify({ ...initLine, id }) + '\n')
           if (initializedLine) sock.write(initializedLine + '\n')
         }
         const items = queue
         queue = []
+        queued = 0
         for (const { line, msgs } of items) write(line, msgs)
         if (inEnded) sock.end()
       })
@@ -310,6 +346,11 @@ function proxyMcp(conn, first, firstRest) {
       else if (m.method === 'notifications/initialized') initializedLine = line
     }
     if (sock) return write(line, msgs)
+    if (queue.length >= MAX_QUEUE || queued + line.length > MAX_LINE) {
+      for (const m of msgs) if (isRequest(m)) failure(m.id, m.method, 'Too many calls are waiting for the link to Tessel. Retry in a moment.')
+      return
+    }
+    queued += line.length
     queue.push({ line, msgs })
     connect()
   }
@@ -319,6 +360,11 @@ function proxyMcp(conn, first, firstRest) {
   process.stdin.setEncoding('utf8')
   process.stdin.on('data', (chunk) => {
     inBuf += chunk
+    if (inBuf.length > MAX_LINE && inBuf.indexOf('\n') < 0) {
+      inBuf = ''
+      out(JSON.stringify({ jsonrpc: '2.0', id: null, error: { code: -32700, message: 'Message too large for the link to Tessel (over 4 MB): it was dropped.' } }))
+      return
+    }
     let nl
     while ((nl = inBuf.indexOf('\n')) >= 0) {
       const line = inBuf.slice(0, nl).replace(/\r$/, '')

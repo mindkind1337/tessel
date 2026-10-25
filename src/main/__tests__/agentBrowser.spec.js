@@ -929,6 +929,8 @@ describe('browser tools in the MCP server', () => {
       const deps = { runtimes: () => [{ pipe: 'a' }], call }
       const r = await mcp.browserTool('open', { url: 'localhost:3000' }, deps)
       expect(r.text).toMatch(/^Opened\.\nNote: this browser runs on the user's PC, not on dev\.example/)
+      const echoed = (await mcp.browserTool('open', { url: 'localhost:3000/"\u0001x\ny' }, deps)).text
+      expect(echoed).toContain('"localhost:3000/  x y" is')
       expect((await mcp.browserTool('open', { url: 'https://example.com' }, deps)).text).toBe('Opened.')
       expect((await mcp.browserTool('snapshot', {}, deps)).text).toBe('Opened.')
       delete process.env.TESSEL_REMOTE
@@ -956,5 +958,19 @@ describe('browser tools in the MCP server', () => {
       'browser_wait'
     ])
     for (const name of names) expect(mcp.TOOLS.some((t) => t.name === name)).toBe(true)
+  })
+})
+
+describe('the tools server reading stdin', () => {
+  it('refuses a line over 4 MB that never ends, and exits', async () => {
+    const { spawn } = await import('child_process')
+    const child = spawn(process.execPath, [join(__dirname, '..', 'teamMcp', 'server.cjs')], { stdio: ['pipe', 'pipe', 'ignore'] })
+    let out = ''
+    child.stdout.on('data', (d) => (out += d))
+    const done = new Promise((r) => child.on('exit', r))
+    child.stdin.on('error', () => {})
+    child.stdin.write('x'.repeat(5 * 1024 * 1024))
+    expect(await done).toBe(1)
+    expect(out).toMatch(/too large/)
   })
 })

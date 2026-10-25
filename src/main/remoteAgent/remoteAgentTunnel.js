@@ -207,6 +207,8 @@ export function createRemoteAgentTunnel({
     maxPaneMcp: MAX_PANE_MCP,
     maxPaneHooks: MAX_PANE_HOOKS,
     hookRatePerS: HOOK_RATE_PER_S,
+    mcpRatePerS: 2,
+    mcpBurst: 4,
     mcpIdleMs: MCP_IDLE_MS,
     ...limits
   }
@@ -493,6 +495,17 @@ export function createRemoteAgentTunnel({
       if (sessions >= L.maxSessions) return false
       if (kind === 'mcp') {
         if (p.mcp >= L.maxPaneMcp) return false
+        // Each hello starts a node child here: a few per second per pane at most
+        // (the shim waits and retries on "busy").
+        const t = now()
+        const mb = p.mBucket === undefined ? L.mcpBurst : p.mBucket
+        const refilled = Math.min(L.mcpBurst, mb + ((t - (p.mBucketAt || t)) / 1000) * L.mcpRatePerS)
+        p.mBucketAt = t
+        if (refilled < 1) {
+          p.mBucket = refilled
+          return false
+        }
+        p.mBucket = refilled - 1
         p.mcp++
       } else {
         const t = now()

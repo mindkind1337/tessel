@@ -1205,7 +1205,7 @@ function remoteLocalNote(op, args) {
   if (!isRemote() || (op !== 'open' && op !== 'navigate')) return ''
   if (!LOCAL_HOST_RE.test(String((args && args.url) || '').trim())) return ''
   return `
-Note: this browser runs on the user's PC, not on ${remoteHost()}. "${String(args.url).trim().slice(0, 100)}" is the user's own PC: a server running on ${remoteHost()} is not reachable there unless its port is also open on this PC (an SSH port forward, or a public address). If the page is blank or refused, use the server's public address, or ask the user to forward the port.`
+Note: this browser runs on the user's PC, not on ${remoteHost()}. "${String(args.url).trim().slice(0, 100).replace(/[\u0000-\u001f\u007f"]/g, ' ')}" is the user's own PC: a server running on ${remoteHost()} is not reachable there unless its port is also open on this PC (an SSH port forward, or a public address). If the page is blank or refused, use the server's public address, or ask the user to forward the port.`
 }
 
 async function browserTool(op, args, deps = { runtimes: browserRuntimes, call: pipeCall }) {
@@ -1712,6 +1712,7 @@ function handle(msg, signal = null) {
   throw Object.assign(new Error(`Method not found: ${method}`), { code: -32601 })
 }
 
+const MAX_STDIN_LINE = 4 * 1024 * 1024
 function serve() {
   let buf = ''
   const running = new Map() // request id -> AbortController
@@ -1719,6 +1720,11 @@ function serve() {
   process.stdin.setEncoding('utf8')
   process.stdin.on('data', (chunk) => {
     buf += chunk
+    // One line is a JSON message: a line that never ends is not one.
+    if (buf.length > MAX_STDIN_LINE && buf.indexOf('\n') < 0) {
+      write({ jsonrpc: '2.0', id: null, error: { code: -32700, message: 'Message too large (over 4 MB): the connection is closed.' } })
+      return process.exit(1)
+    }
     let nl
     while ((nl = buf.indexOf('\n')) !== -1) {
       const line = buf.slice(0, nl).trim()

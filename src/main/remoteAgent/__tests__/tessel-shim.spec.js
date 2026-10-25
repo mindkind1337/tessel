@@ -522,6 +522,7 @@ describe('mcp proxy across a dropped link', () => {
   let server
   let sock
   let hellos
+  let ids
   let conns
   let mode // 'echo' | 'hang' | 'refuse'
   const sockPath = () =>
@@ -529,6 +530,7 @@ describe('mcp proxy across a dropped link', () => {
 
   beforeEach(async () => {
     hellos = []
+    ids = []
     conns = []
     mode = 'echo'
     sock = sockPath()
@@ -552,6 +554,16 @@ describe('mcp proxy across a dropped link', () => {
           }
           const m = JSON.parse(line)
           if (m.id === undefined) continue
+          ids.push(m.id)
+          if (m.method === 'tools/call' && mode === 'bulk') {
+            for (let i = 0; i < 59; i++) c.write(JSON.stringify({ jsonrpc: '2.0', method: 'notifications/message', params: 'y'.repeat(200000) }) + '\n')
+            c.write(JSON.stringify({ jsonrpc: '2.0', id: m.id, result: { n: 60 } }) + '\n')
+            continue
+          }
+          if (m.method === 'tools/call' && mode === 'big') {
+            c.write(JSON.stringify({ jsonrpc: '2.0', id: m.id, result: 'x'.repeat(5 * 1024 * 1024) }) + '\n')
+            continue
+          }
           if (m.method === 'tools/call' && mode === 'hang') continue
           c.write(JSON.stringify({ jsonrpc: '2.0', id: m.id, result: { n: hellos.length, method: m.method } }) + '\n')
         }
@@ -571,6 +583,7 @@ describe('mcp proxy across a dropped link', () => {
       env: { PATH: process.env.PATH, TESSEL_PANE_ID: 'pane-7', TESSEL_REMOTE_SOCK: sock, TESSEL_REMOTE_TOKEN: TOKEN },
       stdio: ['pipe', 'pipe', 'pipe']
     })
+    child.stdin.on('error', () => {})
     const lines = []
     const waiters = []
     let buf = ''
@@ -654,5 +667,74 @@ describe('mcp proxy across a dropped link', () => {
     expect((await p.reply(2)).result.method).toBe('tools/list')
     p.child.stdin.end()
     expect(await p.exited).toBe(0)
+  })
+
+  it('replays the initialize under an id the client cannot send, and never leaks the socket path', async () => {
+    const p = start()
+    p.send(INIT)
+    await p.reply(0)
+    await dropAll()
+    p.send({ jsonrpc: '2.0', id: 1, method: 'tools/list' })
+    await p.reply(1)
+    expect(ids.filter((i) => typeof i === 'string')).toHaveLength(1)
+    expect(ids.find((i) => typeof i === 'string')).toMatch(/^tessel-reinit-[0-9a-f]{16}-1$/)
+    p.child.stdin.end()
+    await p.exited
+    // Tessel unreachable: the reason shown has no path.
+    const q = spawn(process.execPath, [SHIM, 'mcp'], {
+      env: { PATH: process.env.PATH, TESSEL_PANE_ID: 'pane-7', TESSEL_REMOTE_SOCK: sock + '-nope', TESSEL_REMOTE_TOKEN: TOKEN },
+      stdio: ['pipe', 'pipe', 'pipe']
+    })
+    let out = ''
+    q.stdout.on('data', (d) => (out += d))
+    q.stdin.end(JSON.stringify(INIT) + '\n')
+    await new Promise((r) => q.on('exit', r))
+    expect(out).toMatch(/not reachable/)
+    expect(out).not.toContain('tessel-shim-proxy')
+  })
+
+  it('an answer over 4 MB drops the link (destroyed) and fails the running call; the next call reconnects', async () => {
+    const p = start()
+    p.send(INIT)
+    await p.reply(0)
+    mode = 'big'
+    p.send({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'x' } })
+    const r = await p.reply(1)
+    expect(r.result.isError).toBe(true)
+    expect(r.result.content[0].text).toMatch(/too large/)
+    mode = 'echo'
+    p.send({ jsonrpc: '2.0', id: 2, method: 'tools/list' })
+    expect((await p.reply(2)).result.method).toBe('tools/list')
+    p.child.stdin.end()
+    expect(await p.exited).toBe(0)
+  })
+
+  it('a slow reader of stdout loses nothing: the link is paused, not buffered without end', async () => {
+    const p = start()
+    p.send(INIT)
+    await p.reply(0)
+    p.child.stdout.pause()
+    mode = 'bulk'
+    p.send({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'x' } })
+    await new Promise((r) => setTimeout(r, 500))
+    p.child.stdout.resume()
+    const r = await p.reply(1)
+    expect(r.result.n).toBe(60)
+    p.child.stdin.end()
+    expect(await p.exited).toBe(0)
+  })
+
+  it('a client line over 4 MB without an end is refused with a clear error', async () => {
+    const p = start()
+    p.send(INIT)
+    await p.reply(0)
+    p.child.stdin.write('x'.repeat(5 * 1024 * 1024))
+    await new Promise((res, rej) => {
+      const t = setTimeout(() => rej(new Error('no error line')), 8000)
+      const check = () => p.lines.find((l) => l.id === null && /too large/.test(l.error.message)) && (clearTimeout(t), res())
+      p.child.stdout.on('data', check)
+      check()
+    })
+    p.child.kill()
   })
 })
