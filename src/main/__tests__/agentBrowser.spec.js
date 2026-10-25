@@ -1024,18 +1024,59 @@ describe('agent browser: pages out of sight, canvas and games', () => {
       guest,
       onAsk: (p) => {
         if (p.op !== 'paint') return undefined
-        paints.push([p.page, p.on, p.agent])
+        paints.push([p.page, p.on, p.agent, p.token])
         painted = p.on
         return { agent: 'Gauss', page: p.page, moved: true, why: 'layer', project: 'Game' }
       }
     })
     const r = await call('screenshot')
     expect(r.image).toBeTruthy()
-    expect(paints).toEqual([
+    expect(paints.map((x) => x.slice(0, 3))).toEqual([
       ['pane-b', true, PANE],
       ['pane-b', false, PANE]
     ])
+    // The same capture's name both times (the window ends that capture only).
+    expect(paints[0][3]).toMatch(/^[\w-]{6,}$/)
+    expect(paints[1][3]).toBe(paints[0][3])
     expect(guest.capturePage.mock.calls.length).toBe(2)
+  })
+
+  it('the end of a capture is always asked for, even when the window refused or lost the start', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] })
+    const guest = fakeGuest(11, { cdp: viewportCdp({ 'Page.captureScreenshot': {} }) })
+    guest.capturePage = vi.fn(async () => null)
+    const paints = []
+    const { call } = setup({
+      guest,
+      onAsk: (p) => {
+        if (p.op !== 'paint') return undefined
+        paints.push([p.on, p.token])
+        if (p.on) throw new Error('The window did not answer in time.')
+        return { page: p.page, moved: true }
+      }
+    })
+    const out = call('screenshot').catch((e) => e)
+    await vi.advanceTimersByTimeAsync(30000)
+    const err = await out
+    expect(err.code).toBe('capture_failed')
+    expect(err.message).toContain('did not draw it for the capture (The window did not answer in time.)')
+    expect(paints.map(([on]) => on)).toEqual([true, false])
+    expect(paints[1][1]).toBe(paints[0][1])
+  })
+
+  it('the viewport is read in Tessel\'s isolated world only, and a screenshot is only ever made smaller', async () => {
+    // No isolated world: no viewport (never the page's own numbers).
+    const noWorld = fakeGuest(11, { cdp: viewportCdp({ 'Page.createIsolatedWorld': () => Promise.reject(new Error('no frame')) }) })
+    const one = setup({ guest: noWorld })
+    await expect(one.call('click', { x: 10, y: 10 })).rejects.toMatchObject({ code: 'page_error' })
+    // A page zoomed out (devicePixelRatio 0.8): not enlarged; the scale is said.
+    const shot = picture(512, 384)
+    const base = viewportCdp()
+    const zoomedOut = fakeGuest(12, { cdp: { ...base, 'Runtime.evaluate': (p) => (String(p.expression).startsWith('[innerWidth') ? { result: { value: [640, 480, 0.8, 0, 0] } } : base['Runtime.evaluate'](p)) }, image: shot })
+    const r = await setup({ guest: zoomedOut }).call('screenshot')
+    expect(shot.resize).not.toHaveBeenCalled()
+    expect(r.text).toContain('at 0.8 image pixels per CSS pixel')
+    expect(r.text).toContain('divide a point read on it by 0.8')
   })
 
   it('no picture at all: the debugger is tried too, and the answer says where the page is (no guess about minimizing)', async () => {
@@ -1098,10 +1139,66 @@ describe('agent browser: pages out of sight, canvas and games', () => {
   it("a right-click goes to the page: Tessel's own page menu stays closed for it", async () => {
     const guest = fakeGuest(31, { cdp: viewportCdp() })
     const { call } = setup({ guest })
-    expect(contextMenuQuiet(31)).toBe(false)
+    expect(contextMenuQuiet(31, { x: 100, y: 100 })).toBe(false)
     await call('click', { x: 100, y: 100, button: 'right' })
-    expect(contextMenuQuiet(31)).toBe(true)
+    // Not for a menu somewhere else (the user's own right-click), once for the agent's point.
+    expect(contextMenuQuiet(31, { x: 300, y: 20 })).toBe(false)
+    expect(contextMenuQuiet(31, { x: 101, y: 99 })).toBe(true)
+    expect(contextMenuQuiet(31, { x: 100, y: 100 })).toBe(false)
+    // The page zoomed in: the menu's point is in zoomed pixels.
+    await call('click', { x: 100, y: 100, button: 'right' })
+    expect(contextMenuQuiet(31, { x: 150, y: 150 }, 1.5)).toBe(true)
     expect(mouseEvents(guest).find((e) => e.type === 'mousePressed')).toMatchObject({ button: 'right', buttons: 2 })
+  })
+
+  it('Stop during a held key: the key goes up and nothing more is pressed', async () => {
+    const guest = fakeGuest(11, { cdp: viewportCdp() })
+    const events = []
+    guest.sendInputEvent = vi.fn((ev) => events.push(`${ev.type}:${ev.keyCode}`))
+    const { call, ab } = setup({ guest })
+    const pressing = call('press', { key: 'ArrowRight', hold_ms: 5000, repeat: 3 }).catch((e) => e)
+    await new Promise((r) => setTimeout(r, 150))
+    expect(events).toEqual(['keyDown:Right'])
+    ab.stop(11)
+    const err = await pressing
+    expect(err.code).toBe('stopped_by_user')
+    await new Promise((r) => setTimeout(r, 120))
+    expect(events).toEqual(['keyDown:Right', 'keyUp:Right'])
+  })
+
+  it('a button still held when the agent lets go (or the user stops it) is released first', async () => {
+    const guest = fakeGuest(11, { cdp: viewportCdp() })
+    const { call, ab } = setup({ guest })
+    await call('mouse', { action: 'down', x: 30, y: 40 })
+    ab.release(11)
+    await new Promise((r) => setTimeout(r, 10))
+    expect(mouseEvents(guest).at(-1)).toMatchObject({ type: 'mouseReleased', x: 30, y: 40, button: 'left', buttons: 0 })
+  })
+
+  it('a drag the page starts stays in the page (intercepted, played as drag events, dropped at the end)', async () => {
+    const guest = fakeGuest(11, { cdp: viewportCdp() })
+    const { call } = setup({ guest })
+    await call('snapshot')
+    expect(guest.sent).toContainEqual(['Input.setInterceptDrags', { enabled: true }])
+    // The page starts a drag at the first move with the button held.
+    const base = guest.debugger.sendCommand
+    let started = false
+    guest.debugger.sendCommand = async (method, params, sessionId) => {
+      const r = await base.call(guest.debugger, method, params, sessionId)
+      if (method === 'Input.dispatchMouseEvent' && params.type === 'mouseMoved' && params.buttons && !started) {
+        started = true
+        guest.cdpEvent('Input.dragIntercepted', { data: { items: [{ mimeType: 'text/plain', data: 'card' }], dragOperationsMask: 1 } })
+      }
+      return r
+    }
+    const r = await call('mouse', { action: 'drag', x: 20, y: 20, to_x: 220, to_y: 120, steps: 3 })
+    expect(r.text).toContain('the page took it as a drag and drop')
+    const seq = guest.sent.filter(([m]) => m === 'Input.dispatchDragEvent' || m === 'Input.dispatchMouseEvent').map(([m, p]) => `${m === 'Input.dispatchDragEvent' ? 'drag' : 'mouse'}:${p.type}:${p.x},${p.y}`)
+    expect(seq).toContain('drag:dragEnter:87,53')
+    expect(seq.indexOf('drag:dragEnter:87,53')).toBe(seq.indexOf('mouse:mouseMoved:87,53') + 1)
+    expect(seq.at(-2)).toBe('drag:drop:220,120')
+    expect(seq.at(-1)).toBe('mouse:mouseReleased:220,120')
+    expect(seq.filter((x) => x.startsWith('drag:')).map((x) => x.split(':')[1])).toEqual(['dragEnter', 'dragOver', 'dragOver', 'dragOver', 'drop'])
   })
 
   it('browser_mouse drag: pointer to the start, press, moves with the button held, release at the end', async () => {

@@ -139,19 +139,31 @@ export function wantsNewPane(disposition, mouse) {
 
 // An agent's right-click (agentBrowser.js) goes to the page: Tessel's own
 // page menu stays closed for it (it would open on the user's screen, over
-// whatever they do). Page id -> until when.
+// whatever they do). Once, for the menu at the agent's point (CSS pixels of
+// the page; the menu's are the page's zoomed pixels), soon after.
+// Page id -> { until, x, y }.
 const quietMenus = new Map()
 export const QUIET_MENU_MS = 1500
-export function quietContextMenu(id, ms = QUIET_MENU_MS) {
+const QUIET_MENU_SLACK = 4
+export function quietContextMenu(id, at = null, ms = QUIET_MENU_MS) {
   if (quietMenus.size > 100) quietMenus.clear()
-  quietMenus.set(id, Date.now() + ms)
+  quietMenus.set(id, { until: Date.now() + ms, x: at && Number.isFinite(at.x) ? at.x : null, y: at && Number.isFinite(at.y) ? at.y : null })
 }
-export function contextMenuQuiet(id) {
-  const until = quietMenus.get(id)
-  if (until === undefined) return false
-  if (Date.now() <= until) return true
+// params: Electron's context-menu params ({ x, y }); zoom: the page's zoom factor.
+export function contextMenuQuiet(id, params = null, zoom = 1) {
+  const q = quietMenus.get(id)
+  if (!q) return false
+  if (Date.now() > q.until) {
+    quietMenus.delete(id)
+    return false
+  }
+  if (q.x != null && params && Number.isFinite(params.x) && Number.isFinite(params.y)) {
+    const z = zoom > 0 ? zoom : 1
+    const near = (a, b) => Math.abs(a - b) <= QUIET_MENU_SLACK
+    if (!(near(params.x, q.x * z) && near(params.y, q.y * z)) && !(near(params.x, q.x) && near(params.y, q.y))) return false
+  }
   quietMenus.delete(id)
-  return false
+  return true
 }
 
 // What a right-click in a page offers (Electron shows no menu of its own):
@@ -389,7 +401,13 @@ export function createBrowserGuests({ getWindow, send, log = null, screenshotDir
     // A right-click: a browser's menu (Electron shows none).
     guest.on('context-menu', (_event, params) => {
       // An agent's right-click (agentBrowser.js) is for the page, not a menu on the user's screen.
-      if (contextMenuQuiet(guest.id)) return
+      let zoom = 1
+      try {
+        zoom = typeof guest.getZoomFactor === 'function' ? guest.getZoomFactor() : 1
+      } catch {
+        zoom = 1
+      }
+      if (contextMenuQuiet(guest.id, params, zoom)) return
       showContextMenu(guest, params || {})
     })
 

@@ -2206,7 +2206,12 @@ function onFindInput() {
 // --- Drag & drop files: type their paths into this pane ---------------------
 const dropping = ref(false)
 
+// '' for a name that cannot be typed safely: a control character (a line
+// break would run what follows it; a drag from a web page can carry any
+// text), or a double quote where only double quotes can quote it (cmd and
+// the other shells). No Windows file name has either.
 function quotePath(path) {
+  if (typeof path !== 'string' || !path || /[\u0000-\u001f\u007f\u2028\u2029]/.test(path)) return ''
   const shell = props.node.shellId
   const m = /^([A-Za-z]):[\\/](.*)$/.exec(path)
   if ((shell === 'wsl' || shell === 'gitbash') && m) {
@@ -2220,6 +2225,7 @@ function quotePath(path) {
   if ((shell === 'powershell' || shell === 'pwsh') && !isAgent.value && /[\s&()'^;,$`{}@#[\]‘’‚‛]/.test(path)) {
     return `'${path.replace(/['‘’‚‛]/g, (q) => q + q)}'`
   }
+  if (path.includes('"')) return ''
   return /[\s&()'^;,%]/.test(path) ? `"${path}"` : path
 }
 
@@ -2250,7 +2256,8 @@ function onDrop(e) {
   const dragged = e.dataTransfer ? e.dataTransfer.getData(TESSEL_PATH) : ''
   if (dragged) {
     e.preventDefault()
-    window.shellApi.writePty(props.node.id, quotePath(dragged) + ' ')
+    const typed = quotePath(dragged)
+    if (typed) window.shellApi.writePty(props.node.id, typed + ' ')
     focusTerm()
     return
   }
@@ -2262,7 +2269,8 @@ function onDrop(e) {
   if (!paths.length) return
   if (props.node.backend === 'liveshare') return dropOnHostPane(paths)
   if (props.node.remoteHostId && window.shellApi.sendImageFileToHost && paths.some(isImagePath)) return dropOnSshPane(paths)
-  window.shellApi.writePty(props.node.id, paths.map(quotePath).join(' ') + ' ')
+  const typed = paths.map(quotePath).filter(Boolean)
+  if (typed.length) window.shellApi.writePty(props.node.id, typed.join(' ') + ' ')
   focusTerm()
 }
 
@@ -2422,7 +2430,8 @@ async function dropOnSshPane(paths) {
   const out = []
   for (const p of paths.slice(0, 20)) {
     if (!isImagePath(p)) {
-      out.push(quotePath(p))
+      const typed = quotePath(p)
+      if (typed) out.push(typed)
       continue
     }
     let res = null

@@ -134,6 +134,23 @@ describe('focus watch', () => {
       expect(lines.at(-1)).toContain('out of sight')
     })
 
+    // A page drawn unseen for an agent (browser/pageHost.js: visible, laid
+    // over the user's view at 1%) is out of sight all the same, even with the
+    // mouse over where it lies.
+    it('a page drawn unseen for an agent counts as out of sight', async () => {
+      const { lines, clock, term, page } = pageSetup()
+      document.querySelector('[data-test="browser-agent"]').remove()
+      page.parentElement.classList.add('bp-unseen')
+      term.focus()
+      key(term)
+      clock.add(5000)
+      window.dispatchEvent(new MouseEvent('pointermove', { clientX: 600, clientY: 100 }))
+      pageTakes(page)
+      await settle()
+      expect(document.activeElement).toBe(term)
+      expect(lines.at(-1)).toContain('out of sight')
+    })
+
     it('leaves it to the page after a click on it, a shortcut, the window coming back, or Tessel focusing it', async () => {
       const { lines, clock, term, page } = pageSetup()
       // The mouse went over the page (a click in it).

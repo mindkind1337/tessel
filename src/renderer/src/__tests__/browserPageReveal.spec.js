@@ -2,7 +2,9 @@
 // (browser/pageHost.js keepDrawn / revealPage), and the agents' way to ask
 // for it (browser/agentBrowserTargets.js op "paint").
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { claimPage, placePage, revealPage, endCapture, keepDrawn, releasePage, _resetPagesForTests, REVEAL_OPACITY } from '../browser/pageHost'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
+import { claimPage, placePage, revealPage, endCapture, keepDrawn, releasePage, _resetPagesForTests, REVEAL_OPACITY, UNSEEN_CLASS } from '../browser/pageHost'
 import { createAgentBrowserTargets } from '../browser/agentBrowserTargets'
 
 // jsdom lays nothing out: the boxes' rectangles are given here. A hidden
@@ -127,6 +129,54 @@ describe('a page drawn unseen for an agent (pageHost.js)', () => {
     expect(page.box.style.visibility).toBe('hidden')
   })
 
+  it('while drawn unseen it takes no click, no focus and is hidden from screen readers; all put back after', () => {
+    const btn = document.createElement('button')
+    page.overlay.appendChild(btn)
+    page.webview.setAttribute('tabindex', '0')
+    page.webview.focus()
+    const blur = vi.spyOn(page.webview, 'blur')
+    Object.defineProperty(document, 'activeElement', { configurable: true, get: () => page.webview })
+    try {
+      keepDrawn(page, true)
+    } finally {
+      delete document.activeElement
+    }
+    expect(page.box.classList.contains(UNSEEN_CLASS)).toBe(true)
+    expect(page.box.getAttribute('aria-hidden')).toBe('true')
+    expect(page.overlay.inert).toBe(true)
+    expect(page.webview.getAttribute('tabindex')).toBe('-1')
+    expect(blur).toHaveBeenCalled()
+    keepDrawn(page, false)
+    expect(page.box.classList.contains(UNSEEN_CLASS)).toBe(false)
+    expect(page.box.hasAttribute('aria-hidden')).toBe(false)
+    expect(page.overlay.inert).toBe(false)
+    expect(page.webview.getAttribute('tabindex')).toBe('0')
+  })
+
+  it('style.css: nothing in an unseen box takes the pointer, Tessel\'s own panels included', () => {
+    const css = readFileSync(join(__dirname, '..', 'style.css'), 'utf8')
+    const rule = css.match(/\.bp-box\.bp-unseen,\s*\.bp-box\.bp-unseen \*\s*\{([^}]*)\}/)
+    expect(rule).toBeTruthy()
+    expect(rule[1]).toMatch(/pointer-events:\s*none\s*!important/)
+  })
+
+  it('a capture never ended ends by itself; ended by its own token only', async () => {
+    vi.useFakeTimers()
+    try {
+      const before = placed()
+      revealPage(page, 'cap-1', 15000)
+      revealPage(page, 'cap-2', 15000)
+      expect(endCapture(page, 'other')).toBe(false)
+      expect(endCapture(page, 'cap-1')).toBe(true)
+      expect(page.box.style.opacity).toBe(REVEAL_OPACITY)
+      vi.advanceTimersByTime(15001)
+      expect(placed()).toBe(before)
+      expect(page.captures.size).toBe(0)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('its pane closed: nothing kept', () => {
     keepDrawn(page, true)
     releasePage('p1', 'owner')
@@ -141,10 +191,10 @@ describe('an agent asks for its page drawn for a capture (agentBrowserTargets.js
   const forEachLeaf = (node, fn) => (node.type === 'leaf' ? fn(node) : node.children.forEach((c) => forEachLeaf(c, fn)))
   const wsA = { id: 'A', name: 'Game', tree: { type: 'split', children: [leaf('agent-a', 'agent'), leaf('browser-a', 'browser')] } }
   const wsB = { id: 'B', name: 'Other', tree: { type: 'split', children: [leaf('browser-b', 'browser')] } }
-  const setup = () => {
+  const setup = ({ enabled = () => true } = {}) => {
     const paint = vi.fn((id, on) => (on ? { moved: true, why: 'layer' } : { moved: true, why: null }))
     const targets = createAgentBrowserTargets({
-      enabled: () => true,
+      enabled,
       workspaces: () => [wsA, wsB],
       forEachLeaf,
       sameView: () => true,
@@ -158,13 +208,23 @@ describe('an agent asks for its page drawn for a capture (agentBrowserTargets.js
 
   it('its own page only; says why it was out of sight and its project', async () => {
     const { targets, paint } = setup()
-    expect(await targets.handle({ agent: 'agent-a', op: 'paint', page: 'browser-a', on: true })).toEqual({ agent: 'Gauss', page: 'browser-a', moved: true, why: 'layer', project: 'Game' })
-    await targets.handle({ agent: 'agent-a', op: 'paint', page: 'browser-a', on: false })
+    expect(await targets.handle({ agent: 'agent-a', op: 'paint', page: 'browser-a', on: true, token: 'tok_1' })).toEqual({ agent: 'Gauss', page: 'browser-a', moved: true, why: 'layer', project: 'Game' })
+    await targets.handle({ agent: 'agent-a', op: 'paint', page: 'browser-a', on: false, token: 'tok_1' })
     expect(paint.mock.calls).toEqual([
-      ['browser-a', true],
-      ['browser-a', false]
+      ['browser-a', true, 'tok_1'],
+      ['browser-a', false, 'tok_1']
     ])
     await expect(targets.handle({ agent: 'agent-a', op: 'paint', page: 'browser-b', on: true })).rejects.toMatchObject({ code: 'page_not_found' })
     expect(paint).toHaveBeenCalledTimes(2)
+  })
+
+  it('the end of a capture is always done: setting turned off, the agent\'s pane gone', async () => {
+    let on = true
+    const { targets, paint } = setup({ enabled: () => on })
+    on = false
+    expect(await targets.handle({ agent: 'gone-pane', op: 'paint', page: 'browser-a', on: false, token: 'tok_2' })).toMatchObject({ page: 'browser-a', moved: true })
+    expect(paint).toHaveBeenCalledWith('browser-a', false, 'tok_2')
+    // Its start is still refused while the setting is off.
+    await expect(targets.handle({ agent: 'agent-a', op: 'paint', page: 'browser-a', on: true })).rejects.toMatchObject({ code: 'disabled' })
   })
 })

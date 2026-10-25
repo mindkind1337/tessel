@@ -203,26 +203,39 @@ function remembered(cache) {
   return cache.secretIds
 }
 
-// Notes every password field the page has now.
+// The password fields one document's isolated world sees, into `ids`.
+async function scanSecrets(send, contextId, ids) {
+  const { result } = await send('Runtime.evaluate', { expression: SECRET_SCAN, contextId, returnByValue: false })
+  if (!result || !result.objectId) return
+  const { result: props } = await send('Runtime.getProperties', { objectId: result.objectId, ownProperties: true })
+  for (const p of props || []) {
+    if (!/^\d+$/.test(p.name) || !p.value || !p.value.objectId) continue
+    try {
+      const { node } = await send('DOM.describeNode', { objectId: p.value.objectId })
+      if (node && node.backendNodeId) ids.add(node.backendNodeId)
+    } catch {
+      // gone meanwhile
+    }
+  }
+  send('Runtime.releaseObject', { objectId: result.objectId }).catch(() => {})
+}
+
+// Notes every password field the page has now: its document (and the frames
+// it can look into), then each frame of its own process it cannot (another
+// site, sandboxed), in that frame's isolated world.
 export async function rememberSecrets(send, cache) {
   const ids = remembered(cache)
   try {
-    const contextId = await isolatedWorld(send, cache)
-    const { result } = await send('Runtime.evaluate', { expression: SECRET_SCAN, contextId, returnByValue: false })
-    if (!result || !result.objectId) return ids
-    const { result: props } = await send('Runtime.getProperties', { objectId: result.objectId, ownProperties: true })
-    for (const p of props || []) {
-      if (!/^\d+$/.test(p.name) || !p.value || !p.value.objectId) continue
-      try {
-        const { node } = await send('DOM.describeNode', { objectId: p.value.objectId })
-        if (node && node.backendNodeId) ids.add(node.backendNodeId)
-      } catch {
-        // gone meanwhile
-      }
-    }
-    send('Runtime.releaseObject', { objectId: result.objectId }).catch(() => {})
+    await scanSecrets(send, await isolatedWorld(send, cache), ids)
   } catch {
     // the checks below still apply
+  }
+  for (const f of await localFrames(send)) {
+    try {
+      await scanSecrets(send, await frameWorld(send, cache, f.id, f.loaderId), ids)
+    } catch {
+      // a frame gone meanwhile
+    }
   }
   return ids
 }
@@ -610,13 +623,19 @@ export function moveSoon(send, params, ms = 100) {
 }
 
 // at(): where to click (default: the element's centre, in the page's session).
-export async function click(send, backendNodeId, { button = 'left', clickCount = 1, at = null } = {}) {
+// before(event): called right before each press and release (a right-click's
+// page menu kept closed for that point, browserGuest.js quietContextMenu).
+export async function click(send, backendNodeId, { button = 'left', clickCount = 1, at = null, before = null } = {}) {
   const { x, y } = at ? await at() : await elementCenter(send, backendNodeId)
   await moveSoon(send, { type: 'mouseMoved', x, y })
   const bit = BUTTON_BITS[button] || 1
+  const press = async (ev) => {
+    if (before) before(ev)
+    await send('Input.dispatchMouseEvent', ev)
+  }
   for (let n = 1; n <= clickCount; n++) {
-    await send('Input.dispatchMouseEvent', { type: 'mousePressed', x, y, button, buttons: bit, clickCount: n })
-    await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x, y, button, buttons: 0, clickCount: n })
+    await press({ type: 'mousePressed', x, y, button, buttons: bit, clickCount: n })
+    await press({ type: 'mouseReleased', x, y, button, buttons: 0, clickCount: n })
   }
   return { x: Math.round(x), y: Math.round(y) }
 }
@@ -768,6 +787,8 @@ export const MAX_HOLD_MS = 10000
 export const MAX_REPEAT = 100
 export const MAX_PRESS_MS = 30000
 export const REPEAT_GAP_MS = 30
+// A hold is looked at this often for a Stop.
+const HOLD_STEP_MS = 50
 export function keyTiming(holdMs, repeat) {
   const hold = holdMs == null || holdMs === '' ? 0 : num(holdMs)
   const times = repeat == null || repeat === '' ? 1 : num(repeat)
@@ -783,13 +804,36 @@ export function keyTiming(holdMs, repeat) {
 // frames: the page's frames from other sites (see focusedField).
 // timing: { holdMs, repeat, gapMs } (keyTiming): the key stays down holdMs
 // between its keyDown and its keyUp, `repeat` times.
-export async function pressKey(send, combo, sendInput = null, cache = null, frames = [], timing = null) {
+// check(): throws when the press must stop (the user's Stop, the setting
+// turned off, the command's time up): looked at before each press and all
+// through a hold; a key held down is let up first.
+export async function pressKey(send, combo, sendInput = null, cache = null, frames = [], timing = null, check = null) {
   const { def, modifiers } = parseKeyCombo(combo)
   const { holdMs = 0, repeat = 1, gapMs = REPEAT_GAP_MS } = timing || {}
   const wait = (ms) => (ms > 0 ? new Promise((r) => setTimeout(r, ms)) : null)
+  const stop = () => {
+    if (check) check()
+  }
+  const hold = async (ms, up) => {
+    const until = Date.now() + ms
+    for (;;) {
+      try {
+        stop()
+      } catch (err) {
+        await Promise.resolve()
+          .then(up)
+          .catch(() => {})
+        throw err
+      }
+      const left = until - Date.now()
+      if (left <= 0) return
+      await wait(Math.min(HOLD_STEP_MS, left))
+    }
+  }
   const printable = typesChar(def) && !(modifiers & 7)
   for (let i = 0; i < repeat; i++) {
     if (i) await wait(gapMs)
+    stop()
     // A character into a password field is typing a password; focus Tessel
     // cannot see counts as one (fail closed). Looked at before each press.
     if (printable) {
@@ -805,17 +849,18 @@ export async function pressKey(send, combo, sendInput = null, cache = null, fram
     const frameSend = focus && focus.frame && typeof focus.frame.send === 'function' ? focus.frame.send : null
     if (sendInput && !frameSend) {
       const events = electronKeyEvents(def, modifiers)
+      const upEvent = events[events.length - 1]
       for (const ev of events.slice(0, -1)) await sendInput(ev)
-      await wait(holdMs)
-      await sendInput(events[events.length - 1])
+      await hold(holdMs, () => sendInput(upEvent))
+      await sendInput(upEvent)
       continue
     }
     const keys = frameSend || send
     const down = { ...def, modifiers, type: def.text ? 'keyDown' : 'rawKeyDown' }
-    await keys('Input.dispatchKeyEvent', down)
-    await wait(holdMs)
     const up = { ...def, modifiers, type: 'keyUp' }
     delete up.text
+    await keys('Input.dispatchKeyEvent', down)
+    await hold(holdMs, () => keys('Input.dispatchKeyEvent', up))
     await keys('Input.dispatchKeyEvent', up)
   }
   return def.key

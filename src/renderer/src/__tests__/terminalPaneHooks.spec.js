@@ -357,6 +357,26 @@ describe('TerminalPane status integration', () => {
     expect(ctx.toast).toHaveBeenCalledWith('The image could not be sent to the host: not connected', expect.objectContaining({ kind: 'error' }))
   })
 
+  // A drag from a web page can carry any text as a "path": a line break would
+  // run what follows it, and cmd has no way to quote a double quote.
+  it('a dropped path with a line break, or a double quote in cmd, is not typed', async () => {
+    await mountPane({ id: 'test-pane', kind: 'shell', shellId: 'cmd' })
+    const dropPath = (text) => {
+      const event = new Event('drop', { bubbles: true, cancelable: true })
+      Object.defineProperty(event, 'dataTransfer', { value: { getData: (t) => (t === 'text/x-tessel-path' ? text : ''), types: ['text/x-tessel-path'], files: [] } })
+      wrapper.find('[data-pane-id]').element.dispatchEvent(event)
+    }
+    dropPath('C:\\a b\r\ncalc.exe')
+    dropPath('C:\\x" & calc & "')
+    dropPath('C:\\tab\there')
+    expect(window.shellApi.writePty).not.toHaveBeenCalled()
+    dropPath('C:\\a b\\c.txt')
+    expect(window.shellApi.writePty).toHaveBeenCalledWith('test-pane', '"C:\\a b\\c.txt" ')
+    window.shellApi.pathForFile = (f) => f.path
+    drop([{ path: 'C:\\ok.txt' }, { path: 'C:\\bad\nname.txt' }])
+    expect(window.shellApi.writePty).toHaveBeenLastCalledWith('test-pane', 'C:\\ok.txt ')
+  })
+
   it('an image file dropped on a pane on an SSH host: sent there, its path there pasted with the other files\u2019; not sent: said', async () => {
     window.shellApi.pathForFile = (f) => f.path
     window.shellApi.sendImageFileToHost = vi.fn(async () => ({ ok: true, path: '/home/deploy/.tessel-server/paste/image-3-def456.png' }))

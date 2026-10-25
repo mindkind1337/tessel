@@ -160,6 +160,33 @@ describe('keys held and repeated', () => {
       vi.useRealTimers()
     }
   })
+
+  it('stopped during a hold: the key goes up at once, then the stop is thrown; no further press', async () => {
+    vi.useFakeTimers()
+    try {
+      const { send } = plainPage()
+      const events = []
+      const sendInput = vi.fn(async (ev) => events.push(`${ev.type}:${ev.keyCode}@${Date.now()}`))
+      let stopped = false
+      const check = () => {
+        if (stopped) throw new BrowserInputError('stopped_by_user', 'stopped')
+      }
+      const start = Date.now()
+      const done = pressKey(send, 'ArrowLeft', sendInput, {}, [], { holdMs: 5000, repeat: 3, gapMs: 30 }, check).catch((e) => e)
+      await vi.advanceTimersByTimeAsync(200)
+      stopped = true
+      await vi.advanceTimersByTimeAsync(100)
+      const err = await done
+      expect(err.code).toBe('stopped_by_user')
+      expect(events.map((e) => e.split('@')[0])).toEqual(['keyDown:Left', 'keyUp:Left'])
+      // Up within a hold step of the stop, not after the 5 s hold.
+      expect(Number(events[1].split('@')[1]) - start).toBeLessThanOrEqual(250)
+      await vi.advanceTimersByTimeAsync(20000)
+      expect(events.length).toBe(2)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
 })
 
 // A page whose keyboard went into a frame of another process (another site,
@@ -256,6 +283,24 @@ describe('the keyboard in a frame of another site', () => {
     const ok = framedPage({ frameFocus: { tag: 'INPUT', secret: false } })
     await pressKey(ok.page, 'a', vi.fn(), {}, ok.frames)
     expect(ok.frameSent.filter(([m]) => m === 'Input.dispatchKeyEvent').length).toBe(2)
+  })
+
+  it('the password fields of a frame of the page\'s own process are remembered (scanned in its isolated world)', async () => {
+    const p = framedPage({ local: true, frameFocus: { tag: 'INPUT', secret: false } })
+    // The game frame's world (context 77) finds a password field (backend 901: the focused INPUT).
+    const scanned = []
+    const page = async (method, params = {}) => {
+      if (method === 'Runtime.evaluate' && String(params.expression).includes("querySelectorAll('*')")) {
+        scanned.push(params.contextId)
+        return params.contextId === 77 ? { result: { objectId: 'scan-77' } } : { result: {} }
+      }
+      if (method === 'Runtime.getProperties' && params.objectId === 'scan-77') return { result: [{ name: '0', value: { objectId: 'f-INPUT' } }] }
+      return p.page(method, params)
+    }
+    const cache = {}
+    await expect(pressKey(page, 'a', vi.fn(), cache, [])).rejects.toMatchObject({ code: 'password_field' })
+    expect(scanned).toEqual([1, 77])
+    expect(cache.secretIds.has(901)).toBe(true)
   })
 
   it('a frame of the page\'s own process is looked at in its own isolated world', async () => {

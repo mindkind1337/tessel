@@ -961,6 +961,8 @@ watch(
 let resizeObserver = null
 // A click on the page's overlays (the failure page, Design Mode) activates the pane.
 function onBoxMouseDown() {
+  // Drawn unseen for an agent (pageHost.js): never the user's click.
+  if (page && page.reveal) return
   focusNavigationOwner(pageOwner)
   if (!isActive.value) ctx.setActive(props.node.id)
 }

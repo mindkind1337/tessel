@@ -90,8 +90,12 @@ const CAPTURE_TIMEOUT_MS = 5000
 export const FIRST_CAPTURE_MS = 1500
 export const PAINTED_CAPTURE_MS = 4000
 const CAPTURE_RETRY_MS = 60
+// A screenshot scaled to CSS pixels is at most this many pixels a side.
+const MAX_SHOT_SIDE = 8192
 // Between the moves of a drag.
 const DRAG_STEP_MS = 16
+// A browser_press (holds and repeats) ends before the command's own time does.
+const PRESS_BUDGET_MS = COMMAND_TIMEOUT_MS - 5000
 export const WAIT_DEFAULT_MS = 10000
 export const WAIT_MAX_MS = 30000
 const MAX_URL = 4000
@@ -311,6 +315,9 @@ export function createAgentBrowser({ verify, enabled = () => true, ask, guestByI
           s.world = null
         }
         if (method === 'Runtime.executionContextsCleared') s.world = null
+        // A drag the agent started in the page: kept here instead of an
+        // operating system drag (which would follow the user's own mouse).
+        if (method === 'Input.dragIntercepted') s.drag = { data: (params && params.data) || { items: [], dragOperationsMask: 1 }, entered: false }
         // An unanswered dialog blocks every command: an alert is closed, a
         // confirm or prompt refused (never accepted for the agent).
         if (method === 'Page.javascriptDialogOpening') {
@@ -330,6 +337,11 @@ export function createAgentBrowser({ verify, enabled = () => true, ask, guestByI
       // window, a grid out of sight) still takes the agent's typing: it
       // behaves as focused while the agent drives it (undone on detach).
       await cdp('Emulation.setFocusEmulationEnabled', { enabled: true }).catch(() => {})
+      // A drag in the page (an image, a link, selected text, a draggable
+      // element) never starts the operating system's drag: Chromium hands
+      // it over (Input.dragIntercepted) and browser_mouse plays it inside
+      // the page (Input.dispatchDragEvent). Undone on detach.
+      await cdp('Input.setInterceptDrags', { enabled: true }).catch(() => {})
       s.attached = true
     }
     return sender(guest)
@@ -344,6 +356,7 @@ export function createAgentBrowser({ verify, enabled = () => true, ask, guestByI
       s.lease = null
       if (lease.active && !lease.alone && guest && !guest.isDestroyed()) {
         lease.send('Emulation.setFocusEmulationEnabled', { enabled: false }).catch(() => {})
+        lease.send('Input.setInterceptDrags', { enabled: false }).catch(() => {})
         lease.send('Target.setAutoAttach', { autoAttach: false, waitForDebuggerOnStart: false, flatten: true }).catch(() => {})
         for (const sessionId of s.frames.keys()) lease.send('Target.detachFromTarget', { sessionId }).catch(() => {})
       }
@@ -402,14 +415,44 @@ export function createAgentBrowser({ verify, enabled = () => true, ask, guestByI
     keepRunning(guest, s)
     s.idle = setTimeout(() => release(guest.id), IDLE_MS)
   }
+  // A button the agent still held down (browser_mouse "down"), or a drag it
+  // started in the page: let go before the debugger goes, so the page is not
+  // left in the middle of a drag. -> the sends, or null when nothing was held.
+  function letGoOfPointer(s) {
+    const m = s.mouse
+    const drag = s.drag
+    s.mouse = null
+    s.drag = null
+    const lease = s.lease
+    if (!lease || !lease.active || (!drag && !(m && m.buttons))) return null
+    const x = m && m.x != null ? m.x : 0
+    const y = m && m.y != null ? m.y : 0
+    const sends = []
+    if (drag) sends.push(lease.send('Input.dispatchDragEvent', { type: 'dragCancel', x, y, data: drag.data }).catch(() => {}))
+    let buttons = m ? m.buttons : 0
+    for (const [button, bit] of Object.entries(BUTTON_BITS)) {
+      if (!(buttons & bit)) continue
+      buttons &= ~bit
+      sends.push(lease.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x, y, button, buttons, clickCount: 1 }).catch(() => {}))
+    }
+    return withTimeout(Promise.all(sends), 1000, () => null).catch(() => null)
+  }
   function release(id, { stopped = false } = {}) {
     const s = pages.get(id)
     if (s && s.idle) clearTimeout(s.idle)
     if (s) s.idle = null
     if (s) letRest(s)
-    if (s) s.mouse = null
-    // The lease goes even when the window no longer names the page.
-    if (s) detach(guestById(id) || null, s)
+    // The lease goes even when the window no longer names the page (after
+    // the agent's held button or drag is let go).
+    if (s) {
+      const pending = letGoOfPointer(s)
+      if (!pending) detach(guestById(id) || null, s)
+      else
+        pending.then(() => {
+          // Driven again meanwhile (a new command): the debugger stays.
+          if (!s.idle) detach(guestById(id) || null, s)
+        })
+    }
     send('browser:agentControl', { webContentsId: id, active: false, ...(stopped ? { stopped: true } : {}) })
   }
 
@@ -516,13 +559,15 @@ export function createAgentBrowser({ verify, enabled = () => true, ask, guestByI
   // The page's viewport, CSS pixels: { width, height, dpr, scrollX, scrollY }
   // (read in Tessel's isolated world: the page's scripts cannot change it).
   async function viewportOf(cdp, s) {
+    // Never the page's own world (its scripts could make up these numbers).
     let contextId = null
     try {
       contextId = await isolatedWorld(cdp, s)
     } catch {
       contextId = null
     }
-    const r = await cdp('Runtime.evaluate', { expression: '[innerWidth, innerHeight, devicePixelRatio, scrollX, scrollY]', ...(contextId ? { contextId } : {}), returnByValue: true })
+    if (!contextId) throw new BrowserInputError('page_error', 'Tessel could not read the page\'s viewport (no frame yet?): try again in a moment.')
+    const r = await cdp('Runtime.evaluate', { expression: '[innerWidth, innerHeight, devicePixelRatio, scrollX, scrollY]', contextId, returnByValue: true })
     const v = r && r.result && Array.isArray(r.result.value) ? r.result.value.map(Number) : []
     if (!(v[0] > 0 && v[1] > 0 && v[0] < 100000 && v[1] < 100000)) throw new BrowserInputError('not_laid_out', 'The page has no viewport yet (still loading?): try again in a moment.')
     return { width: Math.round(v[0]), height: Math.round(v[1]), dpr: v[2] > 0 && v[2] < 20 ? v[2] : 1, scrollX: Math.round(v[3]) || 0, scrollY: Math.round(v[4]) || 0 }
@@ -565,8 +610,11 @@ export function createAgentBrowser({ verify, enabled = () => true, ask, guestByI
     let img = windowHidden() ? null : await capturePage(guest, FIRST_CAPTURE_MS)
     if (usable(img)) return { img, painted: null }
     let painted = null
+    // This capture's own name: the window ends it by it (and on its own after
+    // a while if the end never comes, pageHost.js CAPTURE_TTL_MS).
+    const token = crypto.randomBytes(9).toString('base64url')
     try {
-      painted = (await ask('browserTarget', { agent: pane, op: 'paint', page: s.page, on: true })) || {}
+      painted = (await ask('browserTarget', { agent: pane, op: 'paint', page: s.page, on: true, token })) || {}
     } catch (err) {
       painted = { error: String((err && err.message) || err).slice(0, 200) }
     }
@@ -582,8 +630,13 @@ export function createAgentBrowser({ verify, enabled = () => true, ask, guestByI
       img = await debuggerCapture(guest, s)
       return { img: usable(img) ? img : null, painted }
     } finally {
-      // Put back as it was, before the answer (the next command finds it so).
-      if (painted && painted.moved) await Promise.resolve(ask('browserTarget', { agent: pane, op: 'paint', page: s.page, on: false })).catch(() => {})
+      // Put back as it was, before the answer (the next command finds it
+      // so): always, even when the window's answer was lost or refused.
+      await withTimeout(
+        Promise.resolve().then(() => ask('browserTarget', { agent: pane, op: 'paint', page: s.page, on: false, token })),
+        CAPTURE_TIMEOUT_MS,
+        () => null
+      ).catch(() => {})
     }
   }
 
@@ -623,12 +676,18 @@ export function createAgentBrowser({ verify, enabled = () => true, ask, guestByI
     const { img: shot, painted } = await capturePageImage(guest, s, pane)
     if (!shot) throw fail('capture_failed', captureFailure(painted))
     let img = shot
-    // One image pixel per CSS pixel (a HiDPI screen or the page's zoom give more).
+    // One image pixel per CSS pixel (a HiDPI screen or the page's zoom give
+    // more): only ever made smaller, to a size it can be.
     const raw = img.getSize()
-    if (vp && vp.dpr !== 1 && typeof img.resize === 'function') {
-      const width = Math.max(1, Math.round(raw.width / vp.dpr))
-      const height = Math.max(1, Math.round(raw.height / vp.dpr))
-      if (width !== raw.width || height !== raw.height) img = img.resize({ width, height, quality: 'best' })
+    // Image pixels per CSS pixel: 1 once scaled (else said in the answer).
+    let perCss = vp ? vp.dpr : null
+    if (vp && vp.dpr > 1 && typeof img.resize === 'function') {
+      const width = Math.round(raw.width / vp.dpr)
+      const height = Math.round(raw.height / vp.dpr)
+      if (width >= 1 && height >= 1 && width < raw.width && height < raw.height && width <= MAX_SHOT_SIDE && height <= MAX_SHOT_SIDE) {
+        img = img.resize({ width, height, quality: 'best' })
+        perCss = 1
+      }
     }
     const png = img.toPNG()
     if (png.length > MAX_SCREENSHOT_BYTES) throw fail('too_large', 'The screenshot is too large.')
@@ -663,8 +722,13 @@ export function createAgentBrowser({ verify, enabled = () => true, ask, guestByI
     const { url } = where(guest)
     // The coordinate system, for a canvas or a game clicked by x/y.
     let coords = ''
-    if (vp) {
-      coords = ` ${size.width}x${size.height} pixels = the page's viewport in CSS pixels (devicePixelRatio ${Math.round(vp.dpr * 100) / 100}, scrolled to ${vp.scrollX},${vp.scrollY}): a point (x, y) on it is browser_click / browser_mouse {x, y}.`
+    if (vp && perCss) {
+      const round = (n) => Math.round(n * 100) / 100
+      const at = `devicePixelRatio ${round(vp.dpr)}, scrolled to ${vp.scrollX},${vp.scrollY}`
+      coords =
+        perCss === 1
+          ? ` ${size.width}x${size.height} pixels = the page's viewport in CSS pixels (${at}): a point (x, y) on it is browser_click / browser_mouse {x, y}.`
+          : ` ${size.width}x${size.height} pixels = the page's viewport at ${round(perCss)} image pixels per CSS pixel (${at}): divide a point read on it by ${round(perCss)} for browser_click / browser_mouse {x, y}.`
       const k = shownWidth / size.width
       if (image && Math.abs(k - 1) > 0.01) coords += ` The image shown here is scaled to ${Math.round(k * 100)}%: divide what you read on it by ${Math.round(k * 1000) / 1000} (the saved file is full size).`
     } else coords = ` ${size.width}x${size.height} pixels (the page's scale could not be read: divide by the page's devicePixelRatio to get CSS pixels).`
@@ -764,6 +828,12 @@ export function createAgentBrowser({ verify, enabled = () => true, ask, guestByI
     // The pointer as the page last saw it from the agent (a button held down by browser_mouse "down").
     const mouse = () => s.mouse || (s.mouse = { x: null, y: null, buttons: 0, button: 'none' })
     const pointerText = (at, button) => `(${at.x}, ${at.y})${button !== 'left' ? ` with the ${button} button` : ''}`
+    // An agent's right-click is for the page (a game's own menu): Tessel's page
+    // menu stays closed for it, once, at that point (set right before each
+    // right press and release: Windows opens the menu on the release).
+    const quietRight = (ev) => {
+      if (ev && ev.button === 'right' && (ev.type === 'mousePressed' || ev.type === 'mouseReleased')) quietContextMenu(guest.id, { x: ev.x, y: ev.y })
+    }
     // A ref is this agent's only if its own snapshot gave it (two agents on
     // one page: the other's snapshot listed other elements under the same refs).
     if (args.ref != null && s.refMap && s.refOwner !== pane) {
@@ -786,19 +856,16 @@ export function createAgentBrowser({ verify, enabled = () => true, ask, guestByI
         if (args.ref == null && !point) throw new BrowserInputError('invalid_argument', 'Give a "ref" from browser_snapshot, or "x" and "y" (CSS pixels of the page\'s viewport, as on browser_screenshot).')
         const cdp = await attach(guest, s)
         const clickCount = args.double ? 2 : 1
-        // An agent's right-click is for the page (a game's own menu): Tessel's
-        // page menu does not open on the user's screen for it.
-        if (button === 'right') quietContextMenu(guest.id)
         if (args.ref == null) {
           const at = viewportPoint(args.x, args.y, await viewportOf(cdp, s))
-          await click(cdp, null, { button, clickCount, at: async () => at })
+          await click(cdp, null, { button, clickCount, at: async () => at, before: quietRight })
           Object.assign(mouse(), { x: at.x, y: at.y })
           await sleep(150)
           return { text: `Clicked at ${pointerText(at, button)}${clickCount > 1 ? ' twice' : ''}. If the page changed, take a browser_screenshot or browser_snapshot again.` }
         }
         const entry = await resolveRef(cdp, s, args.ref, sendOf)
         const at = point ? pointInBox(await boxOf(cdp, entry), args.x, args.y, await viewportOf(cdp, s)) : null
-        await click(cdp, entry.backendDOMNodeId, { button, clickCount, at: at ? async () => at : () => centerOf(cdp, entry) })
+        await click(cdp, entry.backendDOMNodeId, { button, clickCount, at: at ? async () => at : () => centerOf(cdp, entry), before: quietRight })
         await sleep(150)
         return { text: `Clicked ${args.ref} (${entry.role} "${entry.name}")${at ? ` at ${pointerText(at, button)}` : button !== 'left' ? ` with the ${button} button` : ''}. If the page changed, call browser_snapshot again.` }
       }
@@ -811,20 +878,49 @@ export function createAgentBrowser({ verify, enabled = () => true, ask, guestByI
         const m = mouse()
         // down / up without x and y: where the pointer is.
         const at = args.x == null && args.y == null && action !== 'drag' && action !== 'move' && m.x != null ? { x: m.x, y: m.y } : viewportPoint(args.x, args.y, vp)
-        // Moves: not waited for longer than a moment (moveSoon), presses and releases fully.
-        const dispatch = (ev, ms = 250) => (ev.type === 'mouseMoved' ? moveSoon(cdp, ev, ms) : cdp('Input.dispatchMouseEvent', ev))
-        if (button === 'right' && action !== 'move') quietContextMenu(guest.id)
+        // Moves: not waited for longer than a moment (moveSoon), presses and
+        // releases fully (a right one keeps Tessel's page menu closed for it).
+        // A drag the page started (s.drag, intercepted): played on inside the
+        // page at each move, dropped at the release.
+        const dragOver = async (pt) => {
+          const d = s.drag
+          if (!d) return
+          const type = d.entered ? 'dragOver' : 'dragEnter'
+          d.entered = true
+          await cdp('Input.dispatchDragEvent', { type, x: pt.x, y: pt.y, data: d.data }).catch(() => {})
+        }
+        const dispatch = async (ev, ms = 250) => {
+          if (ev.type === 'mouseMoved') {
+            await moveSoon(cdp, ev, ms)
+            if (ev.buttons) await dragOver(ev)
+            return
+          }
+          if (ev.type === 'mouseReleased' && s.drag) {
+            await dragOver(ev)
+            const d = s.drag
+            s.drag = null
+            await cdp('Input.dispatchDragEvent', { type: 'drop', x: ev.x, y: ev.y, data: d.data }).catch(() => {})
+          }
+          quietRight(ev)
+          await cdp('Input.dispatchMouseEvent', ev)
+        }
         if (action === 'drag') {
           const to = viewportPoint(args.to_x, args.to_y, vp, ['to_x', 'to_y'])
           const events = dragEvents(at, to, { button, steps: args.steps })
+          let dropped = false
           for (const ev of events) {
             allowed(guest)
+            if (ev.type === 'mouseReleased') {
+              // The page's drag starts on a move: given a moment to be handed over.
+              await sleep(DRAG_STEP_MS)
+              dropped = !!s.drag
+            }
             await dispatch(ev, 50)
             if (ev.type === 'mouseMoved') await sleep(DRAG_STEP_MS)
           }
           Object.assign(m, { x: to.x, y: to.y, buttons: 0, button: 'none' })
           await sleep(100)
-          return { text: `Dragged from (${at.x}, ${at.y}) to (${to.x}, ${to.y}) in ${events.length - 3} steps${button !== 'left' ? ` with the ${button} button` : ''}.` }
+          return { text: `Dragged from (${at.x}, ${at.y}) to (${to.x}, ${to.y}) in ${events.length - 3} steps${button !== 'left' ? ` with the ${button} button` : ''}${dropped ? ' (the page took it as a drag and drop)' : ''}.` }
         }
         if (action === 'move') {
           await dispatch({ type: 'mouseMoved', x: at.x, y: at.y, button: m.buttons ? m.button : 'none', buttons: m.buttons })
@@ -866,7 +962,14 @@ export function createAgentBrowser({ verify, enabled = () => true, ask, guestByI
         if (reservedKey(args.key)) throw fail('reserved_key', `${String(args.key).slice(0, 40)} is a Tessel or browser shortcut, or paste: agents cannot press it.`)
         const timing = keyTiming(args.hold_ms, args.repeat)
         const cdp = await attach(guest, s)
-        const key = await pressKey(cdp, args.key, typeof guest.sendInputEvent === 'function' ? (ev) => guest.sendInputEvent(ev) : null, s, frameList(s), timing)
+        // The user's Stop, the setting turned off or the command's time up end
+        // a long press at once (its key let up), never overlapping the next command.
+        const deadline = Date.now() + PRESS_BUDGET_MS
+        const check = () => {
+          allowed(guest)
+          if (Date.now() > deadline) throw fail('timeout', 'The key presses took too long and were stopped.')
+        }
+        const key = await pressKey(cdp, args.key, typeof guest.sendInputEvent === 'function' ? (ev) => guest.sendInputEvent(ev) : null, s, frameList(s), timing, check)
         const how = `${timing.holdMs ? ` held ${timing.holdMs} ms` : ''}${timing.repeat > 1 ? ` ${timing.repeat} times` : ''}`
         return { text: `Pressed ${String(args.key).slice(0, 40) || key}${how}.` }
       }

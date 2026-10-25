@@ -114,7 +114,7 @@ export function destroyPage(paneId) {
   unwatch(page)
   page.reveal = null
   page.keep = false
-  page.capture = 0
+  clearCaptures(page)
   page.box.remove()
 }
 
@@ -144,7 +144,7 @@ export function placePage(page, area, { hidden = false } = {}) {
   }
   Object.assign(page.box.style, page.place)
   // Drawn for an agent meanwhile: still drawn, from its new place.
-  if (page.reveal || page.keep || page.capture) refreshDrawn(page)
+  if (page.reveal || page.keep || capturing(page)) refreshDrawn(page)
 }
 
 // --- Drawn for an agent, unseen (src/main/agentBrowser.js) ---------------------------
@@ -162,7 +162,15 @@ export function placePage(page, area, { hidden = false } = {}) {
 // While the window is minimized it is not kept so (nothing is drawn then and a
 // page in the viewport would be slowed the same way): only for a capture.
 // (Fully transparent is not drawn at all: Chromium slows such a page too.)
+// Unseen also for the pointer, the keyboard and screen readers: nothing in
+// the box (the page, Tessel's own panels over it: blank page, failure page,
+// find bar, Design Mode) takes a click or the focus (.bp-unseen in
+// style.css, the overlay inert), it is aria-hidden, and the focus guard
+// counts it as out of sight (focusWatch.js).
 export const REVEAL_OPACITY = '0.01'
+export const UNSEEN_CLASS = 'bp-unseen'
+// A capture the main process never said was over ends by itself after this.
+export const CAPTURE_TTL_MS = 15000
 const REVEALED = ['visibility', 'opacity', 'pointerEvents', 'translate']
 
 // On screen as it is: visible, of some size, at least partly in the viewport.
@@ -186,9 +194,39 @@ function hiddenBy(page) {
   return 'offscreen'
 }
 
+// Unseen for the pointer, the keyboard and screen readers (or no longer).
+function markUnseen(page, on) {
+  const r = page.reveal
+  const box = page.box
+  if (on === !!r.marked) return
+  r.marked = on
+  const wv = page.webview
+  if (on) {
+    r.attrs = { ariaHidden: box.getAttribute('aria-hidden'), tabindex: wv ? wv.getAttribute('tabindex') : null, inert: !!(page.overlay && page.overlay.inert) }
+    box.classList.add(UNSEEN_CLASS)
+    box.setAttribute('aria-hidden', 'true')
+    if (page.overlay) page.overlay.inert = true
+    if (wv) wv.setAttribute('tabindex', '-1')
+    // The keyboard in it (the user's typing would go into a page they cannot see).
+    const active = box.ownerDocument.activeElement
+    if (active && box.contains(active) && typeof active.blur === 'function') active.blur()
+    return
+  }
+  const a = r.attrs || {}
+  box.classList.remove(UNSEEN_CLASS)
+  if (a.ariaHidden == null) box.removeAttribute('aria-hidden')
+  else box.setAttribute('aria-hidden', a.ariaHidden)
+  if (page.overlay) page.overlay.inert = !!a.inert
+  if (wv) {
+    if (a.tabindex == null) wv.removeAttribute('tabindex')
+    else wv.setAttribute('tabindex', a.tabindex)
+  }
+}
+
 function undoReveal(page) {
   const r = page.reveal
   const s = page.box.style
+  markUnseen(page, false)
   for (const [el, display, visibility] of r.ancestors.splice(0)) {
     el.style.display = display
     el.style.visibility = visibility
@@ -223,6 +261,7 @@ function applyReveal(page) {
     s.width = `${Math.max(1, Math.round(size.width))}px`
     s.height = `${Math.max(1, Math.round(size.height))}px`
   }
+  markUnseen(page, true)
   s.visibility = 'visible'
   s.opacity = REVEAL_OPACITY
   s.pointerEvents = 'none'
@@ -246,16 +285,18 @@ function unwatch(page) {
   page.watcher = null
 }
 
+const capturing = (page) => !!page.captures && page.captures.size > 0
+
 // Drawn (unseen) when an agent needs it, as placed otherwise.
 function refreshDrawn(page) {
   if (!page || !page.box) return false
-  const wanted = page.box.isConnected && (page.capture > 0 || (!!page.keep && !windowHidden(page.box)))
+  const wanted = page.box.isConnected && (capturing(page) || (!!page.keep && !windowHidden(page.box)))
   if (!wanted) {
     if (page.reveal) {
       undoReveal(page)
       page.reveal = null
     }
-    if (!page.keep && !page.capture) unwatch(page)
+    if (!page.keep && !capturing(page)) unwatch(page)
     else watchAncestors(page)
     return false
   }
@@ -274,16 +315,32 @@ export function keepDrawn(page, on) {
   refreshDrawn(page)
 }
 
-// For a capture: -> { moved, why } (moved: false when the page was on screen already).
-export function revealPage(page) {
+function clearCaptures(page) {
+  if (!page.captures) return
+  for (const timer of page.captures.values()) clearTimeout(timer)
+  page.captures.clear()
+}
+
+// For a capture, named by its token (the main process ends it with the same
+// token; one it never ends ends by itself after ttl ms).
+// -> { moved, why } (moved: false when the page was on screen already).
+export function revealPage(page, token = 'capture', ttl = CAPTURE_TTL_MS) {
   if (!page || !page.box || !page.box.isConnected) return { moved: false, why: 'gone' }
-  page.capture = (page.capture || 0) + 1
+  if (!page.captures) page.captures = new Map()
+  const key = String(token).slice(0, 64)
+  clearTimeout(page.captures.get(key))
+  page.captures.set(
+    key,
+    setTimeout(() => endCapture(page, key), ttl)
+  )
   const moved = refreshDrawn(page)
   return { moved, why: moved ? page.reveal.why : null }
 }
-export function endCapture(page) {
-  if (!page || !page.capture) return false
-  page.capture -= 1
+export function endCapture(page, token = 'capture') {
+  const key = String(token).slice(0, 64)
+  if (!page || !page.captures || !page.captures.has(key)) return false
+  clearTimeout(page.captures.get(key))
+  page.captures.delete(key)
   refreshDrawn(page)
   return true
 }
@@ -293,7 +350,7 @@ export function concealPage(page) {
   if (!page) return false
   const had = !!page.reveal
   page.keep = false
-  page.capture = 0
+  clearCaptures(page)
   refreshDrawn(page)
   return had
 }

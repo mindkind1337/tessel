@@ -156,6 +156,8 @@ export function installFocusWatch({ win = typeof window !== 'undefined' ? window
   function pageHidden(page) {
     if (!page.getClientRects().length) return true
     if (page.closest && page.closest('.ws-layer.hidden')) return true
+    // Drawn unseen for an agent (browser/pageHost.js): out of sight all the same.
+    if (page.closest && page.closest('.bp-unseen')) return true
     const style = win.getComputedStyle ? win.getComputedStyle(page) : null
     return !!style && (style.visibility === 'hidden' || style.display === 'none')
   }
