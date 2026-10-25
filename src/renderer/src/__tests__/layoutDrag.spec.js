@@ -171,14 +171,13 @@ describe('the right panel’s edge (App.vue startTaskResize)', () => {
     expect(layoutEvents).toBe(1)
   })
 
-  it('closes when dragged shut like the sidebar collapses, keeping its width; a second press resets it', async () => {
-    const { ctx, aside, drag } = load()
+  it('closes when dragged shut like the sidebar collapses, keeping its width (it opens again at it)', async () => {
+    const { ctx, drag } = load()
     drag().onMove({ clientX: 1900 - RESIZE_COLLAPSE_BELOW + 5 })
     runFrame()
     drag().onEnd()
     expect(ctx.taskPanelOpen.value).toBe(false)
     expect(ctx.taskPanelWidth.value).toBe(330)
-    expect(aside.style.flexBasis).toBe('330px')
     await nextTick()
     expect(layoutEvents).toBe(1)
     // Dragged back out before it is let go: it stays open.

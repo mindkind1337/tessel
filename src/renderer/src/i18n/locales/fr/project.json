@@ -106,7 +106,7 @@
       "connect": "Connecter",
       "folder": {
         "title": "Dossier du projet sur {{host}}",
-        "description": "Les nouveaux volets de « {{name}} » démarrent dans le dossier choisi. Les volets déjà ouverts restent où ils sont, et les fichiers ouverts dans l'ancien dossier ne seront plus enregistrés ni listés.",
+        "description": "Les nouveaux panneaux de « {{name}} » démarrent dans le dossier choisi. Les panneaux déjà ouverts restent où ils sont, et les fichiers ouverts dans l'ancien dossier ne seront plus enregistrés ni listés.",
         "checking": "Vérification du dossier sur l'hôte…",
         "same": "Ce projet utilise déjà ce dossier.",
         "other": "Le projet « {{name}} » utilise déjà ce dossier.",
@@ -182,7 +182,7 @@
       "truncated": "Seules les premières entrées sont affichées. Saisissez un chemin pour aller plus loin.",
       "cancel": "Annuler",
       "select": "Sélectionner le dossier",
-      "footerFolder": "Les nouveaux volets démarrent dans ce dossier sur cet hôte · {{path}}"
+      "footerFolder": "Les nouveaux panneaux démarrent dans ce dossier sur cet hôte · {{path}}"
     }
   }
 }

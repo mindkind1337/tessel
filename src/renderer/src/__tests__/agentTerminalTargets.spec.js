@@ -521,14 +521,14 @@ describe('agent terminals: a terminal opened for a background command closes whe
     expect(deps.closeTerminal).not.toHaveBeenCalled()
   })
 
-  it('the window sends clicks, resizes and moves (App.vue, SplitNode.vue)', async () => {
+  it('the window sends clicks, resizes and moves (App.vue, PaneGrid.vue)', async () => {
     const fs = await import('fs')
     const { join } = await import('path')
     const app = fs.readFileSync(join(__dirname, '..', 'App.vue'), 'utf8').replace(/\r\n/g, '\n')
     expect(app).toContain('watch(activeId, (id) => id && agentTerminalTargets.touch(id))')
     expect(app).toContain("window.addEventListener('tessel-panes-resized', onResized)")
     expect(app).toContain('function movePane(srcId, target) {\n  agentTerminalTargets.touch(srcId)')
-    const split = fs.readFileSync(join(__dirname, '..', 'components', 'SplitNode.vue'), 'utf8')
+    const split = fs.readFileSync(join(__dirname, '..', 'components', 'PaneGrid.vue'), 'utf8')
     expect(split).toContain("new CustomEvent('tessel-panes-resized'")
   })
 })

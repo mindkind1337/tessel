@@ -10,6 +10,7 @@
 // everything again.
 import { FolderOpen, Globe, Plus } from 'lucide-vue-next'
 import { t } from './i18n'
+import { posixRootTooBroad, localRootTooBroad, isBareHomePath } from '../../shared/projectRootPolicy'
 import { hostStatus, statusLabel } from './remoteHosts'
 import { hostAddress, hostFolder, shortRemotePath } from './remoteHostDisplay'
 
@@ -186,51 +187,23 @@ export function enterAction(filtered) {
 }
 
 // A folder that must not become a project's root (its files are read and
-// written, guests' too): the host's root, a system folder, or a folder with
-// fewer than two parts (/home...). -> '' when fine, else the reason.
-const SYSTEM_DIRS = ['/etc', '/root', '/proc', '/sys', '/dev', '/boot', '/var', '/usr', '/bin', '/lib', '/lib64', '/sbin', '/run', '/opt', '/srv', '/tmp', '/home', '/Users']
-export function remoteRootRefusal(path) {
-  const p = String(path || '').trim().replace(/\/+$/, '') || '/'
-  if (!p.startsWith('/')) return ''
-  if (p.split('/').filter(Boolean).length < 2 || SYSTEM_DIRS.includes(p)) {
-    return t('project.remote.rootRefused', 'This folder is too broad or belongs to the system: choose a project folder inside it.')
-  }
-  return ''
-}
-// The folder of one user (/home/me): allowed, after a confirmation.
-export const isBareHome = (path) => /^\/(home|Users)\/[^/]+\/?$/.test(String(path || ''))
-
-// The same rule for a folder on this computer (Windows or POSIX): a drive or
-// filesystem root, the system folders and the folder that holds every user's
-// home (C:\Windows, C:\Program Files, C:\Users, /etc, /usr, /home...).
-// -> '' when fine, else the reason.
-const LOCAL_SYSTEM_DIRS = ['/', '/root', '/var', '/tmp', '/run', '/srv', '/opt', '/home', '/users', '/applications', '/system', '/library', '/volumes', '/private', '/mnt', '/media']
-const LOCAL_SYSTEM_TREES = /^\/(etc|proc|sys|dev|boot|usr|bin|lib|lib32|lib64|sbin)(\/|$)/i
-const WIN_SYSTEM_DIR = /^[a-z]:\\(windows|program files|program files \(x86\)|programdata|users|\$recycle\.bin|system volume information|recovery|perflogs)$/i
-export function localRootRefusal(path) {
-  const raw = String(path || '').trim()
-  const refused = t('project.remote.rootRefused', 'This folder is too broad or belongs to the system: choose a project folder inside it.')
-  // The device and long-path forms (backslash-backslash-? and -.) are never a project folder.
-  if (/^[\\/]{2}[?.][\\/]/.test(raw)) return refused
-  if (/^[a-z]:[\\/]*$/i.test(raw)) return refused
-  if (/^[a-z]:[\\/]/i.test(raw)) {
-    const p = raw.replace(/\//g, '\\').replace(/\\+$/, '')
-    return WIN_SYSTEM_DIR.test(p) || /^[a-z]:\\windows\\/i.test(p) ? refused : ''
-  }
-  if (/^[\\/]{2}/.test(raw)) {
-    // A server alone has no share: too broad.
-    return raw.split(/[\\/]+/).filter(Boolean).length < 2 ? refused : ''
-  }
-  if (!raw.startsWith('/')) return ''
-  const p = raw.replace(/\/+$/, '') || '/'
-  // (Case-insensitive: macOS and Windows volumes match /ETC and /users too.)
-  return LOCAL_SYSTEM_DIRS.includes(p.toLowerCase()) || LOCAL_SYSTEM_TREES.test(p) ? refused : ''
-}
-// The folder of one user (C:\Users\me, /home/me, /Users/me, or the home folder
-// of this account): allowed, after a confirmation.
+// written, by agents and by Live Share guests too): the rule is shared with
+// the main process (src/shared/projectRootPolicy.js), which applies it again
+// to a shared project's real path. -> '' when fine, else the reason.
+const ROOT_REFUSED = () => t('project.remote.rootRefused', 'This folder is too broad or belongs to the system: choose a project folder inside it.')
+// A folder on an SSH host.
+export const remoteRootRefusal = (path) => (posixRootTooBroad(path) ? ROOT_REFUSED() : '')
+// A folder on this computer (Windows, macOS, Linux, a WSL distribution).
+export const localRootRefusal = (path) => (localRootTooBroad(path) ? ROOT_REFUSED() : '')
+// The folder of one user on an SSH host (/home/me, /root): allowed, after a
+// confirmation.
+export const isBareHome = (path) => String(path || '').trim().startsWith('/') && isBareHomePath(path)
+// The folder of one user on this computer (C:\Users\me, /home/me, one in a
+// WSL distribution or through an admin share), or the home folder of this
+// account: allowed, after a confirmation.
 export function isBareLocalHome(path, home = '') {
   const p = String(path || '').trim().replace(/[\\/]+$/, '')
-  if (/^[a-z]:[\\/]users[\\/][^\\/]+$/i.test(p) || /^\/(home|users)\/[^/]+$/i.test(p)) return true
+  if (isBareHomePath(p)) return true
   const h = String(home || '').replace(/[\\/]+$/, '')
   return !!h && samePath(p, h)
 }

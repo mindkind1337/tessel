@@ -2,7 +2,7 @@
 // in one grid, each task copy's (git worktree's) in its own, like the cards
 // of the left sidebar (sidebarModel.js buildProjectCards). The panes all stay
 // in the workspace's single tree; a view is the part of it that belongs to
-// one copy. Pure functions: App picks the view, SplitNode draws it.
+// one copy. Pure functions: App picks the view, PaneGrid draws its grid.
 // In a view, the editor and browser panes are not in the grid: each is a tab
 // of its own above it (ViewTabs.vue: Terminal | Editor | Browser), shown
 // alone in the whole room; the Terminal tab is the grid of the others.
@@ -35,22 +35,19 @@ function eachLeaf(node, fn) {
 }
 
 // A tree's views: [{ key, ids }] (ids: a Set of its panes' ids), the project
-// folder's first, then each copy's as met.
+// folder's first, then each copy's by its folder. Never in tree order: a
+// change of the tree (a pane split, a grid tiled again) never reorders the
+// views, whose layers are keyed in the page (App.vue): a layer moved there
+// reloads its pages and loses the keyboard.
 export function treeViews(tree, cwd) {
-  const views = []
   const byKey = new Map()
   eachLeaf(tree, (leaf) => {
     const key = viewKey(leaf, cwd)
     let view = byKey.get(key)
-    if (!view) {
-      view = { key, ids: new Set() }
-      byKey.set(key, view)
-      if (key) views.push(view)
-      else views.unshift(view)
-    }
+    if (!view) byKey.set(key, (view = { key, ids: new Set() }))
     view.ids.add(leaf.id)
   })
-  return views
+  return [...byKey.values()].sort((a, b) => (a.key === b.key ? 0 : !a.key ? -1 : !b.key ? 1 : a.key < b.key ? -1 : 1))
 }
 
 // The view on screen: the active pane's (the first view when none is).

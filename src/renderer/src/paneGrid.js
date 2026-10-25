@@ -1,16 +1,19 @@
-// Auto-tile: a tab's panes laid out as a regular grid (equal cells), whatever
-// the number of panes. Pure functions: App picks the room and the policy,
-// these pick the rows and build the tree.
+// The grid of a view's terminals and agents: where each pane sits on screen
+// (gridLayout: PaneGrid.vue draws every pane in one flat list, so a pane
+// never mounts again when the tree around it changes), and auto-tile (a new
+// pane lays the panes out again as a regular grid of equal cells, whatever
+// their number). Pure functions: App picks the room and the policy.
 //
-// A grid is a column of rows (a split 'col' whose children are rows, a split
-// 'row' of panes; a row with one pane is that pane). Panes fill it row by
-// row, in their order; the rows share the panes as evenly as they can (the
-// longer rows first) and each row's panes share its width equally, so a
+// A tiled grid is a column of rows (a split 'col' whose children are rows,
+// a split 'row' of panes; a row with one pane is that pane). Panes fill it
+// row by row, in their order; the rows share the panes as evenly as they can
+// (the longer rows first) and each row's panes share its width equally, so a
 // shorter row stretches its panes to the full width.
+import { isTabLeaf, viewKey } from './paneViews'
 
-// Cells a terminal can live in: a bit wider than tall (80-120 columns by
-// 25-40 lines), never under about 50 columns or 6 lines when avoidable.
-export const TARGET_ASPECT = 1.6
+// Cells as square as the room allows, a little wider than tall (a terminal's
+// lines are long), never under about 45 columns or 6 lines when avoidable.
+export const TARGET_ASPECT = 1.2
 export const MIN_CELL_WIDTH = 360
 export const MIN_CELL_HEIGHT = 160
 
@@ -61,18 +64,20 @@ export function gridShape(n, width, height) {
 }
 
 const near = (a, b) => Math.abs(a - b) <= 2
+// Child i's share of a split (an odd or missing size: an equal share). The
+// grid is drawn and its dividers dragged by these same shares (PaneGrid.vue).
+export const shareOf = (node, i) => {
+  const k = node.children.length
+  const s = Array.isArray(node.sizes) && node.sizes.length === k ? Number(node.sizes[i]) : NaN
+  return Number.isFinite(s) && s > 0 ? s : 100 / k
+}
 
 // Is a tree (of terminals and agents only) already a grid: a single row, a
 // single column, or a column of rows (a pane alone is a row of one), every
-// share equal? An older layout without the manualSizes flag tiles only then.
+// share equal? A grid with no mode saved (an older layout) tiles only then.
 export function isNearGrid(tree) {
-  if (!tree) return true
-  if (tree.type === 'leaf') return true
-  const equal = (node) => {
-    const k = node.children.length
-    const sizes = node.sizes && node.sizes.length === k ? node.sizes : null
-    return !!sizes && sizes.every((s) => near(s, 100 / k))
-  }
+  if (!tree || tree.type === 'leaf') return true
+  const equal = (node) => node.children.every((_, i) => near(shareOf(node, i), 100 / node.children.length))
   if (!equal(tree)) return false
   if (tree.children.every((c) => c.type === 'leaf')) return true
   if (tree.dir !== 'col') return false
@@ -80,11 +85,8 @@ export function isNearGrid(tree) {
 }
 
 // The tree for these panes (leaves, in order) as the rows `counts` say.
-// makeSplit(dir, children, sizes) makes a split; `old` (the tree it
-// replaces) lends its split ids where its shape allows, so the panes that
-// stay in the same row stay mounted (a pane is keyed by its place in the
-// tree: moving it to another split mounts it again).
-export function buildGridTree(leaves, counts, makeSplit, old = null) {
+// makeSplit(dir, children, sizes) makes a split.
+export function buildGridTree(leaves, counts, makeSplit) {
   if (!leaves.length) return null
   if (leaves.length === 1) return leaves[0]
   const rows = []
@@ -93,20 +95,12 @@ export function buildGridTree(leaves, counts, makeSplit, old = null) {
     rows.push(leaves.slice(at, at + k))
     at += k
   }
-  const reuse = (node, dir) => (node && node.type === 'split' && node.dir === dir ? node.id : null)
-  const split = (dir, children, oldNode) => {
-    const node = makeSplit(dir, children, children.map(() => 100 / children.length))
-    const id = reuse(oldNode, dir)
-    if (id) node.id = id
-    return node
-  }
-  if (rows.length === 1) return split('row', rows[0], old)
-  const oldRows = old && old.type === 'split' && old.dir === 'col' ? old.children : []
-  const rowNodes = rows.map((r, i) => (r.length === 1 ? r[0] : split('row', r, oldRows[i])))
-  return split('col', rowNodes, old)
+  const split = (dir, children) => makeSplit(dir, children, children.map(() => 100 / children.length))
+  if (rows.length === 1) return split('row', rows[0])
+  return split('col', rows.map((r) => (r.length === 1 ? r[0] : split('row', r))))
 }
 
-// The panes of a tree, left to right and top to bottom.
+// The panes of a tree `keep` accepts, left to right and top to bottom.
 export function treeLeaves(tree, keep = () => true) {
   const out = []
   const walk = (n) => {
@@ -119,27 +113,131 @@ export function treeLeaves(tree, keep = () => true) {
   return out
 }
 
-// The part of a workspace's tree that holds its grid: the tree itself, or,
-// when editor and browser panes were added beside it (paneViews.js
-// addTabLeaf: row [grid, tab]), the child the tabs were added to. null when
-// the grid is not one subtree with all the panes and no tab (then it is
-// built again whole). isTab(leaf): is it a tab pane?
-export function gridRootOf(tree, isTab) {
-  if (!tree) return null
-  const hasTab = (n) => (n.type === 'leaf' ? isTab(n) : n.children.some(hasTab))
-  let node = tree
-  while (node.type === 'split' && node.children.some((c) => c.type === 'leaf' && isTab(c))) {
-    const rest = node.children.filter((c) => !(c.type === 'leaf' && isTab(c)))
-    if (rest.length !== 1) return null
-    node = rest[0]
-  }
-  return hasTab(node) ? null : node
+// The tree without the panes whose id is in `ids`: a split left with one
+// child becomes that child, the others keep their share of the room (as
+// App.vue removeLeaf). Untouched branches are the same objects. null when
+// nothing is left.
+export function withoutLeaves(node, ids) {
+  if (!node) return null
+  if (node.type === 'leaf') return ids.has(node.id) ? null : node
+  const kept = []
+  node.children.forEach((c, i) => {
+    const k = withoutLeaves(c, ids)
+    if (k) kept.push({ node: k, size: shareOf(node, i) })
+  })
+  if (!kept.length) return null
+  if (kept.length === 1) return kept[0].node
+  if (kept.length === node.children.length && kept.every((k, i) => k.node === node.children[i])) return node
+  const total = kept.reduce((t, k) => t + k.size, 0)
+  return { ...node, children: kept.map((k) => k.node), sizes: kept.map((k) => (k.size / total) * 100) }
 }
 
-// The tree with `target` (a node of it) replaced by `next`: the splits on
-// the way keep their ids, so the panes beside it are not mounted again.
-export function swapNode(node, target, next) {
-  if (node === target) return next
-  if (!node || node.type === 'leaf') return node
-  return { ...node, children: node.children.map((c) => swapNode(c, target, next)) }
+// The tree with the pane `id` replaced by `next` (the splits on the way are
+// new objects, the rest the same).
+function replaceLeaf(node, id, next) {
+  if (!node) return node
+  if (node.type === 'leaf') return node.id === id ? next : node
+  const children = node.children.map((c) => replaceLeaf(c, id, next))
+  return children.some((c, i) => c !== node.children[i]) ? { ...node, children } : node
 }
+
+// The tree with the panes `inView` accepts (one view's terminals and agents)
+// laid out again as a grid for a room of room.w x room.h pixels, in their
+// order, `extra` (a new pane) last. The grid takes the place of its first
+// pane; the rest of the tree (another task copy's panes, the editor and
+// browser tabs: each view and tab is drawn on its own, paneViews.js) keeps
+// its shape and its place. A grid with no pane yet goes beside it all. The
+// panes keep running: only the tree changes (PaneGrid.vue keeps every pane
+// mounted).
+export function tileTree(tree, { inView, extra = null, room, makeSplit }) {
+  const own = treeLeaves(tree, inView)
+  const leaves = extra ? [...own, extra] : own
+  if (!leaves.length) return tree
+  const grid = buildGridTree(leaves, gridShape(leaves.length, room && room.w, room && room.h), makeSplit)
+  if (!own.length) return tree ? makeSplit('row', [tree, grid], [50, 50]) : grid
+  const others = new Set(own.slice(1).map((l) => l.id))
+  return replaceLeaf(withoutLeaves(tree, others), own[0].id, grid)
+}
+
+// A project's grid modes as its saved layout has them ({ [grid key]:
+// 'manual' | 'tiled' }), or the one flag a layout of the version before had
+// (manualSizes, for the project folder's grid). {} when none.
+export function savedGridModes(snap) {
+  const out = {}
+  const modes = snap && snap.gridModes
+  if (modes && typeof modes === 'object' && !Array.isArray(modes)) {
+    for (const [key, mode] of Object.entries(modes).slice(0, 64)) if (key.length <= 1024 && (mode === 'manual' || mode === 'tiled')) out[key] = mode
+  } else if (snap && typeof snap.manualSizes === 'boolean') out[''] = snap.manualSizes ? 'manual' : 'tiled'
+  return out
+}
+
+// What a project's saved layout keeps of its grid modes: only the grids that
+// still have panes (a task copy closed long ago leaves nothing), and, for a
+// version before this one (going back), manualSizes for the folder's grid.
+// -> fields to spread into the saved project ({} when none).
+export function gridModeFields(ws) {
+  const live = new Set(treeLeaves(ws && ws.tree, (l) => !isTabLeaf(l)).map((l) => viewKey(l, ws.cwd)))
+  const modes = {}
+  for (const [key, mode] of Object.entries((ws && ws.gridModes) || {})) if (live.has(key) && (mode === 'manual' || mode === 'tiled')) modes[key] = mode
+  if (!Object.keys(modes).length) return {}
+  return { gridModes: modes, ...(modes[''] ? { manualSizes: modes[''] === 'manual' } : {}) }
+}
+
+// --- Where each pane sits (PaneGrid.vue) --------------------------------------------
+// A length on screen: p percent of the room's side plus d divider
+// thicknesses (Settings > Appearance, --divider-thickness), so the room can
+// be any size and the dividers any thickness without measuring anything.
+// rect: { x, y, w, h }, each { p, d }.
+const len = (p, d) => ({ p, d })
+const plus = (a, b) => len(a.p + b.p, a.d + b.d)
+const times = (a, f) => len(a.p * f, a.d * f)
+
+// tree -> { tiles: [{ leaf, rect }], dividers: [{ key, split, index, dir, rect, splitRect }] }
+// in tree order. A split's children share its length minus its dividers by
+// their sizes (as flex-grow did); a divider sits between child i and i+1.
+export function gridLayout(tree) {
+  const tiles = []
+  const dividers = []
+  const walk = (node, rect, path = 's') => {
+    if (!node) return
+    if (node.type === 'leaf') {
+      tiles.push({ leaf: node, rect })
+      return
+    }
+    const n = node.children.length
+    if (!n) return
+    const row = node.dir === 'row'
+    const total = row ? rect.w : rect.h
+    const room = len(total.p, total.d - (n - 1))
+    const sum = node.children.reduce((s, _, i) => s + shareOf(node, i), 0)
+    let at = row ? rect.x : rect.y
+    node.children.forEach((child, i) => {
+      const size = times(room, shareOf(node, i) / sum)
+      walk(child, row ? { ...rect, x: at, w: size } : { ...rect, y: at, h: size }, `${path}.${i}`)
+      at = plus(at, size)
+      if (i < n - 1) {
+        const line = len(0, 1)
+        dividers.push({
+          key: `${node.id || path}:${i}`,
+          split: node,
+          index: i,
+          dir: node.dir,
+          rect: row ? { ...rect, x: at, w: line } : { ...rect, y: at, h: line },
+          splitRect: rect
+        })
+        at = plus(at, line)
+      }
+    })
+  }
+  walk(tree, { x: len(0, 0), y: len(0, 0), w: len(100, 0), h: len(100, 0) })
+  return { tiles, dividers }
+}
+
+// A length as CSS (calc only when it needs the divider thickness).
+export function cssLength({ p, d }) {
+  const pct = `${+p.toFixed(4)}%`
+  if (Math.abs(d) < 1e-6) return pct
+  return `calc(${pct} + ${+d.toFixed(4)} * var(--divider-thickness, 3px))` // i18n-ignore
+}
+// A length in pixels, for a room of `side` pixels and dividers `thick` wide.
+export const pxLength = ({ p, d }, side, thick) => (p / 100) * side + d * thick

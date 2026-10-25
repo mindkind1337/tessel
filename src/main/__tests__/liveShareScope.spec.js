@@ -130,6 +130,8 @@ describe('roots', () => {
     expect(rootInfo(join(root, 'src', 'a.js'))).toBe(null)
     expect(rootInfo(join(dir, 'gone'))).toBe(null)
     expect(rootInfo('C:\\')).toBe(null)
+    // A system folder that exists is never a root (shared/projectRootPolicy.js), by its real path.
+    expect(rootInfo(process.platform === 'win32' ? 'C:\\Windows' : '/etc')).toBe(null)
     expect(within('C:\\a\\b', 'C:\\A\\B\\c')).toBe(true)
     expect(within('C:\\a\\b', 'C:\\a\\bc')).toBe(false)
   })
