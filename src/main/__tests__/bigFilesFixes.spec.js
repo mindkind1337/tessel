@@ -182,6 +182,9 @@ describe('F9: the poll cache is bounded; the archive is read async and joins sta
   it('the parse of a team not read for a while is dropped (16 kept)', () => {
     const members = [{ id: 'pane-a', num: 1, title: 'Codex' }]
     for (let i = 1; i <= 20; i++) ensureTeamChannel({ dir, teamId: `team-${i}`, members })
+    // As left a few seconds ago (a file written a moment ago is not kept).
+    const old = new Date(Date.now() - 5000)
+    for (let i = 1; i <= 20; i++) fs.utimesSync(join(dir, '.tessel', 'team-channel', `team-${i}`, 'state.json'), old, old)
     for (let i = 1; i <= 20; i++) pollTeamChannel({ dir, teamId: `team-${i}` })
     const read = vi.spyOn(fs, 'readFileSync')
     pollTeamChannel({ dir, teamId: 'team-20' })
