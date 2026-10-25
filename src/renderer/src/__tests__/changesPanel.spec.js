@@ -281,6 +281,37 @@ describe('Source Control: stage, unstage, discard', () => {
     expect(calls.find(([n]) => n === 'discard')[1].paths).toEqual(['n.txt'])
   })
 
+  it('a list cut short says so, keeps the row actions and turns the "all" actions off', async () => {
+    // sourceControl.js STATUS_ENTRIES_MAX: the "all" actions would act on
+    // the changes listed only.
+    api({ status: () => status([entries[0], entries[2]], { truncated: true, totalEntries: 12345 }) })
+    make()
+    await flushPromises()
+    const notice = w.find('[data-test="sc-truncated"]')
+    expect(notice.exists()).toBe(true)
+    expect(notice.text()).toMatch(/the first 2 of 12.?345 are shown/)
+    expect(w.find('[data-section="unstaged"]').find('[data-test="sc-stage-all"]').exists()).toBe(false)
+    expect(w.find('[data-section="untracked"]').find('[data-test="sc-discard-all"]').exists()).toBe(false)
+    // One file still stages by itself.
+    await rowOf('a.js', 'unstaged').find('[data-test="sc-stage"]').trigger('click')
+    await flushPromises()
+    expect(calls.find(([n]) => n === 'stage')[1]).toEqual({ root: ROOT, paths: ['a.js'] })
+    // Stage All (the primary action) explains instead of staging part of it.
+    calls.length = 0
+    await w.find('[data-test="sc-commit-message"]').setValue('')
+    await w.find('[data-test="sc-primary"]').trigger('click')
+    await flushPromises()
+    expect(calls.some(([n]) => n === 'stage')).toBe(false)
+    expect(w.emitted('toast').at(-1)[0]).toContain('git add -A')
+  })
+
+  it('a list that fits shows no such notice', async () => {
+    api({ status: () => status(entries.slice(0, 3)) })
+    make()
+    await flushPromises()
+    expect(w.find('[data-test="sc-truncated"]').exists()).toBe(false)
+  })
+
   it('cancels discard when an agent finishes the task whose copy was selected', async () => {
     const task = { id: 't1', title: 'Fix it', wsId: 'ws1', column: 'review', worktree: { path: 'C:/copy', branch: 'agent/fix' } }
     setTasks([task])

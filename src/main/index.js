@@ -107,6 +107,7 @@ import { guardIpc, mainFrameSender } from './ipcGuard'
 import { cleanEnv } from './cleanEnv'
 import { createPtyClient } from './ptyClient'
 import { watchLoopLag } from './loopLag'
+import { watchWindowMemory } from './windowMemoryWatch'
 import { createIpcTiming } from './ipcTiming'
 import { paneOpenLine } from '../shared/paneTiming'
 import { createStatusMemo } from './agentStatusMemo'
@@ -389,6 +390,16 @@ const ipcTiming = createIpcTiming({ log: (msg) => log.warn('app', `main process:
 // This process's stalls in the log (loopLag.js), next to the terminal host's
 // in pty-host.log: both at once point at the whole PC, one alone at it.
 watchLoopLag({ log: (msg) => log.warn('app', `main process: ${msg}`), extra: () => ipcTiming.slowestRecent() })
+
+// The window's page growing out of bounds, in the log with the project it
+// shows (windowMemoryWatch.js; the name comes with each layout save).
+let shownProject = ''
+watchWindowMemory({
+  pid: () => (mainWindow && !mainWindow.isDestroyed() ? mainWindow.webContents.getOSProcessId() : 0),
+  metrics: () => app.getAppMetrics(),
+  log: (msg) => log.warn('window', msg),
+  context: () => (shownProject ? `project shown: ${shownProject}` : '')
+})
 
 // Every IPC channel below (and the register*(ipcMain) modules') answers only
 // the main window's own page, never a browser page or a frame (ipcGuard.js).
@@ -979,6 +990,11 @@ ipcMain.on('layout:save', (_evt, data) => {
   if (isLayout(data)) worktreeList.setRoots(localRepoRootsOfLayout(data))
   // ...and the projects whose folder an agent may be pre-trusted in.
   if (isLayout(data)) agentFolderTrust.setRoots(localRootsOfLayout(data))
+  // ...and the project it shows (named in the window's memory reports).
+  if (isLayout(data)) {
+    const w = Array.isArray(data.workspaces) ? data.workspaces[data.currentIndex] : null
+    shownProject = w && typeof w.name === 'string' ? w.name.slice(0, 80) : ''
+  }
   try {
     writeJsonSafe(layoutFile(), data, isLayout)
   } catch {

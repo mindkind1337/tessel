@@ -143,6 +143,11 @@ watch(
 onBeforeUnmount(() => clearTimeout(refreshingTimer))
 const entries = computed(() => (data.value && data.value.repo ? data.value.entries || [] : []))
 const top = computed(() => (data.value && data.value.top) || repoRoot.value)
+// More changes than the list holds (sourceControl.js STATUS_ENTRIES_MAX): the
+// list shows the first ones, and the "all" actions are off (they would act on
+// part of the changes only).
+const truncated = computed(() => !!(data.value && data.value.repo && data.value.truncated))
+const totalEntries = computed(() => (truncated.value && Number.isInteger(data.value.totalEntries) ? data.value.totalEntries : entries.value.length))
 
 // --- A Live Share host's project: what the host lets this guest do ----------------
 // Its git runs on the host. Stage, unstage, discard and commit only with the
@@ -240,11 +245,11 @@ const rowsBySection = computed(() => {
   for (const s of displaySections.value) out[s.id] = viewMode.value === 'tree' ? sectionTreeRows(s, collapsedDirs.value) : sectionListRows(s)
   return out
 })
-// A folder's stage / unstage / discard; hidden while filtering (the folder
-// shows only part of what it holds).
+// A folder's stage / unstage / discard; hidden while filtering or while the
+// list is cut short (the folder shows only part of what it holds).
 function dirActions(node) {
   const a = getSourceControlDirectoryActionPaths(node)
-  const f = !!normalizedFilter.value || readOnly.value
+  const f = !!normalizedFilter.value || readOnly.value || truncated.value
   return {
     canStage: !f && a.stagePaths.length > 0,
     canUnstage: !f && a.unstagePaths.length > 0,
@@ -497,6 +502,13 @@ const lineTotalAria = computed(() => {
   if (added > 0) return t('changes.lineTotal.added', '{{added}} lines added', { added })
   return t('changes.lineTotal.removed', '{{removed}} lines deleted', { removed })
 })
+const truncatedText = () =>
+  t('changes.truncated.notice', 'Too many changes to list them all: the first {{shown}} of {{total}} are shown. Stage, discard or delete all of them from a terminal.', {
+    shown: fmtCount(entries.value.length),
+    total: fmtCount(totalEntries.value)
+  })
+const truncatedActionText = () =>
+  t('changes.truncated.action', 'Not all changes are listed ({{total}}): stage them all from a terminal (git add -A).', { total: fmtCount(totalEntries.value) })
 const fmtCount = (n) => {
   try {
     return Number(n || 0).toLocaleString(intlLocale())
@@ -662,7 +674,7 @@ function sectionActions(section) {
   const stageAll = getStageAllPaths(items)
   const unstageAll = getUnstageAllPaths(items)
   const discardAll = section.area === 'staged' ? [] : getDiscardAllPaths(items, section.area)
-  const f = !!normalizedFilter.value || readOnly.value
+  const f = !!normalizedFilter.value || readOnly.value || truncated.value
   return {
     canStageAll: !f && stageAll.length > 0,
     canUnstageAll: !f && unstageAll.length > 0,
@@ -802,8 +814,11 @@ async function onPrimaryAction() {
   const a = primaryAction.value
   if (a.disabled) return
   if (a.kind === 'commit') await commit()
-  else if (a.kind === 'stage') await stagePaths(getStageAllPaths(entries.value))
-  else await remote(a.kind)
+  else if (a.kind === 'stage') {
+    // Only part of the changes is listed: staging "all" would stage that part.
+    if (truncated.value) emit('toast', truncatedActionText())
+    else await stagePaths(getStageAllPaths(entries.value))
+  } else await remote(a.kind)
 }
 const menuOpen = ref(false)
 const menuPos = ref({ top: 0, right: 0 })
@@ -1424,6 +1439,8 @@ function draftStore() {
             </template>
           </div>
         </Teleport>
+
+        <p v-if="truncated" class="sc-notice sc-truncated" role="status" data-test="sc-truncated">{{ truncatedText() }}</p>
 
         <!-- Changes / Staged Changes / Untracked Files (listing/uncommitted-sections.tsx) -->
         <div v-for="section in displaySections" :key="section.id" class="sc-section" :data-section="section.id">

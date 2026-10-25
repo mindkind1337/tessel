@@ -91,7 +91,9 @@ export function bumpRevision() {
   scmRevision.value++
 }
 
-// The count on the Changes tab: every row the tab lists.
+// The count on the Changes tab: every row the tab lists, or all the changes
+// when the list holds only the first ones (sourceControl.js STATUS_ENTRIES_MAX).
 export function changeCount(data) {
-  return data && data.repo && Array.isArray(data.entries) ? data.entries.length : 0
+  if (!data || !data.repo || !Array.isArray(data.entries)) return 0
+  return data.truncated && Number.isInteger(data.totalEntries) ? data.totalEntries : data.entries.length
 }

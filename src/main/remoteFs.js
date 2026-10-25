@@ -2070,6 +2070,10 @@ ${q.root}`, () => sparseInfoNow(q))
   // one ran out of time in the shared session (SHARED_GIT_MS).
   const scmBgFor = (bg, top) => (bg.low ? { ...bg, holdKey: top.real } : bg)
   const makeScmBackend = (bg = {}) => ({
+    // An untracked folder is one entry in the Changes tab too ("dir/", as in
+    // the Files panel): on a server's huge tree, every file of it ran out of
+    // time on the host and swamped the window (sourceControl.js createScm).
+    untrackedFiles: 'normal',
     async repoOf(root) {
       const loc = isRemotePath(root) && rootOf(root) ? locate(root, root) : null
       if (!loc) return { error: t('main.scm.invalidFolder', 'Invalid folder.') }

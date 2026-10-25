@@ -537,6 +537,12 @@
   color: var(--text-dim);
 }
 
+/* More changes than the list holds: the first ones are shown. */
+.sc-notice.sc-truncated {
+  margin: 8px 12px 0;
+  color: var(--text-dim);
+}
+
 .sc-primary:hover:not(:disabled),
 .sc-chevron:hover {
   background: var(--surface-3);

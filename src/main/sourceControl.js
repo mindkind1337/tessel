@@ -20,6 +20,11 @@ import { isForeignShare } from '../shared/commitRoots'
 const MAX_FILE = 10 * 1024 * 1024 // a version larger than this is not shown
 const MAX_MESSAGE = 20000
 const BULK = 100 // pathspecs per git call (Orca's BULK_CHUNK_SIZE)
+// The Changes tab lists at most this many changes (VS Code stops at 10000:
+// git.statusLimit). 2026-10-25, a FiveM server's resources folder: tens of
+// thousands of untracked files went to the window, which drew every row and
+// grew by 7 GB in a minute until it froze.
+export const STATUS_ENTRIES_MAX = 5000
 
 // git never waits for a password or an editor in the background.
 function gitEnv() {
@@ -125,6 +130,18 @@ export function parseStatusV2(out) {
     if (y !== '.') info.entries.push({ path, area: 'unstaged', status: LETTER[y] || 'modified' })
   }
   return info
+}
+
+// The entries the window gets: all of them up to `max`, else the changes to
+// tracked files (and conflicts) first, then untracked ones, in git's order.
+// -> { entries, total, truncated }
+export function capStatusEntries(entries, max = STATUS_ENTRIES_MAX) {
+  const list = Array.isArray(entries) ? entries : []
+  if (list.length <= max) return { entries: list, total: list.length, truncated: false }
+  const keep = new Set()
+  for (const e of list) if (e.area !== 'untracked' && keep.size < max) keep.add(e)
+  for (const e of list) if (e.area === 'untracked' && keep.size < max) keep.add(e)
+  return { entries: list.filter((e) => keep.has(e)), total: list.length, truncated: true }
 }
 
 // Orca's conflict kinds (shared/git-status-types.ts).
@@ -480,9 +497,14 @@ export function cleanGeneratedMessage(text) {
 // window gets), fullPath(top, rel), operation(top) (a merge, rebase or
 // cherry-pick stopped half way), untracked(top, rels) (their line counts),
 // working(top, rel) -> { exists, version }, prepareTrash / trash (untracked
-// files discarded), staged-diff support.
+// files discarded), staged-diff support, and untrackedFiles: 'normal' to list
+// an untracked folder once ("dir/") instead of every file in it (a remote
+// project: on a server's huge tree the full list ran out of time).
 export function createScm(b) {
   const { git, repoOf, relIn } = b
+  // Every status read here (the list, a discard, the branch compare) uses the
+  // same mode, so a folder listed as "dir/" is found again by its path.
+  const UNTRACKED = `--untracked-files=${b.untrackedFiles === 'normal' ? 'normal' : 'all'}`
   function relList(top, paths) {
     const list = Array.isArray(paths) ? paths : [paths]
     if (!list.length || list.length > 5000) return { error: t('main.scm.noFile', 'No file.') }
@@ -507,14 +529,17 @@ export function createScm(b) {
 
   // Everything the Changes tab shows about a folder's repository.
   // -> { ok, repo, top, branch, detached, upstream, hasUpstream, ahead, behind,
-  //      hasCommits, operation, remotes, entries } | { ok: true, repo: false } | { ok: false, error }
+  //      hasCommits, operation, remotes, entries, truncated?, totalEntries? }
+  //    | { ok: true, repo: false } | { ok: false, error }
+  // truncated: more than STATUS_ENTRIES_MAX changes; entries holds that many,
+  // totalEntries says how many there are.
   async function scmStatus({ root } = {}) {
     const r = await repoOf(root)
     if (r.notRepo) return { ok: true, repo: false }
     if (r.error) return { ok: false, error: r.error }
     const top = r.top
     const [st, un, stg, operation, remotes] = await Promise.all([
-      git(top, ['status', '--porcelain=v2', '--branch', '-z', '--untracked-files=all'], { timeout: 20000 }),
+      git(top, ['status', '--porcelain=v2', '--branch', '-z', UNTRACKED], { timeout: 20000 }),
       git(top, ['diff', '--numstat', '-z', '--no-ext-diff', '--no-textconv']),
       git(top, ['diff', '--cached', '--numstat', '-z', '--no-ext-diff', '--no-textconv']),
       b.operation(top),
@@ -522,12 +547,13 @@ export function createScm(b) {
     ])
     if (!st.ok) return { ok: false, error: gitMessage(st, t('main.scm.statusFailed', 'Git status failed.')) }
     const info = parseStatusV2(st.stdout)
+    const capped = capStatusEntries(info.entries)
     const counts = { unstaged: un.ok ? parseNumstatZ(un.stdout) : {}, staged: stg.ok ? parseNumstatZ(stg.stdout) : {} }
     const untracked = await b.untracked(
       top,
-      info.entries.filter((e) => e.area === 'untracked').map((e) => e.path)
+      capped.entries.filter((e) => e.area === 'untracked').map((e) => e.path)
     )
-    const entries = info.entries.map((e) => {
+    const entries = capped.entries.map((e) => {
       if (e.area === 'untracked') {
         const u = untracked.get(e.path)
         return u && typeof u.added === 'number' ? { ...e, added: u.added, removed: 0 } : e
@@ -549,7 +575,8 @@ export function createScm(b) {
       behind: info.behind,
       operation,
       remotes: remotes.ok ? remotes.stdout.split(/\r?\n/).map((s) => s.trim()).filter(Boolean) : [],
-      entries
+      entries,
+      ...(capped.truncated ? { truncated: true, totalEntries: capped.total } : {})
     }
   }
 
@@ -588,13 +615,15 @@ export function createScm(b) {
     if (r.error) return { ok: false, error: r.error }
     const l = relList(r.top, paths)
     if (l.error) return { ok: false, error: l.error }
-    const st = await git(r.top, ['status', '--porcelain=v2', '-z', '--untracked-files=all'])
+    const st = await git(r.top, ['status', '--porcelain=v2', '-z', UNTRACKED])
     if (!st.ok) return { ok: false, error: gitMessage(st, t('main.scm.statusFailed', 'Git status failed.')) }
     const entries = parseStatusV2(st.stdout).entries
     const tracked = []
     const untracked = []
     for (const rel of l.rels) {
-      const mine = entries.filter((e) => e.path === rel)
+      // A folder git lists once ("dir/": untracked, or holding its own
+      // repository) is asked for by its path, which comes without the "/".
+      const mine = entries.filter((e) => e.path === rel || e.path.replace(/\/+$/, '') === rel)
       if (mine.some((e) => e.conflict)) return { ok: false, error: t('main.scm.hasConflict', '{{path}} has a conflict: resolve it first.', { path: rel }) }
       if (mine.some((e) => e.area === 'untracked')) untracked.push(rel)
       else if (mine.some((e) => e.area === 'unstaged')) tracked.push(rel)
@@ -742,7 +771,7 @@ export function createScm(b) {
     if (!isCommitId(mergeBase)) return { ok: false, base, error: t('main.scm.compareUnavailable', 'Branch compare unavailable') }
     const [diff, st, up] = await Promise.all([
       git(top, ['diff', '-z', '--numstat', '-M', '--no-ext-diff', '--no-textconv', mergeBase, '--'], { timeout: BRANCH_TOTAL_TIMEOUT }),
-      git(top, ['status', '--porcelain=v2', '-z', '--untracked-files=all'], { timeout: 20000 }),
+      git(top, ['status', '--porcelain=v2', '-z', UNTRACKED], { timeout: 20000 }),
       git(top, ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}'])
     ])
     // The files committed on the branch (not on its base branch itself: there

@@ -166,6 +166,10 @@
       "title": "Aucune modification",
       "text": "Cet espace de travail est propre : tout est commité."
     },
+    "truncated": {
+      "notice": "Trop de modifications pour toutes les lister : les {{shown}} premières sur {{total}} sont affichées. Indexez, abandonnez ou supprimez-les toutes depuis un terminal.",
+      "action": "Les modifications ne sont pas toutes listées ({{total}}) : indexez-les toutes depuis un terminal (git add -A)."
+    },
     "discard": {
       "deleteTitle": "Supprimer « {{name}} » ?",
       "deleteText": "Ce fichier sera déplacé dans la Corbeille.",

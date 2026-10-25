@@ -106,13 +106,16 @@ describe("the Files panel's git status", () => {
     rfs.close()
   })
 
-  it('the Changes tab still lists every untracked file (--untracked-files=all)', async () => {
+  it('the Changes tab lists an untracked folder once too (--untracked-files=normal)', async () => {
+    // Every file of it ran out of time on the host and, when it did not,
+    // swamped the window (7 GB in a minute, sourceControlCap.spec.js).
     const { rfs, host } = setup()
-    host.answer = answers('# branch.oid (initial)\0# branch.head main\0? cache/a.bin\0? cache/b.bin\0')
+    host.answer = answers('# branch.oid (initial)\0# branch.head main\0? cache/\0? n.lua\0')
     const st = await rfs.scm.scmStatus({ root: ROOT })
     expect(st.ok).toBe(true)
-    expect(st.entries.map((e) => e.path)).toEqual(['cache/a.bin', 'cache/b.bin'])
-    expect(host.reqs.find(isStatus).args).toContain('--untracked-files=all')
+    expect(st.entries.map((e) => e.path)).toEqual(['cache/', 'n.lua'])
+    expect(host.reqs.find(isStatus).args).toContain('--untracked-files=normal')
+    expect(host.reqs.find(isStatus).args).not.toContain('--untracked-files=all')
     rfs.close()
   })
 })
