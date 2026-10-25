@@ -235,3 +235,16 @@ export function linkClickOpens(mouseTrackingMode, event) {
   if (!mouseTrackingMode || mouseTrackingMode === 'none') return true
   return !!(event && (event.ctrlKey || event.metaKey || event.shiftKey))
 }
+
+// "Always select with the mouse" drops a program's mouse requests, so a drag
+// always selects. A plain single click (no modifier, no drag, no selection
+// made, not on a link) still goes to a program that asked for clicks in the
+// SGR form, on the alternate screen: its buttons and "click here" work.
+// down / up: { col, row, button, detail, mods } of the mousedown / mouseup.
+export function clickPassesThrough({ alwaysSelect, programWantsClicks, down, up, selection, onLink }) {
+  if (!alwaysSelect || !programWantsClicks || selection || onLink || !down || !up) return false
+  if (down.button !== 0 || up.button !== 0 || down.mods || up.mods) return false
+  // detail: the click count (2 on a double click, which selects a word).
+  if (up.detail !== 1) return false
+  return down.col === up.col && down.row === up.row
+}

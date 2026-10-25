@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { detectDeviceLogin, columnOfIndex, mouseClickBytes, linkClickOpens } from '../deviceLogin'
+import { detectDeviceLogin, columnOfIndex, mouseClickBytes, linkClickOpens, clickPassesThrough } from '../deviceLogin'
 
 const pane = readFileSync(join(__dirname, '..', 'components', 'TerminalPane.vue'), 'utf8')
 // Grok Build 1.0.62's real screens (fixtures/grokDeviceLogin.json says how
@@ -138,6 +138,19 @@ describe('mouse helpers', () => {
     expect(linkClickOpens('vt200', { metaKey: true })).toBe(true)
     expect(linkClickOpens('drag', { shiftKey: true })).toBe(true)
   })
+  it('under Always select, only a plain single click on one cell reaches a program that asked', () => {
+    const p = { col: 10, row: 25, button: 0, detail: 1, mods: false }
+    const base = { alwaysSelect: true, programWantsClicks: true, down: p, up: p, selection: false, onLink: false }
+    expect(clickPassesThrough(base)).toBe(true)
+    expect(clickPassesThrough({ ...base, alwaysSelect: false })).toBe(false)
+    expect(clickPassesThrough({ ...base, programWantsClicks: false })).toBe(false)
+    expect(clickPassesThrough({ ...base, selection: true })).toBe(false)
+    expect(clickPassesThrough({ ...base, onLink: true })).toBe(false)
+    expect(clickPassesThrough({ ...base, up: { ...p, col: 11 } })).toBe(false)
+    expect(clickPassesThrough({ ...base, up: { ...p, detail: 2 } })).toBe(false)
+    expect(clickPassesThrough({ ...base, down: { ...p, mods: true } })).toBe(false)
+    expect(clickPassesThrough({ ...base, down: { ...p, button: 2 }, up: { ...p, button: 2 } })).toBe(false)
+  })
 })
 
 describe('TerminalPane sign-in banner and clicks', () => {
@@ -164,7 +177,25 @@ describe('TerminalPane sign-in banner and clicks', () => {
     expect(pane).toMatch(/const now = readSignIn\(\)\s+if \(!now \|\| !now\.showUrl \|\| !mouseClickable\(\)\)/)
     expect(pane).toContain("term.buffer.active.type === 'alternate'")
   })
-  it('French for the banner', () => {
+  it('a plain click passes through under Always select: never in Live Share, never with a link', () => {
+    const fn = pane.slice(pane.indexOf('function onPassUp('), pane.indexOf('function onPassUp(') + 800)
+    expect(fn).toContain("props.node.backend === 'liveshare' || props.node.liveShare")
+    expect(fn).toContain('programWantsClicks: mouseClickable()')
+    expect(fn).toContain('selection: term.hasSelection()')
+    expect(fn).toContain('onLink: performance.now() - linkClickAt < 250 || !!(term.element && term.element.querySelector(\'.xterm-cursor-pointer\'))')
+    expect(fn).toContain('window.shellApi.writePty(props.node.id, mouseClickBytes(up.col, up.row))')
+    expect(pane).toContain("hostEl.value.addEventListener('mouseup', onPassUp, { passive: true })")
+    // Set first in openLink, before the Live Share branch.
+    const open = pane.slice(pane.indexOf('function openLink(uri'), pane.indexOf('function openLink(uri') + 200)
+    expect(open.indexOf('linkClickAt = performance.now()')).toBeGreaterThan(0)
+    expect(open.indexOf('linkClickAt = performance.now()')).toBeLessThan(open.indexOf("backend === 'liveshare'"))
+  })
+  it('Settings > Terminal says what a click and a drag do, in English and French', () => {
+    const set = readFileSync(join(__dirname, '..', 'components', 'settings', 'SettingsTerminal.vue'), 'utf8')
+    expect(set).toContain('a single click still reaches them')
+    expect(set).toContain('settings.terminal.mouseProgramsHint')
+    const fr = JSON.parse(readFileSync(join(__dirname, '..', 'i18n', 'locales', 'fr', 'settings.json'), 'utf8'))
+    expect(JSON.stringify(fr)).toContain('un clic simple leur parvient toujours')
     const frPanes = JSON.parse(readFileSync(join(__dirname, '..', 'i18n', 'locales', 'fr', 'panes.json'), 'utf8'))
     expect(JSON.stringify(frPanes)).toContain('"showFirst"')
   })

@@ -19,7 +19,7 @@ import { terminalTheme } from '../themes'
 // Mouse-reporting modes (X10, normal, button, any-event, UTF-8, SGR, urxvt).
 const MOUSE_MODES = [9, 1000, 1002, 1003, 1005, 1006, 1015]
 import { registerPane, unregisterPane, getPane } from '../paneRegistry'
-import { detectDeviceLogin, columnOfIndex, mouseClickBytes, linkClickOpens } from '../deviceLogin'
+import { detectDeviceLogin, columnOfIndex, mouseClickBytes, linkClickOpens, clickPassesThrough } from '../deviceLogin'
 import {
   setAgentStatus,
   setAttention,
@@ -3017,7 +3017,8 @@ const signInDismissed = ref('')
 const signInShown = computed(() => !!signIn.value && signInDismissed.value !== signIn.value.key)
 const signInCanClick = ref(false)
 // Mouse modes the program asked for and has not reset (even when Always
-// select dropped them), for the sign-in banner's click.
+// select dropped them), for the sign-in banner's click and the clicks that
+// still reach it under Always select.
 const MOUSE_TRACKING = [9, 1000, 1002, 1003]
 const mouseAsked = new Set()
 function mouseClickable() {
@@ -3111,6 +3112,7 @@ function dismissSignIn() {
 // in the Live Share browser (App.vue openGuestUrl), never the router.
 // force: the sign-in banner's button (not a click in the terminal).
 function openLink(uri, event, force = false) {
+  linkClickAt = performance.now()
   if (props.node.backend === 'liveshare') {
     if (ctx.openGuestUrl) ctx.openGuestUrl(uri, { fromId: props.node.id, session: props.node.liveShare ? props.node.liveShare.session : null })
     return
@@ -3124,6 +3126,42 @@ function openLink(uri, event, force = false) {
   // With the mouse taken, Shift/Cmd/Ctrl only lets the click through: the default browser.
   if (ctx.openTarget) return ctx.openTarget(uri, { event: mouseTaken ? undefined : event })
   if (window.shellApi.openExternal) window.shellApi.openExternal(uri)
+}
+// "Always select with the mouse" (deviceLogin.js clickPassesThrough): a
+// drag selects, a plain single click still reaches a program that asked for
+// clicks (Grok's "click here", tmux's panes), written in the SGR form it
+// asked for, at the cell under the pointer. Never in a Live Share pane.
+let linkClickAt = 0
+let passDown = null
+function cellAtPointer(e) {
+  const screen = term && term.element && term.element.querySelector('.xterm-screen')
+  const cell = liveShareCell()
+  if (!screen || !cell) return null
+  const r = screen.getBoundingClientRect()
+  const col = Math.floor((e.clientX - r.left) / cell.w) + 1
+  const row = Math.floor((e.clientY - r.top) / cell.h) + 1
+  return col >= 1 && row >= 1 && col <= term.cols && row <= term.rows ? { col, row } : null
+}
+const pointerOf = (e) => ({ ...(cellAtPointer(e) || { col: 0, row: 0 }), button: e.button, detail: e.detail, mods: e.shiftKey || e.ctrlKey || e.altKey || e.metaKey })
+function onPassDown(e) {
+  passDown = settings.alwaysSelect ? pointerOf(e) : null
+}
+function onPassUp(e) {
+  const down = passDown
+  passDown = null
+  if (!down || !term || props.node.backend === 'liveshare' || props.node.liveShare || props.node.notConnected || exited.value) return
+  const up = pointerOf(e)
+  const pass = clickPassesThrough({
+    alwaysSelect: settings.alwaysSelect,
+    programWantsClicks: mouseClickable(),
+    down,
+    up,
+    selection: term.hasSelection(),
+    // A link opened by this click, or any link under the pointer (xterm's
+    // hand cursor: file paths, [Image #N]).
+    onLink: performance.now() - linkClickAt < 250 || !!(term.element && term.element.querySelector('.xterm-cursor-pointer'))
+  })
+  if (pass && up.col > 0) window.shellApi.writePty(props.node.id, mouseClickBytes(up.col, up.row))
 }
 // The real address of a link a program writes with a text of its own (OSC 8):
 // shown while the mouse is on it, so a link never hides where it goes.
@@ -3709,6 +3747,10 @@ onMounted(() => {
   }
   for (const ev of ['wheel', 'keydown', 'pointerdown', 'pointermove'])
     hostEl.value.addEventListener(ev, byHand, { passive: true, capture: true })
+  // A plain click for a program under Always select (onPassUp): its press
+  // seen on the way down, its release after xterm's links had their turn.
+  hostEl.value.addEventListener('mousedown', onPassDown, { passive: true, capture: true })
+  hostEl.value.addEventListener('mouseup', onPassUp, { passive: true })
   // A WebGL context lost: the normal renderer at once (the event does not
   // bubble: heard on the way down to the canvas).
   if (term.element) term.element.addEventListener('webglcontextlost', onWebglContextLost, true)

@@ -395,8 +395,8 @@ function resetScrollSpeed() {
         <label class="set-row">
           <div class="set-label">
             {{ t('settings.terminal.alwaysSelect', 'Always select with the mouse') }}
-            <span class="set-hint">{{ t('settings.terminal.alwaysSelectHint', 'Even in programs that use the mouse (htop), which then get no clicks. Else hold Shift.') }}</span>
-            <span class="set-hint">{{ t('settings.terminal.mouseProgramsHint', 'Programs that use the mouse (tmux, vim, Grok) get plain clicks; their links open with Shift+click or Cmd+click.') }}</span>
+            <span class="set-hint">{{ t('settings.terminal.alwaysSelectHint', 'Dragging selects even in programs that use the mouse (htop, tmux, Grok); a single click still reaches them. Else hold Shift to select.') }}</span>
+            <span class="set-hint">{{ t('settings.terminal.mouseProgramsHint', 'Off: those programs get every click, and their links open with Shift+click or Cmd+click.') }}</span>
           </div>
           <input v-model="settings.alwaysSelect" type="checkbox" class="set-switch" />
         </label>
