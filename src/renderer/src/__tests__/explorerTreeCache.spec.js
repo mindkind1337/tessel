@@ -6,6 +6,8 @@
 // a slow or failed git status leaves the tree and the last letters as they
 // are. An SSH project's open folders are also kept on disk (names only).
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { readFileSync } from 'fs'
+import { join } from 'path'
 import { mount, flushPromises } from '@vue/test-utils'
 import ExplorerPanel from '../components/ExplorerPanel.vue'
 import { saveTree, loadTree, forgetTree, forgetHostTrees, clearTreeCache, DISK_MAX_ENTRIES, DISK_MAX_BYTES } from '../explorerTreeCache'
@@ -159,6 +161,16 @@ describe('the git letters', () => {
     expect(row(P('a.txt')).classes()).toContain('git-M')
     expect(loadingShown()).toBe(false)
   })
+
+  it('an answer for the project shown before never sets this one\'s pace (time taken, failures)', () => {
+    const src = readFileSync(join(__dirname, '..', 'components', 'ExplorerPanel.vue'), 'utf8').replace(/\r\n/g, '\n')
+    const start = src.indexOf('async function loadStatus()')
+    const body = src.slice(start, src.indexOf('\n}\n', start))
+    const current = body.indexOf('if (!stillCurrent(revision, root)) return')
+    expect(current).toBeGreaterThan(0)
+    expect(body.indexOf('statusCost =')).toBeGreaterThan(current)
+    expect(body.indexOf('statusFails =')).toBeGreaterThan(current)
+  })
 })
 
 describe('kept on disk for an SSH project', () => {
@@ -197,6 +209,30 @@ describe('kept on disk for an SSH project', () => {
     const long = 'n'.repeat(400)
     const fat = Array.from({ length: Math.ceil(DISK_MAX_BYTES / 400) + 10 }, (_, i) => ({ name: `${long}${i}`, path: S(`${long}${i}`), dir: false }))
     saveTree(SSH, { nodes: { [SSH]: fat }, open: [] })
+    clearTreeCache()
+    expect(loadTree(SSH, {})).toBe(null)
+  })
+
+  it('the caps count bytes (UTF-8), not characters: names in another script are not let past them', () => {
+    saveTree(SSH, { nodes: { [SSH]: [{ name: 'small', path: S('small'), dir: false }] }, open: [] })
+    // 3 bytes per character: well under the cap in characters, over it in bytes.
+    const long = '日'.repeat(400)
+    const wide = Array.from({ length: 250 }, (_, i) => ({ name: `${long}${i}`, path: S(`${long}${i}`), dir: false }))
+    expect(JSON.stringify(wide.map((e) => [e.name, 0])).length).toBeLessThan(DISK_MAX_BYTES)
+    saveTree(SSH, { nodes: { [SSH]: wide }, open: [] })
+    clearTreeCache()
+    expect(loadTree(SSH, {})).toBe(null)
+  })
+
+  it('its list of copies could not be written: the copy goes too (never one the caps do not count)', () => {
+    const real = Storage.prototype.setItem
+    const spy = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(function (k, v) {
+      if (k === 'tessel.explorerTree.v2.index') throw new DOMException('full', 'QuotaExceededError')
+      return real.call(this, k, v)
+    })
+    saveTree(SSH, { nodes: { [SSH]: [{ name: 'x', path: S('x'), dir: false }] }, open: [] })
+    spy.mockRestore()
+    expect(Object.keys(localStorage).some((k) => k.startsWith('tessel.explorerTree.v2:'))).toBe(false)
     clearTreeCache()
     expect(loadTree(SSH, {})).toBe(null)
   })

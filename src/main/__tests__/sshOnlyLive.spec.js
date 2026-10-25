@@ -73,4 +73,45 @@ describe('an exec channel on a live connection only (onlyLive)', () => {
     term.stream.close()
     m.closeAll()
   }, 30000)
+
+  it('the idle lanes give way first, one at a time; a busy one only when no idle one is left', async () => {
+    dir = fs.mkdtempSync(join(os.tmpdir(), 'tessel-live-'))
+    const served = []
+    srv = await startSshServer({ auth: { password: PASSWORD, methods: ['password'] }, maxSessions: 3, onExec: (_c, s) => served.push(s) })
+    const m = createSshManager({ ask: async (_h, p) => (p.kind === 'hostkey' ? 'yes' : PASSWORD) })
+    const files = await m.open('h', spec(srv.port), 'exec', { command: 'exec /bin/sh' })
+    const idle = await m.open('h', spec(srv.port), 'exec', { command: 'exec /bin/sh', onlyLive: true })
+    const busy = await m.open('h', spec(srv.port), 'exec', { command: 'exec /bin/sh', onlyLive: true })
+    // A request on its way on one lane (remoteShell.js protocol), answered
+    // on the other: counted until its end marker comes back.
+    busy.stream.write('__t_q 1 4096 5 __t_gst x\n')
+    idle.stream.write('__t_q 2 4096 5 __t_gst x\n')
+    expect(busy.stream.tesselPending).toBe(1)
+    expect(idle.stream.tesselPending).toBe(1)
+    await new Promise((r) => setTimeout(r, 100))
+    const nonce = 'a'.repeat(32)
+    served[1].write(`out\n@@T ${nonce} 2 `)
+    await new Promise((r) => setTimeout(r, 50))
+    served[1].write('0\n@@T ' + nonce + ' 2 z\n')
+    await new Promise((r) => setTimeout(r, 150))
+    expect(idle.stream.tesselPending).toBe(0)
+    expect(busy.stream.tesselPending).toBe(1)
+    const idleGave = vi.spyOn(idle.stream, 'close')
+    const busyGave = vi.spyOn(busy.stream, 'close')
+    // (ssh2 itself calls close again once the server answers it: counted
+    // as called or not, not how many times.)
+    const t1 = await m.open('h', spec(srv.port), 'exec', { command: 'exec /bin/sh' })
+    expect(idleGave).toHaveBeenCalled()
+    expect(busyGave).not.toHaveBeenCalled()
+    expect(busy.stream.tesselClosed).toBeFalsy()
+    // No idle lane left: the busy one gives way (its request runs again in
+    // the Files session: remoteFs.js).
+    const t2 = await m.open('h', spec(srv.port), 'exec', { command: 'exec /bin/sh' })
+    expect(busyGave).toHaveBeenCalled()
+    expect(srv.events.connections).toBe(1)
+    files.stream.close()
+    t1.stream.close()
+    t2.stream.close()
+    m.closeAll()
+  }, 30000)
 })

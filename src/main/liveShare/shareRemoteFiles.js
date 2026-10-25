@@ -137,6 +137,8 @@ export function createRemoteShareFiles({ remote, log = null, now = () => Date.no
     // No guests' lane to the server now (the host's own session is never
     // used for guests): as if not connected.
     if (code === 'no-lane') return 'host-offline'
+    // git on the server too old to tell what it ignores: nothing is given.
+    if (code === 'old-git') return 'unavailable'
     if (code === 'busy') return 'busy'
     if (code === 'missing' || code === 'refused') return missing
     if (code === 'too-large' || code === 'not-file' || code === 'is-folder' || code === 'conflict') return code
@@ -163,7 +165,9 @@ export function createRemoteShareFiles({ remote, log = null, now = () => Date.no
     const promise = Promise.resolve(svc.guest.info({ root: st.root })).then(
       (r) => {
         if (!r || !r.ok) return { code: codeOf(svc, st, r && r.code) }
-        if (remoteRootTooBroad(r.real) || inGitFolder(r.real) || remoteRootTooBroadForHome(r.real, r.home)) return { code: 'remote-project' }
+        // $HOME as set and its real path: either one counts.
+        const homes = Array.isArray(r.homes) && r.homes.length ? r.homes : [r.home]
+        if (remoteRootTooBroad(r.real) || inGitFolder(r.real) || r.rootIsGitDir || homes.some((h) => remoteRootTooBroadForHome(r.real, h))) return { code: 'remote-project' }
         return { hooks: Array.isArray(r.hooks) ? r.hooks : null, gitDirs: Array.isArray(r.gitDirs) ? r.gitDirs : [] }
       },
       () => ({ code: 'failed' })

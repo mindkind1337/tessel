@@ -2121,6 +2121,7 @@ registerRemoteHosts({
   service: remoteHosts,
   // (Disconnect or a removed host: the Files session and its lanes end.)
   killPane: (id) => (isRemoteFsPane(id) ? remoteFs.closePane(id, 'disconnect') : host.send('kill', { id })),
+  closeFiles: (hostId, reason) => remoteFs.closeHost(hostId, reason),
   ssh: sshRemote
 })
 // Its passwords, passphrases and host key questions come through OpenSSH's

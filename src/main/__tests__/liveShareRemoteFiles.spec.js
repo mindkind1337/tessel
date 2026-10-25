@@ -125,7 +125,12 @@ function fakeRemote(tree) {
         if (ignore && state.ignoreFails) return { ok: false, code: 'unknown' }
         return { ok: true, good: new Set(rels.filter((r) => !check(r, ignore))) }
       }),
-    info: () => run('info', () => ({ ok: true, real: state.real, hooks: state.hooks, home: state.home, gitDirs: state.gitDirs })),
+    info: () =>
+      run('info', () =>
+        state.oldGit
+          ? { ok: false, code: 'old-git' }
+          : { ok: true, real: state.real, hooks: state.hooks, home: state.home, ...(state.homes ? { homes: state.homes } : {}), rootIsGitDir: !!state.rootIsGitDir, gitDirs: state.gitDirs }
+      ),
     searchNames: ({ query }) =>
       run('names', () => ({
         ok: true,
@@ -343,6 +348,32 @@ describe('the project and its arguments', () => {
     remote.state.real = '/opt/fivem/server'
     remote.state.home = '/opt/fivem'
     expect((await ask('fs.list', {})).ok).toBe(true)
+  })
+
+  it('$HOME compared as set and by its real path (a home reached through a link)', async () => {
+    // $HOME=/home/fivem, a link to /data/fivem: the project's real path is under the real one.
+    for (const real of ['/data/fivem', '/data/fivem/.ssh', '/data']) {
+      rig.reset()
+      remote.state.real = real
+      remote.state.home = '/home/fivem'
+      remote.state.homes = ['/home/fivem', '/data/fivem']
+      expect((await ask('fs.list', {})).code, real).toBe('remote-project')
+    }
+    rig.reset()
+    remote.state.real = '/data/fivem/server'
+    expect((await ask('fs.list', {})).ok).toBe(true)
+  })
+
+  it('a project that is a repository\'s own folder (a bare repository) shares nothing', async () => {
+    remote.state.rootIsGitDir = true
+    expect((await ask('fs.list', {})).code).toBe('remote-project')
+    expect((await ask('fs.read', { path: 'a.txt' })).code).toBe('remote-project')
+  })
+
+  it('a host whose git is too old to tell what it ignores: nothing is given (a clear code, not a guess)', async () => {
+    remote.state.oldGit = true
+    expect((await ask('fs.list', {})).code).toBe('unavailable')
+    expect(LSHARE_CODES).toContain('unavailable')
   })
 
   it('the repository\'s own folder under another name (.bare, a separate git dir) is hidden like .git', async () => {

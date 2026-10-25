@@ -98,13 +98,23 @@ function readIndex() {
     return []
   }
 }
+// -> whether it was written.
 function writeIndex(list) {
   const s = storage()
-  if (!s) return
+  if (!s) return false
   try {
     s.setItem(DISK_INDEX, JSON.stringify(list))
+    return true
   } catch {
-    /* refused: the entries stay findable by their key */
+    return false
+  }
+}
+// A copy's size in bytes (UTF-8, as the caps say), not in characters.
+const bytesOf = (text) => {
+  try {
+    return new TextEncoder().encode(text).length
+  } catch {
+    return text.length * 3
   }
 }
 function dropDisk(keys) {
@@ -159,10 +169,11 @@ function saveDisk(root, snap) {
   }
   // Too big for one project: not kept on disk (memory only), and an older
   // copy goes (it would come back stale after a restart).
-  if (text.length > DISK_MAX_BYTES) return dropDisk([k])
+  const bytes = bytesOf(text)
+  if (bytes > DISK_MAX_BYTES) return dropDisk([k])
   // The latest last; the oldest go past DISK_PROJECTS or DISK_TOTAL_BYTES.
   let index = readIndex().filter((x) => x.k !== k)
-  const over = () => index.length >= DISK_PROJECTS || index.reduce((n, x) => n + x.bytes, 0) + text.length > DISK_TOTAL_BYTES
+  const over = () => index.length >= DISK_PROJECTS || index.reduce((n, x) => n + x.bytes, 0) + bytes > DISK_TOTAL_BYTES
   while (index.length && over()) dropDisk([index.shift().k])
   // Full (another user of the storage): the oldest of ours go, then it is
   // tried again; never more than ours.
@@ -175,8 +186,16 @@ function saveDisk(root, snap) {
       dropDisk([index.shift().k])
     }
   }
-  index.push({ k, bytes: text.length })
-  writeIndex(index)
+  index.push({ k, bytes })
+  // The index could not be written: the copy goes too (never a copy the
+  // caps do not count).
+  if (!writeIndex(index)) {
+    try {
+      s.removeItem(DISK_PREFIX + k)
+    } catch {
+      /* refused */
+    }
+  }
 }
 
 function loadDisk(root) {

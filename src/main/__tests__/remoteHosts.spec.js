@@ -315,4 +315,22 @@ describe('IPC', () => {
     expect(killed).toEqual(['pane-9'])
     expect((await handlers['remoteHosts:add'](null, { target: { host: '-x' } })).ok).toBe(false)
   })
+
+  it('Disconnect and Remove end the host\'s Files session and its lanes themselves (even with no pane open)', async () => {
+    const handlers = {}
+    const ipcMain = { handle: (ch, fn) => (handlers[ch] = fn) }
+    const closed = []
+    const order = []
+    const s = service()
+    const ssh = { disconnect: (id) => order.push(`ssh ${id}`) }
+    registerRemoteHosts({ ipcMain, service: s, killPane: () => {}, ssh, closeFiles: (id, reason) => (closed.push([id, reason]), order.push(`files ${id}`)) })
+    const added = await handlers['remoteHosts:add'](null, { target: { host: 'srv' } })
+    const id = added.target.id
+    expect(await handlers['remoteHosts:disconnect'](null, { id })).toEqual({ ok: true, closed: 0 })
+    expect(closed).toEqual([[id, 'disconnect']])
+    await handlers['remoteHosts:remove'](null, { id })
+    expect(closed).toEqual([[id, 'disconnect'], [id, 'removed']])
+    // Before the connections close (the lanes end as asked, not as broken).
+    expect(order).toEqual([`files ${id}`, `ssh ${id}`, `files ${id}`, `ssh ${id}`])
+  })
 })

@@ -326,11 +326,13 @@ async function loadStatus() {
   if (!api() || !props.root) return
   const revision = viewRevision, root = props.root, request = ++statusRequest
   const res = await api().status({ root, ignored: true, background: true }).catch(() => null)
+  // (An answer for a project no longer shown says nothing of this one.)
+  if (!stillCurrent(revision, root)) return
   if (res && Number.isFinite(res.ms)) statusCost = res.ms
   // One that failed (ran out of time on a huge repository): the next waits
   // twice as long each time, not a new one every minute.
   statusFails = res && res.ok ? 0 : Math.min(statusFails + 1, 6)
-  if (!stillCurrent(revision, root) || request !== statusRequest) return
+  if (request !== statusRequest) return
   if (res && !res.ok && stateOfAnswer(res) === 'no-access') noteAnswer(res)
   if (!res || !res.ok) return
   const out = {}

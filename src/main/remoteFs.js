@@ -115,6 +115,12 @@ export const LANES = Object.freeze({
 })
 const LANE_READY_MS = 15_000
 export const LANE_RETRY_MS = 45_000
+// The pane lane's requests that may run a second time when their channel
+// went away under them: reads, the shim install (written by a rename, then
+// its idempotent `install`), an account folder made whole (never a new one,
+// never a removal or a sign-out).
+const LANE_RERUN = new Set(['__t_ragent', '__t_agents', '__t_tread', '__t_sread', '__t_accts', '__t_acctdiag', '__t_acctplan', '__t_acctpane'])
+export const laneRerunSafe = (fn, args = []) => LANE_RERUN.has(fn) || (fn === '__t_acctmk' && args[2] !== 'new')
 // What ends the lanes too (else only the Files session ends).
 const LANE_ENDS = new Set(['disconnect', 'removed', 'shutdown'])
 // A guest's requests, bounded on the host (its watchdog ends them).
@@ -123,7 +129,8 @@ export const GUEST_MS = Object.freeze({ list: 8000, stat: 5000, read: 10_000, wr
 // repositories, what git ignores).
 export const GUEST_CHECK_MAX = 2000
 // The guest functions' exit codes -> a guest answer's code.
-const GUEST_RC = { 90: 'refused', 91: 'missing', 92: 'not-file', 93: 'too-large', 95: 'conflict', 96: 'is-folder', 97: 'unknown', 124: 'busy' }
+// 87: git on the host is too old to tell what it ignores (check-ignore --no-index).
+const GUEST_RC = { 87: 'old-git', 90: 'refused', 91: 'missing', 92: 'not-file', 93: 'too-large', 95: 'conflict', 96: 'is-folder', 97: 'unknown', 124: 'busy' }
 // A slow / busy line about the same function on the same lane, at most this often.
 const SLOW_LOG_EVERY_MS = 30_000
 
@@ -859,6 +866,14 @@ export function createRemoteFs({
       // because of a busy lane).
       if (res && ((res.laneFailed && (lane === 'pane' || lane === 'bg')) || (lane === 'pane' && res.code === 'busy')))
         return callOnce(hostId, fn, args, { ...inSession, ...(lane === 'pane' ? { first: true } : {}) })
+      // The lane's channel went away under its request (it gave its slot to
+      // a terminal, the connection dropped): run again in the Files session
+      // when that is safe (background reads; the pane's reads and installs
+      // that may run twice: LANE_RERUN). A guest's request is never run
+      // again by itself: it gets a "busy, try again" answer.
+      const dropped = res && res.error && !res.laneFailed && (res.code === 'closed' || res.code === 'ssh')
+      if (dropped && (lane === 'bg' || (lane === 'pane' && laneRerunSafe(fn, args))))
+        return callOnce(hostId, fn, args, { ...inSession, ...(lane === 'pane' ? { first: true } : {}) })
       // A guest on a host with the system ssh: in its open session, behind the
       // host's own requests, as before; never a new connection or a sign-in.
       if (res && res.laneFailed && lane === 'guest' && res.code === 'system') {
@@ -1401,6 +1416,7 @@ ${q.root}`, () => sparseInfoNow(q))
     for (let i = at + 1; i < records.length; i++) {
       const r = records[i]
       if (r === '/@@I e') return { ok: true, ignored }
+      if (r === '/@@I o') return { ok: false, old: true }
       const p = r.startsWith('./') ? r.slice(2) : r
       if (!asked.has(p)) return { ok: false }
       ignored.add(p)
@@ -1453,7 +1469,7 @@ ${q.root}`, () => sparseInfoNow(q))
       let ignored = null
       if (ignore) {
         const part = ignoreSection(sec.recs, at, sent)
-        if (!part.ok) return results.push({ rel, ok: false, code: 'unknown' })
+        if (!part.ok) return results.push({ rel, ok: false, code: part.old ? 'old-git' : 'unknown' })
         if (rel && part.ignored.has(rel)) return results.push({ rel, ok: false, code: 'missing' })
         ignored = new Set([...part.ignored].map((p) => (rel ? p.slice(rel.length + 1) : p)))
       }
@@ -1528,7 +1544,7 @@ ${q.root}`, () => sparseInfoNow(q))
     const passed = recs.slice(0, end).filter((r) => asked.has(r))
     if (!ignore) return { ok: true, good: new Set(passed) }
     const part = ignoreSection(recs, end + 1, new Set(passed))
-    if (!part.ok) return { ok: false, code: 'unknown' }
+    if (!part.ok) return { ok: false, code: part.old ? 'old-git' : 'unknown' }
     return { ok: true, good: new Set(passed.filter((r) => !part.ignored.has(r))) }
   }
 
@@ -1552,16 +1568,27 @@ ${q.root}`, () => sparseInfoNow(q))
     if (lines[lines.length - 1] === '') lines.pop()
     const real = lines[0] && lines[0].startsWith('R /') ? lines[0].slice(2) : null
     if (!real || CONTROL.test(real)) return guestFail(res.rc === 0 ? { rc: 98 } : res)
-    const homeLine = lines[1] && lines[1].startsWith('M ') ? lines[1].slice(2) : null
-    const home = homeLine && homeLine.startsWith('/') && !CONTROL.test(homeLine) ? homeLine.replace(/(.)\/+$/, '$1') : null
-    const rest = lines.slice(homeLine === null ? 1 : 2)
+    // $HOME as set (M) and its real path (P); the repository's own folders
+    // (G, C); the rest says where its hooks run.
+    const okPath = (p) => p.startsWith('/') && !CONTROL.test(p)
+    const homes = []
     const gitDirs = []
-    for (const l of rest) {
-      if (!/^[GC] \//.test(l)) continue
-      const rel = relativeTo(real, l.slice(2))
-      if (rel !== null && rel && !CONTROL.test(rel)) gitDirs.push(rel.toLowerCase())
+    let rootIsGitDir = false
+    const rest = []
+    for (const l of lines.slice(1)) {
+      const v = l.slice(2)
+      if (/^[MP] /.test(l)) {
+        if (okPath(v)) homes.push(v.replace(/(.)\/+$/, '$1'))
+      } else if (/^[GC] /.test(l)) {
+        if (!okPath(v)) continue
+        const rel = relativeTo(real, v)
+        // The project folder is itself a repository's folder (a bare one),
+        // or inside one: nothing of it is shared.
+        if (rel === '' || relativeTo(v, real) !== null) rootIsGitDir = true
+        else if (rel !== null && !CONTROL.test(rel)) gitDirs.push(rel.toLowerCase())
+      } else rest.push(l)
     }
-    return { ok: true, real, home, hooks: res.rc === 0 ? hooksFrom(real, rest.filter((l) => !/^[GC] /.test(l))) : null, gitDirs: [...new Set(gitDirs)] }
+    return { ok: true, real, home: homes[0] || null, homes: [...new Set(homes)], rootIsGitDir, hooks: res.rc === 0 ? hooksFrom(real, rest) : null, gitDirs: [...new Set(gitDirs)] }
   }
   // __t_ghk's lines after the real root and $HOME -> [rels] | null (cannot be told).
   function hooksFrom(real, lines) {
@@ -1644,9 +1671,36 @@ ${q.root}`, () => sparseInfoNow(q))
     const text = res.out.toString('utf8')
     const nl = text.indexOf('\n')
     const mode = nl < 0 ? '' : text.slice(0, nl)
-    if (mode !== 'G' && mode !== 'P') return { ok: false, code: 'failed' }
-    const found = mode === 'G' ? grepRecords(text.slice(nl + 1), true, max, q.toLowerCase()) : nulGrepRecords(text.slice(nl + 1), max, q.toLowerCase())
+    if (mode !== 'G' && mode !== 'P' && mode !== 'L') return { ok: false, code: 'failed' }
+    const body = text.slice(nl + 1)
+    const found = mode === 'G' ? grepRecords(body, true, max, q.toLowerCase()) : mode === 'P' ? nulGrepRecords(body, max, q.toLowerCase()) : fileGrepRecords(body, max, q.toLowerCase())
     return { ok: true, results: found.results, truncated: cut || found.truncated }
+  }
+  // A grep without --null (BusyBox): each file on a "/@@F ./<path>" line of
+  // its own, then its "<line>:<text>" lines: a name is never taken from a
+  // matched line. -> { results, truncated }
+  function fileGrepRecords(out, max, lower) {
+    const results = []
+    let truncated = false
+    let rel = null
+    for (const rec of out.split('\n')) {
+      if (rec.startsWith('/@@F ')) {
+        const p = rec.slice(5)
+        rel = p.startsWith('./') ? cleanRel(p.slice(2)) : null
+        if (rel && rel.includes('\\')) rel = null
+        continue
+      }
+      const m = rel && /^(\d+):(.*)$/s.exec(rec)
+      if (!m) continue
+      const line = Number(m[1])
+      if (!Number.isInteger(line) || line < 1) continue
+      if (results.length >= max) {
+        truncated = true
+        break
+      }
+      results.push({ rel, line, text: clip(m[2], lower) })
+    }
+    return { results, truncated }
   }
   // grep --null's lines ("./<path>" NUL "<line>:<text>"), read strictly: a
   // file name is never guessed from a ":" (a line whose text looks like one
