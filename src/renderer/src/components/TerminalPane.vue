@@ -3099,7 +3099,7 @@ function signInPage() {
   if (!s || !s.page) return null
   try {
     const host = new URL(s.page).host
-    const head = `https://${host}`
+    const head = `https://${host}` // i18n-ignore
     return { host, rest: s.page.startsWith(head) ? s.page.slice(head.length) : '' }
   } catch {
     return null
