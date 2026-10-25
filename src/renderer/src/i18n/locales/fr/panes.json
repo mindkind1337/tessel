@@ -425,6 +425,10 @@
       "quietFor": "silencieux depuis {{time}}"
     },
     "launch": {
+      "auto": "Auto",
+      "autoTitle": "Dans la grille avec les autres panneaux (Paramètres > Terminal)",
+      "opensGrid": "Rejoint la grille : les panneaux sont réorganisés",
+      "opensLargest": "Divise le plus grand panneau (disposition manuelle)",
       "left": "Gauche",
       "splitLeft": "Diviser vers la gauche",
       "right": "Droite",

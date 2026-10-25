@@ -72,4 +72,31 @@ describe('on an SSH project', () => {
     expect(w.emitted('launch')).toEqual([[{ kind: 'install', id: 'codex' }]])
     w.unmount()
   })
+
+  it('Auto (tile new panes) comes first and is the default; a side picked is sent for that pane and kept', async () => {
+    const shells = [{ id: 'pwsh', name: 'PowerShell' }]
+    const w = mount(LaunchMenu, { props: { shells, agents: [], autoPlace: 'grid', placement: 'right', targetTitle: 'Ada' }, attachTo: document.body })
+    const seg = () => w.findAll('.launch-seg-btn').map((b) => [b.attributes('data-test'), b.classes().includes('on')])
+    expect(seg()).toEqual([['launch-place-auto', true], ['launch-place-left', false], ['launch-place-right', false], ['launch-place-down', false]])
+    expect(w.find('.launch-where-text').text()).toBe('Joins the grid: the panes are tiled again, the new one last')
+    await w.findAll('.launch-item')[0].trigger('click')
+    expect(w.emitted('launch')[0]).toEqual([{ kind: 'shell', id: 'pwsh' }])
+    await w.find('[data-test="launch-place-down"]').trigger('click')
+    expect(w.emitted('placement')).toEqual([['down']])
+    expect(w.find('.launch-where-text').text()).toBe('Opens below Ada')
+    await w.findAll('.launch-item')[0].trigger('click')
+    expect(w.emitted('launch')[1]).toEqual([{ kind: 'shell', id: 'pwsh', side: 'down' }])
+    w.unmount()
+  })
+
+  it('a grid arranged by hand: Auto splits the pane with the most room; without auto-tile, no Auto', () => {
+    const hand = mount(LaunchMenu, { props: { shells: [], agents: [], autoPlace: 'largest', targetTitle: 'Ada' } })
+    expect(hand.find('.launch-where-text').text()).toBe('Splits the pane with the most room (laid out by hand)')
+    hand.unmount()
+    const off = mount(LaunchMenu, { props: { shells: [], agents: [], placement: 'left', targetTitle: 'Ada' } })
+    expect(off.find('[data-test="launch-place-auto"]').exists()).toBe(false)
+    expect(off.find('.launch-place-left, [data-test="launch-place-left"]').classes()).toContain('on')
+    expect(off.find('.launch-where-text').text()).toBe('Opens to the left of Ada')
+    off.unmount()
+  })
 })

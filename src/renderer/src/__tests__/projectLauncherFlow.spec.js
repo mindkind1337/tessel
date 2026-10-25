@@ -13,6 +13,7 @@ import * as launcher from '../projectLauncher'
 import { viewKey, leafViewPath } from '../paneViews'
 import { validHostAccount, hostAccountChoice, defaultHostAccount } from '../hostAccounts'
 import { prefetchAttaches, terminalLeafIds } from '../restoreAttach'
+import { savedGridModes } from '../paneGrid'
 
 // App.vue's Live Share helper (liveShareWindow.js): nothing shared or joined.
 const noLiveShare = { isGuestWs: () => false, isGuestLeaf: () => false, state: { host: { state: 'off', guests: [] }, guest: { state: 'off' } } }
@@ -305,6 +306,7 @@ describe('a restored layout', () => {
       nextWorkspaceName: () => 'Workspace',
       savedRemote: (r) => (r ? { ...r } : null),
       savedGroup: () => null,
+      savedGridModes,
       deserializeNode: vi.fn(deserialize),
       createLeaf: vi.fn(async () => ({ type: 'leaf', id: 'pane-fresh' })),
       selectedShell: ref('powershell'),

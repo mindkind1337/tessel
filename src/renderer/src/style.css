@@ -451,24 +451,29 @@ body.popup-open .toolbar {
   overflow: hidden;
 }
 
-.split {
-  display: flex;
-  width: 100%;
-  height: 100%;
-}
-
-.split.row {
-  flex-direction: row;
-}
-
-.split.col {
-  flex-direction: column;
-}
-
-.split > .node {
-  min-width: 60px;
-  min-height: 50px;
+/* A view's grid (PaneGrid.vue): each pane and each divider placed where its
+   split puts it, in one flat list (a pane never mounts again when the tree
+   changes around it). */
+.pane-grid {
+  position: absolute;
+  inset: 0;
   overflow: hidden;
+}
+
+.pane-grid > .pane-tile {
+  position: absolute;
+  overflow: hidden;
+}
+
+.pane-grid > .divider {
+  position: absolute;
+}
+
+/* A maximized pane fills the whole room: its tile takes it. */
+.pane-grid > .pane-tile:has(> .pane.maximized) {
+  inset: 0 !important;
+  width: auto !important;
+  height: auto !important;
 }
 
 /* Thin dividers with a wider invisible grab area. */

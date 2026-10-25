@@ -3,10 +3,10 @@ export default { name: 'SplitNode' }
 </script>
 
 <script setup>
-import { ref } from 'vue'
-import { t } from '../i18n'
-import { trackPointerDrag } from '../browser/webviewPassthrough'
-import { writeViewSizes } from '../paneViews'
+// One pane of the tree: a code editor, a browser page, a chat agent, a Live
+// Share host's page or chat, or a real terminal. The grid places the panes
+// and draws the dividers (PaneGrid.vue); an editor or browser tab is one of
+// these alone in its room.
 import TerminalPane from './TerminalPane.vue'
 import EditorPane from './EditorPane.vue'
 import BrowserPane from './BrowserPane.vue'
@@ -14,130 +14,18 @@ import ChatPane from './chat/ChatPane.vue'
 import LiveShareChatPane from './LiveShareChatPane.vue'
 import LiveSharePageView from './LiveSharePageView.vue'
 
-const props = defineProps({
+defineProps({
   node: { type: Object, required: true }
 })
-
-const containerEl = ref(null)
-const dragIndex = ref(-1)
-const MIN_PANE_WIDTH = 325
-const MIN_PANE_HEIGHT = 156
-let layoutFrame = 0
-
-function notifyLayoutChange() {
-  if (layoutFrame) cancelAnimationFrame(layoutFrame)
-  layoutFrame = requestAnimationFrame(() => {
-    layoutFrame = 0
-    window.dispatchEvent(new Event('terminal-layout-change'))
-  })
-}
-
-// The user resized the panes on both sides of divider `i` (an agent's
-// terminal then stays open, App.vue).
-function userResized(i) {
-  const ids = []
-  const walk = (n) => (n.type === 'leaf' ? ids.push(n.id) : (n.children || []).forEach(walk))
-  for (const c of props.node.children.slice(i, i + 2)) walk(c)
-  window.dispatchEvent(new CustomEvent('tessel-panes-resized', { detail: { ids } }))
-}
-
-// Drag the divider that sits between child `i` and child `i+1`. We move the
-// boundary by adjusting only that adjacent pair, keeping their combined size
-// constant — so other panes in the row/column stay put.
-// Keyboard: the arrow keys move a divider by 2% (each pane keeps at least
-// 5% of the split).
-function onDividerKey(e, i) {
-  const isRow = props.node.dir === 'row'
-  const back = isRow ? 'ArrowLeft' : 'ArrowUp'
-  const fwd = isRow ? 'ArrowRight' : 'ArrowDown'
-  if (e.key !== back && e.key !== fwd) return
-  e.preventDefault()
-  e.stopPropagation()
-  const sizes = props.node.sizes
-  const step = e.key === fwd ? 2 : -2
-  const a = sizes[i] + step
-  const b = sizes[i + 1] - step
-  if (a < 5 || b < 5) return
-  sizes[i] = a
-  sizes[i + 1] = b
-  userResized(i)
-  // A worktree's view of a split: the split itself takes the move.
-  writeViewSizes(props.node)
-  notifyLayoutChange()
-}
-
-function startDrag(e, i) {
-  e.preventDefault()
-  const el = containerEl.value
-  if (!el) return
-  const isRow = props.node.dir === 'row'
-  const total = isRow ? el.getBoundingClientRect().width : el.getBoundingClientRect().height
-  const start = isRow ? e.clientX : e.clientY
-  const sizes = props.node.sizes
-  const a0 = sizes[i]
-  const b0 = sizes[i + 1]
-  const pairSum = a0 + b0
-  dragIndex.value = i
-  userResized(i)
-
-  const move = (ev) => {
-    const pos = isRow ? ev.clientX : ev.clientY
-    const deltaPct = ((pos - start) / total) * 100
-    let a = a0 + deltaPct
-    const minPixels = isRow ? MIN_PANE_WIDTH : MIN_PANE_HEIGHT
-    const min = Math.min(pairSum / 2, (minPixels / total) * 100)
-    a = Math.max(min, Math.min(pairSum - min, a))
-    const next = sizes.slice()
-    next[i] = a
-    next[i + 1] = pairSum - a
-    props.node.sizes = next
-    writeViewSizes(props.node)
-    notifyLayoutChange()
-  }
-  const up = () => {
-    dragIndex.value = -1
-    if (layoutFrame) {
-      cancelAnimationFrame(layoutFrame)
-      layoutFrame = 0
-    }
-    window.dispatchEvent(new Event('terminal-layout-change'))
-    notifyLayoutChange()
-  }
-  // Browser pages let the pointer through while it runs, and it ends even
-  // when the button is let go over a page or outside the window
-  // (browser/webviewPassthrough.js).
-  trackPointerDrag(e, { onMove: move, onEnd: up })
-}
 </script>
 
 <template>
-  <!-- Leaf: a code editor or a browser page (no terminal), or a real terminal -->
-  <EditorPane v-if="node.type === 'leaf' && node.kind === 'editor'" :key="node.id" :node="node" />
-  <BrowserPane v-else-if="node.type === 'leaf' && node.kind === 'browser'" :key="node.id" :node="node" />
-  <ChatPane v-else-if="node.type === 'leaf' && node.kind === 'chat'" :key="node.id" :node="node" />
+  <EditorPane v-if="node.kind === 'editor'" :key="node.id" :node="node" />
+  <BrowserPane v-else-if="node.kind === 'browser'" :key="node.id" :node="node" />
+  <ChatPane v-else-if="node.kind === 'chat'" :key="node.id" :node="node" />
   <!-- A Live Share host's browser page: its frames, no page here -->
-  <LiveSharePageView v-else-if="node.type === 'leaf' && node.backend === 'liveshare' && node.liveShare && node.liveShare.page === true" :key="node.id + ':page'" :node="node" />
+  <LiveSharePageView v-else-if="node.backend === 'liveshare' && node.liveShare && node.liveShare.page === true" :key="node.id + ':page'" :node="node" />
   <!-- A Live Share host's pane in chat mode: no terminal here -->
-  <LiveShareChatPane v-else-if="node.type === 'leaf' && node.backend === 'liveshare' && node.liveShare && node.liveShare.terminal === false" :key="node.id + ':chat'" :node="node" />
-  <TerminalPane v-else-if="node.type === 'leaf'" :key="node.id + ':' + (node.gen || 0)" :node="node" />
-
-  <!-- Split: N children separated by draggable dividers -->
-  <div v-else ref="containerEl" class="split" :class="node.dir">
-    <template v-for="(child, i) in node.children" :key="child.id">
-      <div class="node" :style="{ flexGrow: node.sizes[i], flexBasis: 0, flexShrink: 1 }">
-        <SplitNode :node="child" />
-      </div>
-      <div
-        v-if="i < node.children.length - 1"
-        class="divider"
-        :class="[node.dir, { dragging: dragIndex === i }]"
-        role="separator"
-        tabindex="0"
-        :aria-orientation="node.dir === 'row' ? 'vertical' : 'horizontal'"
-        :aria-label="t('app.split.resize', 'Resize panes (arrow keys)')"
-        @pointerdown="startDrag($event, i)"
-        @keydown="onDividerKey($event, i)"
-      ></div>
-    </template>
-  </div>
+  <LiveShareChatPane v-else-if="node.backend === 'liveshare' && node.liveShare && node.liveShare.terminal === false" :key="node.id + ':chat'" :node="node" />
+  <TerminalPane v-else :key="node.id + ':' + (node.gen || 0)" :node="node" />
 </template>
