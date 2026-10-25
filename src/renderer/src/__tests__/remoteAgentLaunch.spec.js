@@ -3,7 +3,7 @@
 // command typed (or none: its install offered; remoteAgentInstalls.spec.js)
 // and the "+" menu's agents.
 import { describe, expect, it } from 'vitest'
-import { claudeStartChoice, codexResumes, hostMenuAgents, hostRunsAsRoot, needsRemoteAgentCheck, remoteAgentLine, hostCodexNoDaemon, remoteCodexNoDaemon, withoutNoDaemon, codexNoDaemonRefusalWatcher } from '../remoteAgentLaunch'
+import { claudeStartChoice, codexResumes, hostMenuAgents, hostRunsAsRoot, needsRemoteAgentCheck, remoteAgentLine, hostCodexNoDaemon, remoteCodexNoDaemon, codexNoDaemonRefusalWatcher } from '../remoteAgentLaunch'
 
 const newId = () => 'new-uuid'
 
@@ -150,17 +150,32 @@ describe("Codex's daemon on a host: --no-daemon from the host's own Codex", () =
     expect(remoteCodexNoDaemon(null)).toBe(true)
     expect(remoteCodexNoDaemon(false)).toBe(false)
   })
-  it('the line again without it', () => {
-    expect(withoutNoDaemon("'/u/codex' resume abc --no-daemon -c check_for_update_on_startup=false")).toBe("'/u/codex' resume abc -c check_for_update_on_startup=false")
-    expect(withoutNoDaemon('codex --no-daemon')).toBe('codex')
-    expect(withoutNoDaemon('codex --no-daemonx')).toBe('codex --no-daemonx')
+  // clap's real words (Codex 0.150), coloured as on a terminal.
+  const REFUSAL = "\x1b[1m\x1b[31merror:\x1b[0m unexpected argument '\x1b[33m--no-daemon\x1b[0m' found\r\n\r\n\x1b[1m\x1b[4mUsage:\x1b[0m \x1b[1mcodex\x1b[0m [OPTIONS] [PROMPT]\r\n       \x1b[1mcodex\x1b[0m [OPTIONS] <COMMAND> [ARGS]\r\n\r\nFor more information, try '\x1b[1m--help\x1b[0m'.\r\n"
+  it('an older Codex refusing it: its whole message, cut anywhere; once', () => {
+    for (const cut of [10, 37, 64, 120, REFUSAL.lastIndexOf('--help') + 3]) {
+      const w = codexNoDaemonRefusalWatcher()
+      expect(w(REFUSAL.slice(0, cut))).toBe(null)
+      expect(w(REFUSAL.slice(cut) + 'fivem@box:~$ \x1b[?2004h')).toBe('refused')
+      expect(w(REFUSAL)).toBe(null)
+    }
   })
-  it("sees an older Codex refusing it (clap's words, colours and a cut chunk), once; nothing else", () => {
+  it("Codex's own screen first (alternate screen, bracketed paste, its keyboard mode): started, and nothing it shows later counts", () => {
+    for (const ui of ['\x1b[?1049h', '\x1b[?2004h', '\x1b[>7u', '\x1b[?u', '\x1b[=5;1u']) {
+      const w = codexNoDaemonRefusalWatcher()
+      expect(w(`'/u/codex' --no-daemon -c check_for_update_on_startup=false\r\n${ui}`)).toBe('started')
+      expect(w(REFUSAL)).toBe(null)
+    }
+    // A screen sequence cut between two chunks.
     const w = codexNoDaemonRefusalWatcher()
-    expect(w("\x1b[1m\x1b[31merror:\x1b[0m unexpected argument '\x1b[33m--no-")).toBe(false)
-    expect(w("daemon\x1b[0m' found\r\n")).toBe(true)
-    expect(w("error: unexpected argument '--no-daemon' found")).toBe(false)
+    expect(w('\x1b[?10')).toBe(null)
+    expect(w('49h\x1b[H')).toBe('started')
+  })
+  it('part of the message, or the words in some other output, is no refusal', () => {
+    const w = codexNoDaemonRefusalWatcher()
+    expect(w("error: unexpected argument '--no-daemon' found\r\n")).toBe(null)
+    expect(w('some other text\r\n')).toBe(null)
     const other = codexNoDaemonRefusalWatcher()
-    expect(other("error: unexpected argument '--yolo' found\r\nno-daemon in the docs")).toBe(false)
+    expect(other("error: unexpected argument '--yolo' found\r\n\r\nUsage: codex [OPTIONS]\r\n\r\nFor more information, try '--help'.\r\n")).toBe(null)
   })
 })

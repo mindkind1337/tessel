@@ -2123,8 +2123,9 @@ ${root}`, () => gitWorktreesNow(root))
     return call(hostId, '__t_ragent', [version], { cap: 64 * 1024, timeoutMs: 60_000, upload: Buffer.from(String(source || ''), 'utf8'), op: 'agent', lane: 'pane' })
   }
 
-  // The agents installed on this host (__t_agents): their paths, never run,
-  // and what an install there needs. Only through a session the host allows
+  // The agents installed on this host (__t_agents): their paths (none is run,
+  // but Codex for its --version and --help), and what an install there
+  // needs. Only through a session the host allows
   // (a terminal opened on it).
   // -> { claude, codex, vscodeClaude, bins, host, uid } (null when missing) | { error }
   // An image pasted for an agent in a terminal on this host (its own

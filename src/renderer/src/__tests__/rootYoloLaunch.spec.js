@@ -23,7 +23,6 @@ import {
   rootRefusalWatcher,
   hostCodexNoDaemon,
   remoteCodexNoDaemon,
-  withoutNoDaemon,
   codexNoDaemonRefusalWatcher
 } from '../remoteAgentLaunch'
 import { remoteAgentFound } from '../projectLauncher'
@@ -89,7 +88,7 @@ function load({ username = 'root', status = { hostId: HOST, claude: '/usr/local/
     remoteHostsState: { targets: [{ id: HOST, label: 'Box', host: 'box.example', username }] },
     remoteAgentName: (id) => (id === 'codex' ? 'Codex CLI' : 'Claude Code'),
     remoteAgentTools: reactive({ [HOST]: status }),
-    askHostAgents: async () => status,
+    askHostAgents: vi.fn(async () => status),
     validSavedFiles: () => [],
     savedOutput: {},
     readDrafts: () => ({}),
@@ -104,7 +103,6 @@ function load({ username = 'root', status = { hostId: HOST, claude: '/usr/local/
     rootRefusalWatcher,
     hostCodexNoDaemon,
     remoteCodexNoDaemon,
-    withoutNoDaemon,
     codexNoDaemonRefusalWatcher,
     claudeStartChoice,
     codexResumes,
@@ -120,6 +118,7 @@ function load({ username = 'root', status = { hostId: HOST, claude: '/usr/local/
     findLeaf: (id) => (tree.value && tree.value.id === id ? tree.value : null),
     // Short delays (the launch, the retry) run now; the watch's end waits.
     setTimeout: (fn, ms) => (ms && ms > 1000 ? later.push(fn) : fn()),
+    clearTimeout: () => {},
     Promise,
     Object,
     Number,
@@ -200,13 +199,16 @@ describe('Claude Code in Yolo on a root host', () => {
 })
 
 describe("Codex on a host: --no-daemon as the host's Codex knows it", () => {
-  const cx = (host) => ({ hostId: HOST, claude: null, codex: '/home/deploy/.local/bin/codex', ...(host ? { host } : {}) })
-  const deploy = (host) => load({ username: 'deploy', status: cx(host), permissions: 'manual' })
-  it('the host says its Codex knows it: with --no-daemon (this computer\'s Codex never asked)', async () => {
+  const cx = (host, path = '/home/deploy/.local/bin/codex') => ({ hostId: HOST, claude: null, codex: path, ...(host ? { host } : {}) })
+  const deploy = (host, opts = {}) => load({ username: 'deploy', status: cx(host, opts.path), permissions: opts.permissions || 'manual' })
+  // clap's whole refusal (Codex 0.150), then the shell's prompt.
+  const REFUSAL = "\x1b[1m\x1b[31merror:\x1b[0m unexpected argument '\x1b[33m--no-daemon\x1b[0m' found\r\n\r\nUsage: codex [OPTIONS] [PROMPT]\r\n       codex [OPTIONS] <COMMAND> [ARGS]\r\n\r\nFor more information, try '--help'.\r\ndeploy@box:~$ "
+  it("the host says its Codex knows it: with --no-daemon, nothing watched (this computer's Codex never asked)", async () => {
     const env = deploy({ codexVersion: '0.164.0', codexNoDaemon: true })
     await env.start(codex)
     expect(env.typed()).toEqual(["'/home/deploy/.local/bin/codex' --no-daemon -c check_for_update_on_startup=false\r"])
     expect(env.shellApi.codexNoDaemon).not.toHaveBeenCalled()
+    expect(env.listeners).toHaveLength(0)
   })
   it('an older Codex there (no daemon, refuses the flag): without it, nothing watched', async () => {
     const env = deploy({ codexVersion: '0.150.0', codexNoDaemon: false })
@@ -214,27 +216,54 @@ describe("Codex on a host: --no-daemon as the host's Codex knows it", () => {
     expect(env.typed()).toEqual(["'/home/deploy/.local/bin/codex' -c check_for_update_on_startup=false\r"])
     expect(env.listeners).toHaveLength(0)
   })
-  it('not known (an older check, its Codex too slow): with it; refused there, typed once more without it and known from then on', async () => {
+  it('not known: with it; refused there, its line typed once more without the flag it was given, and the host asked again (never set from the screen)', async () => {
+    const env = deploy({ codexVersion: null, codexNoDaemon: null }, { path: '/opt/a --no-daemon b/codex', permissions: 'yolo' })
+    await env.start(codex)
+    expect(env.typed()).toEqual(["'/opt/a --no-daemon b/codex' --no-daemon -c check_for_update_on_startup=false --dangerously-bypass-approvals-and-sandbox\r"])
+    expect(env.listeners).toHaveLength(1)
+    env.emit(REFUSAL)
+    expect(env.typed()[1]).toBe("'/opt/a --no-daemon b/codex' -c check_for_update_on_startup=false --dangerously-bypass-approvals-and-sandbox\r")
+    expect(env.ctx.askHostAgents).toHaveBeenCalledWith(HOST, { fresh: true })
+    expect(env.ctx.remoteAgentTools[HOST].host.codexNoDaemon).toBe(null)
+    expect(env.listeners).toHaveLength(0)
+  })
+  it("not known, and Codex's own screen starts first: it took the flag; the same words later type nothing", async () => {
     const env = deploy({ codexVersion: null, codexNoDaemon: null })
     await env.start(codex)
-    expect(env.typed()).toEqual(["'/home/deploy/.local/bin/codex' --no-daemon -c check_for_update_on_startup=false\r"])
-    expect(env.listeners).toHaveLength(1)
-    env.emit("\x1b[1m\x1b[31merror:\x1b[0m unexpected argument '\x1b[33m--no-daemon\x1b[0m' found\r\n\r\nUsage: codex [OPTIONS] [PROMPT]\r\n")
-    expect(env.typed()[1]).toBe("'/home/deploy/.local/bin/codex' -c check_for_update_on_startup=false\r")
-    expect(env.ctx.remoteAgentTools[HOST].host.codexNoDaemon).toBe(false)
+    env.emit('\x1b[?1049h\x1b[H')
     expect(env.listeners).toHaveLength(0)
-    // The next Codex there starts without it.
-    await env.start(codex)
-    expect(env.typed()[2]).toBe("'/home/deploy/.local/bin/codex' -c check_for_update_on_startup=false\r")
+    env.emit(REFUSAL)
+    expect(env.typed()).toHaveLength(1)
+    expect(env.ctx.askHostAgents).not.toHaveBeenCalledWith(HOST, { fresh: true })
   })
-  it('a resume keeps the flag after its id; output that is not the refusal types nothing more', async () => {
+  it('not known, part of the message only: nothing typed; the watch ends after a few seconds', async () => {
+    const env = deploy({ codexVersion: null, codexNoDaemon: null })
+    await env.start(codex)
+    env.emit("error: unexpected argument '--no-daemon' found\r\n")
+    expect(env.typed()).toHaveLength(1)
+    for (const fn of env.later) fn()
+    expect(env.listeners).toHaveLength(0)
+  })
+  it('a line started by an install chain: the retry is the line alone, never the install again', async () => {
+    const env = deploy({ codexVersion: null, codexNoDaemon: null })
+    const leaf = await env.ctx.api.createLeaf('pwsh', codex, null, null, { id: 'pane-1', remoteHostId: HOST, remotePath: '/srv/app', wrap: (l) => `curl -fsSL https://x/install.sh | sh && ${l}` })
+    env.ctx.findLeaf = () => leaf
+    expect(env.typed()[0]).toBe("curl -fsSL https://x/install.sh | sh && '/home/deploy/.local/bin/codex' --no-daemon -c check_for_update_on_startup=false\r")
+    env.emit(REFUSAL)
+    expect(env.typed()[1]).toBe("'/home/deploy/.local/bin/codex' -c check_for_update_on_startup=false\r")
+  })
+  it('a resume keeps the flag after its id', async () => {
     const env = deploy({ codexVersion: '0.157.0', codexNoDaemon: true })
     env.shellApi.remoteAgentSessionExists.mockResolvedValue(true)
-    const leaf = await env.ctx.api.createLeaf('pwsh', codex, null, null, { id: 'pane-1', remoteHostId: HOST, remotePath: '/srv/app', sessionId: SID, resume: true })
-    env.ctx.findLeaf = () => leaf
+    await env.ctx.api.createLeaf('pwsh', codex, null, null, { id: 'pane-1', remoteHostId: HOST, remotePath: '/srv/app', sessionId: SID, resume: true })
     expect(env.typed()).toEqual([`'/home/deploy/.local/bin/codex' resume ${SID} --no-daemon -c check_for_update_on_startup=false\r`])
-    env.emit('error: unexpected argument \'--yolo\' found\r\n')
-    expect(env.typed()).toHaveLength(1)
+    // Whether its conversation is there: asked as soon as its terminal was
+    // there (beside the agent check), then by its start line (main answers
+    // both from one request: index.js remote:agentSessionExists).
+    expect(env.shellApi.remoteAgentSessionExists.mock.calls).toEqual([
+      [HOST, 'codex', SID],
+      [HOST, 'codex', SID]
+    ])
   })
 })
 

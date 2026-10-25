@@ -312,11 +312,13 @@ export function writeRoster({ dir, teamId, members } = {}) {
 
 // Which panes have their team tools running (the tools say so every 30 s,
 // see teamMcp/server.cjs): -> Promise of { ok, alive: { paneId: { at, version } | null },
-// seen: { paneId: at | null } } (seen: when its tools last ran, however long
-// ago: an SSH host's agent keeps the file once its tools stop).
+// seen: { paneId: at | null }, sameLaunch: { paneId: true | false | null } }
+// (seen: when its tools last ran, however long ago: an SSH host's agent
+// keeps the file once its tools stop; sameLaunch: whether they belong to the
+// launch whose token `launches` gives, null when either is not known).
 // Read without blocking (only reads, nothing shared): one file per pane,
 // read synchronously they held the main process for 586 ms on a busy disk.
-export async function toolsAlive({ dir, ids } = {}) {
+export async function toolsAlive({ dir, ids, launches = null } = {}) {
   if (typeof dir !== 'string' || !isAbsolute(dir) || !Array.isArray(ids)) return { ok: false, error: 'Invalid location.' }
   const wanted = ids.slice(0, 200).filter((id) => typeof id === 'string' && ID_RE.test(id))
   const read = async (id) => {
@@ -329,13 +331,17 @@ export async function toolsAlive({ dir, ids } = {}) {
   const found = await Promise.all(wanted.map(read))
   const alive = {}
   const seen = {}
+  const sameLaunch = {}
   wanted.forEach((id, i) => {
     const data = found[i]
     const at = data && Number.isFinite(data.at) ? data.at : null
     alive[id] = at !== null && Date.now() - at < 90000 ? { at, version: data.version || null } : null
     seen[id] = at
+    const token = launches && typeof launches === 'object' && typeof launches[id] === 'string' ? launches[id] : ''
+    const digest = data && typeof data.launch === 'string' ? data.launch : ''
+    sameLaunch[id] = token && digest ? createHash('sha256').update(token).digest('hex').slice(0, 16) === digest : null
   })
-  return { ok: true, alive, seen }
+  return { ok: true, alive, seen, sameLaunch }
 }
 
 // The status of team messages by id, read from the channel's state:

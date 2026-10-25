@@ -2525,13 +2525,20 @@ function aliveFile() {
   if (!/^[A-Za-z0-9._-]{1,100}$/.test(paneId) || paneId.startsWith('.') || !dir) return null
   return path.join(dir, '.tessel', 'agents', `${paneId}.json`)
 }
+// Which launch of its pane these tools belong to: a digest of the pane's
+// launch token (never the token), so a pane started again in place is never
+// taken for its previous launch (teamTasks.js toolsAlive sameLaunch).
+function launchDigest() {
+  const token = String(process.env.TESSEL_AGENT_LAUNCH || '')
+  return token ? crypto.createHash('sha256').update(token).digest('hex').slice(0, 16) : null
+}
 function sayAlive() {
   const file = aliveFile()
   if (!file) return
   try {
     fs.mkdirSync(path.dirname(file), { recursive: true })
     const tmp = `${file}.${process.pid}.tmp`
-    fs.writeFileSync(tmp, JSON.stringify({ pid: process.pid, at: Date.now(), version: VERSION }))
+    fs.writeFileSync(tmp, JSON.stringify({ pid: process.pid, at: Date.now(), version: VERSION, launch: launchDigest() }))
     fs.renameSync(tmp, file)
   } catch {
     // tried again in 30 s

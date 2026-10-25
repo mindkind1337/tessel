@@ -13,6 +13,14 @@ describe('an agent whose team tools ran since it started', () => {
   const launchedAt = 1_000_000
   const remote = { id: 'p1', remoteHostId: 'ssh-h', launchedAt }
   const local = { id: 'p1', launchedAt }
+  it('the tools of a previous launch of the same pane never count; this launch\'s, however long ago on a host', () => {
+    const old = { ok: true, alive: { p1: { at: launchedAt + 10 } }, seen: { p1: launchedAt + 10 }, sameLaunch: { p1: false } }
+    expect(toolsRanSince(old, 'p1', remote)).toBe(false)
+    expect(toolsRanSince(old, 'p1', local)).toBe(false)
+    const mine = { ok: true, alive: { p1: null }, seen: { p1: launchedAt - 3_600_000 }, sameLaunch: { p1: true } }
+    expect(toolsRanSince(mine, 'p1', remote)).toBe(true)
+    expect(toolsRanSince(mine, 'p1', local)).toBe(false)
+  })
   it('running now: yes, local or remote', () => {
     const res = { ok: true, alive: { p1: { at: launchedAt + 10 } }, seen: { p1: launchedAt + 10 } }
     expect(toolsRanSince(res, 'p1', remote)).toBe(true)
@@ -40,7 +48,13 @@ describe('the note it puts in the pane', () => {
     expect(team).toContain('for (const id of ids) if (toolsRanSince(res, id, findLeaf(id))) alive.add(id)')
   })
   it('goes by itself once the tools connect, only when this check put it', () => {
-    expect(check).toMatch(/if \(remoteToolsNoted\.delete\(id\)\) delete leaf\.remoteToolsNote/)
-    expect(check).toMatch(/leaf\.remoteToolsNote = t\('app\.remoteAgents\.toolsNotRunning'[^\n]*\n\s*remoteToolsNoted\.add\(id\)/)
+    expect(check).toMatch(/if \(remoteToolsNoted\.delete\(leaf\)\) delete leaf\.remoteToolsNote/)
+    expect(check).toMatch(/leaf\.remoteToolsNote = t\('app\.remoteAgents\.toolsNotRunning'[^\n]*\r?\n\s*remoteToolsNoted\.add\(leaf\)/)
+    // Kept per pane object: a pane started again in place counts from nothing.
+    expect(src).toContain('const remoteToolsMisses = new WeakMap()')
+    expect(src).toContain('const remoteToolsNoted = new WeakSet()')
+  })
+  it('each pane says which launch is its own (toolsAlive tells the tools of a previous launch apart)', () => {
+    expect(src.split('window.shellApi.team.toolsAlive({ dir, ids, launches: launchTokens(ids) })').length - 1).toBe(2)
   })
 })

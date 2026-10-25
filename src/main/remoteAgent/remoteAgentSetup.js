@@ -135,6 +135,13 @@ const own = (o, k) => Object.prototype.hasOwnProperty.call(o, k)
 // codexVersion / codexNoDaemon: the Codex found there (its --version, and
 // whether its --help has --no-daemon: Codex 0.156+), null when not found or
 // it did not answer in time.
+// What is known of a host's Codex, given to __t_agents with the names it
+// looks for (that version's --help is then not asked again). -> [] | [arg]
+const CODEX_VERSION = /^\d{1,4}\.\d{1,4}(?:\.\d{1,6})?(?:[-+.][0-9A-Za-z.]{1,40})?$/
+export function codexKnownArg(known) {
+  if (!known || typeof known.noDaemon !== 'boolean' || typeof known.version !== 'string' || !CODEX_VERSION.test(known.version) || /[+]/.test(known.version)) return []
+  return [`codex.known.${known.version}.nd${known.noDaemon ? 1 : 0}`]
+}
 export function emptyHost() {
   return { node: null, nodeMajor: null, npm: null, npmPrefix: null, npmWritable: null, snap: null, curl: null, wget: null, os: null, codexVersion: null, codexNoDaemon: null }
 }
@@ -159,7 +166,9 @@ export function parseAgentTools(text) {
       } else if (name === '@os') {
         if (/^[A-Za-z][\w.-]{0,31}$/.test(value)) out.host.os = value
       } else if (name === '@partial') {
-        out.partial = true
+        // Only Codex's own probe out of time: its --no-daemon is not known,
+        // the rest of the answer is whole.
+        if (value.split(/\s+/).some((r) => r && r !== 'codex')) out.partial = true
       } else if (name === '@codexv') {
         if (/^\d{1,4}\.\d{1,4}(?:\.\d{1,6})?(?:[-+.][0-9A-Za-z.]{1,40})?$/.test(value) && out.host.codexVersion == null) out.host.codexVersion = value
       } else if (name === '@codexnd') {
@@ -230,7 +239,7 @@ export function createRemoteAgentCheck({ ensureShim, agentTools, agentBins = [],
         .then(() => ensureShim(hostId))
         .catch((err) => ({ ok: false, reason: 'failed', detail: (err && err.message) || '' })),
       Promise.resolve()
-        .then(() => agentTools(hostId))
+        .then(() => agentTools(hostId, { codexKnown: codexDaemon.get(hostId) || null }))
         .catch((err) => ({ error: (err && err.message) || 'failed' }))
     ])
     const ok = tools && !tools.error

@@ -1102,7 +1102,7 @@ describe('the team tools say they are running', () => {
   it('an agent on an SSH host keeps its file when its tools stop (its shim opens them again): seen, with the time it last ran', async () => {
     const dir = fs.mkdtempSync(join(os.tmpdir(), 'tessel-alive-'))
     try {
-      const env = { ...process.env, TESSEL_PANE_ID: 'pane-7-remote', TESSEL_PROJECT_DIR: dir, TESSEL_REMOTE: '1' }
+      const env = { ...process.env, TESSEL_PANE_ID: 'pane-7-remote', TESSEL_PROJECT_DIR: dir, TESSEL_REMOTE: '1', TESSEL_AGENT_LAUNCH: 'launch-token-1' }
       const started = Date.now()
       const p = spawn(process.execPath, [SERVER], { env, stdio: ['pipe', 'pipe', 'pipe'] })
       const file = join(dir, '.tessel', 'agents', 'pane-7-remote.json')
@@ -1113,6 +1113,11 @@ describe('the team tools say they are running', () => {
       expect(fs.existsSync(file)).toBe(true)
       const res = await toolsAlive({ dir, ids: ['pane-7-remote'] })
       expect(res.seen['pane-7-remote']).toBeGreaterThanOrEqual(started)
+      // Which launch they belong to: a digest in the file (never the token itself).
+      expect(fs.readFileSync(file, 'utf8')).not.toContain('launch-token-1')
+      expect((await toolsAlive({ dir, ids: ['pane-7-remote'], launches: { 'pane-7-remote': 'launch-token-1' } })).sameLaunch['pane-7-remote']).toBe(true)
+      expect((await toolsAlive({ dir, ids: ['pane-7-remote'], launches: { 'pane-7-remote': 'launch-token-2' } })).sameLaunch['pane-7-remote']).toBe(false)
+      expect(res.sameLaunch['pane-7-remote']).toBe(null)
       // An hour later it is no longer alive, but still seen.
       const old = JSON.parse(fs.readFileSync(file, 'utf8'))
       fs.writeFileSync(file, JSON.stringify({ ...old, at: started - 3600_000 }))

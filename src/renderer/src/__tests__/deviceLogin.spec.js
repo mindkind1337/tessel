@@ -20,7 +20,8 @@ describe('Grok, on its real screens', () => {
       ['first44', 25, 9]
     ]) {
       const r = read(screens[name])
-      expect(r, name).toMatchObject({ provider: 'grok', label: 'Grok', url: null, code: 'K7Q2-M9XD', known: false })
+      // Not named before a known page shows (the phrases alone vouch for nothing).
+      expect(r, name).toMatchObject({ provider: 'other', label: '', url: null, code: 'K7Q2-M9XD', known: false })
       expect(r.showUrl, name).toEqual({ row, index })
       expect(screens[name].lines[row - 1].slice(index)).toMatch(/^Copying not working\?/)
     }
@@ -139,7 +140,7 @@ describe('mouse helpers', () => {
     expect(linkClickOpens('drag', { shiftKey: true })).toBe(true)
   })
   it('under Always select, only a plain single click on one cell reaches a program that asked', () => {
-    const p = { col: 10, row: 25, button: 0, detail: 1, mods: false }
+    const p = { col: 10, row: 25, button: 0, detail: 1, mods: false, focused: true }
     const base = { alwaysSelect: true, programWantsClicks: true, down: p, up: p, selection: false, onLink: false }
     expect(clickPassesThrough(base)).toBe(true)
     expect(clickPassesThrough({ ...base, alwaysSelect: false })).toBe(false)
@@ -150,6 +151,10 @@ describe('mouse helpers', () => {
     expect(clickPassesThrough({ ...base, up: { ...p, detail: 2 } })).toBe(false)
     expect(clickPassesThrough({ ...base, down: { ...p, mods: true } })).toBe(false)
     expect(clickPassesThrough({ ...base, down: { ...p, button: 2 }, up: { ...p, button: 2 } })).toBe(false)
+    // xterm reports the mouse itself (a request that set other modes too went through): never a second click.
+    expect(clickPassesThrough({ ...base, xtermReports: true })).toBe(false)
+    // The click that only gave the terminal the keyboard.
+    expect(clickPassesThrough({ ...base, down: { ...p, focused: false } })).toBe(false)
   })
 })
 
@@ -178,9 +183,18 @@ describe('TerminalPane sign-in banner and clicks', () => {
     expect(pane).toContain("term.buffer.active.type === 'alternate'")
   })
   it('a plain click passes through under Always select: never in Live Share, never with a link', () => {
-    const fn = pane.slice(pane.indexOf('function onPassUp('), pane.indexOf('function onPassUp(') + 800)
+    const fn = pane.slice(pane.indexOf('function onPassUp(')).split(/\r?\n\}\r?\n/)[0]
     expect(fn).toContain("props.node.backend === 'liveshare' || props.node.liveShare")
     expect(fn).toContain('programWantsClicks: mouseClickable()')
+    expect(fn).toContain("xtermReports: term.modes.mouseTrackingMode !== 'none'")
+    expect(pane).toContain('focused: !!term && !!term.textarea && document.activeElement === term.textarea')
+    expect(pane).toContain("window.addEventListener('mouseup', onWindowMouseUp, true)")
+    expect(pane).toContain("window.removeEventListener('mouseup', onWindowMouseUp, true)")
+    // A reset or a new program ends the mouse requests remembered.
+    expect(pane).toMatch(/registerEscHandler\(\{ final: 'c' \}, \(\) => \{\s*mouseAsked\.clear\(\)/)
+    expect(pane).toContain('if (term.parser.registerEscHandler)')
+    expect(pane).toMatch(/registerCsiHandler\(\{ intermediates: '!', final: 'p' \}, \(\) => \{\s*mouseAsked\.clear\(\)/)
+    expect(pane).toMatch(/\(\) => props\.node\.launchedAt,\s*\(\) => mouseAsked\.clear\(\)/)
     expect(fn).toContain('selection: term.hasSelection()')
     expect(fn).toContain('onLink: performance.now() - linkClickAt < 250 || !!(term.element && term.element.querySelector(\'.xterm-cursor-pointer\'))')
     expect(fn).toContain('window.shellApi.writePty(props.node.id, mouseClickBytes(up.col, up.row))')

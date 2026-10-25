@@ -168,7 +168,8 @@ export const FUNCTIONS = new Set([
   // in ~/.tessel-server and have it register the team tools there.
   '__t_ragent',
   // The agents installed on this host (remoteAgent/remoteAgentSetup.js
-  // parseAgentTools): their paths only (an agent is never run); and what an
+  // parseAgentTools): their paths (no agent is run, but Codex for its
+  // --version and --help, 2 s each: whether it takes --no-daemon); and what an
   // install there needs (node and npm, npm's folder and whether it is the user's,
   // snap, curl, wget, the user id). Its arguments: the command names looked
   // for (each checked here and there). The login shell's PATH (its own way
@@ -833,22 +834,42 @@ __t_agents() {
     __npm=; __pf=
   fi
   [ $# -gt 0 ] || set -- claude codex
+  # codex.known.<version>.nd<0|1>: what Tessel already knows of this host's
+  # Codex (that version takes --no-daemon or not): its --help is not asked again.
+  __ckv=; __ckn=
+  for __a in "$@"; do
+    case $__a in codex.known.*.nd[01]) __ckv=\${__a#codex.known.}; __ckn=\${__ckv##*.nd}; __ckv=\${__ckv%.nd*} ;; esac
+  done
   __cx=
   for __a in "$@"; do
-    case $__a in ''|[-.]*|*[!0-9A-Za-z._+-]*) continue ;; esac
+    case $__a in ''|[-.]*|*[!0-9A-Za-z._+-]*|codex.known.*) continue ;; esac
     if __t_which "$__a"; then __p=$__w
     elif [ -f "$HOME/.$__a/bin/$__a" ] && [ -x "$HOME/.$__a/bin/$__a" ]; then __p="$HOME/.$__a/bin/$__a"
     else __p=-; fi
     printf '%s %s\\n' "$__a" "$__p"
     [ "$__a" = codex ] && [ "$__p" != - ] && __cx=$__p
   done
+  # The Codex found: its version, and whether its --help has --no-daemon
+  # (Codex 0.156+), 2 s each at most; out of time: "@partial codex" (not
+  # known, the rest of the answer whole). Neither starts its daemon nor
+  # writes in ~/.codex (checked with Codex 0.150 and 0.164).
   if [ -n "$__cx" ]; then
-    __v=$(__t_tmo 8 env PATH="\${__cx%/*}:$PATH" "$__cx" --version | tail -n 1) || __v=
-    __v=\${__v##* }
-    case $__v in [0-9]*.[0-9]*) case $__v in *[!0-9A-Za-z.+-]*) ;; *) printf '@codexv %s\\n' "$__v" ;; esac ;; esac
-    __h=$(__t_tmo 8 env PATH="\${__cx%/*}:$PATH" "$__cx" --help); __hr=$?
-    if [ "$__hr" -eq 0 ] && [ ! -e "$__T_D/tk" ]; then
-      case $__h in *--no-daemon*) printf '@codexnd 1\\n' ;; *) printf '@codexnd 0\\n' ;; esac
+    __v=$(__t_tmo 2 env PATH="\${__cx%/*}:$PATH" "$__cx" --version | tail -n 1) || __v=
+    if [ -e "$__T_D/tk" ]; then
+      __part="$__part codex"
+    else
+      __v=\${__v##* }
+      case $__v in [0-9]*.[0-9]*) case $__v in *[!0-9A-Za-z.+-]*) __v= ;; esac ;; *) __v= ;; esac
+      [ -z "$__v" ] || printf '@codexv %s\\n' "$__v"
+      if [ -n "$__v" ] && [ "$__v" = "$__ckv" ]; then
+        printf '@codexnd %s\\n' "$__ckn"
+      else
+        __h=$(__t_tmo 2 env PATH="\${__cx%/*}:$PATH" "$__cx" --help); __hr=$?
+        if [ -e "$__T_D/tk" ]; then __part="$__part codex"
+        elif [ "$__hr" -eq 0 ]; then
+          case $__h in *--no-daemon*) printf '@codexnd 1\\n' ;; *) printf '@codexnd 0\\n' ;; esac
+        fi
+      fi
     fi
   fi
   __p=$(for __c in "$HOME"/.vscode-server/extensions/anthropic.claude-code-*/resources/native-binary/claude; do [ -f "$__c" ] && [ -x "$__c" ] && printf '%s\\n' "$__c"; done | awk '{ v = $0; sub(/.*\\/anthropic\\.claude-code-/, "", v); sub(/\\/.*/, "", v); n = split(v, a, /[.-]/); k = ""; for (i = 1; i <= 4; i++) k = k sprintf("%09d", (i <= n && a[i] ~ /^[0-9]+$/) ? a[i] : 0); if (p == "" || k > b) { b = k; p = $0 } } END { print p }')

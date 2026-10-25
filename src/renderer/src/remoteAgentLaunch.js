@@ -138,26 +138,48 @@ export function hostCodexNoDaemon(status) {
   return host && typeof host.codexNoDaemon === 'boolean' ? host.codexNoDaemon : null
 }
 // Whether the host's Codex starts with --no-daemon: unless its Codex is known
-// to refuse it. Not known: with it, its refusal watched for
+// to refuse it. Not known: with it, its refusal watched for a few seconds
 // (codexNoDaemonRefusalWatcher) and the line typed again without it.
 export function remoteCodexNoDaemon(known) {
   return known !== false
 }
-export function withoutNoDaemon(line) {
-  return String(line || '').replace(/ --no-daemon(?=\s|$)/, '')
-}
-// The refusal of an older Codex, seen in a pane's output (spaces, line breaks
-// and colours ignored). -> a function fed each chunk; true (once) when it shows.
-const NO_DAEMON_REFUSAL = /unexpectedargument['"‘’`]?--no-daemon/
+// The output right after that line, watched for an older Codex refusing the
+// flag: clap's whole message (spaces, line breaks and colours ignored),
+//   error: unexpected argument '--no-daemon' found … Usage: codex …
+//   For more information, try '--help'.
+// printed before Codex shows anything else, after which it exits and the
+// shell is back. Codex's own screen starting first (the alternate screen,
+// bracketed paste, its keyboard mode) means it took the flag: nothing more is
+// watched, so no text a conversation or a file shows can count.
+// -> a function fed each chunk: 'refused' | 'started' (once each), else null.
+const NO_DAEMON_REFUSAL = /error:unexpectedargument['"‘’`]?--no-daemon['"‘’`]?found.*Usage:codex.*Formoreinformation,try['"‘’`]?--help/
+// eslint-disable-next-line no-control-regex
+const CODEX_SCREEN = /\x1b\[\?(?:1049|1047|47|2004)h|\x1b\[[>=][0-9;]*u|\x1b\[\?u/
 export function codexNoDaemonRefusalWatcher() {
   let tail = ''
-  let seen = false
+  let carry = ''
+  let done = false
   return (data) => {
-    if (seen) return false
-    tail = (tail + String(data || '').replace(ANSI, '').replace(/\s+/g, '')).slice(-600)
-    if (!NO_DAEMON_REFUSAL.test(tail)) return false
-    seen = true
-    return true
+    if (done) return null
+    const chunk = String(data || '')
+    // A sequence cut between two chunks still counts (the last bytes of the
+    // one before, `carry`, are looked at again, never added twice).
+    const from = carry.length
+    const raw = carry + chunk
+    carry = raw.slice(-16)
+    const screen = CODEX_SCREEN.exec(raw)
+    // Only what came before Codex's screen (the shell's prompt that follows
+    // a refusal may turn on bracketed paste or a keyboard mode itself).
+    tail = (tail + raw.slice(from, screen ? Math.max(from, screen.index) : raw.length)).slice(-4000)
+    if (NO_DAEMON_REFUSAL.test(tail.replace(ANSI, '').replace(/\s+/g, ''))) {
+      done = true
+      return 'refused'
+    }
+    if (screen) {
+      done = true
+      return 'started'
+    }
+    return null
   }
 }
 

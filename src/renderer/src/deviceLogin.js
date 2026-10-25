@@ -188,8 +188,10 @@ export function detectDeviceLogin(lines, { wrapped = null, cols = 0 } = {}) {
   const opened = known ? new URL(url.origin + url.pathname) : url
   if (known && known.code) opened.searchParams.set('user_code', known.code)
   return {
-    provider: known ? known.page.id : showUrl ? 'grok' : 'other',
-    label: known ? known.page.label : showUrl ? 'Grok' : '',
+    // Named only once a known page is on the screen (the phrases alone vouch
+    // for nothing).
+    provider: known ? known.page.id : 'other',
+    label: known ? known.page.label : '',
     host: url ? url.hostname : '',
     // What the banner shows: a known page without its query (its code is
     // shown apart), any other page whole.
@@ -240,10 +242,13 @@ export function linkClickOpens(mouseTrackingMode, event) {
 // always selects. A plain single click (no modifier, no drag, no selection
 // made, not on a link) still goes to a program that asked for clicks in the
 // SGR form, on the alternate screen: its buttons and "click here" work.
-// down / up: { col, row, button, detail, mods } of the mousedown / mouseup.
-export function clickPassesThrough({ alwaysSelect, programWantsClicks, down, up, selection, onLink }) {
-  if (!alwaysSelect || !programWantsClicks || selection || onLink || !down || !up) return false
-  if (down.button !== 0 || up.button !== 0 || down.mods || up.mods) return false
+// Never when xterm reports the mouse itself (a request that also set other
+// modes went through: the program got the click already), nor for the click
+// that only gave the terminal the keyboard.
+// down / up: { col, row, button, detail, mods, focused } of the mousedown / mouseup.
+export function clickPassesThrough({ alwaysSelect, programWantsClicks, xtermReports = false, down, up, selection, onLink }) {
+  if (!alwaysSelect || !programWantsClicks || xtermReports || selection || onLink || !down || !up) return false
+  if (!down.focused || down.button !== 0 || up.button !== 0 || down.mods || up.mods) return false
   // detail: the click count (2 on a double click, which selects a word).
   if (up.detail !== 1) return false
   return down.col === up.col && down.row === up.row

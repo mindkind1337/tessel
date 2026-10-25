@@ -10,7 +10,7 @@ import { join } from 'path'
 import { reactive } from 'vue'
 import { savedPaneModel } from '../paneLastModel'
 import { HOST_ACCOUNT_AGENTS, validHostAccount, hostAccountChoice, defaultHostAccount } from '../hostAccounts'
-import { needsRemoteAgentCheck, remoteAgentLine, hasClaudeYoloFlag, rootSafeClaudeArgs, hostCodexNoDaemon, remoteCodexNoDaemon, withoutNoDaemon, codexNoDaemonRefusalWatcher } from '../remoteAgentLaunch'
+import { needsRemoteAgentCheck, remoteAgentLine, hasClaudeYoloFlag, rootSafeClaudeArgs, hostCodexNoDaemon, remoteCodexNoDaemon, codexNoDaemonRefusalWatcher } from '../remoteAgentLaunch'
 import { remoteInstallLine, remoteInstallPlan } from '../remoteAgentInstalls'
 import { NVM_INSTALL_URL } from '../shellChain'
 import { remoteAgentFound } from '../projectLauncher'
@@ -119,7 +119,6 @@ function load({ shared = true, status = null, tree = null } = {}) {
     rootSafeClaudeArgs,
     hostCodexNoDaemon,
     remoteCodexNoDaemon,
-    withoutNoDaemon,
     codexNoDaemonRefusalWatcher,
     setTimeout,
     clearTimeout,

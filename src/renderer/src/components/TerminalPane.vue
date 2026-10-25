@@ -3021,6 +3021,11 @@ const signInCanClick = ref(false)
 // still reach it under Always select.
 const MOUSE_TRACKING = [9, 1000, 1002, 1003]
 const mouseAsked = new Set()
+// The pane started again (a new program): its requests are gone with it.
+watch(
+  () => props.node.launchedAt,
+  () => mouseAsked.clear()
+)
 function mouseClickable() {
   return (
     !!term &&
@@ -3074,10 +3079,22 @@ function signInText() {
   const s = signIn.value
   if (!s) return ''
   const who = s.label || ''
-  if (!s.url && s.showUrl && signInCanClick.value) return t('pane.signin.showFirst', '{{who}} asks you to sign in: Show the URL brings its page here.', { who })
+  if (!s.url && s.showUrl && signInCanClick.value) return t('pane.signin.showFirst', 'A sign-in waits in this terminal: Show the URL brings its page here.')
   if (!s.url) return t('pane.signin.needUrl', 'Sign-in: click “show full URL” in the terminal, then its page appears here.')
-  if (s.known) return t('pane.signin.ready', '{{who}} sign-in: open {{page}} on this PC, then enter the code. Only if you started this sign-in.', { who, page: s.page })
-  return t('pane.signin.readyOther', 'Sign-in page from this terminal: {{page}}. Check the address, and open it only if you started this sign-in.', { page: s.page })
+  if (s.known) return t('pane.signin.ready', '{{who}} sign-in: open this page on this PC, then enter the code. Only if you started this sign-in.', { who })
+  return t('pane.signin.readyOther', 'Sign-in page from this terminal: check its address, and open it only if you started this sign-in.')
+}
+// The page the banner opens, on its own line: its host first, in bold.
+function signInPage() {
+  const s = signIn.value
+  if (!s || !s.page) return null
+  try {
+    const host = new URL(s.page).host
+    const head = `https://${host}`
+    return { host, rest: s.page.startsWith(head) ? s.page.slice(head.length) : '' }
+  } catch {
+    return null
+  }
 }
 function openSignIn(event) {
   const s = signIn.value
@@ -3143,17 +3160,27 @@ function cellAtPointer(e) {
   return col >= 1 && row >= 1 && col <= term.cols && row <= term.rows ? { col, row } : null
 }
 const pointerOf = (e) => ({ ...(cellAtPointer(e) || { col: 0, row: 0 }), button: e.button, detail: e.detail, mods: e.shiftKey || e.ctrlKey || e.altKey || e.metaKey })
+// Seen on the way down, before xterm's own mousedown gives it the keyboard:
+// whether this terminal had it already (a first click only focuses).
 function onPassDown(e) {
-  passDown = settings.alwaysSelect ? pointerOf(e) : null
+  passDown = settings.alwaysSelect ? { ...pointerOf(e), focused: !!term && !!term.textarea && document.activeElement === term.textarea } : null
+}
+// A press here released outside the pane: forgotten (after onPassUp had its turn).
+function onWindowMouseUp() {
+  setTimeout(() => (passDown = null), 0)
 }
 function onPassUp(e) {
   const down = passDown
   passDown = null
   if (!down || !term || props.node.backend === 'liveshare' || props.node.liveShare || props.node.notConnected || exited.value) return
   const up = pointerOf(e)
+  // Written to this pane only (a click is at a cell of this screen, never
+  // sent to the other panes typing together); not typing (App noteUserInput
+  // leaves escape sequences out, as for the clicks xterm reports itself).
   const pass = clickPassesThrough({
     alwaysSelect: settings.alwaysSelect,
     programWantsClicks: mouseClickable(),
+    xtermReports: term.modes.mouseTrackingMode !== 'none',
     down,
     up,
     selection: term.hasSelection(),
@@ -3726,6 +3753,16 @@ onMounted(() => {
     }
     return false
   })
+  // A terminal reset (RIS: ESC c; DECSTR: CSI ! p) ends every mouse request.
+  if (term.parser.registerEscHandler)
+    term.parser.registerEscHandler({ final: 'c' }, () => {
+      mouseAsked.clear()
+      return false
+    })
+  term.parser.registerCsiHandler({ intermediates: '!', final: 'p' }, () => {
+    mouseAsked.clear()
+    return false
+  })
   search.onDidChangeResults(({ resultIndex, resultCount }) => {
     findResult.index = resultIndex
     findResult.count = resultCount
@@ -3751,6 +3788,7 @@ onMounted(() => {
   // seen on the way down, its release after xterm's links had their turn.
   hostEl.value.addEventListener('mousedown', onPassDown, { passive: true, capture: true })
   hostEl.value.addEventListener('mouseup', onPassUp, { passive: true })
+  window.addEventListener('mouseup', onWindowMouseUp, true)
   // A WebGL context lost: the normal renderer at once (the event does not
   // bubble: heard on the way down to the canvas).
   if (term.element) term.element.addEventListener('webglcontextlost', onWebglContextLost, true)
@@ -4100,6 +4138,7 @@ watch(isMaximized, () => {
 onBeforeUnmount(() => {
   mounted = false
   clearTimeout(signInTimer)
+  window.removeEventListener('mouseup', onWindowMouseUp, true)
   if (ro) ro.disconnect()
   if (screenObserver) screenObserver.disconnect()
   clearTimeout(releaseTimer)
@@ -4607,7 +4646,9 @@ const paneMenuBindings = computed(() => ({
     </div>
 
     <div v-if="signIn && signInShown && !node.failed" class="root-note signin-note" :style="{ top: `${signInNoteTop}px` }" data-test="device-login-banner" role="status" @mousedown.stop>
-      <span class="root-note-text" data-test="device-login-text">{{ signInText() }}</span>
+      <span class="root-note-text" data-test="device-login-text"
+        >{{ signInText() }}<span v-if="signInPage()" class="signin-page" data-test="device-login-page"><b>{{ signInPage().host }}</b>{{ signInPage().rest }}</span></span
+      >
       <button v-if="signIn.url" class="exit-btn primary" data-test="device-login-open" :title="signIn.url" @click="openSignIn($event)">{{ t('pane.signin.open', 'Open the page here') }}</button>
       <button v-else-if="signIn.showUrl && signInCanClick" class="exit-btn primary" data-test="device-login-show" @click="showSignInUrl">{{ t('pane.signin.showUrl', 'Show the URL') }}</button>
       <button v-if="signIn.code" class="exit-btn" data-test="device-login-copy" :title="signIn.code" @click="copySignInCode">{{ t('pane.signin.copyCode', 'Copy the code') }}</button>

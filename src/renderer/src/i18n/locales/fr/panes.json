@@ -829,10 +829,10 @@
       "open": "Ouvrir la page ici",
       "copyCode": "Copier le code",
       "showUrl": "Afficher l'URL",
-      "showFirst": "{{who}} vous demande de vous connecter : Afficher l'URL amène sa page ici.",
+      "showFirst": "Une connexion attend dans ce terminal : Afficher l'URL amène sa page ici.",
       "needUrl": "Connexion : cliquez sur « show full URL » dans le terminal, puis sa page apparaît ici.",
-      "ready": "Connexion à {{who}} : ouvrez {{page}} sur ce PC, puis saisissez le code. Seulement si c'est vous qui avez lancé cette connexion.",
-      "readyOther": "Page de connexion venant de ce terminal : {{page}}. Vérifiez l'adresse, et ne l'ouvrez que si c'est vous qui avez lancé cette connexion."
+      "ready": "Connexion à {{who}} : ouvrez cette page sur ce PC, puis saisissez le code. Seulement si c'est vous qui avez lancé cette connexion.",
+      "readyOther": "Page de connexion venant de ce terminal : vérifiez son adresse, et ne l'ouvrez que si c'est vous qui avez lancé cette connexion."
     }
   },
   "floating": {

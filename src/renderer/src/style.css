@@ -2709,6 +2709,14 @@ kbd {
 .root-note-text {
   flex: 1;
   min-width: 0;
+  overflow-wrap: anywhere;
+}
+/* The sign-in banner's page, on its own line (TerminalPane signInPage). */
+.signin-page {
+  display: block;
+  margin-top: 2px;
+  font-family: var(--mono, monospace);
+  font-size: 0.92em;
 }
 /* An agent on an SSH host without Tessel's tools: the reason and Retry */
 .root-note.tools-note {

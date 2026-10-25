@@ -203,7 +203,7 @@ import { remoteToolsReason as remoteToolsReasonText, remoteInstallErrorFor, REMO
 import { removeStatusHooks, STATUS_HOOK_AGENTS } from './agentStatusHooks'
 import teamServerSource from './teamMcp/server.cjs?raw'
 import remoteShimSource from './remoteAgent/tessel-shim.cjs?raw'
-import { BIN_NAME, REMOTE_AGENT_PROVIDERS, createShimInstaller, instanceName, newRemoteToken, readInstallId, remoteProjectDataDir, remoteServerEnv, createRemoteAgentCheck } from './remoteAgent/remoteAgentSetup'
+import { BIN_NAME, REMOTE_AGENT_PROVIDERS, createShimInstaller, instanceName, newRemoteToken, readInstallId, remoteProjectDataDir, remoteServerEnv, createRemoteAgentCheck, codexKnownArg } from './remoteAgent/remoteAgentSetup'
 import { ensureInbox, takeInbox, removeInbox } from './leadInbox'
 import { t, setLanguage as setMainLanguage, currentLocale, onLanguageChange } from './i18n'
 import { createCliServer, CliError } from './cliServer'
@@ -4498,7 +4498,8 @@ const remoteShims = createShimInstaller({
 const REMOTE_AGENT_BINS = AGENT_PRESETS.map((a) => ({ id: a.id, bin: firstWord(a.command) })).filter((b) => BIN_NAME.test(b.bin))
 const remoteAgentCheck = createRemoteAgentCheck({
   ensureShim: (hostId) => remoteShims.ensure(hostId),
-  agentTools: (hostId) => remoteFs.agentTools(hostId, REMOTE_AGENT_BINS.map((b) => b.bin), { first: true }),
+  // With what is known of its Codex (codexKnownArg): that version's --help is not asked again.
+  agentTools: (hostId, opts) => remoteFs.agentTools(hostId, [...REMOTE_AGENT_BINS.map((b) => b.bin), ...codexKnownArg(opts && opts.codexKnown)], { first: true }),
   agentBins: REMOTE_AGENT_BINS,
   label: (hostId) => {
     const target = remoteHosts.get(hostId)

@@ -7,7 +7,7 @@ import fs from 'fs'
 import os from 'os'
 import { join } from 'path'
 import { createRemoteSession, prelude, sessionArgs } from '../../remoteShell'
-import { parseAgentTools, createRemoteAgentCheck, emptyHost } from '../remoteAgentSetup'
+import { parseAgentTools, createRemoteAgentCheck, emptyHost, codexKnownArg } from '../remoteAgentSetup'
 import { gitSh, fakeSshLaunch, posixPath } from '../../__tests__/fixtures/fakeSsh'
 
 const tops = (r) => ({ claude: r.claude, codex: r.codex, vscodeClaude: r.vscodeClaude })
@@ -72,6 +72,29 @@ describe("the host's Codex and its daemon", () => {
     expect(parseAgentTools('@codexv $(rm -rf)\n@codexnd yes\n').host).toMatchObject({ codexVersion: null, codexNoDaemon: null })
     // Not said (an older Tessel, its Codex too slow): not known.
     expect(parseAgentTools('codex /usr/bin/codex\n').host).toMatchObject({ codexVersion: null, codexNoDaemon: null })
+  })
+  it('its own probe out of time: only its --no-daemon is not known, the answer is not partial', () => {
+    expect(parseAgentTools('codex /u/codex\n@partial codex\n')).toMatchObject({ partial: false, host: { codexNoDaemon: null } })
+    expect(parseAgentTools('@partial login codex\n').partial).toBe(true)
+  })
+  it('what is known goes back to the host as one more name, a version __t_agents can read', () => {
+    expect(codexKnownArg({ path: '/u/codex', version: '0.164.0', noDaemon: true })).toEqual(['codex.known.0.164.0.nd1'])
+    expect(codexKnownArg({ version: '0.165.0-alpha.1', noDaemon: false })).toEqual(['codex.known.0.165.0-alpha.1.nd0'])
+    for (const k of [null, { version: null, noDaemon: true }, { version: '0.1', noDaemon: null }, { version: '$(x)', noDaemon: true }, { version: '1.2.3+x', noDaemon: true }]) expect(codexKnownArg(k)).toEqual([])
+  })
+  it('the next check tells the host what it knows of its Codex', async () => {
+    const asked = []
+    const check = createRemoteAgentCheck({
+      ensureShim: async () => ({ ok: true }),
+      agentTools: async (_h, o) => {
+        asked.push(o && o.codexKnown)
+        return { codex: '/u/bin/codex', claude: null, vscodeClaude: null, bins: {}, host: { codexVersion: '0.164.0', codexNoDaemon: true } }
+      },
+      agentBins: []
+    })
+    await check.check('h1', { fresh: true })
+    await check.check('h1', { fresh: true })
+    expect(asked).toEqual([null, { path: '/u/bin/codex', version: '0.164.0', noDaemon: true }])
   })
   it('kept per host for its path and version: a check where its Codex did not answer says it again; another version asks anew', async () => {
     let answer = { codex: '/u/bin/codex', claude: null, vscodeClaude: null, bins: {}, host: { codexVersion: '0.164.0', codexNoDaemon: true } }
@@ -324,6 +347,38 @@ describe.skipIf(!gitSh())('__t_agents on a POSIX sh (fake ssh)', () => {
     // No codex there: nothing said.
     fs.rmSync(join(dir, '.local', 'bin', 'codex'))
     expect(await once()).not.toMatch(/^@codex/m)
+  }, 60000)
+
+  it('codex there, its version known with its answer: --help is not asked again; another version is', async () => {
+    dir = fs.mkdtempSync(join(os.tmpdir(), 'tessel-agents-'))
+    const home = posixPath(dir)
+    const once = async (names) => {
+      const out = await agentsIn(dir, {}, names)
+      session.close('done')
+      session = null
+      return out
+    }
+    script(join(dir, '.local', 'bin', 'codex'), `case "$1" in --version) echo "codex-cli 0.164.0" ;; --help) echo asked >> '${home}/help.log'; echo "  --no-daemon" ;; esac`)
+    const known = parseAgentTools(await once(['codex', 'codex.known.0.164.0.nd1']))
+    expect(known.host).toMatchObject({ codexVersion: '0.164.0', codexNoDaemon: true })
+    expect(known.bins).toEqual({ codex: `${home}/.local/bin/codex` })
+    expect(fs.existsSync(join(dir, 'help.log'))).toBe(false)
+    // Updated there since: asked.
+    expect(parseAgentTools(await once(['codex', 'codex.known.0.163.0.nd0'])).host.codexNoDaemon).toBe(true)
+    expect(fs.readFileSync(join(dir, 'help.log'), 'utf8').trim()).toBe('asked')
+  }, 60000)
+
+  it('a codex that never answers: given up after its 2 s, "@partial codex", the rest of the answer there', async () => {
+    dir = fs.mkdtempSync(join(os.tmpdir(), 'tessel-agents-'))
+    script(join(dir, '.local', 'bin', 'codex'), 'sleep 30')
+    const t0 = Date.now()
+    const out = await agentsIn(dir, {}, ['codex'])
+    expect(Date.now() - t0).toBeLessThan(15000)
+    expect(out).toMatch(/^@partial.* codex$/m)
+    expect(out).toMatch(/^@os \S+$/m)
+    const r = parseAgentTools(out)
+    expect(r.partial).toBe(false)
+    expect(r.host).toMatchObject({ codexVersion: null, codexNoDaemon: null })
   }, 60000)
 
   it('npm: its folder (where its agents are) and whether it is the user\'s; node and its version', async () => {

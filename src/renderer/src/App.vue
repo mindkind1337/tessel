@@ -9,7 +9,7 @@ import ViewTabs from './components/ViewTabs.vue'
 import FloatingTerminal from './components/FloatingTerminal.vue'
 import ProjectLauncher from './components/ProjectLauncher.vue'
 import { allowDropRetry, droppedRemotePane, emptiedWorkspaceChoice, launcherAgents, launcherShells, projectOpenChoice, rememberedValue, remoteAgentFound } from './projectLauncher'
-import { claudeStartChoice, codexResumes, hostMenuAgents, needsRemoteAgentCheck, remoteAgentLine, hostRunsAsRoot, hasClaudeYoloFlag, rootSafeClaudeArgs, rootRefusalWatcher, hostCodexNoDaemon, remoteCodexNoDaemon, withoutNoDaemon, codexNoDaemonRefusalWatcher } from './remoteAgentLaunch'
+import { claudeStartChoice, codexResumes, hostMenuAgents, needsRemoteAgentCheck, remoteAgentLine, hostRunsAsRoot, hasClaudeYoloFlag, rootSafeClaudeArgs, rootRefusalWatcher, hostCodexNoDaemon, remoteCodexNoDaemon, codexNoDaemonRefusalWatcher } from './remoteAgentLaunch'
 import { remoteInstallLine, remoteInstallPlan } from './remoteAgentInstalls'
 import { createFloatingTerminal, isFloatingToggleKey } from './floatingTerminal'
 import BrandIcon from './components/BrandIcon.vue'
@@ -1358,16 +1358,19 @@ async function agentStartLine(agent, sessionId, resume, accountId, { known = fal
     // host: what the host's Codex knows (remoteAgentLaunch.js
     // remoteCodexNoDaemon), never this computer's.
     const noDaemon = hostId ? remoteCodexNoDaemon(hostNoDaemon) : !!(window.shellApi.codexNoDaemon && (await window.shellApi.codexNoDaemon().catch(() => false)))
-    const own =
-      (noDaemon ? ' --no-daemon' : '') +
-      // No update check at start: its menu takes keystrokes (a reminder's
-      // Enter chose "Update now" and Codex quit). Updates: Settings > Agents.
-      ' -c check_for_update_on_startup=false'
+    // No update check at start: its menu takes keystrokes (a reminder's
+    // Enter chose "Update now" and Codex quit). Updates: Settings > Agents.
+    const bare = ' -c check_for_update_on_startup=false'
+    const own = (noDaemon ? ' --no-daemon' : '') + bare
     // On a host: its rollout there (gone: a fresh Codex rather than a resume
     // that fails); can't tell: resumed as here.
     const exists = sessionId && resume && hostId && !known ? await onHost('codex') : null
-    if (codexResumes({ sessionId, resume, exists })) return { line: `${agent.command} resume ${sessionId}${own}`, sessionId, resumed: true } // i18n-ignore
-    return { line: `${agent.command}${own}`, sessionId: null, resumed: false }
+    const head = codexResumes({ sessionId, resume, exists }) ? `${agent.command} resume ${sessionId}` : agent.command // i18n-ignore
+    // On a host, the same line without the flag it was given (bareLine): typed
+    // instead if that host's Codex refuses it (createLeaf).
+    const withBare = hostId && noDaemon ? { bareLine: head + bare } : {}
+    if (head !== agent.command) return { line: head + own, sessionId, resumed: true, ...withBare }
+    return { line: head + own, sessionId: null, resumed: false, ...withBare }
   }
   if (kind === 'gemini' || kind === 'qwen') {
     // Like Claude Code: resume if it was written to, else start with this id.
@@ -1606,11 +1609,19 @@ async function createLeaf(shellId, agent = null, cwd = null, worktree = null, op
   // it nor each other), all within REMOTE_START_BUDGET_MS rather than one
   // wait after the other.
   let earlyCommand = null
+  // Whether its conversation is still on the host (main keeps the answer for
+  // the start line's own ask): asked once, as early as the host can answer.
+  let conversationAsked = false
+  const askConversationEarly = () => {
+    if (conversationAsked || !agent || !opts.remoteHostId || !opts.sessionId || opts.remoteSession === true || !window.shellApi.remoteAgentSessionExists) return
+    const kind = sessionKind(agent)
+    if (kind !== 'claude' && !(kind === 'codex' && opts.resume)) return
+    conversationAsked = true
+    window.shellApi.remoteAgentSessionExists(opts.remoteHostId, kind, opts.sessionId).catch(() => null)
+  }
   if (!refused && !attached && opts.restart === true && agent && agent.command && !agent.custom && opts.remoteHostId && launch && launch.command === agent.command && hostShared(opts.remoteHostId)) {
     earlyCommand = remoteAgentCommand(opts.remoteHostId, agent.id, launch.command, { strict: !!opts.agentMissing, restore: true, deadline: paneT0 + REMOTE_START_BUDGET_MS })
-    const kind = sessionKind(agent)
-    if (opts.sessionId && opts.remoteSession !== true && (kind === 'claude' || (kind === 'codex' && opts.resume)) && window.shellApi.remoteAgentSessionExists)
-      window.shellApi.remoteAgentSessionExists(opts.remoteHostId, kind, opts.sessionId).catch(() => null)
+    askConversationEarly()
   }
   if (refused) {
     res = { ok: false, error: refused }
@@ -1741,6 +1752,9 @@ async function createLeaf(shellId, agent = null, cwd = null, worktree = null, op
   // it (restored, reconnected) starts it only when the host says it is
   // there now. A command of your own (Settings > Agents) is typed as is.
   let launchCommand = launch && launch.command
+  // Any other pane resuming a conversation on its host (Connect on a restored
+  // pane): asked now that its terminal is there, beside the agent check.
+  askConversationEarly()
   if (agent && agent.command && opts.remoteHostId && !agent.custom && launchCommand === agent.command) {
     if (typeof opts.onStartStep === 'function') opts.onStartStep('check')
     launchCommand = await (earlyCommand || remoteAgentCommand(opts.remoteHostId, agent.id, launchCommand, { strict: !!opts.agentMissing, restore: !!opts.id }))
@@ -1782,13 +1796,15 @@ async function createLeaf(shellId, agent = null, cwd = null, worktree = null, op
   // Started: the pane keeps the account it started on (its folder, or null:
   // the host's own sign-in), for its restarts; a later default changes it not.
   if (onHostAgent && launchCommand) leaf.hostAccount = hostAccount || null
+  // Whether the host's Codex knows --no-daemon (its last check); null: not known.
+  const codexDaemonKnown = agent && agent.id === 'codex' && opts.remoteHostId ? hostCodexNoDaemon(remoteAgentTools[opts.remoteHostId]) : null
   if (agent && agent.command && launchCommand) {
     if (opts.remoteHostId && typeof opts.onStartStep === 'function') opts.onStartStep('agent')
     const start = await agentStartLine({ ...agent, command: launchCommand }, opts.sessionId || null, !!opts.resume, accountId, {
       known: opts.remoteSession === true && !!opts.remoteHostId,
       hostId: opts.remoteHostId || null,
       // Whether the host's Codex knows --no-daemon (its last check).
-      hostNoDaemon: opts.remoteHostId ? hostCodexNoDaemon(remoteAgentTools[opts.remoteHostId]) : null
+      hostNoDaemon: codexDaemonKnown
     })
     leaf.sessionId = start.sessionId
     if (typeof paneStep === 'function') paneStep('start line')
@@ -1829,9 +1845,9 @@ async function createLeaf(shellId, agent = null, cwd = null, worktree = null, op
       window.shellApi.killPty(id)
       return null
     }
-    const lineWith = (args) => {
+    const lineWith = (args, startLine = start.line) => {
       const permissionModeArg = permissionMode && !/--permission-mode\b/.test(args) ? ` --permission-mode ${permissionMode}` : '' // i18n-ignore
-      return hostPrefix + (args ? `${start.line} ${args}` : start.line) + extra + automationArgs + continueArgs + permissionModeArg
+      return hostPrefix + (args ? `${startLine} ${args}` : startLine) + extra + automationArgs + continueArgs + permissionModeArg
     }
     const base = lineWith(launchArgs)
     setTimeout(() => {
@@ -1846,9 +1862,10 @@ async function createLeaf(shellId, agent = null, cwd = null, worktree = null, op
         const safe = lineWith(rootSafeClaudeArgs(launchArgs, permissionMode)) + (withWake ? wakeArg : '')
         watchRootYoloRefusal(leaf, id, opts.wrap ? opts.wrap(safe) : safe)
       }
-      // The same for a host's Codex that refuses --no-daemon (older than
-      // 0.156, it has no daemon): started once more without it.
-      if (opts.remoteHostId && agent.id === 'codex' && / --no-daemon(?=\s|$)/.test(line)) watchCodexNoDaemonRefusal(leaf, id, opts.remoteHostId, withoutNoDaemon(line))
+      // The same for a host's Codex not known to take --no-daemon, which
+      // refuses it (older than 0.156, it has no daemon): its line without the
+      // flag, never the install chain again (opts.wrap ran already).
+      if (start.bareLine && codexDaemonKnown === null) watchCodexNoDaemonRefusal(leaf, id, opts.remoteHostId, lineWith(launchArgs, start.bareLine) + (withWake ? wakeArg : ''))
       // Recorded only when the prompt really went: it was this launch's reminder.
       if (withWake) {
         noteLaunchWake(id, opts.wake.gen || 0)
@@ -6653,28 +6670,52 @@ function watchRootYoloRefusal(leaf, id, retry) {
   })
   setTimeout(stop, ROOT_REFUSAL_WATCH_MS)
 }
-// A host's Codex refused --no-daemon in pane `id`: `retry` (the line without
-// it) typed once; that host's Codex is known not to take it until its next check.
-const CODEX_REFUSAL_WATCH_MS = 30000
+// A host's Codex not known to take --no-daemon, in pane `id`: its output
+// watched a few seconds (remoteAgentLaunch.js codexNoDaemonRefusalWatcher).
+// Refused (clap's whole message, before Codex's own screen): `retry` (the
+// same line without the flag) typed once the shell is back (the refusal ends
+// that Codex at once; its prompt follows), and the host asked again for its
+// Codex (its --help: never decided from what a screen shows). Codex's screen
+// starting, or the time running out: nothing more is watched.
+const CODEX_REFUSAL_WATCH_MS = 8000
+const CODEX_RETRY_QUIET_MS = 400
 function watchCodexNoDaemonRefusal(leaf, id, hostId, retry) {
   if (!window.shellApi.onData) return
-  const refused = codexNoDaemonRefusalWatcher()
+  const feed = codexNoDaemonRefusalWatcher()
   let off = null
+  let quiet = null
   const stop = () => {
     if (off) off()
     off = null
   }
-  off = window.shellApi.onData(({ id: paneId, data }) => {
-    if (paneId !== id || !refused(data)) return
+  const typeAgain = () => {
     stop()
     const now = findLeaf(id)
     if (now && now !== leaf) return // replaced meanwhile (restarted)
-    const st = remoteAgentTools[hostId]
-    if (st && st.host) st.host.codexNoDaemon = false
-    if (window.shellApi.log) window.shellApi.log('info', `pane ${id}: the Codex on ${hostId} does not know --no-daemon (older than 0.156, no daemon there): started again without it`)
-    setTimeout(() => window.shellApi.writePty(id, `${retry}\r`), 400)
+    if (window.shellApi.log) window.shellApi.log('info', `pane ${id}: the Codex on ${hostId} refused --no-daemon (older than 0.156, no daemon there): started again without it`)
+    window.shellApi.writePty(id, `${retry}\r`)
+    void askHostAgents(hostId, { fresh: true })
+  }
+  off = window.shellApi.onData(({ id: paneId, data }) => {
+    if (paneId !== id) return
+    // Refused: typed once the shell has printed its prompt (no output for a moment).
+    if (quiet) {
+      clearTimeout(quiet)
+      quiet = setTimeout(typeAgain, CODEX_RETRY_QUIET_MS)
+      return
+    }
+    const seen = feed(data)
+    if (seen === 'started') stop()
+    else if (seen === 'refused') quiet = setTimeout(typeAgain, CODEX_RETRY_QUIET_MS)
   })
-  setTimeout(stop, CODEX_REFUSAL_WATCH_MS)
+  setTimeout(() => {
+    if (!quiet) stop()
+  }, CODEX_REFUSAL_WATCH_MS)
+  // A shell that never goes quiet after it: nothing typed.
+  setTimeout(() => {
+    clearTimeout(quiet)
+    stop()
+  }, CODEX_REFUSAL_WATCH_MS + 5000)
 }
 // opts.deadline (performance.now() time): a restart's check waits until then
 // at most (REMOTE_START_BUDGET_MS), not the full REMOTE_CHECK_MS.
@@ -9363,7 +9404,7 @@ async function checkTeamTools(round) {
     }
     const alive = new Set()
     for (const [dir, ids] of Object.entries(byDir)) {
-      const res = await window.shellApi.team.toolsAlive({ dir, ids })
+      const res = await window.shellApi.team.toolsAlive({ dir, ids, launches: launchTokens(ids) })
       if (roundGone(round)) return
       for (const id of ids) if (toolsRanSince(res, id, findLeaf(id))) alive.add(id)
     }
@@ -9401,11 +9442,26 @@ async function checkTeamTools(round) {
 // for an agent on an SSH host, they ran after it started. Its tools stop when
 // the link is idle (30 min) or drops, and its shim (tessel-shim.cjs 1.4+)
 // opens them again on its next call: server.cjs keeps their file there.
+// Tools of another launch of the same pane (started again in place) never
+// count: their file says which launch they belong to (sameLaunch); a file
+// from older tools that does not say: by the time, as before.
 function toolsRanSince(res, id, leaf) {
   if (!res || !res.ok || !leaf) return false
+  const same = res.sameLaunch ? res.sameLaunch[id] : null
+  if (same === false) return false
   if (res.alive && res.alive[id]) return true
   const at = leaf.remoteHostId && res.seen ? res.seen[id] : null
-  return Number.isFinite(at) && at >= (leaf.restartedAt || leaf.launchedAt || 0) - 5000
+  if (!Number.isFinite(at)) return false
+  return same === true || at >= (leaf.restartedAt || leaf.launchedAt || 0) - 5000
+}
+// Each pane's launch token, for toolsAlive to tell its launch's tools.
+function launchTokens(ids) {
+  const out = {}
+  for (const id of ids) {
+    const leaf = findLeaf(id)
+    if (leaf && typeof leaf.agentLaunchToken === 'string' && leaf.agentLaunchToken) out[id] = leaf.agentLaunchToken
+  }
+  return out
 }
 // An agent on an SSH host whose tessel-team server never connected since it
 // started (Codex's startup timeout, a stale shim, no link when it started):
@@ -9414,8 +9470,10 @@ function toolsRanSince(res, id, leaf) {
 // server instead of Tessel's browser. Two checks in a row (about 40 s) before
 // the note, so a slow start is not reported; the note goes by itself once
 // its tools connect (a sign-in finished first).
-const remoteToolsMisses = {} // paneId -> consecutive checks without its tools
-const remoteToolsNoted = new Set() // panes whose note this check put
+// Per pane object: a pane started again in place is a new one (its count and
+// note start over).
+const remoteToolsMisses = new WeakMap() // leaf -> consecutive checks without its tools
+const remoteToolsNoted = new WeakSet() // leaves whose note this check put
 async function checkRemoteAgentTools(round) {
   const byDir = {}
   const seen = new Set()
@@ -9431,25 +9489,24 @@ async function checkRemoteAgentTools(round) {
   })
   const alive = new Set()
   for (const [dir, ids] of Object.entries(byDir)) {
-    const res = await window.shellApi.team.toolsAlive({ dir, ids })
+    const res = await window.shellApi.team.toolsAlive({ dir, ids, launches: launchTokens(ids) })
     if (roundGone(round)) return
     for (const id of ids) if (toolsRanSince(res, id, findLeaf(id))) alive.add(id)
   }
-  for (const id of Object.keys(remoteToolsMisses)) if (!seen.has(id)) delete remoteToolsMisses[id]
-  for (const id of [...remoteToolsNoted]) if (!findLeaf(id)) remoteToolsNoted.delete(id)
   for (const id of seen) {
     const leaf = findLeaf(id)
     if (!leaf) continue
     if (alive.has(id)) {
-      delete remoteToolsMisses[id]
-      if (remoteToolsNoted.delete(id)) delete leaf.remoteToolsNote
+      remoteToolsMisses.delete(leaf)
+      if (remoteToolsNoted.delete(leaf)) delete leaf.remoteToolsNote
       continue
     }
-    remoteToolsMisses[id] = (remoteToolsMisses[id] || 0) + 1
-    if (remoteToolsMisses[id] < 2 || leaf.remoteToolsNote) continue
+    const misses = (remoteToolsMisses.get(leaf) || 0) + 1
+    remoteToolsMisses.set(leaf, misses)
+    if (misses < 2 || leaf.remoteToolsNote) continue
     const host = remoteHostLabel(leaf.remoteHostId)
     leaf.remoteToolsNote = t('app.remoteAgents.toolsNotRunning', 'Tessel tools are not connected on {{host}}: this agent has no Tessel browser or team tools, so it may use the server for web pages instead. Retry restarts it with them.', { host })
-    remoteToolsNoted.add(id)
+    remoteToolsNoted.add(leaf)
     if (window.shellApi.log) window.shellApi.log('warn', `pane ${id}: tessel-team not connected on ${leaf.remoteHostId} (no proof of life), note shown`)
   }
 }
