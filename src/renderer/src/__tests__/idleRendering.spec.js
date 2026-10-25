@@ -32,6 +32,18 @@ describe('stableComputed', () => {
     scope.stop()
   })
 
+  it('a list it hands out by reference (a project\'s worktrees) changed in place gives a new value', async () => {
+    const worktrees = reactive([{ path: 'C:/a' }])
+    const list = stableComputed(() => [{ id: 1, worktrees }])
+    const first = list.value
+    worktrees[0].path = 'C:/b'
+    await nextTick()
+    expect(list.value).not.toBe(first)
+    const second = list.value
+    worktrees.push({ path: 'C:/c' })
+    expect(list.value).not.toBe(second)
+  })
+
   it('hands out a value it cannot compare as it is', () => {
     const cycle = {}
     cycle.self = cycle
@@ -61,6 +73,34 @@ describe('applyAgentStates', () => {
     applyAgentStates({ 'pane-1': state({ state: 'working' }) })
     expect(agentStates['pane-1']).not.toBe(before)
     expect(agentStates['pane-1'].state).toBe('working')
+    applyAgentStates({})
+  })
+
+  it('a change deep inside a state (a sub-agent, a question) replaces the object, and what reads it runs again', async () => {
+    applyAgentStates({ 'pane-1': state({ children: [{ id: 'c1', state: 'working' }], ask: { question: 'Run?', options: ['yes'] } }) })
+    const before = agentStates['pane-1']
+    const scope = effectScope()
+    let runs = 0
+    scope.run(() =>
+      watchEffect(() => {
+        void agentStates['pane-1']
+        runs++
+      })
+    )
+    applyAgentStates({ 'pane-1': state({ children: [{ id: 'c1', state: 'working' }], ask: { question: 'Run?', options: ['yes'] } }) })
+    await nextTick()
+    expect(agentStates['pane-1']).toBe(before)
+    expect(runs).toBe(1)
+    applyAgentStates({ 'pane-1': state({ children: [{ id: 'c1', state: 'idle' }], ask: { question: 'Run?', options: ['yes'] } }) })
+    await nextTick()
+    expect(agentStates['pane-1']).not.toBe(before)
+    expect(agentStates['pane-1'].children[0].state).toBe('idle')
+    expect(runs).toBe(2)
+    applyAgentStates({ 'pane-1': state({ children: [{ id: 'c1', state: 'idle' }], ask: { question: 'Run?', options: ['yes', 'no'] } }) })
+    await nextTick()
+    expect(agentStates['pane-1'].ask.options).toEqual(['yes', 'no'])
+    expect(runs).toBe(3)
+    scope.stop()
     applyAgentStates({})
   })
 })

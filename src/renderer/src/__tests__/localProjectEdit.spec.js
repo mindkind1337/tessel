@@ -44,12 +44,12 @@ describe('Rename in the flat list', () => {
     await setUiLanguage('en')
   })
 
-  it('the project card menu has Rename and opens the dialog, prefilled', async () => {
+  it('the project card menu has Rename Project and opens the dialog, prefilled', async () => {
     settings.sidebarGroupBy = 'none'
     const w = mountSidebar([project()])
     await cardMenu(w)
-    expect(labels()).toEqual(expect.arrayContaining(['Rename', 'Change Project Folder…']))
-    await choose('Rename')
+    expect(labels()).toEqual(expect.arrayContaining(['Rename Project…', 'Change Project Folder…']))
+    await choose('Rename Project…')
     const input = document.querySelector('[data-test="rename-project-input"]')
     expect(input).toBeTruthy()
     expect(input.value).toBe('api')
@@ -61,7 +61,7 @@ describe('Rename in the flat list', () => {
     settings.sidebarGroupBy = 'none'
     const w = mountSidebar([project()])
     await cardMenu(w)
-    await choose('Rename')
+    await choose('Rename Project…')
     const input = document.querySelector('[data-test="rename-project-input"]')
     input.value = '  New\u202e name '
     input.dispatchEvent(new Event('input'))
@@ -75,12 +75,12 @@ describe('Rename in the flat list', () => {
     settings.sidebarGroupBy = 'none'
     const w = mountSidebar([project()])
     await cardMenu(w)
-    await choose('Rename')
+    await choose('Rename Project…')
     document.querySelector('[role="dialog"]').dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
     await nextTick()
     expect(document.querySelector('[data-test="rename-project-dialog"]')).toBeNull()
     await cardMenu(w)
-    await choose('Rename')
+    await choose('Rename Project…')
     document.querySelector('[data-test="rename-project-cancel"]').click()
     await nextTick()
     expect(w.emitted('rename')).toBeUndefined()
@@ -90,7 +90,8 @@ describe('Rename in the flat list', () => {
     settings.sidebarGroupBy = 'none'
     const w = mountSidebar([project({ live: 'guest' })])
     await cardMenu(w)
-    expect(labels()).not.toContain('Rename')
+    expect(labels()).not.toContain('Rename Project…')
+    expect(labels()).not.toContain('Change Project Folder…')
     w.vm.openRenameDialog('ws1')
     await nextTick()
     expect(document.querySelector('[data-test="rename-project-dialog"]')).toBeNull()
@@ -117,7 +118,7 @@ describe('Rename in the flat list', () => {
     settings.sidebarGroupBy = 'none'
     const w = mountSidebar([project({ cwd: null, remote: { host: 'dev', path: '/srv/api' } })])
     await cardMenu(w)
-    expect(labels()).toContain('Rename')
+    expect(labels()).toContain('Rename Project…')
   })
 })
 
@@ -148,11 +149,19 @@ describe('the rename dialog', () => {
 })
 
 describe('a folder on this computer', () => {
-  it('refuses drive roots, system folders and the folder of all homes', () => {
-    for (const p of ['C:\\', 'C:/', 'D:/', 'C:\\Windows', 'c:\\windows\\system32', 'C:\\Program Files', 'C:\\Program Files (x86)', 'C:\\Users', 'C:\\ProgramData', '\\\\server', '/', '/etc', '/etc/ssh', '/usr', '/usr/lib', '/home', '/Users', '/bin', '/ETC', '/users', '/Library', '\\\\?\\C:\\Windows', '\\\\.\\C:\\', '//?/C:/Windows']) {
+  it('refuses drive roots, system folders, the folder of all homes, device forms and a WSL distribution’s root', () => {
+    for (const p of ['C:\\', 'C:/', 'D:/', 'C:\\Windows', 'c:\\windows\\system32', 'C:\\Program Files', 'C:\\Program Files (x86)', 'C:\\Users', 'C:\\ProgramData', '\\\\server', '/', '/etc', '/usr', '/usr/lib', '/usr/local', '/proc/1', '/home', '/Users', '/bin', '/ETC', '/users', '/Library', '\\\\?\\C:\\Windows', '\\\\.\\C:\\', '//?/C:/Windows', '\\\\wsl$\\Ubuntu', '\\\\wsl.localhost\\Ubuntu\\', '\\\\wsl$\\Ubuntu\\etc']) {
       expect(localRootRefusal(p), p).toBeTruthy()
     }
-    for (const p of ['C:\\code\\api', '\\\\server\\share', '/home/me/api', '/srv/app', '/opt/app', 'C:\\Program Files\\App', 'C:\\Users\\me\\code']) {
+    // A Windows drive seen from WSL takes the Windows rule; an admin share, its drive's.
+    for (const p of ['/mnt/c', '/mnt/c/', '/mnt/c/Windows', '/mnt/c/Windows/System32', '/mnt/c/Users', '/mnt/d', '\\\\wsl.localhost\\Ubuntu\\mnt\\c', '\\\\wsl$\\Ubuntu\\mnt\\c\\Program Files', '\\\\localhost\\c$', '\\\\localhost\\C$\\', '\\\\localhost\\c$\\Users', '\\\\host\\c$\\Windows\\Temp', '\\\\host\\admin$', '\\\\host\\ADMIN$\\System32']) {
+      expect(localRootRefusal(p), p).toBeTruthy()
+    }
+    for (const p of ['/mnt/c/code/api', '/mnt/data', '\\\\wsl$\\Ubuntu\\mnt\\c\\code', '\\\\host\\c$\\code\\api', '\\\\nas\\projects$']) {
+      expect(localRootRefusal(p), p).toBe('')
+    }
+    // A project inside a system folder or a top folder of its own is fine.
+    for (const p of ['C:\\code\\api', '\\\\server\\share', '/home/me/api', '/srv/app', '/opt/app', '/etc/nginx', '/app', 'C:\\Program Files\\App', 'C:\\Users\\me\\code', '\\\\wsl$\\Ubuntu\\home\\me\\api']) {
       expect(localRootRefusal(p), p).toBe('')
     }
   })
@@ -160,6 +169,11 @@ describe('a folder on this computer', () => {
     expect(isBareLocalHome('C:\\Users\\me')).toBe(true)
     expect(isBareLocalHome('/home/me/')).toBe(true)
     expect(isBareLocalHome('/Users/me')).toBe(true)
+    expect(isBareLocalHome('/root')).toBe(true)
+    expect(isBareLocalHome('\\\\wsl$\\Ubuntu\\home\\me')).toBe(true)
+    expect(isBareLocalHome('/mnt/c/Users/me/')).toBe(true)
+    expect(isBareLocalHome('\\\\host\\c$\\Users\\me')).toBe(true)
+    expect(isBareLocalHome('/mnt/c/Users/me/code')).toBe(false)
     expect(isBareLocalHome('E:\\Profiles\\me', 'E:\\profiles\\me\\')).toBe(true)
     expect(isBareLocalHome('C:\\Users\\me\\code')).toBe(false)
   })
@@ -214,7 +228,7 @@ describe('App.vue: change folder on this computer', () => {
     expect(f).toContain('delete wsWorktrees[old]')
   })
   it('the command palette renames and moves the project on screen, never a guest’s', () => {
-    expect(src).toMatch(/canEditProject\(currentWs\.value, \(w\) => liveShare\.isGuestWs\(w\)\)[\s\S]{0,500}openRenameDialog\(wsId\)[\s\S]{0,200}setWorkspaceFolder\(wsId\)/)
+    expect(src).toMatch(/if \(currentWs\.value && !liveShare\.isGuestWs\(currentWs\.value\)\) \{[\s\S]{0,500}openRenameDialog\(wsId\)[\s\S]{0,200}setWorkspaceFolder\(wsId\)/)
   })
   it('main answers checkFolder and the preload exposes it', () => {
     expect(readFileSync(resolve(__dirname, '../../../main/addProject.js'), 'utf8')).toContain("'addProject:checkFolder'")

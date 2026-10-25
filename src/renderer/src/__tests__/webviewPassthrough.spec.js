@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { reactive } from 'vue'
 import { acquirePassthrough, passthroughActive, registerWebview, trackPointerDrag } from '../browser/webviewPassthrough'
-import SplitNode from '../components/SplitNode.vue'
+import PaneGrid from '../components/PaneGrid.vue'
 
 function pointer(type, props = {}) {
   const e = new Event(type, { bubbles: true })
@@ -96,7 +96,7 @@ describe('webviewPassthrough', () => {
   })
 })
 
-describe('SplitNode divider drag', () => {
+describe('PaneGrid divider drag', () => {
   // A split of two empty splits: only the divider matters here.
   const emptySplit = (id) => reactive({ type: 'split', id, dir: 'row', sizes: [], children: [] })
 
@@ -104,8 +104,8 @@ describe('SplitNode divider drag', () => {
     const page = document.createElement('webview')
     const off = registerWebview(page)
     const node = reactive({ type: 'split', id: 's', dir: 'row', sizes: [50, 50], children: [emptySplit('a'), emptySplit('b')] })
-    const wrapper = mount(SplitNode, { props: { node }, attachTo: document.body })
-    const container = wrapper.find('.split').element
+    const wrapper = mount(PaneGrid, { props: { node }, attachTo: document.body })
+    const container = wrapper.find('.pane-grid').element
     container.getBoundingClientRect = () => ({ width: 1000, height: 600, left: 0, top: 0, right: 1000, bottom: 600 })
     const divider = wrapper.find('.divider')
     divider.element.setPointerCapture = vi.fn()

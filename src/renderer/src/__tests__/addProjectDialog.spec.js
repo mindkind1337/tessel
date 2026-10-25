@@ -200,6 +200,20 @@ describe('browse folder', () => {
     w.unmount()
   })
 
+  it('a drive, a system folder or the folder of all homes is refused, never scanned', async () => {
+    for (const p of ['C:\\', 'C:\\Windows', 'C:\\Users', '\\\\localhost\\c$']) {
+      calls.length = 0
+      pickResult = p
+      const w = mountDialog()
+      await w.find('[data-test="ap-browse"]').trigger('click')
+      await flushPromises()
+      expect(calls.find((c) => c[0] === 'scan'), p).toBeUndefined()
+      expect(w.emitted('add'), p).toBeUndefined()
+      expect(w.find('.ap-error').text()).toBe('This folder is too broad or belongs to the system: choose a project folder inside it.')
+      w.unmount()
+    }
+  })
+
   it('a folder of repositories opens the import step: all selected, group named after the folder', async () => {
     const w = mountDialog()
     await w.find('[data-test="ap-browse"]').trigger('click')

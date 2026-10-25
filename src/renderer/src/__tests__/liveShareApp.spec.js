@@ -47,7 +47,10 @@ function loadMove(workspaces) {
     makeSplit: (dir, children, sizes) => ({ type: 'split', dir, children, sizes }),
     mapLeaves: (tree) => tree,
     firstLeafId: (tree) => leavesOf(tree)[0]?.id || null,
-    newId: () => 'split-new'
+    newId: () => 'split-new',
+    // Auto-tile off here (autoTile.spec.js covers a pane moved to a project).
+    isTabLeaf: () => false,
+    canAutoTile: () => false
   }
   vm.createContext(ctx)
   vm.runInContext(slice('function movePane(srcId, target) {', 'const makeSplit') + '\nthis.movePane = movePane', ctx)

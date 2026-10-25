@@ -11,11 +11,6 @@ export function cleanProjectName(raw) {
   return String(raw == null ? '' : raw).replace(INVISIBLE, ' ').replace(/\s+/g, ' ').trim().slice(0, 80)
 }
 
-// A Live Share guest's project is the host's: its name and folder are theirs.
-export function canEditProject(ws, isGuestWs) {
-  return !!ws && !isGuestWs(ws)
-}
-
 // The host's answer to listing the chosen folder (remoteFs.browse) -> the
 // path to keep, or { error } in words. Another project of this host on the
 // same folder, or the same folder again, is refused.
@@ -56,7 +51,7 @@ export function checkLocalFolder({ ws, checked, workspaces = [], home = '' }) {
   if (refused) return { error: refused }
   const sameFolder = (dir) => !!dir && (samePath(dir, path) || (!!checked.real && samePath(dir, checked.real)))
   if (sameFolder(ws.cwd)) return { error: t('project.remote.folder.same', 'This project already uses this folder.'), same: true }
-  const other = workspaces.find((w) => w !== ws && !w.remote && w.live !== 'guest' && !w.liveShare && sameFolder(w.cwd))
+  const other = workspaces.find((w) => w !== ws && !w.remote && !w.liveShare && sameFolder(w.cwd))
   if (other) return { error: t('project.remote.folder.other', 'The project "{{name}}" already uses this folder.', { name: other.name }) }
   return isBareLocalHome(path, home) || (checked.real && isBareLocalHome(checked.real, home)) ? { path, confirmHome: true } : { path }
 }

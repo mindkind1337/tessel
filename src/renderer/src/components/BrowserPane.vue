@@ -2035,8 +2035,7 @@ defineExpose({ navigate, focusAddress })
    selectors: in scoped CSS, `:global(body.x) .bp-webview` compiles to just
    `body.x` and made the whole window ignore the pointer during a pane drag. */
 body.pane-dragging .bp-webview,
-body.ws-resizing .bp-webview,
-.split:has(.divider.dragging) .bp-webview {
+body.ws-resizing .bp-webview {
   pointer-events: none;
 }
 

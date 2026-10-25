@@ -33,5 +33,16 @@ export function createSaveScheduler(run, { quietMs = 500, maxWaitMs = 5000, now 
     first = 0
     return true
   }
-  return { schedule, flush, cancel, pending: () => timer !== null }
+  // A save that failed: run again in ms, unless a change already waits (it
+  // saves everything). It counts as waiting, so closing the window runs it.
+  function retry(ms) {
+    if (timer) return
+    first = now()
+    timer = setTimeout(() => {
+      timer = null
+      first = 0
+      run()
+    }, ms)
+  }
+  return { schedule, flush, cancel, retry, pending: () => timer !== null }
 }

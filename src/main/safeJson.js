@@ -136,7 +136,10 @@ export function writeJsonSafe(file, data, valid = anyShape, opts = {}) {
     let fresh = false
     if (opts.backupEveryMs > 0) {
       try {
-        fresh = Date.now() - fs.statSync(bak).mtimeMs < opts.backupEveryMs
+        // A copy "from the future" (the clock was set back since) is not
+        // fresh: it would not be renewed until the clock caught up.
+        const age = Date.now() - fs.statSync(bak).mtimeMs
+        fresh = age >= 0 && age < opts.backupEveryMs
       } catch {
         fresh = false
       }

@@ -42,4 +42,28 @@ describe('createSaveScheduler', () => {
     vi.advanceTimersByTime(10000)
     expect(run).toHaveBeenCalledTimes(1)
   })
+
+  it('retry: a failed save runs again later, sooner if a change comes, and closing the window runs it', () => {
+    const run = vi.fn()
+    const s = createSaveScheduler(run, { now: () => Date.now() })
+    s.retry(5000)
+    expect(s.pending()).toBe(true)
+    vi.advanceTimersByTime(4999)
+    expect(run).not.toHaveBeenCalled()
+    vi.advanceTimersByTime(1)
+    expect(run).toHaveBeenCalledTimes(1)
+    // A change while the retry waits: saved after the usual quiet moment.
+    s.retry(5000)
+    s.schedule()
+    vi.advanceTimersByTime(500)
+    expect(run).toHaveBeenCalledTimes(2)
+    // A retry never pushes back a save already waiting.
+    s.schedule()
+    s.retry(60000)
+    vi.advanceTimersByTime(500)
+    expect(run).toHaveBeenCalledTimes(3)
+    s.retry(60000)
+    expect(s.flush()).toBe(true)
+    expect(run).toHaveBeenCalledTimes(4)
+  })
 })

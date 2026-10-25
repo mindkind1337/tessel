@@ -51,6 +51,7 @@ function validState(state) {
 // At most MAX_POLLED teams (the least recently read goes first): the parse of
 // a team that was closed does not stay in memory.
 const MAX_POLLED = 16
+const RACY_MS = 2000
 const polled = new Map() // state.json path -> { size, mtimeMs, ino, state }
 function readPolledState(root) {
   const file = join(root, 'state.json')
@@ -69,13 +70,19 @@ function readPolledState(root) {
   }
   const state = readState(root)
   // The file can be restored from its copy by readState: its stamp is read after.
+  // A file written a moment ago is not kept: another Tessel (the installed one
+  // and a development one share a project's channel) could write it again
+  // within the same tick of a coarse clock (a network drive, FAT) with the
+  // same size, and the stamp would not tell. Polls of a quiet channel use it.
+  polled.delete(file)
   try {
     const after = fs.statSync(file)
-    polled.delete(file)
-    if (polled.size >= MAX_POLLED) polled.delete(polled.keys().next().value)
-    polled.set(file, { size: after.size, mtimeMs: after.mtimeMs, ino: after.ino, state })
+    if (Date.now() - after.mtimeMs >= RACY_MS) {
+      if (polled.size >= MAX_POLLED) polled.delete(polled.keys().next().value)
+      polled.set(file, { size: after.size, mtimeMs: after.mtimeMs, ino: after.ino, state })
+    }
   } catch {
-    polled.delete(file)
+    /* not kept */
   }
   return state
 }

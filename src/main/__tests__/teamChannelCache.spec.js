@@ -35,10 +35,16 @@ const writeState = (mutate) => {
   fs.writeFileSync(stateFile, JSON.stringify(state))
 }
 const stateReads = (spy) => spy.mock.calls.filter(([p]) => String(p) === stateFile).length
+// state.json as left a few seconds ago (a file written a moment ago is read again at each poll).
+const settle = (file = stateFile) => {
+  const old = new Date(Date.now() - 5000)
+  fs.utimesSync(file, old, old)
+}
 
 describe('polling an unchanged channel', () => {
   it('reads and parses state.json once, not at every poll', () => {
     writeState((s) => (s.messages = Array.from({ length: 300 }, (_, i) => delivered(i))))
+    settle()
     const read = vi.spyOn(fs, 'readFileSync')
     const first = pollTeamChannel({ dir, teamId })
     for (let i = 0; i < 10; i++) expect(pollTeamChannel({ dir, teamId })).toEqual(first)
@@ -57,6 +63,16 @@ describe('polling an unchanged channel', () => {
     const done = pollTeamChannel({ dir, teamId })
     expect(done.held).toEqual([])
     expect(done.history.find((m) => m.id === 'p1').status).toBe('delivered')
+  })
+
+  it('a file written a moment ago is read again at each poll: another Tessel can rewrite it with the same size within the clock tick', () => {
+    writeState((s) => s.messages.push({ id: 'aaaa', fromId: 'pane-a', toId: 'pane-b', text: 'x', status: 'pending', createdAt: 1 }))
+    const { mtime } = fs.statSync(stateFile)
+    expect(pollTeamChannel({ dir, teamId }).deliveries.map((m) => m.id)).toEqual(['aaaa'])
+    // Rewritten in place (same file, same size), its time put back as it was.
+    writeState((s) => (s.messages[0].id = 'bbbb'))
+    fs.utimesSync(stateFile, mtime, mtime)
+    expect(pollTeamChannel({ dir, teamId }).deliveries.map((m) => m.id)).toEqual(['bbbb'])
   })
 
   it('a change made by another program shows at the next poll', () => {

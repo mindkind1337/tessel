@@ -543,7 +543,7 @@
       "contrastTargetHint": "Des valeurs plus élevées augmentent le contraste lorsque cela est possible. Les couleurs d'arrière-plan restent inchangées.",
       "layout": "Disposition",
       "tileNewPanes": "Disposer les nouveaux panneaux en grille",
-      "tileNewPanesHint": "Un nouveau panneau réorganise ceux du projet en cellules égales, aussi carrées que la place le permet. Une disposition que vous avez redimensionnée ou déplacée à la main est conservée jusqu'à « Organiser les panneaux en grille ».",
+      "tileNewPanesHint": "Un nouveau panneau réorganise ceux de sa grille en cellules égales, aussi carrées que la place le permet. « Diviser à droite », « Diviser vers le bas » et un côté choisi dans le menu + font ce qui est demandé ; une disposition que vous avez redimensionnée ou déplacée à la main est conservée jusqu'à « Organiser les panneaux en grille ».",
       "copyPaste": "Copier et coller",
       "copyOnSelect": "Copier le texte quand vous le sélectionnez",
       "rightClickPaste": "Le clic droit colle",

@@ -78,13 +78,20 @@ describe('LiveShareAsk: someone asks to join', () => {
     expect(boxes(w, 'ls-right-')).toEqual([false, false, false, false, false, false, false, false])
   })
 
-  it('a click on the waiting Trust box takes you to the code check and makes it blink', async () => {
+  it('a click on the waiting Trust box (the box itself, or its words) takes you to the code check and makes it blink', async () => {
     const w = mount(LiveShareAsk, { props: { ask: bob, projects: PROJECTS }, attachTo: document.body })
     await flushPromises()
     expect(w.find('[data-test="ls-ask-code"]').classes()).not.toContain('nudge')
-    await w.find('[data-test="ls-ask-trust-box"]').trigger('click')
+    // Said quietly first; it stands out once the box was tried.
+    expect(w.find('[data-test="ls-ask-trust-why"]').classes()).toContain('ls-ask-dim')
+    // Right on the box: a disabled input would take no click at all.
+    await w.find('[data-test="ls-ask-trust-box"] input').trigger('click')
     expect(w.find('[data-test="ls-ask-code"]').classes()).toContain('nudge')
+    expect(w.find('[data-test="ls-ask-trust-why"]').classes()).toContain('ls-ask-need')
     expect(document.activeElement).toBe(w.find('[data-test="ls-ask-code-checked"] input').element)
+    expect(w.find('[data-test="ls-ask-trust-box"] input').element.checked).toBe(false)
+    // On its words too, and it stays unticked.
+    await w.find('[data-test="ls-ask-trust-box"] .ls-ask-check-text').trigger('click')
     expect(w.find('[data-test="ls-ask-trust-box"] input').element.checked).toBe(false)
     w.unmount()
   })
@@ -93,10 +100,10 @@ describe('LiveShareAsk: someone asks to join', () => {
     const w = mount(LiveShareAsk, { props: { ask: bob, projects: PROJECTS } })
     expect(w.find('[data-test="ls-ask-trust"]').exists()).toBe(true)
     // Shown, but waiting for the code check (and it says so).
-    expect(w.find('[data-test="ls-ask-trust-box"] input').element.disabled).toBe(true)
+    expect(w.find('[data-test="ls-ask-trust-box"] input').attributes('aria-disabled')).toBe('true')
     expect(w.find('[data-test="ls-ask-trust-why"]').text()).toBe('Tick “I checked it with them” above first.')
     await w.find('[data-test="ls-ask-code-checked"] input').setValue(true)
-    expect(w.find('[data-test="ls-ask-trust-box"] input').element.disabled).toBe(false)
+    expect(w.find('[data-test="ls-ask-trust-box"] input').attributes('aria-disabled')).toBeUndefined()
     expect(w.find('[data-test="ls-ask-trust-why"]').exists()).toBe(false)
     await w.find('[data-test="ls-ask-trust-box"] input').setValue(true)
     await arm()
@@ -108,7 +115,7 @@ describe('LiveShareAsk: someone asks to join', () => {
     await w.find('[data-test="ls-ask-trust-box"] input').setValue(true)
     await w.find('[data-test="ls-ask-code-checked"] input').setValue(false)
     expect(w.find('[data-test="ls-ask-trust-box"] input').element.checked).toBe(false)
-    expect(w.find('[data-test="ls-ask-trust-box"] input').element.disabled).toBe(true)
+    expect(w.find('[data-test="ls-ask-trust-box"] input').attributes('aria-disabled')).toBe('true')
     await arm()
     await w.find('[data-test="ls-ask-allow"]').trigger('click')
     expect(w.emitted('answer')[1][0].trust).toBe(false)

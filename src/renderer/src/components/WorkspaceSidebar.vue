@@ -867,13 +867,19 @@ const optionsOpen = ref(null) // anchor rect
 const optionsMenuItems = computed(() => (optionsOpen.value ? optionsItems() : []))
 
 // Rename and the project's folder (local, or on its SSH host); nothing for a
-// Live Share guest.
-function projectEditItems(project) {
+// Live Share guest. On a card (not under the project's own name), Rename
+// says it is the project's.
+function projectEditItems(project, { onCard = false } = {}) {
   if (isGuestProject(project)) return []
   const wsId = project.id
   const folder = project.remote ? project.remote.path : project.cwd
   return [
-    { type: 'item', icon: Pencil, label: t('sidebar.project.rename', 'Rename'), onSelect: () => startRename(project) },
+    {
+      type: 'item',
+      icon: Pencil,
+      label: onCard ? t('sidebar.card.renameProject', 'Rename Project…') : t('sidebar.project.rename', 'Rename'),
+      onSelect: () => startRename(project)
+    },
     {
       type: 'item',
       icon: FolderOpen,
@@ -1022,13 +1028,13 @@ function cardMenuItems(card) {
   // The project's own card: rename it / move its folder from here too.
   const owner = card.isMain ? props.projects.find((p) => p.id === card.projectId) : null
   if (owner && !isGuestProject(owner)) {
-    items.push(...projectEditItems(owner))
+    items.push(...projectEditItems(owner, { onCard: true }))
     items.push({ type: 'separator' })
   }
   if (card.taskId) {
     items.push({ type: 'item', icon: GitCompare, label: t('sidebar.card.review', 'Review Changes…'), onSelect: () => emit('review-task', card.taskId) })
+    items.push({ type: 'separator' })
   }
-  items.push({ type: 'separator' })
   // A chat agent has no terminal to stop (it stops by itself when idle).
   const sleepable = card.panes.filter((r) => r.kind === 'agent' && !r.chat && !r.sleeping).map((r) => r.id)
   items.push({

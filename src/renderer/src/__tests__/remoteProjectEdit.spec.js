@@ -11,7 +11,7 @@ import RemoteFolderDialog from '../components/project/RemoteFolderDialog.vue'
 import { resetSettings } from '../settings'
 import { setUiLanguage, t } from '../i18n'
 import { _resetFeedsForTest } from '../agentChildrenFeed'
-import { cleanProjectName, canEditProject, checkRemoteFolder } from '../projectFolder'
+import { cleanProjectName, checkRemoteFolder } from '../projectFolder'
 import { remoteRootRefusal } from '../addProject'
 import { hostLayoutFromWorkspace, hostChatsFromWorkspace } from '../liveShareLayout'
 
@@ -68,10 +68,13 @@ describe('the sidebar menus of a remote project', () => {
     expect(w.emitted('rename')).toEqual([['ws1', 'FX resources']])
   })
 
-  it('the main card menu has them too', async () => {
+  it('the main card menu has them too, Rename saying it is the project’s', async () => {
     const w = mountSidebar([project()])
     await w.findAll('.wtc-surface')[0].trigger('contextmenu', { clientX: 20, clientY: 30 })
-    expect(items()).toEqual(expect.arrayContaining(['Rename', 'Change Project Folder…']))
+    expect(items()).toEqual(expect.arrayContaining(['Rename Project…', 'Change Project Folder…']))
+    // No two separators in a row (a card with no review).
+    const kinds = [...document.querySelector('.orca-menu').children].map((el) => (el.getAttribute('role') === 'separator' ? 'sep' : 'x'))
+    expect(kinds.join(',')).not.toContain('sep,sep')
   })
 
   it('a Live Share guest sees neither, and a double-click does not edit', async () => {
@@ -95,13 +98,6 @@ describe('the checks', () => {
     expect(cleanProjectName('x'.repeat(200))).toHaveLength(80)
     expect(cleanProjectName('   ')).toBe('')
     expect(cleanProjectName(null)).toBe('')
-  })
-
-  it('a guest cannot edit', () => {
-    const isGuest = (w) => !!w.liveShare
-    expect(canEditProject(ws, isGuest)).toBe(true)
-    expect(canEditProject({ ...ws, liveShare: {} }, isGuest)).toBe(false)
-    expect(canEditProject(null, isGuest)).toBe(false)
   })
 
   it('keeps the real path the host listed', () => {
@@ -128,15 +124,18 @@ describe('the checks', () => {
     expect(bad('/a', { ok: true, path: '/srv/web' }).error).toContain('web')
   })
 
-  it('refuses the host’s root, system folders and one-part folders; the home folder asks first', () => {
+  it('refuses the host’s root, the system folders and the kernel’s trees; a home folder (root’s too) asks first', () => {
     const at = (p) => checkRemoteFolder({ ws, picked: p, browsed: { ok: true, path: p }, workspaces: [ws] })
-    for (const p of ['/', '/etc', '/root', '/proc', '/sys', '/dev', '/boot', '/var', '/usr', '/bin', '/lib', '/sbin', '/home', '/opt', '//']) {
+    for (const p of ['/', '/etc', '/proc', '/proc/1', '/sys/class', '/dev', '/boot', '/var', '/var/lib', '/usr', '/usr/local', '/bin', '/lib', '/sbin', '/home', '/opt', '/srv', '/tmp', '/mnt', '/Users', '//']) {
       expect(at(p).error, p).toBeTruthy()
       expect(at(p).path, p).toBeUndefined()
     }
     expect(at('/home/me')).toEqual({ path: '/home/me', confirmHome: true })
+    expect(at('/root')).toEqual({ path: '/root', confirmHome: true })
+    expect(at('/Users/me/')).toEqual({ path: '/Users/me/', confirmHome: true })
     expect(at('/home/me/fx')).toEqual({ path: '/home/me/fx' })
-    expect(at('/var/www')).toEqual({ path: '/var/www' })
+    // A project inside a system folder, or a top folder of its own (a container's /app).
+    for (const p of ['/var/www', '/etc/nginx', '/opt/app', '/srv/www', '/app', '/workspace', '/root/app']) expect(at(p), p).toEqual({ path: p })
     // Add a project shares the check
     expect(remoteRootRefusal('/')).toBeTruthy()
     expect(remoteRootRefusal('~')).toBe('')
@@ -217,14 +216,16 @@ describe('App.vue', () => {
     expect(fn.indexOf('remoteFolder.value = {')).toBeLessThan(fn.indexOf('pickFolder'))
   })
   it('a guest can neither rename nor move a project', () => {
-    expect(src).toMatch(/function renameWorkspace[\s\S]{0,300}canEditProject\(ws,/)
-    expect(src).toMatch(/async function setWorkspaceFolder[\s\S]{0,400}canEditProject\(ws,/)
+    expect(src).toMatch(/function renameWorkspace[\s\S]{0,300}if \(!ws \|\| liveShare\.isGuestWs\(ws\)\) return/)
+    expect(src).toMatch(/async function setWorkspaceFolder[\s\S]{0,400}if \(liveShare\.isGuestWs\(ws\)\) \{/)
     expect(src).toMatch(/function applyRemoteFolder\(ws, path\) \{\s*if \(!ws\.remote \|\| liveShare\.isGuestWs\(ws\)\) return false/)
   })
   it('what follows a remote project reads ws.remote live (git, roots, new panes, saved layout)', () => {
     expect(src).toMatch(/const gitKeyOf = \(w\) => \(w\.remote \? remoteRoot\(w\.remote\.hostId, w\.remote\.path\)/)
     expect(src).toMatch(/return \{ \.\.\.opts, remoteHostId: ws\.remote\.hostId, remotePath: ws\.remote\.path \}/)
     expect(src).toMatch(/\.\.\.\(w\.remote \? \{ remote: \{ hostId: w\.remote\.hostId, path: w\.remote\.path \} \} : \{\}\)/)
-    expect(src).toMatch(/filter\(\(w\) => w\.remote\)\s*\.map\(\(w\) => remoteRoot\(w\.remote\.hostId, w\.remote\.path\)\)[\s\S]{0,120}saveLayoutNow/)
+    // A project's folder changed (remote or local): saved at once, so main's
+    // allowlists take the new folder and drop the old one.
+    expect(src).toMatch(/\.map\(\(w\) => \(w\.remote \? remoteRoot\(w\.remote\.hostId, w\.remote\.path\) : w\.liveShare \? '' : w\.cwd \|\| ''\)\)[\s\S]{0,120}saveLayoutNow/)
   })
 })
