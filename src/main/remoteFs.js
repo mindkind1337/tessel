@@ -24,7 +24,7 @@
 //   `gio trash --restore` can put it back), never rm.
 import crypto from 'crypto'
 import { ACCOUNT_FUNCTIONS } from './remoteAgent/remoteAccounts'
-import { createRemoteSession, sessionArgs, remotePathArg, rawArg, RC } from './remoteShell'
+import { createRemoteSession, sessionArgs, remotePathArg, rawArg, RC, DEFAULT_TIMEOUT_MS } from './remoteShell'
 import { createScm } from './sourceControl'
 import { looksBinary, MAX_EDIT_BYTES, MAX_HEAD_BYTES } from './editorFiles'
 import { cleanEnv } from './cleanEnv'
@@ -115,6 +115,17 @@ export const LANES = Object.freeze({
 })
 const LANE_READY_MS = 15_000
 export const LANE_RETRY_MS = 45_000
+// No background lane (an older terminal host, the system ssh, no slot): the
+// Files panel's own git work (its colours, the Changes count: `low`) shares
+// the host's one session with the agent readers, a pane's setup and the
+// user's clicks. There it runs last (remoteShell.js pump), is stopped on the
+// host after SHARED_GIT_MS, and one that ran out of time is not run in the
+// background again for that repository for SHARED_GIT_HOLD_MS (the Changes
+// tab, which asks in the foreground, still runs it at once). A huge tree
+// (2026-10-25: a FiveM server) held the session 30 s at a time, over and
+// over, and the agent views and new panes gave up behind it.
+export const SHARED_GIT_MS = 8000
+export const SHARED_GIT_HOLD_MS = 5 * 60_000
 // The pane lane's requests that may run a second time when their channel
 // went away under them: reads, the shim install (written by a rename, then
 // its idempotent `install`), an account folder made whole (never a new one,
@@ -409,6 +420,7 @@ export function createRemoteFs({
   const sessions = new Map() // hostId -> entry
   const roots = new Map() // hostId\npath -> { hostId, path }
   const repoInfos = new Map() // hostId\nroot path -> Promise<info>
+  const gitHolds = new Map() // hostId\nrepository top -> time before which its background git work is held (SHARED_GIT_MS)
   const watchedRoots = new Map() // virtual root -> { hostId, root, last }
   const watchedFiles = new Map() // hostId\npath -> { virtual, loc, sig }
   const changeListeners = new Set() // fn(virtual root): a watched project changed
@@ -745,7 +757,8 @@ export function createRemoteFs({
   }
   // One request on a lane. -> like callOnce; laneFailed: the lane could not
   // be had (nothing was sent); code 'system': the host is on the system ssh.
-  async function laneCall(hostId, lane, fn, args, { cap, timeoutMs, upload } = {}) {
+  // low: the Files panel's git work, behind the lane's other requests.
+  async function laneCall(hostId, lane, fn, args, { cap, timeoutMs, upload, low = false } = {}) {
     let session
     try {
       session = await openLane(hostId, lane)
@@ -758,7 +771,7 @@ export function createRemoteFs({
       entry.idleTimer = null
     }
     try {
-      return await session.run(fn, args, { ...(cap ? { cap } : {}), ...(timeoutMs ? { timeoutMs } : {}), ...(upload ? { upload } : {}) })
+      return await session.run(fn, args, { ...(cap ? { cap } : {}), ...(timeoutMs ? { timeoutMs } : {}), ...(upload ? { upload } : {}), ...(low ? { background: true, low: true } : {}) })
     } catch (err) {
       return { error: sessionErrorText(hostId, err), code: (err && err.code) || 'failed', ...(err && err.notSent ? { notSent: true } : {}) }
     } finally {
@@ -797,7 +810,10 @@ export function createRemoteFs({
   // (LANE_ENDS): a guest's save or a background read on its way is not cut
   // by the Files session's idle close or the badge's Cancel.
   function closeHost(hostId, reason = 'cancelled') {
-    if (LANE_ENDS.has(reason)) closeLanes(hostId, reason)
+    if (LANE_ENDS.has(reason)) {
+      closeLanes(hostId, reason)
+      for (const k of [...gitHolds.keys()]) if (k.startsWith(`${hostId}\n`)) gitHolds.delete(k)
+    }
     const entry = sessions.get(hostId)
     if (!entry) return false
     if (entry.session) entry.session.close(reason)
@@ -852,12 +868,15 @@ export function createRemoteFs({
   // lane: 'pane' | 'guest' | 'bg' (see LANES). A guest's call is always on
   // its lane; a background one (a poll, a refresh, a reader) on the 'bg' lane
   // when the host has one.
+  // low (with background): the Files panel's own git work; holdKey: its
+  // repository (SHARED_GIT_MS).
   async function callOnce(hostId, fn, args, opts = {}) {
-    const { cap, timeoutMs, upload, op = '', ifOpen = false, background = false, first = false, guest = false } = opts
-    let { quiet = false } = opts
+    const { cap, upload, op = '', ifOpen = false, background = false, first = false, guest = false } = opts
+    let { quiet = false, timeoutMs } = opts
+    const low = !!opts.low && background && !first
     const lane = guest ? 'guest' : opts.lane || ((background || quiet || ifOpen) && !opts.noLane ? 'bg' : null)
     if (lane) {
-      const res = await laneCall(hostId, lane, fn, args, { cap, timeoutMs, upload })
+      const res = await laneCall(hostId, lane, fn, args, { cap, timeoutMs, upload, low: low && lane === 'bg' })
       const inSession = { ...opts, lane: null, noLane: true }
       // The pane's or the background lane cannot be had (a connection not
       // signed in yet, the system ssh, an older terminal host, no slot, not
@@ -881,6 +900,14 @@ export function createRemoteFs({
         return r && r.skipped ? { error: sessionErrorText(hostId, laneError('not-connected')), code: 'not-connected' } : r
       }
       return res
+    }
+    // The Files panel's git work in the host's one shared session (no lane):
+    // held back after one ran out of time there, else stopped on the host
+    // after SHARED_GIT_MS (see SHARED_GIT_MS).
+    const holdKey = `${hostId}\n${opts.holdKey || ''}`
+    if (low) {
+      if ((gitHolds.get(holdKey) || 0) > now()) return { error: t('main.explorer.statusSlow', 'Git status took too long.'), code: 'held' }
+      timeoutMs = Math.min(timeoutMs || DEFAULT_TIMEOUT_MS, SHARED_GIT_MS)
     }
     let session
     const entry0 = sessions.get(hostId)
@@ -916,14 +943,22 @@ export function createRemoteFs({
       }, SLOW_MS)
     }
     try {
-      return await session.run(fn, args, {
+      const res = await session.run(fn, args, {
         ...(cap ? { cap } : {}),
         ...(timeoutMs ? { timeoutMs } : {}),
         ...(upload ? { upload } : {}),
         ...(ifOpen ? { touch: false } : {}),
         ...(quiet || background ? { background: true } : {}),
-        ...(first ? { first: true } : {})
+        ...(first ? { first: true } : {}),
+        ...(low ? { low: true } : {})
       })
+      if (low && res && res.rc === RC.TIMEOUT) {
+        if (!((gitHolds.get(holdKey) || 0) > now()))
+          warn(`remote git work on ${hostId} ran out of time in the shared session (${secs(timeoutMs)}): not run in the background again for ${SHARED_GIT_HOLD_MS / 60_000} min`) // i18n-ignore log line
+        if (gitHolds.size > 200) gitHolds.clear()
+        gitHolds.set(holdKey, now() + SHARED_GIT_HOLD_MS)
+      }
+      return res
     } catch (err) {
       return { error: sessionErrorText(hostId, err), code: (err && err.code) || 'failed', ...(err && err.notSent ? { notSent: true } : {}) }
     } finally {
@@ -1177,11 +1212,16 @@ ${!!q.ignored}`, () => projectStatusNow(q))
     const info = await repoInfo(loc, { background: background === true })
     if (info.error) return { ok: false, error: info.error }
     if (info.missing || !info.top) return { ok: true, files: {}, repo: false }
-    const args = ['status', '--porcelain=v1', '-z', '--untracked-files=all', ...(ignored ? ['--ignored=matching'] : [])]
+    // An untracked folder is one entry ("?? dir/"; the explorer shows what is
+    // inside it as untracked too: explorerStatus.js), never every file in it:
+    // on a huge tree the full list ran out of time and held the host's
+    // session. The Changes tab still lists every file (sourceControl.js).
+    const args = ['status', '--porcelain=v1', '-z', '--untracked-files=normal', ...(ignored ? ['--ignored=matching'] : [])]
     // How long it took is said (ms): the Files panel asks less often for a
     // big project, and backs off after one that ran out of time.
     const t0 = now()
-    const res = await call(loc.hostId, '__t_gitin', [arg(loc.root.path), arg(info.top), ...info.gitArgs, ...args], { cap: 32 * 1024 * 1024, timeoutMs: 30000, op: 'status', background: background === true, retry: true })
+    const bg = background === true ? { background: true, low: true, holdKey: info.top } : {}
+    const res = await call(loc.hostId, '__t_gitin', [arg(loc.root.path), arg(info.top), ...info.gitArgs, ...args], { cap: 32 * 1024 * 1024, timeoutMs: 30000, op: 'status', retry: true, ...bg })
     const ms = now() - t0
     if (res.error) return { ok: false, error: res.error, ms }
     if (res.rc !== 0) return { ok: false, error: rcText(res, t('main.scm.statusFailed', 'Git status failed.')), ms }
@@ -2025,7 +2065,10 @@ ${q.root}`, () => sparseInfoNow(q))
     }
   }
   const READ_ONLY_GIT = new Set(['status', 'diff', 'remote', 'log', 'show', 'rev-parse', 'for-each-ref', 'symbolic-ref', 'ls-files', 'cat-file', 'merge-base', 'rev-list'])
-  // bg: { background: true } for the reads made by themselves (scmBg below).
+  // bg: { background: true, low: true } for the reads made by themselves
+  // (scmBg below): the Files panel's git work, held for its repository after
+  // one ran out of time in the shared session (SHARED_GIT_MS).
+  const scmBgFor = (bg, top) => (bg.low ? { ...bg, holdKey: top.real } : bg)
   const makeScmBackend = (bg = {}) => ({
     async repoOf(root) {
       const loc = isRemotePath(root) && rootOf(root) ? locate(root, root) : null
@@ -2056,7 +2099,7 @@ ${q.root}`, () => sparseInfoNow(q))
         op: slow ? list[0] === '-F' ? 'commit' : list[0] : 'git',
         // A read (nothing changes on the host): run again after a dropped connection.
         retry: READ_ONLY_GIT.has(list[0]),
-        ...bg
+        ...scmBgFor(bg, top)
       })
       return gitResult(res, maxBuffer)
     },
@@ -2077,7 +2120,7 @@ ${q.root}`, () => sparseInfoNow(q))
     present: (top) => top.virtual,
     fullPath: (top, rel) => childPath(top.virtual, rel),
     async operation(top) {
-      const res = await call(top.hostId, '__t_gitop', [arg(top.rootPath), arg(top.real)], { cap: 1024, op: 'status', ...bg })
+      const res = await call(top.hostId, '__t_gitop', [arg(top.rootPath), arg(top.real)], { cap: 1024, op: 'status', ...scmBgFor(bg, top) })
       const op = !res.error && res.rc === 0 ? res.out.toString('latin1').trim() : ''
       return ['rebase', 'merge', 'cherry-pick'].includes(op) ? op : null
     },
@@ -2086,7 +2129,7 @@ ${q.root}`, () => sparseInfoNow(q))
       const list = (rels || []).filter((r) => typeof r === 'string' && r && !CONTROL.test(r)).slice(0, REMOTE_UNTRACKED_COUNTS)
       for (let i = 0; i < list.length; i += 200) {
         const chunk = list.slice(i, i + 200)
-        const res = await call(top.hostId, '__t_wcl', [arg(top.rootPath), arg(top.real), ...chunk], { cap: 256 * 1024, timeoutMs: 30000, op: 'status', ...bg })
+        const res = await call(top.hostId, '__t_wcl', [arg(top.rootPath), arg(top.real), ...chunk], { cap: 256 * 1024, timeoutMs: 30000, op: 'status', ...scmBgFor(bg, top) })
         if (res.error || res.rc !== 0) break
         const lines = res.out.toString('latin1').split('\n')
         chunk.forEach((rel, j) => {
@@ -2129,7 +2172,7 @@ ${q.root}`, () => sparseInfoNow(q))
   // The Changes count read by itself (a change notice, the panel shown):
   // the same reads as background work, never in front of a click and never
   // "busy" in the badge.
-  const scmBg = createScm(makeScmBackend({ background: true }))
+  const scmBg = createScm(makeScmBackend({ background: true, low: true }))
   const remoteOnly = () => ({ ok: false, error: t('main.remoteFs.localOnly', 'Not available for a project on a remote host.') })
 
   // The window's view of a host's session.

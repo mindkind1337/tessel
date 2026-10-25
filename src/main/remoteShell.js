@@ -1316,8 +1316,12 @@ export function createRemoteSession({
     // The user's own requests first; background ones in the gaps.
     // Then the background ones that a pane waits for (first: the agent check
     // made when a terminal opens), before Live Share guests' reads and polls.
+    // The Files panel's own git work (low: its colours, the Changes count)
+    // last: it only starts when nothing else waits (agent readers, a pane's
+    // account checks, the user's clicks go first).
     let at = queue.findIndex((r) => !r.bg)
     if (at < 0) at = queue.findIndex((r) => r.first)
+    if (at < 0) at = queue.findIndex((r) => !r.low)
     if (at < 0) at = 0
     const [req] = queue.splice(at, 1)
     if (req.waitTimer) timers.clearTimeout(req.waitTimer)
@@ -1406,10 +1410,13 @@ export function createRemoteSession({
   // goes on). background: a poll or a reader, behind the user's requests.
   // signal: an AbortSignal; aborted while it waits, the request is dropped
   // (once it runs, only the session's end stops it).
-  function run(fn, args = [], { cap = 4 * 1024 * 1024, timeoutMs = DEFAULT_TIMEOUT_MS, upload = null, touch = true, background = false, first = false, queueWaitMs, signal = null } = {}) {
+  // low (with background): the Files panel's own git work, behind every
+  // other background request too (see pump); its queue bound is its own.
+  function run(fn, args = [], { cap = 4 * 1024 * 1024, timeoutMs = DEFAULT_TIMEOUT_MS, upload = null, touch = true, background = false, first = false, low = false, queueWaitMs, signal = null } = {}) {
     if (state === 'closed') return Promise.reject(sessionError(closedReason || 'closed'))
     if (signal && signal.aborted) return Promise.reject(Object.assign(new Error('cancelled'), { code: 'cancelled' })) // i18n-ignore internal
-    const waiting = queue.filter((q) => !!q.bg === !!background).length
+    const isLow = !!low && !!background && !first
+    const waiting = queue.filter((q) => !!q.bg === !!background && !!q.low === isLow).length
     if (waiting >= (background ? maxBgQueued : maxQueued)) {
       report({ kind: 'busy', fn, why: 'full', waitMs: 0 })
       return Promise.reject(busyError())
@@ -1424,7 +1431,7 @@ export function createRemoteSession({
     }
     const data = upload ? Buffer.from(upload) : null
     return new Promise((resolve, reject) => {
-      const req = { id, fn, cap, script, upload: data, timeoutMs, touch, bg: !!background, first: !!first && !!background, resolve, reject, waitTimer: null, queuedAt: clock() }
+      const req = { id, fn, cap, script, upload: data, timeoutMs, touch, bg: !!background, first: !!first && !!background, low: isLow, resolve, reject, waitTimer: null, queuedAt: clock() }
       const drop = (err) => {
         const at = queue.indexOf(req)
         if (at < 0) return
@@ -1445,11 +1452,23 @@ export function createRemoteSession({
               : background
                 ? BG_QUEUE_WAIT_MS
                 : QUEUE_WAIT_MS
-      req.waitTimer = timers.setTimeout(() => {
+      const giveUp = () => {
+        req.waitTimer = null
         const was = queue.includes(req)
+        // Held only by the Files panel's git work (low work never starts
+        // while this one waits, so the one running was there before it):
+        // waits for it to end, once, bounded by that run's own limit,
+        // instead of failing because of it.
+        if (was && !req.low && !req.extended && current && current.low) {
+          req.extended = true
+          const left = current.timeoutMs + HARD_MARGIN_MS - (clock() - current.startedAt)
+          req.waitTimer = timers.setTimeout(giveUp, Math.max(1000, left))
+          return
+        }
         drop(busyError())
         if (was) report({ kind: 'busy', fn, why: 'wait', waitMs: clock() - req.queuedAt })
-      }, wait)
+      }
+      req.waitTimer = timers.setTimeout(giveUp, wait)
       if (signal && typeof signal.addEventListener === 'function') {
         signal.addEventListener('abort', () => drop(Object.assign(new Error('cancelled'), { code: 'cancelled' })), { once: true }) // i18n-ignore internal
       }

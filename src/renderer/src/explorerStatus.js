@@ -3,12 +3,39 @@
 // renamed > copied, as Orca shows it). Keys are lower-case full paths.
 const PRIORITY = { D: 5, M: 4, A: 3, U: 3, R: 2, C: 1 }
 
-export function statusOf(map, key) {
-  const l = map[key]
-  return l && l !== '!' ? l : ''
+const parentOf = (p) => p.replace(/[\\/][^\\/]*$/, '')
+
+// Inside an untracked folder: a remote project's status lists an untracked
+// folder once ("?? dir/", remoteFs.js projectStatus), not every file in it.
+// The nearest folder listed decides (an ignored folder inside an untracked
+// one stays ignored). Only folders above `key` (below root) are looked at.
+export function inUntracked(map, key, rootKey) {
+  if (!map || !key) return false
+  const root = String(rootKey || '').replace(/[\\/]+$/, '')
+  let p = String(key).replace(/[\\/]+$/, '')
+  for (;;) {
+    const up = parentOf(p)
+    if (up === p || up.length <= root.length || (root && !up.startsWith(root))) return false
+    p = up
+    const l = map[p]
+    if (l === 'U') return true
+    if (l) return false
+  }
 }
 
-const parentOf = (p) => p.replace(/[\\/][^\\/]*$/, '')
+export function statusOf(map, key, rootKey) {
+  const l = map[key]
+  if (l) return l !== '!' ? l : ''
+  return inUntracked(map, key, rootKey) ? 'U' : ''
+}
+
+// A folder's own letter beyond what is inside it: untracked itself, or
+// inside an untracked folder.
+export function untrackedFolder(map, key, rootKey) {
+  const l = map[key]
+  if (l) return l === 'U' ? 'U' : ''
+  return inUntracked(map, key, rootKey) ? 'U' : ''
+}
 
 // -> { "<folder key>": letter } for every folder between a changed file and root.
 export function folderStatus(map, rootKey) {

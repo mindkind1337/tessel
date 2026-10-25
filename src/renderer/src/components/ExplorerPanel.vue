@@ -9,7 +9,7 @@
 import { ref, reactive, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import ThemedSelect from './ui/ThemedSelect.vue'
 import PanelState from './ui/PanelState.vue'
-import { statusOf, folderStatus, ignoredSet, isIgnored } from '../explorerStatus'
+import { statusOf, untrackedFolder, folderStatus, ignoredSet, isIgnored } from '../explorerStatus'
 import { buildRows, toggledPaths, soleSubfolder, activeGuide, segmentOf, rowPadding, guideX, stickyFolders, INDENT, ROW_HEIGHT } from '../explorerRows'
 import { statusMatters, foldersToReload, sameEntries, sameStatus, rememberIgnored, inGitDir, parentOf } from '../explorerChanges'
 import { saveTree, loadTree, forgetTree } from '../explorerTreeCache'
@@ -62,7 +62,7 @@ function newFromHead(folder) {
 const unsavedCount = computed(() => new Set(props.openEditors.filter((e) => e.dirty).map((e) => key(e.path))).size)
 const unsavedLabel = computed(() => t('explorer.unsaved', '{{count}} unsaved', { count: unsavedCount.value }))
 // An open file's git letter, when it is in this project.
-const editorLetter = (ed) => (ed.kind === 'file' && ed.path ? statusOf(status.value, key(ed.path)) : '')
+const editorLetter = (ed) => (ed.kind === 'file' && ed.path ? statusOf(status.value, key(ed.path), key(props.root)) : '')
 const folderTitle = computed(() => {
   const name = props.rootTitle || rootName.value || t('explorer.side.files', 'Files')
   return props.remoteLabel ? t('explorer.remoteTitle', '{{name}} [SSH: {{host}}]', { name, host: props.remoteLabel }) : name
@@ -349,7 +349,7 @@ async function loadStatus() {
 // commit, a pull…): one more at each such change seen.
 const repoChanges = ref(0)
 // A file's git letter (the Timeline's "Uncommitted Changes" hover).
-const fileLetter = (p) => statusOf(status.value, key(p))
+const fileLetter = (p) => statusOf(status.value, key(p), key(props.root))
 // Git status after changes: at most every second (every 4 s on a remote
 // host, where it shares the connection with the user's clicks), one run at
 // a time, the last change always seen (VS Code's git extension debounces
@@ -530,7 +530,8 @@ const inGuide = (i) => !!guide.value && i >= guide.value.from && i < guide.value
 // The selected folder of a compact row (-1: the row is not selected).
 const segSelected = (row, i) => (selected.value != null && tree.value.index.get(selected.value) === i ? segmentOf(row, selected.value) : -1)
 function letterOf(e) {
-  return e.dir ? folderStatuses.value[key(e.path)] || '' : statusOf(status.value, key(e.path))
+  const k = key(e.path)
+  return e.dir ? folderStatuses.value[k] || untrackedFolder(status.value, k, key(props.root)) : statusOf(status.value, k, key(props.root))
 }
 const ignoredOf = (p) => isIgnored(ignored.value, key(p), key(props.root))
 // Search results without git-ignored files when they are hidden.

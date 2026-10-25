@@ -72,6 +72,81 @@ describe('remote session queue', () => {
     await expect(guest).resolves.toMatchObject({ rc: 0 })
   })
 
+  it("the Files panel's git work (low) runs after every other background request", async () => {
+    const { s, child } = await ready()
+    const running = s.run('__t_nop', [])
+    const git = s.run('__t_nop', ['git'], { background: true, low: true })
+    const reader = s.run('__t_nop', ['reader'], { background: true })
+    const check = s.run('__t_nop', ['check'], { background: true, first: true })
+    const order = []
+    answer(child, idOf(child.stdin.written.pop()), 'one')
+    await running
+    for (let i = 0; i < 3; i++) {
+      const next = child.stdin.written.pop()
+      order.push(/'(\w+)'/.exec(next)[1])
+      answer(child, idOf(next))
+      await new Promise((r) => setImmediate(r))
+    }
+    expect(order).toEqual(['check', 'reader', 'git'])
+    await expect(Promise.all([git, reader, check])).resolves.toHaveLength(3)
+  })
+
+  it('a reader held only by low git work is not given up at its wait limit: it waits for that run to end, once', async () => {
+    const pending = []
+    const timers = {
+      setTimeout: (fn, ms) => {
+        const h = { fn, ms, cleared: false }
+        pending.push(h)
+        return h
+      },
+      clearTimeout: (h) => {
+        if (h) h.cleared = true
+      }
+    }
+    let now = 1000
+    const { s, child } = await ready({ timers, clock: () => now })
+    const git = s.run('__t_nop', ['git'], { background: true, low: true, timeoutMs: 8000 })
+    const reader = s.run('__t_nop', ['reader'], { background: true, queueWaitMs: 20_000 })
+    const fire = (ms) => {
+      const h = pending.find((p) => !p.cleared && !p.fired && p.ms === ms)
+      h.fired = true
+      h.fn()
+      return h
+    }
+    now += 20_000
+    fire(20_000)
+    // Not given up: a new wait, until the git run's own limit (8 s + the
+    // session's margin, 20 s of it gone).
+    const again = pending.filter((p) => !p.cleared && !p.fired && p.ms !== 8000 + 15_000)
+    expect(again.map((p) => p.ms)).toEqual([3000])
+    answer(child, idOf(child.stdin.written.find((l) => l.includes("'git'"))))
+    await git
+    const next = child.stdin.written.pop()
+    expect(next).toContain("'reader'")
+    answer(child, idOf(next))
+    await expect(reader).resolves.toMatchObject({ rc: 0 })
+  })
+
+  it('a reader held by other work is still given up at its wait limit', async () => {
+    const { s } = await ready()
+    void s.run('__t_nop', [], { background: true }).catch(() => {})
+    const reader = s.run('__t_nop', ['reader'], { background: true, queueWaitMs: 20 })
+    await expect(reader).rejects.toMatchObject({ code: 'busy' })
+    s.close('cancelled')
+  })
+
+  it('low git work has a queue bound of its own: a full one never refuses a reader', async () => {
+    const { s } = await ready()
+    s.run('__t_nop', []).catch(() => {})
+    const waiting = []
+    for (let i = 0; i < MAX_BG_QUEUED; i++) waiting.push(s.run('__t_nop', [], { background: true, low: true }).catch(() => {}))
+    await expect(s.run('__t_nop', [], { background: true, low: true })).rejects.toMatchObject({ code: 'busy' })
+    const reader = s.run('__t_nop', ['reader'], { background: true })
+    s.close('cancelled')
+    await expect(reader).rejects.toMatchObject({ code: 'cancelled' })
+    await Promise.all(waiting)
+  })
+
   it('a first request waits as long as a user request (not the short background wait)', async () => {
     const { s } = await ready()
     void s.run('__t_nop', []).catch(() => {})
