@@ -14,6 +14,8 @@
 //
 // The answers go to the agent: English on purpose.
 
+import { pageOf, revealPage, endCapture } from './pageHost'
+
 export class AgentBrowserTargetError extends Error {
   constructor(code, message) {
     super(message)
@@ -56,8 +58,17 @@ export const MAX_AGENT_PAGES = 5
 //   paneLabel(leaf) -> "Gauss"
 //   openPage({ ws, near, url }) -> the new browser leaf
 //   sleep(ms)
+//   paint(paneId, on) -> { moved, why }   its page drawn, unseen, for a capture
+//                                        (pageHost.js revealPage / concealPage)
 export function createAgentBrowserTargets(deps) {
   const sleep = deps.sleep || ((ms) => new Promise((r) => setTimeout(r, ms)))
+  const paint =
+    deps.paint ||
+    ((paneId, on) => {
+      const page = pageOf(paneId)
+      if (!on) return { moved: endCapture(page), why: null }
+      return revealPage(page)
+    })
 
   function findAgent(paneId) {
     for (const ws of deps.workspaces()) {
@@ -138,6 +149,15 @@ export function createAgentBrowserTargets(deps) {
       } else page = pages.find((l) => l.id === req.last) || pages[0] || null
       if (!page) throw refuse('no_page', 'No browser page in your project: open one with browser_open.') // i18n-ignore
       return { agent, page: page.id, url: page.url || '', guestId: await waitGuest(page.id) }
+    }
+
+    // A screenshot of a page out of sight: drawn (unseen) for the capture, then
+    // put back. Only a page the agent may drive.
+    if (req.op === 'paint') {
+      const page = pages.find((l) => l.id === req.page) || null
+      if (!page) throw refuse('page_not_found', `No browser page "${String(req.page || '').slice(0, 80)}" in your project: see browser_pages.`) // i18n-ignore
+      const r = paint(page.id, req.on !== false) || {}
+      return { agent, page: page.id, moved: !!r.moved, why: r.why || null, project: String(ws.name || '').slice(0, 80) }
     }
     throw refuse('invalid_argument', 'Unknown request.') // i18n-ignore
   }

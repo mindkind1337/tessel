@@ -181,6 +181,7 @@ describe('Tessel team tools (background messages)', () => {
       'browser_navigate',
       'browser_snapshot',
       'browser_click',
+      'browser_mouse',
       'browser_fill',
       'browser_type',
       'browser_press',

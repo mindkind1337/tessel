@@ -137,6 +137,23 @@ export function wantsNewPane(disposition, mouse) {
   return !!mouse && (mouse.middle || mouse.ctrl)
 }
 
+// An agent's right-click (agentBrowser.js) goes to the page: Tessel's own
+// page menu stays closed for it (it would open on the user's screen, over
+// whatever they do). Page id -> until when.
+const quietMenus = new Map()
+export const QUIET_MENU_MS = 1500
+export function quietContextMenu(id, ms = QUIET_MENU_MS) {
+  if (quietMenus.size > 100) quietMenus.clear()
+  quietMenus.set(id, Date.now() + ms)
+}
+export function contextMenuQuiet(id) {
+  const until = quietMenus.get(id)
+  if (until === undefined) return false
+  if (Date.now() <= until) return true
+  quietMenus.delete(id)
+  return false
+}
+
 // What a right-click in a page offers (Electron shows no menu of its own):
 // [{ id, label, enabled }] or { type: 'separator' }. params: Electron's
 // context-menu params; nav: { canGoBack, canGoForward }.
@@ -370,7 +387,11 @@ export function createBrowserGuests({ getWindow, send, log = null, screenshotDir
     })
 
     // A right-click: a browser's menu (Electron shows none).
-    guest.on('context-menu', (_event, params) => showContextMenu(guest, params || {}))
+    guest.on('context-menu', (_event, params) => {
+      // An agent's right-click (agentBrowser.js) is for the page, not a menu on the user's screen.
+      if (contextMenuQuiet(guest.id)) return
+      showContextMenu(guest, params || {})
+    })
 
     // The page starts or stops making sound: the window shows a speaker on
     // its tab (a click mutes it, as in a browser).

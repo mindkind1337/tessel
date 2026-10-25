@@ -159,6 +159,23 @@ const DEEP_ACTIVE = `(() => {
   return el || null;
 })()`
 
+// The same walk, to the <iframe> it cannot look into (where DEEP_ACTIVE said
+// 'opaque'): that frame has the keyboard. null when there is none.
+const DEEP_FRAME = `(() => {
+  let el = document.activeElement;
+  for (let i = 0; el && i < 64; i++) {
+    if (el.shadowRoot && el.shadowRoot.activeElement) { el = el.shadowRoot.activeElement; continue; }
+    const tag = String(el.tagName || '').toLowerCase();
+    if (tag !== 'iframe' && tag !== 'frame') return null;
+    let d = null;
+    try { d = el.contentDocument; } catch (e) { d = null; }
+    if (!d) return el;
+    if (!d.activeElement || d.activeElement === d.body) return null;
+    el = d.activeElement;
+  }
+  return null;
+})()`
+
 // The password fields of the page (its document, open shadow roots and
 // same-origin frames), as elements, for the page's remembered secrets.
 const SECRET_SCAN = `(() => {
@@ -227,11 +244,51 @@ async function inspectElement(send, objectId, cache) {
 // has the keyboard ('elsewhere' if not).
 const FRAME_DEEP_ACTIVE = `(document.hasFocus() ? ${DEEP_ACTIVE} : 'elsewhere')`
 
+// An isolated world in one frame of the page's own process (by its frame id),
+// kept in cache.frameWorlds until that frame loads another document.
+async function frameWorld(send, cache, frameId, loaderId) {
+  const worlds = cache ? cache.frameWorlds || (cache.frameWorlds = new Map()) : null
+  const w = worlds && worlds.get(frameId)
+  if (w && w.loaderId === loaderId) return w.contextId
+  const { executionContextId } = await send('Page.createIsolatedWorld', { frameId, worldName: 'tessel-agent', grantUniveralAccess: false })
+  if (worlds) {
+    if (worlds.size > 64) worlds.clear()
+    worlds.set(frameId, { loaderId, contextId: executionContextId })
+  }
+  return executionContextId
+}
+
+// The frames of the page's own process below its main frame: [{ id, loaderId }].
+// A frame from another site is here when Chromium kept it in the page's
+// process, and so is a sandboxed frame (srcdoc, about:blank, a game embed):
+// the page's own document cannot look into them, an isolated world of that
+// frame can. Frames in a process of their own are not here (their own
+// debugger sessions, `frames`).
+const MAX_LOCAL_FRAMES = 32
+async function localFrames(send) {
+  try {
+    const { frameTree } = await send('Page.getFrameTree')
+    const out = []
+    const walk = (node, depth) => {
+      for (const child of (node && node.childFrames) || []) {
+        if (out.length >= MAX_LOCAL_FRAMES || depth > 8) return
+        if (child.frame && child.frame.id) out.push({ id: child.frame.id, loaderId: child.frame.loaderId || null })
+        walk(child, depth + 1)
+      }
+    }
+    walk(frameTree, 0)
+    return out
+  } catch {
+    return []
+  }
+}
+
 // One document's keyboard: { none }, { elsewhere }, { inFrame } (in a frame
 // it cannot see into) or { secret, opaque }. Errors: opaque.
-async function focusIn(send, cache, expression) {
+// world: the frame's isolated world (default: the main frame's).
+async function focusIn(send, cache, expression, world = null) {
   try {
-    const contextId = await isolatedWorld(send, cache)
+    const contextId = world ? await world() : await isolatedWorld(send, cache)
     const { result } = await send('Runtime.evaluate', { expression, contextId, returnByValue: false })
     if (result && result.type === 'string' && result.value === 'elsewhere') return { elsewhere: true }
     if (result && result.type === 'string' && result.value === 'opaque') return { secret: false, opaque: true, inFrame: true }
@@ -248,15 +305,57 @@ async function focusIn(send, cache, expression) {
 // error counts as opaque (the caller refuses: fail closed). frames: the
 // page's frames from other sites ([{ send, cache }], their own debugger
 // sessions): focus in one of them is looked at there ({ remote: true }).
+// The frame id of the <iframe> a document cannot look into, where its
+// keyboard went (DEEP_FRAME), or null.
+async function stuckFrameId(send, cache, world = null) {
+  try {
+    const contextId = world ? await world() : await isolatedWorld(send, cache)
+    const { result } = await send('Runtime.evaluate', { expression: DEEP_FRAME, contextId, returnByValue: false })
+    if (!result || !result.objectId) return null
+    const { node } = await send('DOM.describeNode', { objectId: result.objectId })
+    send('Runtime.releaseObject', { objectId: result.objectId }).catch(() => {})
+    return (node && node.frameId) || null
+  } catch {
+    return null
+  }
+}
+
 export async function focusedField(send, cache = null, frames = []) {
   const top = await focusIn(send, cache, DEEP_ACTIVE)
   if (!top.inFrame) return top
-  // The frame whose document has the keyboard and shows where in it (its
-  // parent frames have it too, but only see their <iframe>).
-  for (const f of frames || []) {
+  const list = frames || []
+  // Down the <iframe> elements that have the keyboard, one document at a
+  // time: a frame in a process of its own by its debugger session (its target
+  // id is its frame id), one of the page's own process (another site,
+  // sandboxed) by an isolated world of that frame. A frame out of sight does
+  // not say document.hasFocus() even with the keyboard (harness, 2026-10-25):
+  // the <iframe> that has it in its parent is what counts.
+  let at = { send, cache, world: null }
+  let frameId = await stuckFrameId(send, cache)
+  for (let depth = 0; frameId && depth < 8; depth++) {
+    const f = list.find((x) => x.cache && x.cache.targetId === frameId)
+    if (f) {
+      const r = await focusIn(f.send, f.cache, DEEP_ACTIVE)
+      if (!r.inFrame) return { ...r, remote: true, frame: f }
+      at = { send: f.send, cache: f.cache, world: null }
+      frameId = await stuckFrameId(f.send, f.cache)
+      continue
+    }
+    const local = (await localFrames(at.send)).find((x) => x.id === frameId)
+    if (!local) break
+    const world = () => frameWorld(at.send, at.cache, local.id, local.loaderId)
+    const r = await focusIn(at.send, at.cache, DEEP_ACTIVE, world)
+    if (!r.inFrame && !(r.opaque && !r.backendNodeId)) return { ...r, remote: true }
+    if (!r.inFrame) break
+    at = { ...at, world }
+    frameId = await stuckFrameId(at.send, at.cache, world)
+  }
+  // Else the frame whose document says it has the keyboard (its parent frames
+  // have it too, but only see their <iframe>).
+  for (const f of list) {
     const r = await focusIn(f.send, f.cache, FRAME_DEEP_ACTIVE)
     if (r.elsewhere || r.inFrame) continue
-    return { ...r, remote: true }
+    return { ...r, remote: true, frame: f }
   }
   return { secret: false, opaque: true }
 }
@@ -277,7 +376,8 @@ export async function nodeField(send, backendNodeId, cache = null) {
 }
 
 const PASSWORD_REFUSAL = 'Agents may not type into password fields. Ask the user to fill it in.'
-const OPAQUE_REFUSAL = 'Tessel cannot see where the keyboard is in this page (a frame from another site, or a closed component): agents may not type there.'
+export const OPAQUE_REFUSAL =
+  'Tessel cannot see what has the keyboard here (a frame from another site it cannot inspect, or a closed component), so it types no characters there: it could be a password field. Click into the game, canvas or field first (browser_click with x/y read on a browser_screenshot), then press again. Keys that type nothing (arrows, Enter, Escape, Tab, F1-F12) work anywhere.'
 
 function refuseField(info) {
   if (info.secret) throw new BrowserInputError('password_field', PASSWORD_REFUSAL)
@@ -378,8 +478,9 @@ async function recoverRef(send, entry) {
   return null
 }
 
-// The element's centre in the page's viewport, after scrolling it into view.
-export async function elementCenter(send, backendNodeId) {
+// The element's box in the page's viewport ({ x, y, width, height }: its top
+// left corner and size, CSS pixels), after scrolling it into view.
+export async function elementBox(send, backendNodeId) {
   try {
     await send('DOM.scrollIntoViewIfNeeded', { backendNodeId })
   } catch {
@@ -403,15 +504,22 @@ export async function elementCenter(send, backendNodeId) {
   if (!Array.isArray(quad) || quad.length < 8) throw new BrowserInputError('not_visible', 'This element has no box on the page (hidden or not laid out).')
   const xs = [quad[0], quad[2], quad[4], quad[6]]
   const ys = [quad[1], quad[3], quad[5], quad[7]]
-  return { x: (Math.min(...xs) + Math.max(...xs)) / 2, y: (Math.min(...ys) + Math.max(...ys)) / 2 }
+  return { x: Math.min(...xs), y: Math.min(...ys), width: Math.max(...xs) - Math.min(...xs), height: Math.max(...ys) - Math.min(...ys) }
 }
 
-// The centre of an element of a frame from another site, in the page's
+const centerOf = (b) => ({ x: b.x + b.width / 2, y: b.y + b.height / 2 })
+
+// The element's centre in the page's viewport, after scrolling it into view.
+export async function elementCenter(send, backendNodeId) {
+  return centerOf(await elementBox(send, backendNodeId))
+}
+
+// The box of an element of a frame from another site, in the page's
 // viewport: in the frame's own viewport (its session's send), plus where the
 // frame's box is in its parent, and so on up. frame: { send, owner (its
 // <iframe> in the parent session), parent (frame or null: the page) }.
-export async function frameElementCenter(send, frame, backendNodeId) {
-  const at = await elementCenter(frame.send, backendNodeId)
+export async function frameElementBox(send, frame, backendNodeId) {
+  const at = await elementBox(frame.send, backendNodeId)
   for (let f = frame, depth = 0; f; f = f.parent, depth++) {
     if (!f.owner || depth > 8) throw new BrowserInputError('stale_ref', 'The frame of this element is gone: call browser_snapshot again.')
     const up = f.parent ? f.parent.send : send
@@ -429,12 +537,85 @@ export async function frameElementCenter(send, frame, backendNodeId) {
   return at
 }
 
+export async function frameElementCenter(send, frame, backendNodeId) {
+  return centerOf(await frameElementBox(send, frame, backendNodeId))
+}
+
+// --- Points (canvas, games: what a screenshot shows) ------------------------------------
+// Input.dispatchMouseEvent's buttons bits.
+export const BUTTON_BITS = { left: 1, right: 2, middle: 4 }
+export function mouseButton(raw) {
+  if (raw == null || raw === '') return 'left'
+  const b = String(raw).toLowerCase()
+  if (!BUTTON_BITS[b]) throw new BrowserInputError('invalid_argument', '"button" must be left, right or middle.')
+  return b
+}
+
+// A point a little outside (rounding on a scaled screenshot) is taken as the edge.
+export const POINT_SLACK = 2
+const num = (v) => (v === null || v === undefined || v === '' || typeof v === 'boolean' ? NaN : Number(v))
+
+// A point an agent gives, in CSS pixels of the page's viewport (vp: { width,
+// height }, as browser_screenshot shows it) -> inside it, or throws.
+export function viewportPoint(x, y, vp, names = ['x', 'y']) {
+  const px = num(x)
+  const py = num(y)
+  if (!Number.isFinite(px) || !Number.isFinite(py)) throw new BrowserInputError('invalid_argument', `Give "${names[0]}" and "${names[1]}" as numbers: CSS pixels of the page's viewport, as on browser_screenshot.`)
+  const w = Math.max(1, Math.floor(vp.width))
+  const h = Math.max(1, Math.floor(vp.height))
+  if (px < -POINT_SLACK || py < -POINT_SLACK || px > w - 1 + POINT_SLACK || py > h - 1 + POINT_SLACK)
+    throw new BrowserInputError('out_of_viewport', `(${Math.round(px)}, ${Math.round(py)}) is outside the page's viewport (${w}x${h} CSS pixels): pick a point on a browser_screenshot, or scroll first.`)
+  return { x: Math.min(w - 1, Math.max(0, Math.round(px))), y: Math.min(h - 1, Math.max(0, Math.round(py))) }
+}
+
+// A point inside an element's box (box: { x, y, width, height }; offset from
+// its top left corner) -> a point of the viewport, or throws.
+export function pointInBox(box, ox, oy, vp) {
+  const dx = num(ox)
+  const dy = num(oy)
+  if (!Number.isFinite(dx) || !Number.isFinite(dy)) throw new BrowserInputError('invalid_argument', 'With a "ref", "x" and "y" are a point inside the element (CSS pixels from its top left corner): give both.')
+  if (dx < -POINT_SLACK || dy < -POINT_SLACK || dx > box.width + POINT_SLACK || dy > box.height + POINT_SLACK)
+    throw new BrowserInputError('out_of_element', `(${Math.round(dx)}, ${Math.round(dy)}) is outside the element (${Math.round(box.width)}x${Math.round(box.height)} CSS pixels).`)
+  return viewportPoint(box.x + Math.min(box.width, Math.max(0, dx)), box.y + Math.min(box.height, Math.max(0, dy)), vp)
+}
+
+export const MAX_DRAG_STEPS = 100
+// A drag: the pointer to `from`, the button pressed, `steps` moves to `to`
+// with it held, released there. -> Input.dispatchMouseEvent parameters, in order.
+export function dragEvents(from, to, { button = 'left', steps = 10 } = {}) {
+  const bit = BUTTON_BITS[button] || 1
+  const n = Math.min(MAX_DRAG_STEPS, Math.max(1, Math.round(num(steps)) || 10))
+  const out = [
+    { type: 'mouseMoved', x: from.x, y: from.y, button: 'none', buttons: 0 },
+    { type: 'mousePressed', x: from.x, y: from.y, button, buttons: bit, clickCount: 1 }
+  ]
+  for (let i = 1; i <= n; i++) {
+    out.push({ type: 'mouseMoved', x: Math.round(from.x + ((to.x - from.x) * i) / n), y: Math.round(from.y + ((to.y - from.y) * i) / n), button, buttons: bit })
+  }
+  out.push({ type: 'mouseReleased', x: to.x, y: to.y, button, buttons: 0, clickCount: 1 })
+  return out
+}
+
+// A mouse move is answered once the page draws its next frame: a page slowed
+// to a frame a second (its window minimized after a capture) made each move
+// of a drag wait a second. Waited for at most `ms`: the events still reach
+// the page in order (a press or release comes after the moves sent before
+// it; moves the page could not draw in between are merged, as in a browser).
+export function moveSoon(send, params, ms = 100) {
+  let timer
+  const answered = Promise.resolve()
+    .then(() => send('Input.dispatchMouseEvent', params))
+    .catch(() => {})
+  return Promise.race([answered, new Promise((r) => (timer = setTimeout(r, ms)))]).finally(() => clearTimeout(timer))
+}
+
 // at(): where to click (default: the element's centre, in the page's session).
 export async function click(send, backendNodeId, { button = 'left', clickCount = 1, at = null } = {}) {
   const { x, y } = at ? await at() : await elementCenter(send, backendNodeId)
-  await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y })
+  await moveSoon(send, { type: 'mouseMoved', x, y })
+  const bit = BUTTON_BITS[button] || 1
   for (let n = 1; n <= clickCount; n++) {
-    await send('Input.dispatchMouseEvent', { type: 'mousePressed', x, y, button, buttons: button === 'right' ? 2 : 1, clickCount: n })
+    await send('Input.dispatchMouseEvent', { type: 'mousePressed', x, y, button, buttons: bit, clickCount: n })
     await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x, y, button, buttons: 0, clickCount: n })
   }
   return { x: Math.round(x), y: Math.round(y) }
@@ -581,29 +762,62 @@ export function electronKeyEvents(def, modifiers) {
   return events
 }
 
+// A key held (games read held keys) and pressed again: browser_press's
+// "hold_ms" and "repeat" -> { holdMs, repeat, gapMs } or throws.
+export const MAX_HOLD_MS = 10000
+export const MAX_REPEAT = 100
+export const MAX_PRESS_MS = 30000
+export const REPEAT_GAP_MS = 30
+export function keyTiming(holdMs, repeat) {
+  const hold = holdMs == null || holdMs === '' ? 0 : num(holdMs)
+  const times = repeat == null || repeat === '' ? 1 : num(repeat)
+  if (!Number.isFinite(hold) || hold < 0 || hold > MAX_HOLD_MS) throw new BrowserInputError('invalid_argument', `"hold_ms" must be 0 to ${MAX_HOLD_MS} (milliseconds the key stays down).`)
+  if (!Number.isInteger(times) || times < 1 || times > MAX_REPEAT) throw new BrowserInputError('invalid_argument', `"repeat" must be a whole number from 1 to ${MAX_REPEAT}.`)
+  if (times * (hold + REPEAT_GAP_MS) > MAX_PRESS_MS) throw new BrowserInputError('invalid_argument', `hold_ms x repeat must stay under ${MAX_PRESS_MS / 1000} seconds.`)
+  return { holdMs: Math.round(hold), repeat: times, gapMs: REPEAT_GAP_MS }
+}
+
 // sendInput(event): the page's own input pipeline
 // (webContents.sendInputEvent); CDP key events are unreliable in an Electron
 // guest (a Backspace or a second character can be lost).
 // frames: the page's frames from other sites (see focusedField).
-export async function pressKey(send, combo, sendInput = null, cache = null, frames = []) {
+// timing: { holdMs, repeat, gapMs } (keyTiming): the key stays down holdMs
+// between its keyDown and its keyUp, `repeat` times.
+export async function pressKey(send, combo, sendInput = null, cache = null, frames = [], timing = null) {
   const { def, modifiers } = parseKeyCombo(combo)
-  // A character into a password field is typing a password; focus Tessel
-  // cannot see counts as one (fail closed).
-  if (typesChar(def) && !(modifiers & 7)) {
-    await rememberSecrets(send, cache)
-    for (const f of frames || []) await rememberSecrets(f.send, f.cache)
+  const { holdMs = 0, repeat = 1, gapMs = REPEAT_GAP_MS } = timing || {}
+  const wait = (ms) => (ms > 0 ? new Promise((r) => setTimeout(r, ms)) : null)
+  const printable = typesChar(def) && !(modifiers & 7)
+  for (let i = 0; i < repeat; i++) {
+    if (i) await wait(gapMs)
+    // A character into a password field is typing a password; focus Tessel
+    // cannot see counts as one (fail closed). Looked at before each press.
+    if (printable) {
+      await rememberSecrets(send, cache)
+      for (const f of frames || []) await rememberSecrets(f.send, f.cache)
+    }
+    // Where the keyboard is also says where the keys go: webContents.sendInputEvent
+    // reaches the page's own process only, so a frame in a process of its
+    // own (another site, a sandboxed game embed) gets them by its debugger
+    // session (harness, 2026-10-25: sent the other way they were lost).
     const focus = await focusedField(send, cache, frames)
-    if (!focus.none) refuseField(focus)
+    if (printable && !focus.none) refuseField(focus)
+    const frameSend = focus && focus.frame && typeof focus.frame.send === 'function' ? focus.frame.send : null
+    if (sendInput && !frameSend) {
+      const events = electronKeyEvents(def, modifiers)
+      for (const ev of events.slice(0, -1)) await sendInput(ev)
+      await wait(holdMs)
+      await sendInput(events[events.length - 1])
+      continue
+    }
+    const keys = frameSend || send
+    const down = { ...def, modifiers, type: def.text ? 'keyDown' : 'rawKeyDown' }
+    await keys('Input.dispatchKeyEvent', down)
+    await wait(holdMs)
+    const up = { ...def, modifiers, type: 'keyUp' }
+    delete up.text
+    await keys('Input.dispatchKeyEvent', up)
   }
-  if (sendInput) {
-    for (const ev of electronKeyEvents(def, modifiers)) await sendInput(ev)
-    return def.key
-  }
-  const down = { ...def, modifiers, type: def.text ? 'keyDown' : 'rawKeyDown' }
-  await send('Input.dispatchKeyEvent', down)
-  const up = { ...def, modifiers, type: 'keyUp' }
-  delete up.text
-  await send('Input.dispatchKeyEvent', up)
   return def.key
 }
 

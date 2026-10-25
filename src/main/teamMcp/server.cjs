@@ -1286,8 +1286,38 @@ const BROWSER_TOOLS = [
   },
   {
     name: 'browser_click',
-    description: 'Click the element with this ref (from the last browser_snapshot).',
-    inputSchema: { type: 'object', properties: { ref: { type: 'string', description: 'e.g. "@e3"' }, double: { type: 'boolean', description: 'Double-click' }, ...PAGE_ARG }, required: ['ref'] }
+    description:
+      'Click the element with this ref (from the last browser_snapshot): the way for links, buttons and fields. For a canvas, a game or anything browser_snapshot does not list, take a browser_screenshot and click by x/y (CSS pixels of the page\'s viewport, as the screenshot shows them). With a ref and x/y: that point inside the element, from its top left corner.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        ref: { type: 'string', description: 'e.g. "@e3"' },
+        x: { type: 'number', description: 'CSS pixels from the left of the viewport (or of the element with ref)' },
+        y: { type: 'number', description: 'CSS pixels from the top' },
+        button: { type: 'string', enum: ['left', 'right', 'middle'] },
+        double: { type: 'boolean', description: 'Double-click' },
+        ...PAGE_ARG
+      }
+    }
+  },
+  {
+    name: 'browser_mouse',
+    description:
+      'The mouse at x/y (CSS pixels of the viewport, as browser_screenshot shows them), for canvas, games, sliders and drawing: "move" (hover), "down" / "up" (press, release; without x/y where the pointer is), or "drag" from x/y to to_x/to_y in steps moves with the button held.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        action: { type: 'string', enum: ['move', 'down', 'up', 'drag'] },
+        x: { type: 'number' },
+        y: { type: 'number' },
+        to_x: { type: 'number', description: 'drag: where it ends' },
+        to_y: { type: 'number' },
+        steps: { type: 'number', description: 'drag: moves on the way (default 10, at most 100)' },
+        button: { type: 'string', enum: ['left', 'right', 'middle'] },
+        ...PAGE_ARG
+      },
+      required: ['action']
+    }
   },
   {
     name: 'browser_fill',
@@ -1301,8 +1331,17 @@ const BROWSER_TOOLS = [
   },
   {
     name: 'browser_press',
-    description: 'Press a key in the page (where the keyboard is): "Enter", "Tab", "Escape", "ArrowDown", "a", or a combination like "Control+a".',
-    inputSchema: { type: 'object', properties: { key: { type: 'string' }, ...PAGE_ARG }, required: ['key'] }
+    description: 'Press a key in the page (where the keyboard is): "Enter", "Tab", "Escape", "ArrowDown", "Space", "a", or a combination like "Control+a". For a game, click into it first; hold_ms keeps the key down, repeat presses it again.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        key: { type: 'string' },
+        hold_ms: { type: 'number', description: 'Milliseconds the key stays down (default 0, at most 10000)' },
+        repeat: { type: 'number', description: 'Times to press it (default 1, at most 100)' },
+        ...PAGE_ARG
+      },
+      required: ['key']
+    }
   },
   {
     name: 'browser_scroll',
@@ -1311,7 +1350,7 @@ const BROWSER_TOOLS = [
   },
   {
     name: 'browser_screenshot',
-    description: 'A screenshot of what the page shows (an image, and the PNG file path).',
+    description: 'A screenshot of what the page shows (an image, and the PNG file path), even when the page is out of sight. One image pixel is one CSS pixel of the viewport: a point read on it is browser_click / browser_mouse {x, y}.',
     inputSchema: { type: 'object', properties: { ...PAGE_ARG } }
   },
   {

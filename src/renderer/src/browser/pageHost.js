@@ -99,6 +99,7 @@ export function claimPage(paneId, host, src, owner = null, partition = MAIN_PART
 export function releasePage(paneId, owner = null, ms = RELEASE_MS) {
   const page = pages.get(paneId)
   if (!page || page.owner !== owner) return
+  concealPage(page)
   page.box.style.visibility = 'hidden'
   clearTimeout(page.timer)
   page.timer = setTimeout(() => destroyPage(paneId), ms)
@@ -110,6 +111,10 @@ export function destroyPage(paneId) {
   clearTimeout(page.timer)
   pages.delete(paneId)
   delete pageGuests[paneId]
+  unwatch(page)
+  page.reveal = null
+  page.keep = false
+  page.capture = 0
   page.box.remove()
 }
 
@@ -119,17 +124,178 @@ export function pageOf(paneId) {
 
 // Lays the box over `area` (the pane's page area), in the host's coordinates.
 // hidden: another pane is maximized over it.
+// An area of no size (the pane squeezed to nothing): the page keeps its last
+// size, hidden, so it is never laid out at 0x0 (an agent driving it out of
+// sight still has a real viewport).
 export function placePage(page, area, { hidden = false } = {}) {
   if (!page || !area) return
   const a = area.getBoundingClientRect()
   const h = page.host.getBoundingClientRect()
+  const empty = !(a.width > 0 && a.height > 0)
+  if (!empty) page.size = { width: a.width, height: a.height }
+  const size = empty && page.size ? page.size : { width: Math.max(0, a.width), height: Math.max(0, a.height) }
+  page.place = {
+    left: `${a.left - h.left}px`,
+    top: `${a.top - h.top}px`,
+    width: `${size.width}px`,
+    height: `${size.height}px`,
+    // Never 'visible': the box follows its workspace's layer when that is hidden.
+    visibility: hidden || empty ? 'hidden' : ''
+  }
+  Object.assign(page.box.style, page.place)
+  // Drawn for an agent meanwhile: still drawn, from its new place.
+  if (page.reveal || page.keep || page.capture) refreshDrawn(page)
+}
+
+// --- Drawn for an agent, unseen (src/main/agentBrowser.js) ---------------------------
+// A page out of sight (another project or tab shown, a pane maximized over
+// it, the window minimized) is not drawn. Chromium then takes no screenshot
+// of it (capturePage fails, the debugger's capture never answers), and a page
+// drawn once then hidden again is slowed to about one frame a second, its
+// mouse moves with it (bare Electron 42 harness, 2026-10-25). So while an
+// agent drives it (its badge on: keepDrawn), and for the moment of a capture
+// (revealPage / endCapture), its box is laid out inside the window's
+// viewport, at its own size, nearly transparent and letting every click
+// through: drawn, but not seen. Nothing else of the layout changes, the
+// user's project and tab stay as they are, and as soon as the page is on
+// screen by itself it is left as it is.
+// While the window is minimized it is not kept so (nothing is drawn then and a
+// page in the viewport would be slowed the same way): only for a capture.
+// (Fully transparent is not drawn at all: Chromium slows such a page too.)
+export const REVEAL_OPACITY = '0.01'
+const REVEALED = ['visibility', 'opacity', 'pointerEvents', 'translate']
+
+// On screen as it is: visible, of some size, at least partly in the viewport.
+function onScreen(box) {
+  const view = box.ownerDocument && box.ownerDocument.defaultView
+  if (!view) return false
+  if (view.getComputedStyle(box).visibility !== 'visible') return false
+  const r = box.getBoundingClientRect()
+  return r.width > 0 && r.height > 0 && r.right > 0 && r.bottom > 0 && r.left < view.innerWidth && r.top < view.innerHeight
+}
+
+const windowHidden = (box) => box.ownerDocument.documentElement.classList.contains('window-hidden')
+
+// Why it was out of sight, for the agent's answer.
+function hiddenBy(page) {
+  const box = page.box
+  const doc = box.ownerDocument
+  if (windowHidden(box)) return 'window'
+  for (let el = box.parentElement; el && el !== doc.body; el = el.parentElement) if (el.classList.contains('ws-layer') && el.classList.contains('hidden')) return 'layer'
+  if (page.place && page.place.visibility === 'hidden') return 'covered'
+  return 'offscreen'
+}
+
+function undoReveal(page) {
+  const r = page.reveal
   const s = page.box.style
-  s.left = `${a.left - h.left}px`
-  s.top = `${a.top - h.top}px`
-  s.width = `${Math.max(0, a.width)}px`
-  s.height = `${Math.max(0, a.height)}px`
-  // Never 'visible': the box follows its workspace's layer when that is hidden.
-  s.visibility = hidden || a.width <= 0 || a.height <= 0 ? 'hidden' : ''
+  for (const [el, display, visibility] of r.ancestors.splice(0)) {
+    el.style.display = display
+    el.style.visibility = visibility
+  }
+  for (const k of REVEALED) s[k] = r.saved[k]
+  if (page.place) Object.assign(s, page.place)
+  else {
+    s.width = r.saved.width
+    s.height = r.saved.height
+  }
+}
+
+function applyReveal(page) {
+  const r = page.reveal
+  const box = page.box
+  const s = box.style
+  const view = box.ownerDocument.defaultView
+  // As it is placed, first: maybe on screen already.
+  undoReveal(page)
+  if (onScreen(box)) return (r.moved = false)
+  r.why = hiddenBy(page)
+  // A layer of display:none (not one of Tessel's own ways to hide): laid out, unseen.
+  for (let el = box.parentElement; el && el !== box.ownerDocument.body; el = el.parentElement) {
+    if (view.getComputedStyle(el).display !== 'none') continue
+    r.ancestors.push([el, el.style.display, el.style.visibility])
+    el.style.display = 'block'
+    el.style.visibility = 'hidden'
+  }
+  // No size yet: the window's.
+  if (!(box.offsetWidth > 0 && box.offsetHeight > 0)) {
+    const size = page.size || { width: view.innerWidth, height: view.innerHeight }
+    s.width = `${Math.max(1, Math.round(size.width))}px`
+    s.height = `${Math.max(1, Math.round(size.height))}px`
+  }
+  s.visibility = 'visible'
+  s.opacity = REVEAL_OPACITY
+  s.pointerEvents = 'none'
+  s.translate = 'none'
+  // Into the viewport, at its top left corner, whatever moved its layer away.
+  const at = box.getBoundingClientRect()
+  s.translate = `${-Math.round(at.left)}px ${-Math.round(at.top)}px`
+  return (r.moved = true)
+}
+
+// Another project or tab shown, the window minimized or back: a class
+// changes on one of the box's ancestors. Looked at again at once (before the
+// window draws), so a page coming on screen is never seen out of place.
+function watchAncestors(page) {
+  if (page.watcher || typeof MutationObserver !== 'function') return
+  page.watcher = new MutationObserver(() => refreshDrawn(page))
+  for (let el = page.box.parentElement; el; el = el.parentElement) page.watcher.observe(el, { attributes: true, attributeFilter: ['class'] })
+}
+function unwatch(page) {
+  if (page.watcher) page.watcher.disconnect()
+  page.watcher = null
+}
+
+// Drawn (unseen) when an agent needs it, as placed otherwise.
+function refreshDrawn(page) {
+  if (!page || !page.box) return false
+  const wanted = page.box.isConnected && (page.capture > 0 || (!!page.keep && !windowHidden(page.box)))
+  if (!wanted) {
+    if (page.reveal) {
+      undoReveal(page)
+      page.reveal = null
+    }
+    if (!page.keep && !page.capture) unwatch(page)
+    else watchAncestors(page)
+    return false
+  }
+  if (!page.reveal) {
+    const s = page.box.style
+    page.reveal = { saved: Object.fromEntries([...REVEALED, 'width', 'height'].map((k) => [k, s[k]])), ancestors: [], moved: false, why: null }
+  }
+  watchAncestors(page)
+  return applyReveal(page)
+}
+
+// An agent drives the page (its badge on), or no longer.
+export function keepDrawn(page, on) {
+  if (!page) return
+  page.keep = !!on
+  refreshDrawn(page)
+}
+
+// For a capture: -> { moved, why } (moved: false when the page was on screen already).
+export function revealPage(page) {
+  if (!page || !page.box || !page.box.isConnected) return { moved: false, why: 'gone' }
+  page.capture = (page.capture || 0) + 1
+  const moved = refreshDrawn(page)
+  return { moved, why: moved ? page.reveal.why : null }
+}
+export function endCapture(page) {
+  if (!page || !page.capture) return false
+  page.capture -= 1
+  refreshDrawn(page)
+  return true
+}
+
+// Its pane let go of it: as placed, nothing kept.
+export function concealPage(page) {
+  if (!page) return false
+  const had = !!page.reveal
+  page.keep = false
+  page.capture = 0
+  refreshDrawn(page)
+  return had
 }
 
 // Tests.

@@ -62,7 +62,7 @@ import {
 } from '../browser/browserPage'
 import { registerWebview } from '../browser/webviewPassthrough'
 import { registerNavigationOwner, focusNavigationOwner, isNavigationOwner, releaseNavigationOwner } from '../browser/navigationFocus'
-import { claimPage, releasePage, placePage, createWebview, notePageGuest, MAIN_PARTITION, AGENT_PARTITION, GUEST_PARTITION, VIEW_PARTITION } from '../browser/pageHost'
+import { claimPage, releasePage, placePage, keepDrawn, createWebview, notePageGuest, MAIN_PARTITION, AGENT_PARTITION, GUEST_PARTITION, VIEW_PARTITION } from '../browser/pageHost'
 import { mediaApplyScript } from '../../../shared/liveShareMedia'
 import DesignModePanel from './DesignModePanel.vue'
 import ViewTabs from './ViewTabs.vue'
@@ -896,6 +896,8 @@ function subscribe(api) {
   }
   on('onAgentControl', (ev) => {
     agentControl.value = ev.active ? { agent: String(ev.agent || '').slice(0, 60) } : null
+    // Out of sight, it stays drawn (unseen) while an agent drives it (pageHost.js).
+    if (page) keepDrawn(page, !!ev.active)
   })
   on('onPermissionDenied', (ev) => {
     if (ctx.toast) ctx.toast(permissionNotice(ev), { timeout: 6000 })
