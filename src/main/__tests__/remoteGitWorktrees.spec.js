@@ -96,7 +96,8 @@ describe('parseRemoteWorktrees (fixtures)', () => {
   it('the host function is on the allow list and in the prelude, read-only and bounded', () => {
     expect(FUNCTIONS.has('__t_wtl')).toBe(true)
     const text = prelude('0'.repeat(32))
-    const fn = text.slice(text.indexOf('__t_wtl() {'), text.indexOf('__t_dir() {'))
+    // __t_wtl alone (the functions after it in the prelude may clean their temp files).
+    const fn = text.slice(text.indexOf('__t_wtl() {'), text.indexOf('\n}\n', text.indexOf('__t_wtl() {')))
     expect(fn).toMatch(/__t_root "\$1"/)
     expect(fn).toMatch(/worktree list --porcelain/)
     expect(fn).toMatch(/core\.hooksPath=\/nonexistent-tessel-no-hooks/)
