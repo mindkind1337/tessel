@@ -201,18 +201,16 @@ export function createRemoteAgentCheck({ ensureShim, agentTools, agentBins = [],
     return agents
   }
   async function run(hostId) {
-    let shim
-    try {
-      shim = await ensureShim(hostId)
-    } catch (err) {
-      shim = { ok: false, reason: 'failed', detail: (err && err.message) || '' }
-    }
-    let tools
-    try {
-      tools = await agentTools(hostId)
-    } catch (err) {
-      tools = { error: (err && err.message) || 'failed' }
-    }
+    // Asked together: each waits its turn on the host's session, and the look
+    // for the agents (asked first) does not wait behind the shim's install.
+    const [shim, tools] = await Promise.all([
+      Promise.resolve()
+        .then(() => ensureShim(hostId))
+        .catch((err) => ({ ok: false, reason: 'failed', detail: (err && err.message) || '' })),
+      Promise.resolve()
+        .then(() => agentTools(hostId))
+        .catch((err) => ({ error: (err && err.message) || 'failed' }))
+    ])
     const ok = tools && !tools.error
     const found = ok ? tools : { claude: null, codex: null, vscodeClaude: null }
     const status = {

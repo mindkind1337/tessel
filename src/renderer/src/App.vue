@@ -1313,16 +1313,18 @@ function newUuid() {
 
 // The command that starts an agent: a fresh conversation, or the pane's own
 // previous one when `resume` is set and it exists.
-async function agentStartLine(agent, sessionId, resume, accountId, { known = false, hostId = null } = {}) {
+async function agentStartLine(agent, sessionId, resume, accountId, { known = false, hostId = null, hostAhead = null } = {}) {
   const kind = sessionKind(agent)
   // A pane on an SSH host: its conversations are on the host, never in this
   // computer's transcripts. Asked there (never a sign-in): true / false, or
   // null when it can't be told (not connected, too slow, an agent the host
-  // check doesn't know).
+  // check doesn't know). Asked ahead (hostSessionAhead): that answer.
   const onHost = async (which) =>
-    window.shellApi.remoteAgentSessionExists
-      ? await window.shellApi.remoteAgentSessionExists(hostId, which, sessionId).then((v) => (typeof v === 'boolean' ? v : null), () => null)
-      : null
+    hostAhead && hostAhead.which === which
+      ? await hostAhead.exists
+      : window.shellApi.remoteAgentSessionExists
+        ? await window.shellApi.remoteAgentSessionExists(hostId, which, sessionId).then((v) => (typeof v === 'boolean' ? v : null), () => null)
+        : null
   if (kind === 'claude' || kind === 'openclaude') {
     // Whether the conversation exists. If we can't check (older app
     // version), assume it does: resume it rather than reuse an id in use.
@@ -1384,6 +1386,18 @@ async function agentStartLine(agent, sessionId, resume, accountId, { known = fal
   const args = sessionId && resume ? await resumeArgs(kind, sessionId, window.shellApi) : null
   if (args) return { line: resumeLine(kind, agent.command, args), sessionId, resumed: true }
   return { line: agent.command, sessionId: null, resumed: false }
+}
+
+// The question agentStartLine asks an SSH host (does this conversation still
+// exist there?), asked ahead by createLeaf: it waits its turn on the host's
+// session alongside the agent check instead of after it (each took up to 8 s
+// behind a busy session). -> { which, exists: Promise<true | false | null> } | null
+function hostSessionAhead(agent, sessionId, resume, { known = false, hostId = null } = {}) {
+  if (!hostId || !sessionId || known || !window.shellApi.remoteAgentSessionExists) return null
+  const kind = sessionKind(agent)
+  const which = kind === 'claude' ? 'claude' : kind === 'codex' && resume ? 'codex' : null
+  if (!which) return null
+  return { which, exists: window.shellApi.remoteAgentSessionExists(hostId, which, sessionId).then((v) => (typeof v === 'boolean' ? v : null), () => null) }
 }
 
 // Codex, OpenCode, Cline and Copilot pick their own session id (so do Kimi,
@@ -1725,6 +1739,9 @@ async function createLeaf(shellId, agent = null, cwd = null, worktree = null, op
   // it (restored, reconnected) starts it only when the host says it is
   // there now. A command of your own (Settings > Agents) is typed as is.
   let launchCommand = launch && launch.command
+  // Whether its conversation is still on the host: asked now, alongside the
+  // agent check below.
+  const hostAhead = agent && agent.command && opts.remoteHostId ? hostSessionAhead(agent, opts.sessionId || null, !!opts.resume, { known: opts.remoteSession === true, hostId: opts.remoteHostId }) : null
   if (agent && agent.command && opts.remoteHostId && !agent.custom && launchCommand === agent.command) {
     launchCommand = await remoteAgentCommand(opts.remoteHostId, agent.id, launchCommand, { strict: !!opts.agentMissing, restore: !!opts.id })
     if (typeof paneStep === 'function') paneStep('host agent check')
@@ -1760,6 +1777,7 @@ async function createLeaf(shellId, agent = null, cwd = null, worktree = null, op
       leaf.sessionId = opts.sessionId || null
       showToast(t('app.hostAccount.refused', '{{agent}} was not started on its account on this host: {{error}} Pane menu > Restart on… starts it on another one.', { agent: agent.name || agent.id, error: (env && env.error) || t('app.common.unknownError', 'unknown error') }), { kind: 'error', timeout: 15000 })
     }
+    if (typeof paneStep === 'function') paneStep('host account')
   }
   // Started: the pane keeps the account it started on (its folder, or null:
   // the host's own sign-in), for its restarts; a later default changes it not.
@@ -1767,7 +1785,8 @@ async function createLeaf(shellId, agent = null, cwd = null, worktree = null, op
   if (agent && agent.command && launchCommand) {
     const start = await agentStartLine({ ...agent, command: launchCommand }, opts.sessionId || null, !!opts.resume, accountId, {
       known: opts.remoteSession === true && !!opts.remoteHostId,
-      hostId: opts.remoteHostId || null
+      hostId: opts.remoteHostId || null,
+      hostAhead
     })
     leaf.sessionId = start.sessionId
     if (typeof paneStep === 'function') paneStep('start line')

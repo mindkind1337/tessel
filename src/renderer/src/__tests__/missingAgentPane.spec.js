@@ -92,6 +92,8 @@ function load({ shared = true, status = null, tree = null } = {}) {
     settings: { resumeAgents: true, yoloFolders: [], agentPermissions: 'manual' },
     FOUND_AFTER_START: [],
     sessionKind: (a) => (a && ['claude', 'codex'].includes(a.id) ? a.id : null),
+    // Its conversation on the host, asked ahead (App.vue hostSessionAhead): not asked here.
+    hostSessionAhead: () => null,
     teamToolsReady: false,
     teamToolsVersion: null,
     showToast: vi.fn(),

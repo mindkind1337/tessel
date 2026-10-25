@@ -4840,6 +4840,10 @@ async function createSshPane(opts, target, spec, shell, startedAt, timing = null
   sshAskpass.releasePane(id)
   const startDir = os.homedir()
   const teamSecret = newTeamSecret()
+  // An agent pane: the host's agents are looked for now, while its shim goes
+  // there (the window asks for them next, remoteAgentCommand, and gets this
+  // check, not one started after the terminal opened; once per host and run).
+  if (opts.agentId) void remoteAgentCheck.hostStarted(target.id)
   // An agent Tessel starts here gets the team tools and its status like a
   // local one (src/main/remoteAgent/REMOTE_AGENTS.md); without them it still starts.
   const agent = await prepareRemoteAgent({ id, target, remotePath, agentId: opts.agentId, teamSecret })
