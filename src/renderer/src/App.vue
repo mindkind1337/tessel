@@ -3116,11 +3116,10 @@ function startTaskResize(e) {
       content.style.width = ''
       content.style.alignSelf = ''
     }
-    // Closed, it keeps the width it had; else the new one is set once.
-    if (wantsClose) {
-      aside.style.flexBasis = `${taskPanelShown.value}px`
-      taskPanelOpen.value = false
-    } else if (width != null) taskPanelWidth.value = width
+    // Closed, it keeps the width it had (it opens again at it); else the new
+    // one is set once.
+    if (wantsClose) taskPanelOpen.value = false
+    else if (width != null) taskPanelWidth.value = width
     taskResizing.value = false
     nextTick(endDrag)
   }
