@@ -2717,6 +2717,33 @@ kbd {
 .root-note.below-tools-note {
   top: 80px;
 }
+/* An agent starting again on an SSH host: what it does meanwhile */
+.root-note.start-note {
+  padding: 6px 10px;
+  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+}
+.start-note-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: start-note-pulse 1.2s ease-in-out infinite;
+}
+@keyframes start-note-pulse {
+  0%,
+  100% {
+    opacity: 0.35;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .start-note-dot {
+    animation: none;
+  }
+}
 .tools-note .exit-btn,
 .account-note .exit-btn,
 .signin-note .exit-btn {
@@ -8668,6 +8695,13 @@ button.act-stat:hover,
 
 .explorer-head-spinner {
   margin-left: 6px;
+}
+/* An open folder read again in the background: its rows stay, a small spinner */
+.explorer-row-spinner {
+  width: 9px;
+  height: 9px;
+  margin-left: 6px;
+  opacity: 0.8;
 }
 
 .explorer-pending {

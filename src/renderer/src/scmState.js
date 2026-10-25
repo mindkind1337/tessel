@@ -30,26 +30,28 @@ export function statusOf(root) {
 // a poll, two panels) share that next one. On a slow host (a remote
 // project) they would otherwise pile up behind each other there.
 const runs = {} // key -> { running, next }
-function startRun(k, root) {
+function startRun(k, root, background = false) {
   const entry = { running: null, next: null }
   runs[k] = entry
-  entry.running = readStatus(root).finally(() => {
+  entry.running = readStatus(root, background).finally(() => {
     if (runs[k] === entry && !entry.next) delete runs[k]
   })
   return entry.running
 }
-export function refreshStatus(root) {
+// background: read by itself (a change notice, the side panel shown): on a
+// remote host it is background work, never in front of a click.
+export function refreshStatus(root, { background = false } = {}) {
   if (!root || !api()) return Promise.resolve(null)
   const k = rootKey(root)
   const r = runs[k]
-  if (!r) return startRun(k, root)
+  if (!r) return startRun(k, root, background)
   // Asked after the running one started (a stage, a save…): its answer may
   // be stale, so the next run is the one that counts.
-  if (!r.next) r.next = r.running.catch(() => null).then(() => startRun(k, root))
+  if (!r.next) r.next = r.running.catch(() => null).then(() => startRun(k, root, background))
   return r.next
 }
 
-async function readStatus(root) {
+async function readStatus(root, background = false) {
   const k = rootKey(root)
   const my = (seqs[k] = (seqs[k] || 0) + 1)
   if (!scmStatus[k]) scmStatus[k] = { loading: true, loaded: false, error: '', code: '', data: null }
@@ -57,7 +59,7 @@ async function readStatus(root) {
   let res = null
   let failed = ''
   try {
-    res = await api().status({ root })
+    res = await api().status({ root, ...(background ? { background: true } : {}) })
   } catch (err) {
     failed = (err && err.message) || t('changes.status.failed', 'Git status failed.')
   }

@@ -1806,10 +1806,24 @@ ipcMain.handle('sessions:details', async (_evt, q = {}) => {
 // start with a new id; never this computer's transcripts. Never a sign-in
 // (remoteFs.readAgentFile). -> true | false | null (can't tell: not
 // connected, no answer in time)
+// On the host's pane lane (remoteFs.js LANES: never behind its Files session).
+// Asked early by a pane that opens (beside its other checks) and again when
+// its start line is made: the same answer, one request.
+const sessionExistsAsked = new Map() // host\nagent\nid -> { at, promise }
 ipcMain.handle('remote:agentSessionExists', async (_evt, hostId, agent, id) => {
   try {
     if (typeof hostId !== 'string' || !remoteHosts.get(hostId)) return null
-    return await remoteTranscriptExists({ readAgentFile: (h, r) => remoteFs.readAgentFile(h, r), hostId, agent, sessionId: id, timeoutMs: 8000 })
+    const key = `${hostId}\n${agent}\n${id}`
+    const hit = sessionExistsAsked.get(key)
+    if (hit && Date.now() - hit.at < 20_000) return await hit.promise
+    const promise = remoteTranscriptExists({ readAgentFile: (h, r) => remoteFs.readAgentFile(h, { ...r, lane: 'pane' }), hostId, agent, sessionId: id, timeoutMs: 8000 })
+    if (sessionExistsAsked.size > 100) sessionExistsAsked.clear()
+    sessionExistsAsked.set(key, { at: Date.now(), promise })
+    const res = await promise
+    // Only "it is there" is kept (a conversation is not removed in seconds;
+    // one not there yet may be written any moment, and a null is not known).
+    if (res !== true && sessionExistsAsked.get(key)?.promise === promise) sessionExistsAsked.delete(key)
+    return res
   } catch {
     return null
   }
@@ -4455,9 +4469,9 @@ liveShare = registerLiveShare({
         return (r && r[agent]) || null
       },
       sessionsDir: () => sessionsDir(),
-      // An agent on an SSH host: its file there, over the host's connection
-      // (the host's own chat view reads it the same way).
-      readAgentFile: (hostId, q) => (remoteHosts.get(hostId) ? remoteFs.readAgentFile(hostId, q) : { ok: false, error: 'unknown host' }), // i18n-ignore
+      // An agent on an SSH host: its file there, over the host's connection,
+      // on the guests' own lane (remoteFs.js LANES): never in the host's session.
+      readAgentFile: (hostId, q) => (remoteHosts.get(hostId) ? remoteFs.readAgentFile(hostId, { ...q, lane: 'guest' }) : { ok: false, error: 'unknown host' }), // i18n-ignore
       limits: { bytes: 2 * 1024 * 1024, events: 1000, text: 32 * 1024 }
     })
 })
@@ -4527,6 +4541,10 @@ function remoteToolsMissing(msg) {
   send('remoteAgents:toolsMissing', { id, host: String((target && target.label) || msg.hostId || ''), reason: remoteToolsReason(code) })
 }
 async function prepareRemoteAgent({ id, target, remotePath, agentId, teamSecret }) {
+  // The host's agent check, beside the shim install (the window asks for it
+  // as soon as the terminal is there): both at once on the host's pane lane,
+  // never one after the other. Only on a connection signed in already.
+  if (agentId && remoteHosts.sharedConnected(target.id)) void Promise.resolve(remoteAgentCheck.check(target.id)).catch(() => null)
   const provider = REMOTE_AGENT_PROVIDERS.includes(agentId) ? agentId : null
   if (!provider) return {}
   const fail = (reason, detail) => ({ toolsReason: remoteToolsReason(reason, detail) })

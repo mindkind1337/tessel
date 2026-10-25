@@ -8,8 +8,10 @@
 // like every other op; see ptyHost.js):
 //   app -> host
 //     create { ..., ssh: { hostId, spec, remotePath?, texts } }   a remote terminal
-//     ssh-exec { ch, hostId, spec }   the Files session: `exec /bin/sh` (the
-//                                     only command an exec channel may run)
+//     ssh-exec { ch, hostId, spec, onlyLive? }   the Files session: `exec /bin/sh`
+//                                     (the only command an exec channel may run);
+//                                     onlyLive: on a live connection only, never a
+//                                     new connection or sign-in (a Files lane)
 //     ssh-write { ch, data(base64) } / ssh-eof { ch } / ssh-close { ch }
 //     ssh-connect { cid, hostId, spec }   sign in (connection test)
 //     ssh-disconnect { hostId }        close it, forget its credentials
@@ -232,7 +234,7 @@ export function createSshHostBridge({
     const c = { sock, stream: null, release: null, closed: false }
     chans.set(ch, c)
     manager
-      .open(hostId, spec, 'exec', { command: FILES_COMMAND })
+      .open(hostId, spec, 'exec', { command: FILES_COMMAND, onlyLive: msg.onlyLive === true })
       .then(({ stream, release }) => {
         if (c.closed || sock.destroyed) {
           try {

@@ -1596,6 +1596,18 @@ async function createLeaf(shellId, agent = null, cwd = null, worktree = null, op
     }
     paneStep('account')
   }
+  // An agent starting again (opts.restart: restartInPlace) on a host it is
+  // connected to: the host's agent check and whether its conversation is
+  // there are asked now, beside the terminal's creation (they need neither
+  // it nor each other), all within REMOTE_START_BUDGET_MS rather than one
+  // wait after the other.
+  let earlyCommand = null
+  if (!refused && !attached && opts.restart === true && agent && agent.command && !agent.custom && opts.remoteHostId && launch && launch.command === agent.command && hostShared(opts.remoteHostId)) {
+    earlyCommand = remoteAgentCommand(opts.remoteHostId, agent.id, launch.command, { strict: !!opts.agentMissing, restore: true, deadline: paneT0 + REMOTE_START_BUDGET_MS })
+    const kind = sessionKind(agent)
+    if (opts.sessionId && opts.remoteSession !== true && (kind === 'claude' || (kind === 'codex' && opts.resume)) && window.shellApi.remoteAgentSessionExists)
+      window.shellApi.remoteAgentSessionExists(opts.remoteHostId, kind, opts.sessionId).catch(() => null)
+  }
   if (refused) {
     res = { ok: false, error: refused }
   } else if (!attached) {
@@ -1726,7 +1738,8 @@ async function createLeaf(shellId, agent = null, cwd = null, worktree = null, op
   // there now. A command of your own (Settings > Agents) is typed as is.
   let launchCommand = launch && launch.command
   if (agent && agent.command && opts.remoteHostId && !agent.custom && launchCommand === agent.command) {
-    launchCommand = await remoteAgentCommand(opts.remoteHostId, agent.id, launchCommand, { strict: !!opts.agentMissing, restore: !!opts.id })
+    if (typeof opts.onStartStep === 'function') opts.onStartStep('check')
+    launchCommand = await (earlyCommand || remoteAgentCommand(opts.remoteHostId, agent.id, launchCommand, { strict: !!opts.agentMissing, restore: !!opts.id }))
     if (typeof paneStep === 'function') paneStep('host agent check')
     if (!launchCommand) {
       leaf.sessionId = opts.sessionId || null
@@ -1765,6 +1778,7 @@ async function createLeaf(shellId, agent = null, cwd = null, worktree = null, op
   // the host's own sign-in), for its restarts; a later default changes it not.
   if (onHostAgent && launchCommand) leaf.hostAccount = hostAccount || null
   if (agent && agent.command && launchCommand) {
+    if (opts.remoteHostId && typeof opts.onStartStep === 'function') opts.onStartStep('agent')
     const start = await agentStartLine({ ...agent, command: launchCommand }, opts.sessionId || null, !!opts.resume, accountId, {
       known: opts.remoteSession === true && !!opts.remoteHostId,
       hostId: opts.remoteHostId || null
@@ -6504,6 +6518,11 @@ const REMOTE_CHECK_MS = 15000
 // A new pane waits for the host's agent check this long at most: unknown, its
 // agent is started anyway (a restored pane that must know waits REMOTE_CHECK_MS).
 const REMOTE_LAUNCH_CHECK_MS = 4000
+// A pane starting again on a host it is connected to: its checks run beside
+// the terminal's creation, and all of it gets this long, counted from the
+// start (then its agent starts anyway, with the pane's note if its tools
+// are not there).
+const REMOTE_START_BUDGET_MS = 10000
 // opts.strict: only when the host says it is there (a pane already missing
 // it never types it on a check that failed or was too slow).
 // Claude Code's Yolo as root (createLeaf): whether the host's sessions run as
@@ -6556,9 +6575,12 @@ function watchRootYoloRefusal(leaf, id, retry) {
   })
   setTimeout(stop, ROOT_REFUSAL_WATCH_MS)
 }
-async function remoteAgentCommand(hostId, id, command, { strict = false, restore = false } = {}) {
+// opts.deadline (performance.now() time): a restart's check waits until then
+// at most (REMOTE_START_BUDGET_MS), not the full REMOTE_CHECK_MS.
+async function remoteAgentCommand(hostId, id, command, { strict = false, restore = false, deadline = 0 } = {}) {
   let st = remoteAgentTools[hostId]
-  if (needsRemoteAgentCheck(id, st, { connected: hostShared(hostId) })) st = (await askHostAgents(hostId, { newPane: !strict && !restore })) || st
+  if (needsRemoteAgentCheck(id, st, { connected: hostShared(hostId) }))
+    st = (await askHostAgents(hostId, { newPane: !strict && !restore, ...(restore && !strict && deadline ? { deadline } : {}) })) || st
   if (strict && remoteAgentFound(id, st) !== true) return null
   return remoteAgentLine(id, st, command)
 }
@@ -6641,8 +6663,8 @@ const missingAgentInstalls = {} // install pane id -> the waiting pane's id
 // The host's agents, asked now (at most REMOTE_CHECK_MS). opts.fresh: the
 // host itself, never main's check of a few seconds ago (Check again, after
 // an install). -> its status, or null.
-async function askHostAgents(hostId, { fresh: anew = false, newPane = false } = {}) {
-  const waitMs = newPane ? REMOTE_LAUNCH_CHECK_MS : REMOTE_CHECK_MS
+async function askHostAgents(hostId, { fresh: anew = false, newPane = false, deadline = 0 } = {}) {
+  const waitMs = deadline ? Math.max(1000, deadline - performance.now()) : newPane ? REMOTE_LAUNCH_CHECK_MS : REMOTE_CHECK_MS
   const api = window.shellApi.remoteAgents
   if (!api || !api.check) return null
   let timer = null
@@ -9501,10 +9523,28 @@ async function restartInPlace(leafId, opts = {}) {
   // One restart at a time per pane (the automatic one and the user's).
   if (restartingLeaves.has(leafId)) return false
   restartingLeaves.add(leafId)
+  // An agent on an SSH host: it can take a few seconds there (its tools,
+  // the agent check), so the pane says what it is doing meanwhile
+  // (TerminalPane start-note; gone when the new terminal replaces it).
+  const old = findLeaf(leafId)
+  const onHost = !!(old && old.kind === 'agent' && old.remoteHostId && !old.notConnected)
+  const onStartStep = (step) => {
+    if (!onHost || findLeaf(leafId) !== old) return
+    const host = remoteHostLabel(old.remoteHostId)
+    const agent = old.title || old.agentId
+    old.startNote =
+      step === 'agent'
+        ? t('app.remoteAgents.startingAgent', 'Starting on {{host}}… starting {{agent}}', { host, agent })
+        : step === 'check'
+          ? t('app.remoteAgents.startingCheck', 'Starting on {{host}}… checking {{agent}} there', { host, agent })
+          : t('app.remoteAgents.startingTools', 'Starting on {{host}}… setting up tools', { host })
+  }
+  onStartStep('tools')
   try {
-    return await restartInPlaceNow(leafId, opts)
+    return await restartInPlaceNow(leafId, onHost ? { ...opts, onStartStep } : opts)
   } finally {
     restartingLeaves.delete(leafId)
+    if (onHost) delete old.startNote
   }
 }
 
@@ -9544,7 +9584,11 @@ async function restartInPlaceNow(leafId, opts) {
     ...(old.remoteHostId ? { remoteHostId: old.remoteHostId } : {}),
     ...(old.remoteHostId && old.remotePath ? { remotePath: old.remotePath } : {}),
     // Team messages waiting for it: its first prompt says so (see createLeaf).
-    wake: { teamId: old.team || null, gen: (old.gen || 0) + 1 }
+    wake: { teamId: old.team || null, gen: (old.gen || 0) + 1 },
+    // Its checks on an SSH host beside the terminal's creation, in one budget;
+    // what it does, said in the pane meanwhile.
+    restart: true,
+    onStartStep: opts.onStartStep
   })
   if (!fresh) return null
   if (findLeaf(leafId) !== old) {

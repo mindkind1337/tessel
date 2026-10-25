@@ -62,6 +62,8 @@ export const MAX_QUEUED = 64
 export const MAX_BG_QUEUED = 16
 // Upload lines written per slice (64 x 16 KB of base64: ~1 MB).
 const UPLOAD_SLICE_LINES = 64
+// A request that waited or ran this long is reported (onSlow).
+export const SLOW_REPORT_MS = 5000
 
 // Exit codes of the prelude's functions (the rest are the commands' own).
 export const RC = {
@@ -137,6 +139,24 @@ export const FUNCTIONS = new Set([
   '__t_nop',
   // The sidebar's branch and worktrees of a remote project (read-only).
   '__t_wtl',
+  // A Live Share guest's requests on a shared project (remoteFs.js guest,
+  // liveShare/shareRemoteFiles.js), each checked here, on the host, in the
+  // same request as what it reads or writes (__t_gp): every part of the path
+  // below the project folder is a real folder (never a link, never a folder
+  // holding a .git: a nested repository), and, with the share's "hide ignored
+  // files" on, what git ignores is asked of git itself (git check-ignore, one
+  // run per request, the folder's own names only; never a scan of the
+  // project). A listing, a stat, a read, a save, a batch of search results,
+  // the hooks folder, a name search and a content search.
+  '__t_gls',
+  '__t_glsm',
+  '__t_gst',
+  '__t_grd',
+  '__t_gwr',
+  '__t_gchk',
+  '__t_ghk',
+  '__t_gfind',
+  '__t_ggrep',
   // Add a project on the host (remoteFs.js: browse, clone, create). Not
   // bound to a project folder: the folder picker lists any folder the
   // signed-in user can read (names and kinds only, never contents), and a
@@ -168,7 +188,11 @@ export const FUNCTIONS = new Set([
   // One agent conversation file on this host (Claude Code's transcript or a
   // Codex rollout), found by its session id in the agent's own folder only
   // (or a Codex account folder Tessel made there: its conversations are its
-  // own), read-only, a bounded window of it (chat/remoteTranscripts.js).
+  // own), read-only, a bounded window of it (chat/remoteTranscripts.js). A
+  // Codex rollout is looked for first in the day folders its id's time
+  // names (a UUIDv7: sessions/YYYY/MM/DD, the days around it), then by a
+  // search of the whole folder: one search per read held the host's session
+  // for seconds on a host with many sessions.
   '__t_tread',
   // The signed-in user's home folder ($HOME), to tell a "~/…" project from
   // the same folder named by its full path (chat file links).
@@ -517,6 +541,146 @@ __t_wtl() {
     done
   }
 }
+__t_gw() {
+  __gc=$1
+  __go=$IFS; IFS=/; set -f; set -- $2; IFS=$__go; set +f
+  [ $# -gt 0 ] || return 90
+  while [ $# -gt 0 ]; do
+    case $1 in ''|.|..) return 90 ;; esac
+    __gc=$__gc/$1
+    [ -L "$__gc" ] && return 90
+    if [ -d "$__gc" ]; then
+      if [ -e "$__gc/.git" ] || [ -L "$__gc/.git" ]; then return 90; fi
+    elif [ $# -gt 1 ]; then return 91
+    fi
+    shift
+  done
+  return 0
+}
+__t_gp() {
+  __t_root "$1" || return $?
+  __gb=\${1%/}
+  [ "$2" = "$1" ] || [ "$2" = "$__gb" ] && return 0
+  case $2 in "$__gb"/*) ;; *) return 90 ;; esac
+  __t_gw "$__gb" "\${2#"$__gb"/}"
+}
+__t_grel() { __gb=\${1%/}; __gq=; [ "$2" = "$1" ] || [ "$2" = "$__gb" ] || __gq=\${2#"$__gb"/}; }
+__t_gign() {
+  __gt=
+  command -v git >/dev/null 2>&1 && __gt=$(__t_git "$1" rev-parse --is-inside-work-tree 2>/dev/null)
+  if [ "$__gt" = true ]; then
+    printf '/@@I y\\000'
+    __t_git "$1" check-ignore -z --stdin
+    [ $? -le 1 ] && printf '/@@I e\\000'
+    return 0
+  fi
+  __gu=$1
+  while [ -n "$__gu" ]; do
+    if [ -e "$__gu/.git" ] || [ -L "$__gu/.git" ]; then printf '/@@I x\\000'; return 0; fi
+    case $__gu in */*) __gu=\${__gu%/*} ;; *) __gu= ;; esac
+  done
+  if [ -e /.git ]; then printf '/@@I x\\000'; return 0; fi
+  printf '/@@I n\\000'
+}
+__t_gone() {
+  [ "$3" = 1 ] || return 0
+  __t_grel "$1" "$2"
+  [ -n "$__gq" ] || return 0
+  printf './%s\\000' "$__gq" | __t_gign "$__R" | tr '\\000' '\\n' >"$__T_D/gi"
+  read -r __gs <"$__T_D/gi" || __gs=
+  case $__gs in
+    '/@@I n') return 0 ;;
+    '/@@I y')
+      grep -q -x -F -e '/@@I e' "$__T_D/gi" || return 97
+      grep -q -x -F -e "./$__gq" "$__T_D/gi" && return 91
+      grep -q -x -F -e "$__gq" "$__T_D/gi" && return 91
+      return 0 ;;
+  esac
+  return 97
+}
+__t_gls() {
+  __t_gp "$1" "$2" || return $?
+  __t_grel "$1" "$2"
+  __P=$__R; [ -z "$__gq" ] || __P="\${__R%/}/$__gq"
+  [ -d "$__P" ] || return 92
+  : >"$__T_D/gn"
+  [ -z "$__gq" ] || { printf './%s\\000' "$__gq" >>"$__T_D/gn"; __gq="$__gq/"; }
+  __n=0
+  for __f in "$__P"/* "$__P"/.[!.]* "$__P"/..?*; do
+    [ -e "$__f" ] || [ -L "$__f" ] || continue
+    __n=$((__n+1)); [ "$__n" -gt "$3" ] && break
+    __b=\${__f##*/}
+    if [ -L "$__f" ]; then __k=l
+    elif [ -d "$__f" ]; then if [ -e "$__f/.git" ] || [ -L "$__f/.git" ]; then __k=r; else __k=d; fi
+    elif [ -f "$__f" ]; then __k=f; else __k=o; fi
+    printf '%s %s\\000' "$__k" "$__b"
+    case $__k$__b in l*|r*|?.git) ;; *) printf './%s%s\\000' "$__gq" "$__b" >>"$__T_D/gn" ;; esac
+  done
+  [ "$4" = 1 ] && __t_gign "$__R" <"$__T_D/gn"
+  rm -f "$__T_D/gn"
+  return 0
+}
+__t_glsm() {
+  __lr=$1; __lmx=$2; __lig=$3; shift 3
+  for __ld in "$@"; do
+    __t_gls "$__lr" "$__ld" "$__lmx" "$__lig" >"$__T_D/gm"; __lrc=$?
+    printf '/@@D %s\\000' "$__lrc"
+    [ "$__lrc" = 0 ] && cat "$__T_D/gm"
+  done
+  rm -f "$__T_D/gm"
+  return 0
+}
+__t_gst() { __t_gp "$1" "$2" || return $?; __t_gone "$1" "$2" "$3" || return $?; __t_stats "$1" "$2"; }
+__t_grd() { __t_gp "$1" "$2" || return $?; __t_gone "$1" "$2" "$4" || return $?; __t_read "$1" "$2" "$3"; }
+__t_gwr() { __t_gp "$1" "$2" || return $?; __t_gone "$1" "$2" "$6" || return $?; __t_write "$1" "$2" "$3" "$4" '' "$5"; }
+__t_gchk() {
+  __t_root "$1" || return $?
+  __gb=\${1%/}
+  __t_b64d <"$__T_D/u" >"$__T_D/m" || return 98
+  : >"$__T_D/gk"
+  while IFS= read -r __gl || [ -n "$__gl" ]; do
+    [ -n "$__gl" ] || continue
+    __t_gw "$__gb" "$__gl" || continue
+    printf '%s\\000' "$__gl"
+    printf './%s\\000' "$__gl" >>"$__T_D/gk"
+  done <"$__T_D/m"
+  printf '/@@C\\000'
+  [ "$2" = 1 ] && __t_gign "$__R" <"$__T_D/gk"
+  rm -f "$__T_D/gk" "$__T_D/m"
+  return 0
+}
+__t_ghk() {
+  __t_root "$1" || return $?
+  printf 'R %s\\n' "$__R"
+  command -v git >/dev/null 2>&1 || { printf 'N\\n'; return 0; }
+  __t=$(__t_git "$__R" rev-parse --show-toplevel 2>/dev/null) || { printf 'N\\n'; return 0; }
+  __t=$(__t_real "$__t") || return 91
+  printf 'T %s\\n' "$__t"
+  __h=$(__t_git "$__R" config --get core.hooksPath 2>/dev/null); __hr=$?
+  [ "$__hr" = 1 ] && return 0
+  [ "$__hr" = 0 ] || return 98
+  printf 'H %s\\n' "$__h"
+  case $__h in '') return 0 ;; '~'*) return 0 ;; /*) __a=$__h ;; *) __a="\${__t%/}/$__h" ;; esac
+  __q=$(__t_real "$__a" 2>/dev/null) && [ -n "$__q" ] && printf 'Q %s\\n' "$__q"
+  return 0
+}
+__t_gfind() {
+  __t_findn "$1" "$2" d
+  printf '/@@F\\000'
+  __t_findn "$1" "$2" f
+}
+__t_ggrep() {
+  __t_root "$1" || return $?
+  __gq=$2; shift 2
+  cd "$__R" || return 91
+  if command -v git >/dev/null 2>&1 && [ "$(__t_git "$__R" rev-parse --is-inside-work-tree 2>/dev/null)" = true ]; then
+    printf 'G\\n'
+    __t_git "$__R" "$@"
+  else
+    printf 'P\\n'
+    __t_grep "$__R" plain "$__gq"
+  fi
+}
 __t_dir() { [ -d "$1" ] || return 91; __PD=$(cd -P "$1" 2>/dev/null && pwd -P) || return 89; [ -n "$__PD" ] || return 91; }
 __t_browse() {
   __t_dir "$1" || return $?
@@ -701,7 +865,16 @@ __t_tfile() {
       for __c in "\${CLAUDE_CONFIG_DIR:-$HOME/.claude}"/projects/*/"$2".jsonl "$HOME"/.tessel-server/accounts/claude/*/projects/*/"$2".jsonl; do [ -f "$__c" ] && [ ! -L "$__c" ] && { __F=$__c; break; }; done ;;
     codex)
       __cd="\${CODEX_HOME:-$HOME/.codex}"
-      for __r in "$__cd/sessions" "$__cd/archived_sessions" "$HOME"/.tessel-server/accounts/codex/*/sessions; do
+      case $3 in ''|*[!0-9/:]*) ;; *)
+        __go=$IFS; IFS=:
+        for __r in "$__cd/sessions" "$HOME"/.tessel-server/accounts/codex/*/sessions; do
+          for __dd in $3; do
+            for __c in "$__r/$__dd"/rollout-*"$2".jsonl; do [ -f "$__c" ] && [ ! -L "$__c" ] && { __F=$__c; break 3; }; done
+          done
+        done
+        IFS=$__go ;;
+      esac
+      [ -n "$__F" ] || for __r in "$__cd/sessions" "$__cd/archived_sessions" "$HOME"/.tessel-server/accounts/codex/*/sessions; do
         [ -d "$__r" ] || continue
         __F=$(find "$__r" -type f -name "rollout-*$2.jsonl" 2>/dev/null | head -n 1)
         [ -n "$__F" ] && break
@@ -724,7 +897,7 @@ __t_twin() {
   fi
 }
 __t_tread() {
-  __t_tfile "$1" "$2" || return $?
+  __t_tfile "$1" "$2" "$5" || return $?
   __t_twin "$__F" "$3" "$4"
 }
 __t_subdir() {
@@ -892,7 +1065,19 @@ export function createRemoteSession({
   readyTimeoutMs = READY_TIMEOUT_MS,
   maxResponse = MAX_RESPONSE,
   randomHex = () => crypto.randomBytes(16).toString('hex'),
-  onExit = () => {}
+  onExit = () => {},
+  // This session's own queue bounds (a guest's lane keeps a small one) and
+  // default wait for a turn (null: the module's).
+  maxQueued = MAX_QUEUED,
+  maxBgQueued = MAX_BG_QUEUED,
+  queueWait = null,
+  // Told of a request that waited or ran for slowMs or more, and of one given
+  // up as busy, with what ran and what waited (the log line that says what
+  // held a host's session): ({ kind: 'slow' | 'busy', fn, waitMs, runMs?,
+  // rc?, why?, running?, waiting, queued }).
+  onSlow = null,
+  slowMs = SLOW_REPORT_MS,
+  clock = () => Date.now()
 } = {}) {
   const nonce = randomHex()
   let child = null
@@ -999,8 +1184,32 @@ export function createRemoteSession({
     if (c.touch !== false) lastUsed = Date.now()
     const out = Buffer.from(c.out.join(''), 'base64')
     const err = Buffer.from(c.err.join(''), 'base64').toString('utf8')
+    const at = clock()
+    const runMs = at - c.startedAt
+    const waitMs = c.startedAt - c.queuedAt
+    if (runMs >= slowMs || waitMs >= slowMs) report({ kind: 'slow', fn: c.fn, waitMs, runMs, rc: c.rc })
     c.resolve({ rc: c.rc, out, err, truncated: out.length >= c.cap })
     pump()
+  }
+
+  // What waits in the queue, by function ("__t_tread x3, __t_agents").
+  function queued() {
+    const counts = new Map()
+    for (const q of queue) counts.set(q.fn, (counts.get(q.fn) || 0) + 1)
+    return [...counts].map(([fn, n]) => (n > 1 ? `${fn} x${n}` : fn)).join(', ')
+  }
+  function report(info) {
+    if (typeof onSlow !== 'function') return
+    try {
+      onSlow({
+        ...info,
+        running: current ? { fn: current.fn, ms: clock() - current.startedAt } : null,
+        waiting: queue.length,
+        queued: queued()
+      })
+    } catch {
+      /* only a log line */
+    }
   }
 
   function onData(chunk) {
@@ -1040,7 +1249,7 @@ export function createRemoteSession({
     if (at < 0) at = 0
     const [req] = queue.splice(at, 1)
     if (req.waitTimer) timers.clearTimeout(req.waitTimer)
-    current = { ...req, out: [], err: [], section: null, size: 0, rc: null, startedAt: Date.now() }
+    current = { ...req, out: [], err: [], section: null, size: 0, rc: null, startedAt: clock() }
     current.timer = timers.setTimeout(() => fail('timeout'), req.timeoutMs + HARD_MARGIN_MS)
     writeRequest(current)
   }
@@ -1129,7 +1338,10 @@ export function createRemoteSession({
     if (state === 'closed') return Promise.reject(sessionError(closedReason || 'closed'))
     if (signal && signal.aborted) return Promise.reject(Object.assign(new Error('cancelled'), { code: 'cancelled' })) // i18n-ignore internal
     const waiting = queue.filter((q) => !!q.bg === !!background).length
-    if (waiting >= (background ? MAX_BG_QUEUED : MAX_QUEUED)) return Promise.reject(busyError())
+    if (waiting >= (background ? maxBgQueued : maxQueued)) {
+      report({ kind: 'busy', fn, why: 'full', waitMs: 0 })
+      return Promise.reject(busyError())
+    }
     let script
     const id = ++seq
     try {
@@ -1140,7 +1352,7 @@ export function createRemoteSession({
     }
     const data = upload ? Buffer.from(upload) : null
     return new Promise((resolve, reject) => {
-      const req = { id, cap, script, upload: data, timeoutMs, touch, bg: !!background, first: !!first && !!background, resolve, reject, waitTimer: null }
+      const req = { id, fn, cap, script, upload: data, timeoutMs, touch, bg: !!background, first: !!first && !!background, resolve, reject, waitTimer: null, queuedAt: clock() }
       const drop = (err) => {
         const at = queue.indexOf(req)
         if (at < 0) return
@@ -1151,8 +1363,21 @@ export function createRemoteSession({
       queue.push(req)
       // Its turn has to come within the wait limit (counted from now, so
       // only while the session is up or starting).
-      const wait = Number.isFinite(queueWaitMs) && queueWaitMs > 0 ? queueWaitMs : first ? QUEUE_WAIT_MS : background ? BG_QUEUE_WAIT_MS : QUEUE_WAIT_MS
-      req.waitTimer = timers.setTimeout(() => drop(busyError()), wait)
+      const wait =
+        Number.isFinite(queueWaitMs) && queueWaitMs > 0
+          ? queueWaitMs
+          : Number.isFinite(queueWait) && queueWait > 0
+            ? queueWait
+            : first
+              ? QUEUE_WAIT_MS
+              : background
+                ? BG_QUEUE_WAIT_MS
+                : QUEUE_WAIT_MS
+      req.waitTimer = timers.setTimeout(() => {
+        const was = queue.includes(req)
+        drop(busyError())
+        if (was) report({ kind: 'busy', fn, why: 'wait', waitMs: clock() - req.queuedAt })
+      }, wait)
       if (signal && typeof signal.addEventListener === 'function') {
         signal.addEventListener('abort', () => drop(Object.assign(new Error('cancelled'), { code: 'cancelled' })), { once: true }) // i18n-ignore internal
       }

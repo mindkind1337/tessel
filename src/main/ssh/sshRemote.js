@@ -261,15 +261,16 @@ export function createSshRemote({ host, hosts, send = () => {}, log = null, t, s
 
   // --- Channels ------------------------------------------------------------------------
   // A spawnImpl for remoteShell.createRemoteSession: the Files session's
-  // `exec /bin/sh` on the host's connection.
-  function spawnFor(hostId, spec) {
+  // `exec /bin/sh` on the host's connection. onlyLive: only on a connection
+  // signed in already, never a new one (remoteFs.js lanes: nothing is asked).
+  function spawnFor(hostId, spec, { onlyLive = false } = {}) {
     return () => {
       const ch = crypto.randomBytes(12).toString('hex')
       const child = new ChannelChild((op, body) => host.send(op, { ch, ...body }))
       child.hostId = hostId
       chans.set(ch, child)
       host
-        .request('ssh-exec', { ch, hostId, spec })
+        .request('ssh-exec', { ch, hostId, spec, ...(onlyLive ? { onlyLive: true } : {}) })
         .then((res) => {
           if (!res || !res.ok) throw new Error('refused') // i18n-ignore internal
         })

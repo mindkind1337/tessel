@@ -1,214 +1,145 @@
-// Live Share: the files of a shared SSH project, read through the host's own
-// remote session (src/main/liveShare/shareRemoteFiles.js), on a fake remoteFs
-// holding a small tree. Guests get the Files tab's data with the rules of a
-// local shared project: the secret names, what git ignores, .git and .tessel
-// hidden; a link never followed; rights per op; sizes and the number of
-// requests on the host's one session capped; a server that is not connected
-// answers 'host-offline' (and never starts a sign-in); no host path or
-// server detail in any answer.
+// Live Share: the files of a shared SSH project (src/main/liveShare/
+// shareRemoteFiles.js), served through remoteFs's guest requests (a lane of
+// the guests' own, every path checked on the host), on a fake holding a
+// small tree with the host's semantics: a link or a nested repository on the
+// way is refused, what git ignores is told per request (a folder's names,
+// a file, search results), a read is cut at its size, a save compares the
+// host's hash. The rules of a local shared project on top: secret names,
+// .git and .tessel hidden; rights per op, protected files and the hooks
+// folder; sizes; a few requests at once per host; host-offline; no host path
+// or host words in any answer.
 import { describe, it, expect, beforeEach } from 'vitest'
-import {
-  createRemoteShareFiles,
-  MAX_ACTIVE,
-  MAX_WAITING,
-  MAX_PER_PERSON
-} from '../liveShare/shareRemoteFiles'
+import { createRemoteShareFiles, MAX_ACTIVE, MAX_WAITING, MAX_PER_PERSON, INFO_TTL_MS } from '../liveShare/shareRemoteFiles'
 import { hashOf } from '../editorFiles'
 import { LSHARE_CODES, LSHARE_LIMITS as L } from '../../shared/liveSharePath'
 import { createGuestFs } from '../liveShare/guestFs'
 import { cleanRemoteRoot } from '../liveShare'
-import { isProtectedRel } from '../liveShare/shareScope'
-import { remoteRootTooBroad } from '../../shared/remoteRootPolicy'
 
 const ROOT = 'ssh://ssh-a1/home/me/app'
 const BOM = Buffer.from([0xef, 0xbb, 0xbf])
-const sep = (p) => p.replace(/\\/g, '/')
+const sha = (b) => `sha256:${hashOf(b)}`
 
-// A tree: path -> { dir } | { link, dir? } | { text, bom? } | { buf }.
+// tree: rel -> { dir } | { link, dir? } | { nested } (a folder holding a .git)
+// | { text, bom? } | { buf }.
 function fakeRemote(tree) {
   const state = {
     connected: true,
+    laneDown: false,
     calls: [],
     inflight: 0,
     maxInflight: 0,
-    ignored: [],
-    statusFails: false,
     delay: 0,
-    unguarded: [],
-    hooks: [],
+    ignored: new Set(),
+    ignoreFails: false,
     real: '/home/me/app',
-    listeners: [],
+    hooks: [],
+    hashKind: 'sha256',
+    written: null,
     tree
   }
-  const rel = (v) => {
-    const p = sep(v)
-    if (p === ROOT) return ''
-    return p.startsWith(`${ROOT}/`) ? p.slice(ROOT.length + 1) : null
-  }
-  const kids = (dir) => {
-    const pre = dir ? `${dir}/` : ''
-    const out = []
-    for (const [k, v] of Object.entries(state.tree)) {
-      if (!k.startsWith(pre) || k === dir) continue
-      const rest = k.slice(pre.length)
-      if (rest.includes('/')) continue
-      out.push([rest, v])
+  const bytes = (v) => Buffer.concat([v.bom ? BOM : Buffer.alloc(0), v.buf || Buffer.from(v.text || '', 'utf8')])
+  const hostHash = (b) => (state.hashKind === 'sha256' ? sha(b) : `cksum:${b.length}:1`)
+  const parentOf = (rel) => (rel.includes('/') ? rel.slice(0, rel.lastIndexOf('/')) : '')
+  const kids = (dir) =>
+    Object.entries(state.tree).filter(([k]) => k !== dir && parentOf(k) === dir).map(([k, v]) => [k.slice(dir ? dir.length + 1 : 0), v])
+  // The host's guard: every part on the way a real folder.
+  const guard = (rel) => {
+    const segs = rel ? rel.split('/') : []
+    for (let i = 0; i < segs.length; i++) {
+      const v = state.tree[segs.slice(0, i + 1).join('/')]
+      if (v && (v.link || v.nested)) return 'refused'
+      if (i < segs.length - 1 && !(v && v.dir)) return 'missing'
     }
-    return out
+    return null
   }
-  const bytes = (v) =>
-    Buffer.concat([v.bom ? BOM : Buffer.alloc(0), v.buf || Buffer.from(v.text || '', 'utf8')])
-  const stat = (v) => ({ size: bytes(v).length, mtimeMs: v.mtime || 1000 })
-  // Every call must be a guest's (guest: true): the others are listed.
-  const track = async (name, o, fn) => {
+  const ignoredRel = (rel) => {
+    for (let r = rel; r; r = parentOf(r)) if (state.ignored.has(r)) return true
+    return false
+  }
+  // A path checked: refused / missing (ignored too) / unknown, or null.
+  const check = (rel, ignore) => guard(rel) || (ignore && state.ignoreFails ? 'unknown' : ignore && ignoredRel(rel) ? 'missing' : null)
+  const run = async (name, fn) => {
     state.calls.push(name)
-    if (!(o && o.guest === true)) state.unguarded.push(name)
     state.inflight++
     state.maxInflight = Math.max(state.maxInflight, state.inflight)
     try {
       if (state.delay) await new Promise((r) => setTimeout(r, state.delay))
+      if (state.laneDown || !state.connected) return { ok: false, code: 'not-connected' }
       return fn()
     } finally {
       state.inflight--
     }
   }
-  const hasGit = (r) => !!state.tree[r ? `${r}/.git` : '.git']
-  const section = (r, d) => ({
-    dir: d,
-    ok: true,
-    truncated: !!(state.truncatedDirs || []).includes(r),
-    hasGit: hasGit(r) && !!r,
-    entries: kids(r)
-      .filter(([name]) => name !== '.git')
-      .map(([name, v]) => ({ name, dir: !!v.dir, ...(v.link ? { link: true } : {}) }))
-  })
-  const down = (extra = {}) => ({ ok: false, error: 'ssh me@secret-host:22 down', ...extra })
-  const svc = {
-    hasRoot: (v) => v === ROOT,
-    connectedQuietly: () => state.connected,
-    listDir: (q) =>
-      track('listDir', q, () => {
-        if (!state.connected) return down({ transient: true })
-        const r = rel(q.dir || q.root)
-        if (r === null) return { ok: false, error: 'Outside the project.' }
-        if (r && !(state.tree[r] && state.tree[r].dir))
-          return { ok: false, error: 'The folder is gone: /home/me/app/' + r }
-        const { dir: _d, ...rest } = section(r, q.dir)
-        return rest
-      }),
-    listMany: (q) =>
-      track('listMany', q, () => {
-        if (!state.connected) return down({ transient: true })
-        const results = []
-        for (const d of q.dirs) {
-          const r = rel(d)
-          if (r === null || (r && !(state.tree[r] && state.tree[r].dir))) {
-            results.push({ dir: d, ok: false, error: 'gone' })
-            continue
-          }
-          results.push(section(r, d))
-          // The host's own chain of single sub-folders.
-          let cur = r
-          let curV = d
-          while (q.chain) {
-            const subs = kids(cur).filter(([n]) => n !== '.git')
-            if (subs.length !== 1 || !subs[0][1].dir) break
-            cur = cur ? `${cur}/${subs[0][0]}` : subs[0][0]
-            curV = `${curV}\\${subs[0][0]}`
-            results.push(section(cur, curV))
-          }
-        }
-        return { ok: true, results }
-      }),
-    statForEdit: (file, o) =>
-      track('stat', o, () => {
-        const v = state.tree[rel(file)]
-        if (!state.connected) return down()
-        return v && !v.dir
-          ? { ok: true, exists: true, ...stat(v), sig: 'r:1:2:3' }
-          : { ok: true, exists: false, sig: null }
-      }),
-    readForEdit: (file, o) =>
-      track('read', o, () => {
-        if (!state.connected) return down({ code: 'error' })
-        const v = state.tree[rel(file)]
-        if (!v) return { ok: false, error: 'x', code: 'missing' }
-        if (v.dir) return { ok: false, error: 'x', code: 'not-file' }
-        if (v.buf) return { ok: false, error: 'x', code: 'binary' }
-        const b = bytes(v)
+  const guest = {
+    list: ({ root, dirs, ignore }) =>
+      run('list', () => {
+        if (root !== ROOT) return { ok: false, code: 'refused' }
         return {
           ok: true,
-          text: v.text,
-          bom: !!v.bom,
-          size: b.length,
-          ...stat(v),
-          sig: 'r:1:2:3',
-          hash: `sha256:${hashOf(b)}`
+          results: dirs.map((rel) => {
+            const bad = check(rel, ignore)
+            if (bad) return { rel, ok: false, code: bad }
+            if (rel && !(state.tree[rel] && state.tree[rel].dir)) return { rel, ok: false, code: 'not-file' }
+            const entries = kids(rel).map(([name, v]) => ({ name, kind: v.link ? 'l' : v.nested ? 'r' : v.dir ? 'd' : 'f' }))
+            const ignored = ignore ? new Set(entries.filter((e) => ignoredRel(rel ? `${rel}/${e.name}` : e.name)).map((e) => e.name)) : null
+            return { rel, ok: true, entries, truncated: false, ignored }
+          })
         }
       }),
-    writeForEdit: (q) =>
-      track('write', q, () => {
-        const { file, text, bom, expectHash, expectSig, createOnly } = q
-        if (!state.connected) return down()
-        const r = rel(file)
-        const cur = state.tree[r]
-        if (createOnly && cur) return { ok: false, conflict: true }
-        if (cur && expectHash && expectHash !== `sha256:${hashOf(bytes(cur))}`)
-          return { ok: false, conflict: true }
-        if (cur && !expectHash && expectSig === undefined) return { ok: false, error: 'no guard' }
-        if (!cur && !createOnly) return { ok: false, error: 'a new file needs the not-there guard' }
-        state.tree[r] = { text, bom, mtime: 5000 }
-        state.written = { r, text, bom, expectHash, expectSig, createOnly }
-        return { ok: true, ...stat(state.tree[r]) }
+    stat: ({ rel, ignore }) =>
+      run('stat', () => {
+        const bad = check(rel, ignore)
+        if (bad) return { ok: false, code: bad }
+        const v = state.tree[rel]
+        return v && !v.dir ? { ok: true, exists: true, size: bytes(v).length, mtimeMs: 7000, sig: 'r:1:7:9' } : { ok: true, exists: false }
       }),
-    readImage: (file, o) =>
-      track('image', o, () => {
-        const v = state.tree[rel(file)]
-        return v
-          ? {
-              ok: true,
-              kind: 'image',
-              size: bytes(v).length,
-              dataUrl: `data:image/png;base64,${bytes(v).toString('base64')}`
-            }
-          : { ok: false, error: 'x' }
+    read: ({ rel, max, ignore }) =>
+      run('read', () => {
+        const bad = check(rel, ignore)
+        if (bad) return { ok: false, code: bad }
+        const v = state.tree[rel]
+        if (!v) return { ok: false, code: 'missing' }
+        if (v.dir) return { ok: false, code: 'is-folder' }
+        const b = bytes(v)
+        if (b.length > max) return { ok: false, code: 'too-large' }
+        return { ok: true, buf: b, size: b.length, mtimeMs: 7000, sig: 'r:1:7:9', hostHash: hostHash(b) }
       }),
-    searchNames: (q) =>
-      track('names', q, () => ({
+    write: ({ rel, data, expectHash, createOnly, ignore }) =>
+      run('write', () => {
+        const bad = check(rel, ignore)
+        if (bad) return { ok: false, code: bad }
+        const cur = state.tree[rel]
+        if (cur && cur.dir) return { ok: false, code: 'is-folder' }
+        if (createOnly && cur) return { ok: false, code: 'conflict' }
+        if (!createOnly && cur && expectHash !== hostHash(bytes(cur))) return { ok: false, code: 'conflict' }
+        state.tree[rel] = { buf: data }
+        state.written = { rel, data, expectHash, createOnly: !!createOnly }
+        return { ok: true, size: data.length, mtimeMs: 9000, sig: 'r:1:9:9', hostHash: hostHash(data) }
+      }),
+    check: ({ rels, ignore }) =>
+      run('check', () => {
+        if (ignore && state.ignoreFails) return { ok: false, code: 'unknown' }
+        return { ok: true, good: new Set(rels.filter((r) => !check(r, ignore))) }
+      }),
+    info: () => run('info', () => ({ ok: true, real: state.real, hooks: state.hooks })),
+    searchNames: ({ query }) =>
+      run('names', () => ({
         ok: true,
         truncated: false,
         results: Object.entries(state.tree)
-          .filter(([k]) => k.toLowerCase().includes(String(q.query).toLowerCase()))
-          .map(([k, v]) => ({ name: k.split('/').pop(), rel: k, dir: !!v.dir }))
+          .filter(([k, v]) => !v.link && k.toLowerCase().includes(String(query).toLowerCase()))
+          .map(([k, v]) => ({ rel: k, dir: !!v.dir }))
       })),
-    searchContent: (q) =>
-      track('content', q, () => ({
+    searchContent: ({ query }) =>
+      run('content', () => ({
         ok: true,
         truncated: false,
         results: Object.entries(state.tree)
-          .filter(([, v]) => typeof v.text === 'string' && v.text.includes(q.query))
+          .filter(([, v]) => typeof v.text === 'string' && v.text.includes(query))
           .map(([k, v]) => ({ rel: k, line: 1, text: v.text }))
-      })),
-    projectStatus: (q) =>
-      track('status', q, () => {
-        if (state.statusFails) return { ok: false, error: 'git failed at /home/me/app' }
-        const files = {}
-        for (const p of state.ignored) files[`${ROOT}\\${p.replace(/\//g, '\\')}`] = '!'
-        return { ok: true, repo: true, files }
-      }),
-    realRootOf: (q) =>
-      track('real', q, () =>
-        state.real === null ? { ok: false } : { ok: true, real: state.real }
-      ),
-    onChange: (fn) => {
-      state.listeners.push(fn)
-      return () => {}
-    },
-    hooksPathOf: (q) =>
-      track('hooks', q, () =>
-        state.hooks === null ? { ok: false } : { ok: true, rels: state.hooks }
-      )
+      }))
   }
+  const svc = { hasRoot: (v) => v === ROOT, connectedQuietly: () => state.connected, guest }
   return { svc, state }
 }
 
@@ -226,205 +157,190 @@ const baseTree = () => ({
   build: { dir: true },
   'build/out.js': { text: 'built' },
   'ignored.log': { text: 'log' },
-  'link-env': { link: true, text: '' },
+  'link-env': { link: true },
   linkdir: { link: true, dir: true },
   'linkdir/inner.txt': { text: 'inside the link' },
+  nested: { nested: true, dir: true },
+  'nested/n.txt': { text: 'nested main' },
   'pic.png': { buf: Buffer.from([1, 2, 3]) },
   'blob.bin': { buf: Buffer.from([0, 1, 2, 0]) },
+  'latin.txt': { buf: Buffer.from([0x68, 0xe9, 0x6c]) },
   'big.txt': { text: 'x'.repeat(L.textBytes + 10) },
-  CI: { dir: true },
   '.vscode': { dir: true },
-  '.vscode/tasks.json': { text: '{}' }
+  '.vscode/tasks.json': { text: '{}' },
+  'scripts': { dir: true },
+  'scripts/hooks': { dir: true },
+  'scripts/hooks/pre-commit': { text: '#!/bin/sh' },
+  deep: { dir: true },
+  'deep/a': { dir: true },
+  'deep/a/b': { dir: true },
+  'deep/a/b/c.txt': { text: 'deep main' }
 })
 
 let rig
 let remote
 const READ = { edit: false, git: false, type: false }
 const EDIT = { edit: true, type: false }
+const OK = { recheck: async () => true }
 const ask = (op, args, extra = {}) =>
-  rig.handle(
-    { op, project: 'p1', args },
-    { remoteRoots: new Map([['p1', ROOT]]), rights: READ, settings: {}, ...extra }
-  )
+  rig.handle({ op, project: 'p1', args }, { remoteRoots: new Map([['p1', ROOT]]), rights: READ, settings: {}, ...extra })
 
 beforeEach(() => {
   remote = fakeRemote(baseTree())
-  remote.state.ignored = ['build', 'ignored.log']
+  remote.state.ignored = new Set(['build', 'ignored.log'])
   rig = createRemoteShareFiles({ remote: remote.svc })
 })
 
-describe('listing and reading', () => {
-  it('lists the visible entries only, hidden ones counted not named, links left out', async () => {
+describe('listing', () => {
+  it('lists what a guest may see: hidden ones counted, never named; links and nested repositories left out', async () => {
     const res = await ask('fs.list', {})
     expect(res.ok).toBe(true)
-    const names = res.data.entries.map((e) => e.name).sort()
-    expect(names).toContain('a.txt')
-    expect(names).toContain('src')
-    for (const n of ['.env', '.git', '.tessel', 'build', 'ignored.log', 'link-env', 'linkdir'])
-      expect(names).not.toContain(n)
-    expect(res.data.hidden).toBeGreaterThanOrEqual(5)
+    const names = res.data.entries.map((e) => e.name)
+    // .vscode is shown (write-protected, not hidden).
+    expect(names.sort()).toEqual(['.vscode', 'a.txt', 'big.txt', 'blob.bin', 'bom.txt', 'deep', 'latin.txt', 'pic.png', 'scripts', 'src'].sort())
+    // .env .git .tessel build ignored.log link-env linkdir nested
+    expect(res.data.hidden).toBe(8)
     expect(JSON.stringify(res)).not.toContain('/home/me')
   })
 
-  it('hides the secret names inside a folder and never lists a folder that git ignores', async () => {
-    const res = await ask('fs.list', { dir: 'src' })
-    expect(res.data.entries.map((e) => e.name)).toEqual(['main.js'])
-    expect((await ask('fs.list', { dir: 'build' })).code).toBe('not-found')
-    expect((await ask('fs.list', { dir: '.git' })).code).toBe('not-found')
+  it('never lists a folder that is hidden, ignored, a link or a nested repository', async () => {
+    expect((await ask('fs.list', { dir: 'src' })).data.entries.map((e) => e.name)).toEqual(['main.js'])
+    for (const dir of ['build', '.git', '.tessel', 'linkdir', 'nested']) expect((await ask('fs.list', { dir })).code, dir).toBe('not-found')
   })
 
-  it('with the setting off, ignored and secret files show; .git and .tessel stay hidden', async () => {
+  it('with the setting off: ignored and secret files show, git is not asked; .git, .tessel, links and nested repositories stay hidden', async () => {
+    remote.state.ignoreFails = true // would fail closed if asked
     const res = await ask('fs.list', {}, { settings: { hideIgnored: false } })
     const names = res.data.entries.map((e) => e.name)
-    expect(names).toContain('.env')
-    expect(names).toContain('build')
-    expect(names).not.toContain('.git')
-    expect(remote.state.calls).not.toContain('status')
-    expect(
-      (await ask('fs.read', { path: '.git/config' }, { settings: { hideIgnored: false } })).code
-    ).toBe('not-found')
+    for (const n of ['.env', 'build', 'ignored.log']) expect(names).toContain(n)
+    for (const n of ['.git', '.tessel', 'link-env', 'linkdir', 'nested']) expect(names).not.toContain(n)
+    expect((await ask('fs.read', { path: '.git/config' }, { settings: { hideIgnored: false } })).code).toBe('not-found')
   })
 
-  it('reads a file with its hash, signature and read-only flag; a BOM is reported', async () => {
-    const res = await ask('fs.read', { path: 'bom.txt' })
-    expect(res.ok).toBe(true)
-    expect(res.data.text).toBe('héllo')
-    expect(res.data.bom).toBe(true)
-    expect(res.data.hash).toBe(hashOf(Buffer.concat([BOM, Buffer.from('héllo')])))
-    expect(res.data.sig).toMatch(/^\d+:\d+$/)
-    expect(res.data.readOnly).toBe(true)
-    expect((await ask('fs.read', { path: 'a.txt' }, { rights: EDIT })).data.readOnly).toBe(false)
+  it('without dotfiles, they are left out (and not counted)', async () => {
+    const res = await ask('fs.list', { dotfiles: false })
+    expect(res.data.entries.map((e) => e.name).some((n) => n.startsWith('.'))).toBe(false)
   })
 
-  it('refuses the hidden, ignored, secret and special files as not found', async () => {
-    for (const path of [
-      '.env',
-      'src/key.pem',
-      'build/out.js',
-      'ignored.log',
-      '.git/config',
-      '.tessel/notes.md'
-    ]) {
-      expect((await ask('fs.read', { path })).code, path).toBe('not-found')
-    }
-  })
-
-  it('refuses a link, a file below a link, a binary file, a folder and a missing file', async () => {
-    expect((await ask('fs.read', { path: 'link-env' })).code).toBe('not-found')
-    expect((await ask('fs.read', { path: 'linkdir/inner.txt' })).code).toBe('not-found')
-    expect((await ask('fs.list', { dir: 'linkdir' })).code).toBe('not-found')
-    expect((await ask('fs.read', { path: 'blob.bin' })).code).toBe('binary')
-    expect((await ask('fs.read', { path: 'src' })).code).toBe('not-file')
-    expect((await ask('fs.read', { path: 'nope.txt' })).code).toBe('not-found')
-    expect((await ask('fs.stat', { path: 'link-env' })).data).toEqual({ exists: false, sig: null })
-  })
-
-  it('reads nothing larger than the limit (the size is asked first)', async () => {
-    const res = await ask('fs.read', { path: 'big.txt' })
-    expect(res.code).toBe('too-large')
-    expect(remote.state.calls).not.toContain('read')
-  })
-
-  it('fails closed when the ignored files cannot be read', async () => {
-    remote.state.statusFails = true
+  it('fails closed when git cannot tell what it ignores', async () => {
+    remote.state.ignoreFails = true
     expect((await ask('fs.list', {})).code).toBe('failed')
     expect((await ask('fs.read', { path: 'a.txt' })).code).toBe('failed')
+    expect((await ask('fs.searchNames', { query: 'a' })).code).toBe('failed')
   })
 
-  it('stats a file and serves an image within the limit', async () => {
-    const st = await ask('fs.stat', { path: 'a.txt' })
-    expect(st.data).toMatchObject({ exists: true, size: 5 })
-    const img = await ask('fs.image', { path: 'pic.png' })
-    expect(img.data.dataUrl).toMatch(/^data:image\/png;base64,/)
-    expect((await ask('fs.image', { path: 'a.txt' })).code).toBe('not-file')
-  })
-
-  it('lists many folders in one answer, each checked', async () => {
-    const res = await ask('fs.listMany', { dirs: ['', 'src', 'build', 'linkdir'] })
+  it('lists many folders in one request, each checked; compact folders follow sole sub-folders', async () => {
+    const res = await ask('fs.listMany', { dirs: ['', 'src', 'build', 'linkdir', '.env'] })
     const by = Object.fromEntries(res.data.results.map((r) => [r.dir, r]))
     expect(by[''].ok).toBe(true)
     expect(by.src.entries.map((e) => e.name)).toEqual(['main.js'])
-    expect(by.build.ok).toBe(false)
-    expect(by.linkdir.ok).toBe(false)
-  })
-
-  it('searches by name and by content without the hidden files', async () => {
-    expect((await ask('fs.searchNames', { query: 'main' })).data.results.map((r) => r.rel)).toEqual(
-      ['src/main.js']
-    )
-    const names = await ask('fs.searchNames', { query: 'e' })
-    const found = names.data.results.map((r) => r.rel)
-    expect(found.length).toBeGreaterThan(0)
-    for (const bad of ['.env', 'src/key.pem', 'build/out.js', '.git/config'])
-      expect(found).not.toContain(bad)
-    const content = await ask('fs.searchContent', { query: 'SECRET' })
-    expect(content.data.results).toEqual([])
-    expect(content.data.hidden).toBe(0)
-    expect(
-      (await ask('fs.searchContent', { query: 'main' })).data.results.map((r) => r.rel)
-    ).toEqual(['src/main.js'])
-  })
-
-  it('answers the git views with nothing and keeps notes and changes unshared', async () => {
-    expect((await ask('fs.status', {})).data).toEqual({ repo: false, files: {}, hidden: 0 })
-    expect((await ask('fs.sparse', {})).data).toEqual({ sparse: false, dirs: [] })
-    for (const op of [
-      'scm.status',
-      'notes.load',
-      'fs.create',
-      'fs.trash',
-      'fs.rename',
-      'fs.fileList',
-      'review.info'
-    ]) {
-      expect(
-        (
-          await ask(
-            op,
-            { path: 'a.txt', name: 'b', task: 'x' },
-            { rights: { edit: true, git: true } }
-          )
-        ).code,
-        op
-      ).toBe('remote-project')
-    }
+    for (const d of ['build', 'linkdir', '.env']) expect(by[d]).toMatchObject({ ok: false, code: 'not-found' })
+    expect(remote.state.calls.filter((c) => c === 'list')).toHaveLength(1)
+    const chained = await ask('fs.listMany', { dirs: ['deep'], chain: true })
+    expect(chained.data.results.map((r) => r.dir)).toEqual(['deep', 'deep/a', 'deep/a/b'])
   })
 })
 
-describe('arguments and the project', () => {
-  it('refuses absolute and traversing paths and unknown arguments shapes', async () => {
-    for (const path of [
-      '/etc/passwd',
-      '../x',
-      'a/../../x',
-      'C:\\x',
-      '\\\\h\\s',
-      'ssh://ssh-a1/etc'
-    ]) {
-      expect((await ask('fs.read', { path })).code, path).toBe('bad-args')
-    }
-    expect((await ask('fs.list', { dir: 5 })).code).toBe('bad-args')
-    expect((await ask('fs.nope', {})).code).toBe('remote-project')
+describe('reading', () => {
+  it('reads a file with its hash, signature and read-only flag; a BOM is reported', async () => {
+    const res = await ask('fs.read', { path: 'bom.txt' })
+    expect(res.ok).toBe(true)
+    expect(res.data).toMatchObject({ text: 'héllo', bom: true, hash: hashOf(Buffer.concat([BOM, Buffer.from('héllo')])), readOnly: true })
+    expect(res.data.sig).toMatch(/^\d+:\d+$/)
+    expect((await ask('fs.read', { path: 'a.txt' }, { rights: EDIT })).data.readOnly).toBe(false)
   })
 
-  it('takes the folder from the host only: a project it has no SSH root for is refused', async () => {
-    const res = await rig.handle(
-      { op: 'fs.list', project: 'p9', args: {} },
-      { remoteRoots: new Map([['p1', ROOT]]), rights: READ, settings: {} }
-    )
-    expect(res.code).toBe('remote-project')
-    const unknown = await rig.handle(
-      { op: 'fs.list', project: 'p1', args: { hostId: 'ssh-evil', root: 'ssh://ssh-evil/' } },
-      { remoteRoots: new Map([['p1', 'ssh://ssh-zz/other']]), rights: READ, settings: {} }
-    )
-    expect(unknown.code).toBe('remote-project') // not one of the saved projects
+  it('refuses the hidden, ignored, secret and special files, links and nested repositories as not found', async () => {
+    for (const path of ['.env', 'src/key.pem', 'build/out.js', 'ignored.log', '.git/config', '.tessel/notes.md', 'link-env', 'linkdir/inner.txt', 'nested/n.txt', 'nope.txt'])
+      expect((await ask('fs.read', { path })).code, path).toBe('not-found')
+    // The names hidden by themselves never reach the host.
+    remote.state.calls.length = 0
+    await ask('fs.read', { path: '.env' })
+    await ask('fs.read', { path: '.git/config' })
     expect(remote.state.calls).toEqual([])
+  })
+
+  it('a binary, a non-UTF-8 file, a folder; nothing over the limit comes over (the host cuts it)', async () => {
+    expect((await ask('fs.read', { path: 'blob.bin' })).code).toBe('binary')
+    expect((await ask('fs.read', { path: 'latin.txt' })).code).toBe('encoding')
+    expect((await ask('fs.read', { path: 'src' })).code).toBe('not-file')
+    expect((await ask('fs.read', { path: 'big.txt' })).code).toBe('too-large')
+  })
+
+  it('stats a file (hidden or ignored: not there) and serves an image within the limit', async () => {
+    expect((await ask('fs.stat', { path: 'a.txt' })).data).toMatchObject({ exists: true, size: 5 })
+    for (const path of ['link-env', 'ignored.log', '.env', 'src']) expect((await ask('fs.stat', { path })).data, path).toEqual({ exists: false, sig: null })
+    const img = await ask('fs.image', { path: 'pic.png' })
+    expect(img.data.dataUrl).toBe(`data:image/png;base64,${Buffer.from([1, 2, 3]).toString('base64')}`)
+    expect((await ask('fs.image', { path: 'a.txt' })).code).toBe('not-file')
+  })
+
+  it('a file that names a host path keeps its text; a search snippet does not', async () => {
+    remote.state.tree['paths.txt'] = { text: 'see /home/me/app/src for it' }
+    const read = await ask('fs.read', { path: 'paths.txt' })
+    expect(read.data.text).toContain('/home/me/app')
+    const found = await ask('fs.searchContent', { query: 'see' })
+    expect(JSON.stringify(found)).not.toContain('/home/me/app')
+  })
+})
+
+describe('searching', () => {
+  it('by name and by text, without hidden, ignored, linked or nested files, and no hidden count', async () => {
+    expect((await ask('fs.searchNames', { query: 'main' })).data.results.map((r) => r.rel)).toEqual(['src/main.js'])
+    const names = (await ask('fs.searchNames', { query: 'e' })).data.results.map((r) => r.rel)
+    for (const bad of ['.env', 'src/key.pem', 'build/out.js', '.git/config', 'nested/n.txt', 'linkdir/inner.txt']) expect(names).not.toContain(bad)
+    expect((await ask('fs.searchNames', { query: 'main', dir: 'deep' })).data.results).toEqual([])
+    const content = await ask('fs.searchContent', { query: 'main' })
+    expect(content.data.results.map((r) => r.rel).sort()).toEqual(['deep/a/b/c.txt', 'src/main.js'])
+    expect(content.data.hidden).toBe(0)
+    expect((await ask('fs.searchContent', { query: 'SECRET' })).data.results).toEqual([])
+  })
+})
+
+describe('the project and its arguments', () => {
+  it('refuses absolute and traversing paths and unknown shapes; unshared ops say remote-project', async () => {
+    for (const path of ['/etc/passwd', '../x', 'a/../../x', 'C:\\x', '\\\\h\\s', 'ssh://ssh-a1/etc']) expect((await ask('fs.read', { path })).code, path).toBe('bad-args')
+    expect((await ask('fs.list', { dir: 5 })).code).toBe('bad-args')
+    for (const op of ['fs.nope', 'scm.status', 'notes.load', 'fs.create', 'fs.trash', 'fs.rename', 'review.info'])
+      expect((await ask(op, { path: 'a.txt', name: 'b', task: 'x' }, { rights: { edit: true, git: true } })).code, op).toBe('remote-project')
+    expect((await ask('fs.status', {})).data).toEqual({ repo: false, files: {}, hidden: 0 })
+    expect((await ask('fs.sparse', {})).data).toEqual({ sparse: false, dirs: [] })
+  })
+
+  it('only the host\'s own saved project; a broad root, or one whose real path is broad or in a git folder, shares nothing', async () => {
+    const other = await rig.handle({ op: 'fs.list', project: 'p9', args: {} }, { remoteRoots: new Map([['p1', ROOT]]), rights: READ, settings: {} })
+    expect(other.code).toBe('remote-project')
+    const unsaved = await rig.handle({ op: 'fs.list', project: 'p1', args: {} }, { remoteRoots: new Map([['p1', 'ssh://ssh-zz/srv/other']]), rights: READ, settings: {} })
+    expect(unsaved.code).toBe('remote-project')
+    const broad = await rig.handle({ op: 'fs.list', project: 'p1', args: {} }, { remoteRoots: new Map([['p1', 'ssh://ssh-a1/home/me']]), rights: READ, settings: {} })
+    expect(broad.code).toBe('remote-project')
+    expect(remote.state.calls).toEqual([])
+    for (const real of ['/home/me', '/etc/app', '/srv/repo/.git/objects']) {
+      rig.reset()
+      remote.state.real = real
+      expect((await ask('fs.list', {})).code, real).toBe('remote-project')
+      expect(remote.state.calls.at(-1)).toBe('info')
+    }
+  })
+
+  it('the real path is read again after a while; not known: nothing is given', async () => {
+    let clock = 1000
+    rig = createRemoteShareFiles({ remote: remote.svc, now: () => clock })
+    await ask('fs.list', {})
+    await ask('fs.read', { path: 'a.txt' })
+    expect(remote.state.calls.filter((c) => c === 'info')).toHaveLength(1)
+    clock += INFO_TTL_MS + 1
+    remote.state.laneDown = true
+    expect((await ask('fs.list', {})).code).toBe('busy')
+    remote.state.laneDown = false
+    expect((await ask('fs.list', {})).ok).toBe(true)
   })
 
   it('cleans the root the window gives', () => {
     expect(cleanRemoteRoot({ hostId: 'ssh-a1', path: '/home/me/app' })).toBe(ROOT)
     expect(cleanRemoteRoot({ hostId: 'evil', path: '/x' })).toBeNull()
     expect(cleanRemoteRoot({ hostId: 'ssh-a1', path: 'relative' })).toBeNull()
+    expect(cleanRemoteRoot({ hostId: 'ssh-a1', path: '/home/me' })).toBeNull()
     expect(cleanRemoteRoot(null)).toBeNull()
   })
 })
@@ -434,635 +350,119 @@ describe('saving', () => {
 
   it('needs the edit right', async () => {
     const cur = await read('a.txt')
-    const res = await ask('fs.write', { path: 'a.txt', text: 'new', expectHash: cur.hash })
-    expect(res.code).toBe('forbidden')
+    expect((await ask('fs.write', { path: 'a.txt', text: 'new', expectHash: cur.hash })).code).toBe('forbidden')
     expect(remote.state.calls).not.toContain('write')
   })
 
-  it('saves over the version the guest read, and checks the host did not change it', async () => {
+  it('saves over the version the guest read, the host comparing its own hash at the rename', async () => {
     const cur = await read('a.txt')
-    const res = await ask(
-      'fs.write',
-      { path: 'a.txt', text: 'new', expectHash: cur.hash },
-      { rights: EDIT, recheck: async () => true }
-    )
+    const res = await ask('fs.write', { path: 'a.txt', text: 'new', expectHash: cur.hash }, { rights: EDIT, ...OK })
     expect(res.ok).toBe(true)
     expect(res.data.hash).toBe(hashOf(Buffer.from('new')))
-    expect(remote.state.written.expectHash).toMatch(/^sha256:/) // the host compares again at the write
-    // The guest's hash is old now: a conflict, nothing written again.
+    expect(remote.state.written).toMatchObject({ rel: 'a.txt', expectHash: sha(Buffer.from('hello')), createOnly: false })
+    // Old now: a conflict, nothing written again.
     remote.state.written = null
-    const again = await ask(
-      'fs.write',
-      { path: 'a.txt', text: 'other', expectHash: cur.hash },
-      { rights: EDIT, recheck: async () => true }
-    )
-    expect(again.code).toBe('conflict')
+    expect((await ask('fs.write', { path: 'a.txt', text: 'other', expectHash: cur.hash }, { rights: EDIT, ...OK })).code).toBe('conflict')
     expect(remote.state.written).toBeNull()
   })
 
-  it('replaces an existing file only with the hash of what the guest read', async () => {
-    const res = await ask(
-      'fs.write',
-      { path: 'a.txt', text: 'x' },
-      { rights: EDIT, recheck: async () => true }
-    )
-    expect(res.code).toBe('conflict')
+  it('a file there is replaced only with a version; a new one only if nothing is there', async () => {
+    expect((await ask('fs.write', { path: 'a.txt', text: 'x' }, { rights: EDIT, ...OK })).code).toBe('conflict')
+    const made = await ask('fs.write', { path: 'src/new.js', text: 'ok' }, { rights: EDIT, ...OK })
+    expect(made.ok).toBe(true)
+    expect(remote.state.written).toMatchObject({ rel: 'src/new.js', createOnly: true })
   })
 
-  it('creates a new file', async () => {
-    const res = await ask(
-      'fs.write',
-      { path: 'src/new.js', text: 'ok' },
-      { rights: EDIT, recheck: async () => true }
-    )
+  it('a host without sha256 (cksum): the file is compared here first, then by the host with its own hash', async () => {
+    remote.state.hashKind = 'other'
+    const cur = await read('a.txt')
+    const res = await ask('fs.write', { path: 'a.txt', text: 'new', expectHash: cur.hash }, { rights: EDIT, ...OK })
     expect(res.ok).toBe(true)
-    expect(remote.state.tree['src/new.js'].text).toBe('ok')
+    expect(remote.state.written.expectHash).toBe('cksum:5:1')
+    expect((await ask('fs.write', { path: 'a.txt', text: 'x', expectHash: cur.hash }, { rights: EDIT, ...OK })).code).toBe('conflict')
   })
 
-  it('never writes .git, .tessel, secrets, links, ignored files or the protected files without the type right', async () => {
-    for (const path of [
-      '.git/hooks/pre-commit',
-      '.tessel/notes.md',
-      '.env',
-      'link-env',
-      'build/out.js',
-      'linkdir/inner.txt',
-      '.vscode/tasks.json'
-    ]) {
-      const res = await ask(
-        'fs.write',
-        { path, text: 'x', expectHash: hashOf(Buffer.from('x')) },
-        { rights: EDIT, recheck: async () => true }
-      )
-      expect(['not-allowed', 'not-found'], `${path}: ${res.code}`).toContain(res.code)
+  it('never writes .git, .tessel, secrets, links, nested repositories, ignored files, the protected files or the hooks folder without the type right', async () => {
+    remote.state.hooks = ['scripts/hooks']
+    for (const path of ['.git/hooks/pre-commit', '.tessel/notes.md', '.env', 'link-env', 'build/out.js', 'ignored.log', 'linkdir/inner.txt', 'nested/n.txt', '.vscode/tasks.json', 'scripts/hooks/pre-commit', 'CLAUDE.md', '.gitignore']) {
+      const res = await ask('fs.write', { path, text: 'x', expectHash: hashOf(Buffer.from('x')) }, { rights: EDIT, ...OK })
+      expect(res.code, path).toBe('not-allowed')
     }
-    expect(remote.state.calls).not.toContain('write')
-    const ok = await ask(
-      'fs.write',
-      { path: '.vscode/launch.json', text: 'x' },
-      { rights: { edit: true, type: true }, recheck: async () => true }
-    )
+    expect(remote.state.written).toBeNull()
+    const ok = await ask('fs.write', { path: '.vscode/launch.json', text: 'x' }, { rights: { edit: true, type: true }, ...OK })
     expect(ok.ok).toBe(true)
   })
 
-  it('refuses a save over the limit and one the guest lost the right for', async () => {
-    const big = 'x'.repeat(L.writeBytes + 1)
-    expect((await ask('fs.write', { path: 'src/n.js', text: big }, { rights: EDIT })).code).toBe(
-      'bad-args'
-    )
-    const res = await ask(
-      'fs.write',
-      { path: 'src/n.js', text: 'ok' },
-      { rights: EDIT, recheck: async () => false }
-    )
-    expect(res.code).toBe('revoked')
-    expect(remote.state.calls).not.toContain('write')
+  it('the project folder as hooks folder protects its top-level hook names; an unknown hooks folder: nothing is written', async () => {
+    remote.state.hooks = ['']
+    expect((await ask('fs.write', { path: 'pre-commit', text: 'x' }, { rights: EDIT, ...OK })).code).toBe('not-allowed')
+    expect((await ask('fs.write', { path: 'src/pre-commit', text: 'x' }, { rights: EDIT, ...OK })).ok).toBe(true)
+    rig.reset()
+    remote.state.hooks = null
+    expect((await ask('fs.write', { path: 'src/other.js', text: 'x' }, { rights: EDIT, ...OK })).code).toBe('not-allowed')
+    expect((await ask('fs.read', { path: 'a.txt' }, { rights: EDIT })).data.readOnly).toBe(true)
   })
 
-  it('asks the ignored files once for a few seconds', async () => {
-    await ask('fs.list', {})
-    await ask('fs.list', { dir: 'src' })
-    await ask('fs.read', { path: 'a.txt' })
-    expect(remote.state.calls.filter((c) => c === 'status')).toHaveLength(1)
+  it('refuses a save over the limit and one the guest lost the right for (asked right before the write)', async () => {
+    expect((await ask('fs.write', { path: 'src/n.js', text: 'x'.repeat(L.writeBytes + 1) }, { rights: EDIT })).code).toBe('bad-args')
+    expect((await ask('fs.write', { path: 'src/n.js', text: 'x'.repeat(L.writeBytes - 1), bom: true }, { rights: EDIT, ...OK })).code).toBe('too-large')
+    expect((await ask('fs.write', { path: 'src/n.js', text: 'ok' }, { rights: EDIT, recheck: async () => false })).code).toBe('revoked')
+    expect((await ask('fs.write', { path: 'src/n.js', text: 'ok' }, { rights: EDIT, recheck: async () => { throw new Error('x') } })).code).toBe('revoked')
+    expect(remote.state.calls).not.toContain('write')
+  })
+})
+
+describe("the host's session and the guests' load", () => {
+  it('a server that is not connected: host-offline, nothing asked; only the guests\' lane down: busy', async () => {
+    remote.state.connected = false
+    expect((await ask('fs.list', {})).code).toBe('host-offline')
+    expect(remote.state.calls).toEqual([])
+    remote.state.connected = true
+    remote.state.laneDown = true
+    expect((await ask('fs.list', {})).code).toBe('busy')
+  })
+
+  it('a few requests at once per host, a few waiting, a few per person; the rest busy', async () => {
+    remote.state.delay = 20
+    const all = []
+    for (let i = 0; i < MAX_ACTIVE + MAX_WAITING + 3; i++)
+      all.push(rig.handle({ op: 'fs.stat', project: 'p1', args: { path: 'a.txt' } }, { remoteRoots: new Map([['p1', ROOT]]), rights: READ, settings: {}, person: `g${i}` }))
+    const res = await Promise.all(all)
+    expect(res.filter((r) => r.code === 'busy').length).toBeGreaterThan(0)
+    expect(remote.state.maxInflight).toBeLessThanOrEqual(MAX_ACTIVE)
+    const one = []
+    for (let i = 0; i < MAX_PER_PERSON + 2; i++) one.push(ask('fs.stat', { path: 'a.txt' }, { person: 'same' }))
+    expect((await Promise.all(one)).filter((r) => r.code === 'busy')).toHaveLength(2)
+  })
+
+  it('every code it answers is a known one', async () => {
+    const codes = new Set()
+    for (const [op, args, extra] of [
+      ['fs.read', { path: 'big.txt' }],
+      ['fs.read', { path: 'blob.bin' }],
+      ['fs.write', { path: 'a.txt', text: 'x' }, { rights: EDIT, ...OK }],
+      ['fs.list', { dir: 'nested' }],
+      ['fs.read', { path: 'src' }]
+    ])
+      codes.add((await ask(op, args, extra)).code)
+    for (const c of codes) expect(LSHARE_CODES).toContain(c)
   })
 })
 
 describe("the guest's side", () => {
   it('knows the host-offline code, words it and keeps what is shown (transient)', async () => {
     expect(LSHARE_CODES).toContain('host-offline')
-    const fs = createGuestFs({ request: async () => ({ ok: false, code: 'host-offline' }) })
-    const res = await fs.listDir({ root: 'lshare://p1', dir: 'lshare://p1' })
-    expect(res.ok).toBe(false)
-    expect(res.code).toBe('host-offline')
-    expect(res.transient).toBe(true)
+    const gfs = createGuestFs({ request: async () => ({ ok: false, code: 'host-offline' }) })
+    const res = await gfs.listDir({ root: 'lshare://p1', dir: 'lshare://p1' })
+    expect(res).toMatchObject({ ok: false, code: 'host-offline', transient: true })
     expect(res.error).toMatch(/not connected/)
   })
 
   it('shows the files the host sent for an SSH project like a local one', async () => {
-    const fs = createGuestFs({
-      request: (op, project, args) =>
-        rig.handle(
-          { op, project, args },
-          { remoteRoots: new Map([[project, ROOT]]), rights: READ, settings: {} }
-        )
-    })
-    const list = await fs.listDir({ root: 'lshare://p1', dir: 'lshare://p1' })
+    const gfs = createGuestFs({ request: (op, project, args) => rig.handle({ op, project, args }, { remoteRoots: new Map([[project, ROOT]]), rights: READ, settings: {} }) })
+    const list = await gfs.listDir({ root: 'lshare://p1', dir: 'lshare://p1' })
     expect(list.ok).toBe(true)
     expect(list.entries.map((e) => e.name)).toContain('src')
-    const file = await fs.readForEdit('lshare://p1\\src\\main.js')
-    expect(file).toMatchObject({ ok: true, text: 'main', readOnly: true })
-  })
-})
-
-describe('security review fixes', () => {
-  const OKW = { recheck: async () => true }
-  const withTree = (more) => Object.assign(remote.state.tree, more)
-
-  describe('1: the hooks folder of core.hooksPath is not writable with only edit', () => {
-    beforeEach(() => {
-      withTree({
-        scripts: { dir: true },
-        'scripts/hooks': { dir: true },
-        'scripts/hooks/pre-commit': { text: '#!/bin/sh\n' }
-      })
-      remote.state.hooks = ['scripts/hooks']
-    })
-
-    it('refuses a write there and reads it read only; the type right allows it', async () => {
-      const cur = (await ask('fs.read', { path: 'scripts/hooks/pre-commit' }, { rights: EDIT }))
-        .data
-      expect(cur.readOnly).toBe(true)
-      const args = { path: 'scripts/hooks/pre-commit', text: 'evil', expectHash: cur.hash }
-      expect((await ask('fs.write', args, { rights: EDIT, ...OKW })).code).toBe('not-allowed')
-      expect(
-        (await ask('fs.write', { path: 'scripts/hooks/new', text: 'x' }, { rights: EDIT, ...OKW }))
-          .code
-      ).toBe('not-allowed')
-      expect(remote.state.calls).not.toContain('write')
-      const typed = { edit: true, type: true }
-      expect(
-        (await ask('fs.read', { path: 'scripts/hooks/pre-commit' }, { rights: typed })).data
-          .readOnly
-      ).toBe(false)
-      expect((await ask('fs.write', args, { rights: typed, ...OKW })).ok).toBe(true)
-    })
-
-    it('a hooks folder that cannot be read: no write at all, and everything reads read only', async () => {
-      remote.state.hooks = null
-      const cur = (await ask('fs.read', { path: 'a.txt' }, { rights: EDIT })).data
-      expect(cur.readOnly).toBe(true)
-      expect(
-        (
-          await ask(
-            'fs.write',
-            { path: 'a.txt', text: 'x', expectHash: cur.hash },
-            { rights: EDIT, ...OKW }
-          )
-        ).code
-      ).toBe('not-allowed')
-      expect(
-        (await ask('fs.write', { path: 'fresh.txt', text: 'x' }, { rights: EDIT, ...OKW })).code
-      ).toBe('not-allowed')
-      expect(remote.state.calls).not.toContain('write')
-    })
-
-    it('a project with no hooks folder set writes as before', async () => {
-      remote.state.hooks = []
-      const cur = (await ask('fs.read', { path: 'a.txt' }, { rights: EDIT })).data
-      expect(cur.readOnly).toBe(false)
-      expect(
-        (
-          await ask(
-            'fs.write',
-            { path: 'a.txt', text: 'x', expectHash: cur.hash },
-            { rights: EDIT, ...OKW }
-          )
-        ).ok
-      ).toBe(true)
-    })
-  })
-
-  describe('2: the guests cannot flood the host session', () => {
-    it('every call to the host is a guest call (behind its own requests, no sign-in)', async () => {
-      await ask('fs.list', {})
-      await ask('fs.list', { dir: 'src' })
-      await ask('fs.listMany', { dirs: ['', 'src'] })
-      await ask('fs.read', { path: 'src/main.js' }, { rights: EDIT })
-      await ask('fs.stat', { path: 'a.txt' })
-      await ask('fs.image', { path: 'pic.png' })
-      await ask('fs.searchNames', { query: 'main' })
-      await ask('fs.searchContent', { query: 'main' })
-      const cur = (await ask('fs.read', { path: 'a.txt' }, { rights: EDIT })).data
-      await ask(
-        'fs.write',
-        { path: 'a.txt', text: 'x', expectHash: cur.hash },
-        { rights: EDIT, ...OKW }
-      )
-      expect(remote.state.calls.length).toBeGreaterThan(10)
-      expect(remote.state.unguarded).toEqual([])
-    })
-
-    it('a save does not make the ignore list scanned again, only an ignore file does (after the minimum interval)', async () => {
-      let t = 1_000_000
-      rig = createRemoteShareFiles({ remote: remote.svc, now: () => t })
-      const scans = () => remote.state.calls.filter((c) => c === 'status').length
-      await ask('fs.list', {})
-      expect(scans()).toBe(1)
-      t += 4000
-      await ask('fs.write', { path: 'src/n.js', text: 'ok' }, { rights: EDIT, ...OKW })
-      await ask('fs.list', {})
-      expect(scans()).toBe(1)
-      t += 5000 // past the cache's life: scanned again
-      await ask('fs.list', {})
-      expect(scans()).toBe(2)
-      withTree({ '.gitignore': { text: 'build\n' } })
-      const typed = { edit: true, type: true }
-      const cur = (await ask('fs.read', { path: '.gitignore' }, { rights: typed })).data
-      await ask(
-        'fs.write',
-        { path: '.gitignore', text: 'build\nx\n', expectHash: cur.hash },
-        { rights: typed, ...OKW }
-      )
-      // Stale, but not scanned again within the minimum interval.
-      await ask('fs.list', {})
-      expect(scans()).toBe(2)
-      t += 4000
-      await ask('fs.list', {})
-      expect(scans()).toBe(3)
-    })
-
-    it('a scan that failed is not repeated at once either', async () => {
-      remote.state.statusFails = true
-      await ask('fs.list', {})
-      await ask('fs.list', {})
-      await ask('fs.read', { path: 'a.txt' })
-      expect(remote.state.calls.filter((c) => c === 'status')).toHaveLength(1)
-    })
-
-    it("a listMany with chain is one request to the host's own chain, not a listing per folder", async () => {
-      withTree({
-        deep: { dir: true },
-        'deep/a': { dir: true },
-        'deep/a/b': { dir: true },
-        'deep/a/b/c.txt': { text: 'c' }
-      })
-      await ask('fs.list', {}) // the root is known
-      remote.state.calls.length = 0
-      const res = await ask('fs.listMany', { dirs: ['deep'], chain: true })
-      expect(res.data.results.map((r) => r.dir)).toEqual(['deep', 'deep/a', 'deep/a/b'])
-      expect(remote.state.calls.filter((c) => c === 'listMany')).toHaveLength(1)
-      // (One listing of the project's own folder checks that the folder asked is no link.)
-      expect(remote.state.calls.filter((c) => c === 'listDir').length).toBeLessThanOrEqual(1)
-    })
-
-    it('a chain never goes through a link or a hidden folder', async () => {
-      withTree({
-        solo: { dir: true },
-        'solo/next': { link: true, dir: true },
-        'solo/next/x': { text: 'x' }
-      })
-      const res = await ask('fs.listMany', { dirs: ['solo'], chain: true })
-      expect(res.data.results.map((r) => r.dir)).toEqual(['solo'])
-      expect(res.data.results[0].entries).toEqual([])
-    })
-  })
-
-  describe('3: a dropped session answers host-offline, never signs in', () => {
-    it('a call the remote service answers not-connected is host-offline', async () => {
-      const orig = remote.svc.listDir
-      remote.svc.listDir = async (q) => {
-        remote.state.calls.push('listDir')
-        if (q.guest !== true) throw new Error('not a guest call')
-        return {
-          ok: false,
-          error: 'x is not connected. Use Connect to sign in.',
-          code: 'not-connected'
-        }
-      }
-      const res = await ask('fs.list', {})
-      expect(res).toEqual({ ok: false, code: 'host-offline' })
-      remote.svc.listDir = orig
-    })
-  })
-
-  describe('4: links and host paths in search results', () => {
-    it('drops the hits on a link, and the names of links', async () => {
-      withTree({ 'src/ln.js': { link: true, text: '/home/me/.ssh/id_rsa main' } })
-      const content = await ask('fs.searchContent', { query: 'main' })
-      expect(content.data.results.map((r) => r.rel)).toEqual(['src/main.js'])
-      const names = await ask('fs.searchNames', { query: 'ln' })
-      expect(names.data.results.map((r) => r.rel)).not.toContain('src/ln.js')
-      expect(JSON.stringify([content, names])).not.toContain('.ssh')
-    })
-
-    it('scrubs the host folder from a hit text', async () => {
-      withTree({ 'src/note.txt': { text: 'see /home/me/app/src/main.js main' } })
-      const content = await ask('fs.searchContent', { query: 'main' })
-      const hit = content.data.results.find((r) => r.rel === 'src/note.txt')
-      expect(hit.text).not.toContain('/home/me/app')
-    })
-
-    it('drops results below a link folder', async () => {
-      const names = await ask('fs.searchNames', { query: 'inner' })
-      expect(names.data.results).toEqual([])
-    })
-  })
-
-  describe('5: a nested repository is not shared', () => {
-    beforeEach(() => {
-      withTree({
-        nested: { dir: true },
-        'nested/.git': { dir: true },
-        'nested/app.js': { text: 'nested main' },
-        'nested/sub': { dir: true },
-        'nested/sub/deep.js': { text: 'deep main' }
-      })
-    })
-
-    it('lists, reads, stats, writes and searches nothing inside it', async () => {
-      expect((await ask('fs.list', { dir: 'nested' })).code).toBe('not-found')
-      expect((await ask('fs.list', { dir: 'nested/sub' })).code).toBe('not-found')
-      expect((await ask('fs.read', { path: 'nested/app.js' })).code).toBe('not-found')
-      expect((await ask('fs.read', { path: 'nested/sub/deep.js' })).code).toBe('not-found')
-      expect((await ask('fs.stat', { path: 'nested/app.js' })).data).toEqual({
-        exists: false,
-        sig: null
-      })
-      expect(
-        (await ask('fs.write', { path: 'nested/x.js', text: 'x' }, { rights: EDIT, ...OKW })).code
-      ).toBe('not-allowed')
-      const found = (await ask('fs.searchContent', { query: 'main' })).data.results.map(
-        (r) => r.rel
-      )
-      expect(found).toEqual(['src/main.js'])
-      expect((await ask('fs.searchNames', { query: 'deep' })).data.results).toEqual([])
-      const many = await ask('fs.listMany', { dirs: ['nested', 'src'] })
-      expect(many.data.results.find((r) => r.dir === 'nested').ok).toBe(false)
-      expect(many.data.results.find((r) => r.dir === 'src').ok).toBe(true)
-    })
-
-    it('a folder too large to look for a .git in is refused too, the project itself is not', async () => {
-      remote.state.truncatedDirs = ['src']
-      expect((await ask('fs.list', { dir: 'src' })).code).toBe('too-large')
-      remote.state.truncatedDirs = ['']
-      expect((await ask('fs.list', {})).ok).toBe(true)
-    })
-
-    it('the project itself may be a repository (its own .git)', async () => {
-      expect((await ask('fs.list', {})).ok).toBe(true)
-    })
-  })
-
-  describe('7: an undecided repository is unreadable for guests, no dialog', () => {
-    it('answers failed (nothing shown) when the ignored files cannot be read', async () => {
-      remote.state.statusFails = true
-      expect((await ask('fs.list', {})).code).toBe('failed')
-    })
-  })
-
-  describe('8: creating a file', () => {
-    it('asks the host for a not-there guard; a file made meanwhile is not overwritten', async () => {
-      const res = await ask(
-        'fs.write',
-        { path: 'src/new.js', text: 'ok' },
-        { rights: EDIT, ...OKW }
-      )
-      expect(res.ok).toBe(true)
-      expect(remote.state.written.createOnly).toBe(true)
-      // The host says something is there now (another process made it).
-      const orig = remote.svc.writeForEdit
-      remote.svc.writeForEdit = async () => ({ ok: false, conflict: true })
-      const raced = await ask(
-        'fs.write',
-        { path: 'src/other.js', text: 'x' },
-        { rights: EDIT, ...OKW }
-      )
-      expect(raced.code).toBe('conflict')
-      remote.svc.writeForEdit = orig
-    })
-
-    it('every refusal to change a path is the same code: no existence oracle for ignored or hidden files', async () => {
-      const codes = new Set()
-      for (const path of [
-        'ignored.log',
-        'build/new.js',
-        '.env',
-        'nowhere/new.js',
-        '.git/x',
-        'link-env',
-        'linkdir/x',
-        'nested-none/x',
-        'src/key.pem'
-      ]) {
-        const res = await ask(
-          'fs.write',
-          { path, text: 'x', expectHash: hashOf(Buffer.from('x')) },
-          { rights: EDIT, ...OKW }
-        )
-        expect(res.ok, path).toBe(false)
-        codes.add(res.code)
-      }
-      expect([...codes]).toEqual(['not-allowed'])
-    })
-
-    it("the host's shell makes a new file only if nothing is there, and cuts a read at its limit", async () => {
-      const { prelude } = await import('../remoteShell')
-      const text = prelude('0123456789abcdef0123456789abcdef')
-      expect(text).toContain('ln -T "$__tmp" "$__P"')
-      expect(text).toContain('ln "$__tmp" "$__P"')
-      expect(text).toContain('[ -z "$6" ] || { __t_sig "$__P"; return 95; }')
-      expect(text).toContain('head -c "$(($3+1))" "$__P"')
-      expect(text).toContain('! -type d ! -type l -print0')
-    })
-  })
-
-  describe('9: a root that is too broad is not shared', () => {
-    it('refuses the host root, ~, a home folder and a system folder', async () => {
-      for (const root of [
-        'ssh://ssh-a1/',
-        'ssh://ssh-a1/~',
-        'ssh://ssh-a1/home/me',
-        'ssh://ssh-a1/etc',
-        'ssh://ssh-a1/srv'
-      ]) {
-        const res = await rig.handle(
-          { op: 'fs.list', project: 'p1', args: {} },
-          { remoteRoots: new Map([['p1', root]]), rights: READ, settings: {} }
-        )
-        expect(res.code, root).toBe('remote-project')
-      }
-      expect(remote.state.calls).toEqual([])
-    })
-
-    it('the policy and the root cleaner agree', () => {
-      expect(remoteRootTooBroad('/')).toBe(true)
-      expect(remoteRootTooBroad('~')).toBe(true)
-      expect(remoteRootTooBroad('/home/me')).toBe(true)
-      expect(remoteRootTooBroad('/home/me/app')).toBe(false)
-      expect(remoteRootTooBroad('~/app')).toBe(false)
-      expect(remoteRootTooBroad('/srv/app')).toBe(false)
-      expect(cleanRemoteRoot({ hostId: 'ssh-a1', path: '/home/me' })).toBeNull()
-      expect(cleanRemoteRoot({ hostId: 'ssh-a1', path: '~' })).toBeNull()
-      expect(cleanRemoteRoot({ hostId: 'ssh-a1', path: '/home/me/app' })).toBe(ROOT)
-    })
-  })
-
-  describe('6: the share keeps hiding ignored and secret files by default', () => {
-    it('with no setting at all, secret names and ignored files are hidden', async () => {
-      const res = await ask('fs.list', {}, { settings: {} })
-      const names = res.data.entries.map((e) => e.name)
-      expect(names).not.toContain('.env')
-      expect(names).not.toContain('build')
-    })
-  })
-})
-
-describe('second review', () => {
-  const OKW = { recheck: async () => true }
-  const withTree = (more) => Object.assign(remote.state.tree, more)
-
-  describe('1: the real folder of core.hooksPath', () => {
-    it('the folders the host names (link target included) are all protected', async () => {
-      withTree({
-        scripts: { dir: true },
-        'scripts/h': { dir: true },
-        'scripts/h/pre-commit': { text: '#!/bin/sh\n' }
-      })
-      // core.hooksPath=hooks is a link to scripts/h: remoteFs gives both.
-      remote.state.hooks = ['hooks', 'scripts/h']
-      const cur = (await ask('fs.read', { path: 'scripts/h/pre-commit' }, { rights: EDIT })).data
-      expect(cur.readOnly).toBe(true)
-      const res = await ask(
-        'fs.write',
-        { path: 'scripts/h/pre-commit', text: 'evil', expectHash: cur.hash },
-        { rights: EDIT, ...OKW }
-      )
-      expect(res.code).toBe('not-allowed')
-      expect(remote.state.calls).not.toContain('write')
-      // The link itself is below no real folder a guest may write.
-      expect(
-        (
-          await ask(
-            'fs.write',
-            { path: 'hooks/pre-commit', text: 'evil' },
-            { rights: EDIT, ...OKW }
-          )
-        ).code
-      ).toBe('not-allowed')
-    })
-  })
-
-  describe('2: core.hooksPath on the project folder itself', () => {
-    it('protects the top-level files named like a git hook, nothing else', () => {
-      for (const name of [
-        'pre-commit',
-        'commit-msg',
-        'pre-push',
-        'post-merge',
-        'prepare-commit-msg',
-        'update',
-        'Pre-Commit'
-      ]) {
-        expect(isProtectedRel(name, ['']), name).toBe(true)
-      }
-      expect(isProtectedRel('README.md', [''])).toBe(false)
-      expect(isProtectedRel('src/pre-commit', [''])).toBe(false)
-      expect(isProtectedRel('pre-commit', [])).toBe(false)
-      expect(isProtectedRel('pre-commit', null)).toBe(false)
-    })
-
-    it('an edit-only guest cannot write them (type right can)', async () => {
-      withTree({ 'pre-commit': { text: '#!/bin/sh\n' } })
-      remote.state.hooks = ['']
-      const cur = (await ask('fs.read', { path: 'pre-commit' }, { rights: EDIT })).data
-      expect(cur.readOnly).toBe(true)
-      expect(
-        (
-          await ask(
-            'fs.write',
-            { path: 'pre-commit', text: 'x', expectHash: cur.hash },
-            { rights: EDIT, ...OKW }
-          )
-        ).code
-      ).toBe('not-allowed')
-      expect(
-        (
-          await ask(
-            'fs.write',
-            { path: 'a.txt', text: 'x', expectHash: hashOf(Buffer.from('hello')) },
-            { rights: EDIT, ...OKW }
-          )
-        ).ok
-      ).toBe(true)
-      const typed = { edit: true, type: true }
-      expect(
-        (
-          await ask(
-            'fs.write',
-            { path: 'pre-commit', text: 'x', expectHash: cur.hash },
-            { rights: typed, ...OKW }
-          )
-        ).ok
-      ).toBe(true)
-    })
-  })
-
-  describe('3: broad roots, case, system trees, real path', () => {
-    it('compares without case and refuses system trees and secret folders at any depth', () => {
-      for (const p of [
-        '/ETC',
-        '/etc/ssh',
-        '/Etc/ssh/keys',
-        '/var/log',
-        '/usr/local/bin',
-        '/root/proj',
-        '/proc/1',
-        '/sys/x',
-        '/dev/shm',
-        '/boot/x',
-        '/HOME/me',
-        '/Users/me',
-        '/home/me/.ssh',
-        '/home/me/.ssh/keys',
-        '/home/me/.AWS/x',
-        '/Users/me/.gnupg',
-        '/home/me/.config/app',
-        '~/.ssh',
-        '~/.config/x',
-        '~',
-        '/',
-        '/opt',
-        '/srv'
-      ]) {
-        expect(remoteRootTooBroad(p), p).toBe(true)
-      }
-      for (const p of [
-        '/home/me/app',
-        '/Users/me/Code/app',
-        '/srv/app',
-        '/opt/app',
-        '~/app',
-        '~/code/x'
-      ]) {
-        expect(remoteRootTooBroad(p), p).toBe(false)
-      }
-    })
-
-    it('a project folder that is a link to a broad folder is refused (the real path is checked)', async () => {
-      for (const real of ['/', '/home/me', '/etc', '/home/me/.ssh']) {
-        rig.reset()
-        remote.state.real = real
-        const res = await ask('fs.list', {})
-        expect(res.code, real).toBe('remote-project')
-      }
-      expect(remote.state.calls.filter((c) => c === 'listDir')).toEqual([])
-      rig.reset()
-      remote.state.real = '/srv/real-app'
-      expect((await ask('fs.list', {})).ok).toBe(true)
-    })
-
-    it('a real path that cannot be read: nothing is shown', async () => {
-      remote.state.real = null
-      expect((await ask('fs.list', {})).ok).toBe(false)
-    })
-  })
-
-  describe("4: the host explorer's change notice", () => {
-    it('makes the ignore list stale (read again after the minimum interval), like the local scope', async () => {
-      let t = 5_000_000
-      rig = createRemoteShareFiles({ remote: remote.svc, now: () => t })
-      const scans = () => remote.state.calls.filter((c) => c === 'status').length
-      await ask('fs.list', {})
-      expect(remote.state.listeners).toHaveLength(1)
-      t += 4000 // still inside the cache's life
-      await ask('fs.list', {})
-      expect(scans()).toBe(1)
-      remote.state.listeners.forEach((fn) => fn(ROOT))
-      await ask('fs.list', {}) // stale and past the minimum interval
-      expect(scans()).toBe(2)
-      remote.state.listeners.forEach((fn) => fn(ROOT))
-      await ask('fs.list', {}) // stale, but scanned a moment ago
-      expect(scans()).toBe(2)
-    })
+    expect(await gfs.readForEdit('lshare://p1\\src\\main.js')).toMatchObject({ ok: true, text: 'main', readOnly: true })
   })
 })

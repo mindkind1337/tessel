@@ -200,19 +200,18 @@ export function createRemoteAgentCheck({ ensureShim, agentTools, agentBins = [],
     for (const { id, bin } of bins) if (own(reported, bin)) agents[id] = reported[bin] || null
     return agents
   }
+  // The shim and the agents are asked at once: neither needs the other (on
+  // the host's pane lane they follow each other with no gap; a pane opening
+  // waits for both).
   async function run(hostId) {
-    let shim
-    try {
-      shim = await ensureShim(hostId)
-    } catch (err) {
-      shim = { ok: false, reason: 'failed', detail: (err && err.message) || '' }
-    }
-    let tools
-    try {
-      tools = await agentTools(hostId)
-    } catch (err) {
-      tools = { error: (err && err.message) || 'failed' }
-    }
+    const [shim, tools] = await Promise.all([
+      Promise.resolve()
+        .then(() => ensureShim(hostId))
+        .catch((err) => ({ ok: false, reason: 'failed', detail: (err && err.message) || '' })),
+      Promise.resolve()
+        .then(() => agentTools(hostId))
+        .catch((err) => ({ error: (err && err.message) || 'failed' }))
+    ])
     const ok = tools && !tools.error
     const found = ok ? tools : { claude: null, codex: null, vscodeClaude: null }
     const status = {
@@ -246,7 +245,8 @@ export function createRemoteAgentCheck({ ensureShim, agentTools, agentBins = [],
     if (typeof hostId !== 'string' || !hostId) return Promise.resolve(null)
     let p = done.get(hostId)
     if (p) return p
-    p = ask(hostId).then((status) => {
+    // A check already running (asked for a pane while it opened): that one.
+    p = (running.get(hostId) || ask(hostId)).then((status) => {
       // Not reached, or only partly (too slow): the next terminal there tries again.
       if ((status.error || status.partial) && done.get(hostId) === p) done.delete(hostId)
       try {
