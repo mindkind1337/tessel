@@ -9305,11 +9305,7 @@ async function checkRemoteAgentTools(round) {
     remoteToolsMisses[id] = (remoteToolsMisses[id] || 0) + 1
     if (remoteToolsMisses[id] < 2 || leaf.remoteToolsNote) continue
     const host = remoteHostLabel(leaf.remoteHostId)
-    leaf.remoteToolsNote = t(
-      'app.remoteAgents.toolsNotRunning',
-      'Tessel tools are not connected on {{host}}: this agent has no Tessel browser or team tools, so it may use the server for web pages instead. Retry restarts it with them.',
-      { host }
-    )
+    leaf.remoteToolsNote = t('app.remoteAgents.toolsNotRunning', 'Tessel tools are not connected on {{host}}: this agent has no Tessel browser or team tools, so it may use the server for web pages instead. Retry restarts it with them.', { host })
     if (window.shellApi.log) window.shellApi.log('warn', `pane ${id}: tessel-team not connected on ${leaf.remoteHostId} (no proof of life), note shown`)
   }
 }
