@@ -514,3 +514,145 @@ describe('sessions', () => {
     expect(JSON.parse(out.text).sessions.map((s) => s.title)).toEqual(['Hello'])
   })
 })
+
+// The link to Tessel drops (idle close, SSH down, Tessel restarted): the agent
+// keeps one server, the next call reopens the link, and a call cut off is
+// answered with a precise message instead of "Transport closed".
+describe('mcp proxy across a dropped link', () => {
+  let server
+  let sock
+  let hellos
+  let conns
+  let mode // 'echo' | 'hang' | 'refuse'
+  const sockPath = () =>
+    process.platform === 'win32' ? `\\\\.\\pipe\\tessel-shim-proxy-${process.pid}-${Date.now()}` : join(fs.mkdtempSync(join(os.tmpdir(), 'tsp-')), 's.sock')
+
+  beforeEach(async () => {
+    hellos = []
+    conns = []
+    mode = 'echo'
+    sock = sockPath()
+    server = net.createServer({ allowHalfOpen: true }, (c) => {
+      conns.push(c)
+      let buf = ''
+      let hello = false
+      c.setEncoding('utf8')
+      c.on('data', (d) => {
+        buf += d
+        let nl
+        while ((nl = buf.indexOf('\n')) >= 0) {
+          const line = buf.slice(0, nl)
+          buf = buf.slice(nl + 1)
+          if (!hello) {
+            hello = true
+            hellos.push(JSON.parse(line))
+            if (mode === 'refuse') return c.end('{"ok":false,"error":"unknown-pane"}\n')
+            c.write('{"ok":true}\n')
+            continue
+          }
+          const m = JSON.parse(line)
+          if (m.id === undefined) continue
+          if (m.method === 'tools/call' && mode === 'hang') continue
+          c.write(JSON.stringify({ jsonrpc: '2.0', id: m.id, result: { n: hellos.length, method: m.method } }) + '\n')
+        }
+      })
+      c.on('end', () => c.end())
+      c.on('error', () => {})
+    })
+    await new Promise((r) => server.listen(sock, r))
+  })
+  afterEach(async () => {
+    for (const c of conns) c.destroy()
+    await new Promise((r) => server.close(r))
+  })
+
+  const start = () => {
+    const child = spawn(process.execPath, [SHIM, 'mcp'], {
+      env: { PATH: process.env.PATH, TESSEL_PANE_ID: 'pane-7', TESSEL_REMOTE_SOCK: sock, TESSEL_REMOTE_TOKEN: TOKEN },
+      stdio: ['pipe', 'pipe', 'pipe']
+    })
+    const lines = []
+    const waiters = []
+    let buf = ''
+    child.stdout.on('data', (d) => {
+      buf += d
+      let nl
+      while ((nl = buf.indexOf('\n')) >= 0) {
+        lines.push(JSON.parse(buf.slice(0, nl)))
+        buf = buf.slice(nl + 1)
+      }
+      for (const w of [...waiters]) w()
+    })
+    const send = (m) => child.stdin.write(JSON.stringify(m) + '\n')
+    const reply = (id) =>
+      new Promise((res, rej) => {
+        const t = setTimeout(() => rej(new Error(`no reply ${id}`)), 8000)
+        const check = () => {
+          const m = lines.find((l) => l.id === id)
+          if (m) {
+            clearTimeout(t)
+            waiters.splice(waiters.indexOf(check), 1)
+            res(m)
+          }
+        }
+        waiters.push(check)
+        check()
+      })
+    const exited = new Promise((r) => child.on('exit', (code) => r(code)))
+    return { child, lines, send, reply, exited }
+  }
+  const INIT = { jsonrpc: '2.0', id: 0, method: 'initialize', params: { protocolVersion: '2025-03-26' } }
+  const dropAll = async () => {
+    for (const c of conns) c.destroy()
+    conns = []
+    await new Promise((r) => setTimeout(r, 150))
+  }
+
+  it('reopens the link on the next call, replaying the initialize without showing its answer', async () => {
+    const p = start()
+    p.send(INIT)
+    expect((await p.reply(0)).result.method).toBe('initialize')
+    p.send({ jsonrpc: '2.0', method: 'notifications/initialized' })
+    p.send({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'browser_pages' } })
+    expect((await p.reply(1)).result.n).toBe(1)
+    await dropAll() // idle close, an SSH drop, a Tessel restart
+    p.send({ jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'browser_pages' } })
+    expect((await p.reply(2)).result).toEqual({ n: 2, method: 'tools/call' })
+    expect(hellos).toHaveLength(2)
+    expect(p.lines.filter((l) => String(l.id).startsWith('tessel-reinit'))).toEqual([])
+    p.child.stdin.end()
+    expect(await p.exited).toBe(0)
+  })
+
+  it('answers a call cut off by the drop with what happened, not Transport closed', async () => {
+    const p = start()
+    p.send(INIT)
+    await p.reply(0)
+    mode = 'hang'
+    p.send({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'browser_pages' } })
+    await new Promise((r) => setTimeout(r, 200))
+    await dropAll()
+    const r = await p.reply(1)
+    expect(r.result.isError).toBe(true)
+    expect(r.result.content[0].text).toMatch(/link from Tessel to this server is down[\s\S]*may or may not have been done/)
+    p.child.stdin.end()
+    expect(await p.exited).toBe(0)
+  })
+
+  it('a call that finds Tessel gone or not knowing the agent gets the reason and the agent stays up', async () => {
+    const p = start()
+    p.send(INIT)
+    await p.reply(0)
+    await dropAll()
+    mode = 'refuse'
+    p.send({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'browser_pages' } })
+    const r = await p.reply(1)
+    expect(r.result.isError).toBe(true)
+    expect(r.result.content[0].text).toMatch(/Restart this agent from Tessel/)
+    mode = 'echo'
+    p.send({ jsonrpc: '2.0', id: 2, method: 'tools/list' })
+    expect((await p.reply(2)).result.method).toBe('tools/list')
+    p.child.stdin.end()
+    expect(await p.exited).toBe(0)
+  })
+})

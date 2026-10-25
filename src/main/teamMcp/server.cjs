@@ -1197,6 +1197,17 @@ function browserRequest(op, args) {
   return { pane, op, args: clean, auth: { nonce, at, mac } }
 }
 
+// The browser is Tessel's, on the user's PC. An address on the agent's own
+// server ("localhost:3000") means this PC there, where nothing listens: said
+// once with the result so the agent does not conclude the page is broken.
+const LOCAL_HOST_RE = /^(?:https?:\/\/)?(?:localhost|127(?:\.\d{1,3}){3}|\[::1\]|0\.0\.0\.0)(?::\d+)?(?:[/?#]|$)/i
+function remoteLocalNote(op, args) {
+  if (!isRemote() || (op !== 'open' && op !== 'navigate')) return ''
+  if (!LOCAL_HOST_RE.test(String((args && args.url) || '').trim())) return ''
+  return `
+Note: this browser runs on the user's PC, not on ${remoteHost()}. "${String(args.url).trim().slice(0, 100)}" is the user's own PC: a server running on ${remoteHost()} is not reachable there unless its port is also open on this PC (an SSH port forward, or a public address). If the page is blank or refused, use the server's public address, or ask the user to forward the port.`
+}
+
 async function browserTool(op, args, deps = { runtimes: browserRuntimes, call: pipeCall }) {
   if (!process.env.TESSEL_PANE_ID || !teamSecret())
     return { text: 'The browser tools work only in an agent Tessel started: restart this agent from Tessel (right-click its pane, Restart).', isError: true }
@@ -1208,7 +1219,7 @@ async function browserTool(op, args, deps = { runtimes: browserRuntimes, call: p
     const r = await deps.call(rt, 'browser', browserRequest(op, args))
     if (r && r.ok) {
       const res = r.result || {}
-      const out = { text: String(res.text || 'Done.') }
+      const out = { text: String(res.text || 'Done.') + remoteLocalNote(op, args) }
       if (res.image && typeof res.image.data === 'string' && /^image\/(png|jpeg)$/.test(res.image.mimeType)) out.image = { data: res.image.data, mimeType: res.image.mimeType }
       return out
     }
@@ -1217,7 +1228,7 @@ async function browserTool(op, args, deps = { runtimes: browserRuntimes, call: p
     if (last.code === 'unknown_pane' || last.code === 'not_running' || last.code === 'unknown_method') continue
     break
   }
-  return { text: `${last.message || 'Tessel could not do it.'}${last.code ? ` [${last.code}]` : ''}`, isError: true }
+  return { text: `${last.message || 'Tessel could not do it.'}${last.code ? ` [${last.code}]` : ''}${remoteLocalNote(op, args)}`, isError: true }
 }
 
 // The arguments as Tessel reads them, signed by this pane (team key "team-mgmt").

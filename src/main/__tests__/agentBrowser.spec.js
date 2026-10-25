@@ -919,6 +919,26 @@ describe('browser tools in the MCP server', () => {
     expect(call).toHaveBeenCalledTimes(1)
   })
 
+  it('on an SSH host, an address on localhost says the browser is on the PC (once, with the result)', async () => {
+    process.env.TESSEL_PANE_ID = PANE
+    process.env.TESSEL_TEAM_SECRET = SECRET
+    process.env.TESSEL_REMOTE = '1'
+    process.env.TESSEL_REMOTE_HOST = 'dev.example'
+    try {
+      const call = vi.fn().mockResolvedValue({ ok: true, result: { text: 'Opened.' } })
+      const deps = { runtimes: () => [{ pipe: 'a' }], call }
+      const r = await mcp.browserTool('open', { url: 'localhost:3000' }, deps)
+      expect(r.text).toMatch(/^Opened\.\nNote: this browser runs on the user's PC, not on dev\.example/)
+      expect((await mcp.browserTool('open', { url: 'https://example.com' }, deps)).text).toBe('Opened.')
+      expect((await mcp.browserTool('snapshot', {}, deps)).text).toBe('Opened.')
+      delete process.env.TESSEL_REMOTE
+      expect((await mcp.browserTool('open', { url: 'localhost:3000' }, deps)).text).toBe('Opened.')
+    } finally {
+      delete process.env.TESSEL_REMOTE
+      delete process.env.TESSEL_REMOTE_HOST
+    }
+  })
+
   it('lists the browser tools with descriptions', () => {
     const names = mcp.BROWSER_TOOLS.map((t) => t.name)
     expect(names).toEqual([

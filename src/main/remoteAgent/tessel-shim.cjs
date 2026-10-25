@@ -16,7 +16,7 @@ const os = require('os')
 const net = require('net')
 const path = require('path')
 
-const VERSION = '1.3.0'
+const VERSION = '1.4.0'
 const PROTOCOL = 1
 const SERVER_NAME = 'tessel-team'
 const SHIM_NAME = 'tessel-shim.cjs'
@@ -162,38 +162,183 @@ function emptyServer(reason) {
   process.stdin.resume()
 }
 
+// What to tell the agent when the link to Tessel is gone or refused, in words
+// that say what happened and what to do (never "Transport closed").
+function linkProblem(err) {
+  const m = String((err && (err.code || err.message)) || err || '')
+  if (/bad-token|unknown-pane/.test(m)) return 'Tessel no longer knows this agent (Tessel was restarted, or this pane was closed or restarted). Restart this agent from Tessel (right-click its pane, Restart).'
+  if (/busy/.test(m)) return 'Tessel has too many tool connections open for this agent. Wait a moment and retry.'
+  if (/failed/.test(m)) return 'Tessel could not start its tools for this agent. Retry; if it persists, restart this agent from Tessel.'
+  if (/did not answer/.test(m)) return 'Tessel did not answer in time. It may be busy or the SSH link may be stuck. Retry in a moment.'
+  if (/ENOENT|ECONNREFUSED|ECONNRESET|EPIPE|closed/.test(m))
+    return 'The link from Tessel to this server is down (Tessel is closed or restarting, or the SSH connection dropped). Tessel reconnects by itself when it is back: retry in a few seconds. If it persists, reopen this SSH pane in Tessel.'
+  return `Tessel is not reachable (${m.slice(0, 80) || 'no answer'}). Retry in a few seconds.`
+}
+
+// The MCP stdio, kept alive across the link: the agent's client sees one
+// server for its whole life, even when the tunnel is closed (idle for
+// 30 minutes, the SSH connection dropped, Tessel restarted). A call that
+// finds the link down opens a new one (hello, then the initialize the client
+// sent first is replayed); a call that was running when the link dropped, and
+// a call the new link cannot take, are answered with a precise message
+// instead of "Transport closed".
 function runMcp(argv, env = process.env) {
   const conn = remoteEnv(env)
   if (conn.error) return emptyServer(null)
   open(conn, 'mcp', [], (err, socket, rest) => {
     if (err) return emptyServer(String(err.message || 'no answer').slice(0, 120))
-    let exiting = false
-    const exit = (code) => {
-      if (exiting) return
-      exiting = true
-      process.exitCode = code
-      process.stdout.write('', () => process.exit(code))
-    }
-    if (rest.length) process.stdout.write(rest)
-    socket.on('data', (chunk) => {
-      if (!process.stdout.write(chunk)) {
-        socket.pause()
-        process.stdout.once('drain', () => socket.resume())
-      }
-    })
-    socket.on('end', () => exit(0))
-    socket.on('close', () => exit(0))
-    socket.on('error', (e) => {
-      process.stderr.write(`tessel-shim: ${e.message}\n`)
-      exit(1)
-    })
-    socket.resume()
-    process.stdin.pipe(socket)
-    // The agent closed our stdin: the stream ends (Tessel then stops the server).
-    process.stdin.on('end', () => socket.end())
-    process.stdin.on('error', () => socket.end())
-    process.stdout.on('error', () => exit(0))
+    proxyMcp(conn, socket, rest)
   })
+}
+
+function proxyMcp(conn, first, firstRest) {
+  const out = (line) => process.stdout.write(line.endsWith('\n') ? line : line + '\n')
+  const note = (text) => process.stderr.write(`tessel-shim: ${text}\n`)
+  let sock = null
+  let connecting = false
+  let inEnded = false
+  let exiting = false
+  let initLine = null // the client's initialize request (parsed)
+  let initializedLine = null // its notifications/initialized
+  let replays = 0
+  let queue = [] // { line, msgs } waiting for a link
+  const pending = new Map() // id -> method, for requests sent on the current link
+  const swallow = new Set() // ids of the replayed initialize
+  const exit = (code) => {
+    if (exiting) return
+    exiting = true
+    process.exitCode = code
+    process.stdout.write('', () => process.exit(code))
+  }
+  const failure = (id, method, text) =>
+    method === 'tools/call'
+      ? out(JSON.stringify({ jsonrpc: '2.0', id, result: { content: [{ type: 'text', text }], isError: true } }))
+      : out(JSON.stringify({ jsonrpc: '2.0', id, error: { code: -32000, message: text } }))
+  const isRequest = (m) => m && typeof m === 'object' && typeof m.method === 'string' && m.id !== undefined && m.id !== null
+  const parse = (line) => {
+    try {
+      const v = JSON.parse(line)
+      return Array.isArray(v) ? v : [v]
+    } catch {
+      return []
+    }
+  }
+
+  function attach(s, rest) {
+    sock = s
+    let buf = Buffer.alloc(0)
+    const onBytes = (chunk) => {
+      buf = Buffer.concat([buf, chunk])
+      let nl
+      while ((nl = buf.indexOf(10)) >= 0) {
+        const line = buf.subarray(0, nl).toString('utf8')
+        buf = buf.subarray(nl + 1)
+        if (!line.trim()) continue
+        let drop = false
+        for (const m of parse(line)) {
+          if (m && typeof m === 'object' && m.id !== undefined && m.id !== null && typeof m.method !== 'string') {
+            if (swallow.delete(m.id)) drop = true
+            else pending.delete(m.id)
+          }
+        }
+        if (!drop) out(line)
+      }
+    }
+    let dropped = false
+    const lost = (why) => {
+      if (dropped) return
+      dropped = true
+      if (sock === s) sock = null
+      const text = `${linkProblem(why || 'closed')} The call was running when the link dropped: it may or may not have been done, check before repeating it.`
+      for (const [id, method] of pending) failure(id, method, text)
+      pending.clear()
+      swallow.clear()
+      if (inEnded) exit(0)
+      else note(`link to Tessel closed${why && why.message ? ` (${why.message})` : ''}; the next call reopens it`)
+    }
+    s.on('data', onBytes)
+    s.on('end', () => lost(null))
+    s.on('close', () => lost(null))
+    s.on('error', (e) => lost(e))
+    if (rest && rest.length) onBytes(rest)
+    s.resume()
+  }
+
+  function write(line, msgs) {
+    for (const m of msgs) if (isRequest(m)) pending.set(m.id, m.method)
+    sock.write(line + '\n')
+  }
+
+  function connect() {
+    if (connecting) return
+    connecting = true
+    let tries = 0
+    const attempt = () => {
+      tries++
+      open(conn, 'mcp', [], (err, socket, rest) => {
+        if (err && tries < 2 && !/bad-token|unknown-pane/.test(err.message)) return setTimeout(attempt, 1000)
+        connecting = false
+        if (err) {
+          const items = queue
+          queue = []
+          for (const { msgs } of items) for (const m of msgs) if (isRequest(m)) failure(m.id, m.method, linkProblem(err))
+          note(`could not reopen the link: ${String(err.message).slice(0, 80)}`)
+          if (inEnded) exit(0)
+          return
+        }
+        attach(socket, rest)
+        if (initLine) {
+          const id = `tessel-reinit-${++replays}`
+          swallow.add(id)
+          sock.write(JSON.stringify({ ...initLine, id }) + '\n')
+          if (initializedLine) sock.write(initializedLine + '\n')
+        }
+        const items = queue
+        queue = []
+        for (const { line, msgs } of items) write(line, msgs)
+        if (inEnded) sock.end()
+      })
+    }
+    attempt()
+  }
+
+  function fromClient(line) {
+    const msgs = parse(line)
+    for (const m of msgs) {
+      if (!m || typeof m !== 'object') continue
+      if (m.method === 'initialize' && m.id !== undefined) initLine = m
+      else if (m.method === 'notifications/initialized') initializedLine = line
+    }
+    if (sock) return write(line, msgs)
+    queue.push({ line, msgs })
+    connect()
+  }
+
+  attach(first, firstRest)
+  let inBuf = ''
+  process.stdin.setEncoding('utf8')
+  process.stdin.on('data', (chunk) => {
+    inBuf += chunk
+    let nl
+    while ((nl = inBuf.indexOf('\n')) >= 0) {
+      const line = inBuf.slice(0, nl).replace(/\r$/, '')
+      inBuf = inBuf.slice(nl + 1)
+      if (line.trim()) fromClient(line)
+    }
+  })
+  // The agent closed our stdin: the stream ends (Tessel then stops the server).
+  const stdinGone = () => {
+    if (inEnded) return
+    inEnded = true
+    if (sock) {
+      sock.end()
+      setTimeout(() => exit(0), 3000).unref()
+    } else if (!connecting) exit(0)
+  }
+  process.stdin.on('end', stdinGone)
+  process.stdin.on('error', stdinGone)
+  process.stdout.on('error', () => exit(0))
+  process.stdin.resume()
 }
 
 // A hook never blocks nor breaks the agent: anything wrong -> exit 0, quietly.

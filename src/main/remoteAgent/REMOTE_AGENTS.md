@@ -185,3 +185,12 @@ server.cjs runs with cwd = the pane env's `TESSEL_PROJECT_DIR` (when absolute).
    panes) – lead, after 1 and 2.
 4. Test bench: sshd in WSL Ubuntu on 127.0.0.1:2222, then a final test on a
    real server with the user.
+
+## Shim 1.4.0: the MCP stdio survives a closed tunnel
+
+`tessel-shim.cjs mcp` no longer exits when the forwarded connection ends (30 min
+idle, SSH drop, Tessel restart): it keeps the agent's stdio, and the next call
+opens a new connection (hello, replay of the client's `initialize` under an id
+the client never sees). A call running when the link dropped, or one the new link
+refuses, is answered with a tool result `isError` saying what happened and what to
+do. The tunnel logs `remote agent tools opened/closed` with the reason.

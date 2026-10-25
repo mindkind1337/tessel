@@ -344,7 +344,7 @@ export function createRemoteAgentTunnel({
     h.retry = 0
     // A bind in progress is not joined by a pane that comes next.
     h.binding = null
-    for (const c of [...h.conns]) c.end()
+    for (const c of [...h.conns]) c.end('the socket was unbound (last agent pane closed, or the host left)')
     const client = h.client
     h.client = null
     if (client && h.sockPath) safely(() => client.openssh_unforwardInStreamLocal(h.sockPath, () => {}))
@@ -387,9 +387,13 @@ export function createRemoteAgentTunnel({
     let pane = null
     let helloTimer = null
     let release = null // the session slot taken after the hello
+    // MCP connections only: why it ended, logged once (no secret, no pane token).
+    let why = ''
+    let mcpSince = 0
     const conn = {
-      end() {
+      end(reason) {
         if (ended) return
+        if (reason) why = reason
         ended = true
         cleanup()
         safely(() => stream.close ? stream.close() : stream.destroy())
@@ -402,6 +406,10 @@ export function createRemoteAgentTunnel({
       timers.clearTimeout(helloTimer)
       if (release) release()
       release = null
+      if (mcpSince) {
+        log('info', `remote agent tools closed on ${h.spec ? h.spec.host : hostId} (${why || 'the shim or the link ended'}) after ${Math.round((now() - mcpSince) / 1000)} s`)
+        mcpSince = 0
+      }
     }
     // A last line, then the channel closes (after the line is out).
     function finishWith(obj) {
@@ -417,6 +425,7 @@ export function createRemoteAgentTunnel({
     stream.once('close', () => {
       if (!ended) {
         ended = true
+        why = 'the SSH link dropped or the shim on the server ended'
         cleanup()
       }
     })
@@ -523,13 +532,17 @@ export function createRemoteAgentTunnel({
         return finishWith({ ok: false, error: 'failed' })
       }
       let spawned = false
-      child.once('error', () => {
-        if (!spawned) finishWith({ ok: false, error: 'failed' })
-        else conn.end()
+      child.once('error', (err) => {
+        if (!spawned) {
+          log('warn', `remote agent tools: the server could not start on ${h.spec ? h.spec.host : hostId}: ${(err && err.code) || 'error'}`)
+          finishWith({ ok: false, error: 'failed' })
+        } else conn.end('server error')
       })
       child.once('spawn', () => {
         spawned = true
         if (ended) return safely(() => child.kill())
+        mcpSince = now()
+        log('info', `remote agent tools opened on ${h.spec ? h.spec.host : hostId}`)
         stream.write(JSON.stringify({ ok: true }) + '\n')
         child.stdin.on('error', () => {})
         child.stdout.on('error', () => {})
@@ -544,16 +557,17 @@ export function createRemoteAgentTunnel({
         const check = () => {
           if (ended) return
           const left = L.mcpIdleMs - (now() - last)
-          if (left <= 0) return conn.end()
+          if (left <= 0) return conn.end('idle')
           idleTimer = timers.setTimeout(check, left)
         }
         idleTimer = timers.setTimeout(check, L.mcpIdleMs)
         stream.resume()
       })
       // server.cjs gone: the client's stdout ends, then the channel closes.
-      child.once('close', () => {
+      child.once('close', (code, signal) => {
         if (ended) return
         ended = true
+        why = `the tools server exited${typeof code === 'number' ? ` with code ${code}` : signal ? ` on ${signal}` : ''}`
         cleanup()
         safely(() => {
           stream.once('finish', () => safely(() => stream.close && stream.close()))
