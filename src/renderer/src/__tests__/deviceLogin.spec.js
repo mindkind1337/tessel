@@ -4,83 +4,64 @@ import { join } from 'node:path'
 import { detectDeviceLogin, columnOfIndex, mouseClickBytes, linkClickOpens } from '../deviceLogin'
 
 const pane = readFileSync(join(__dirname, '..', 'components', 'TerminalPane.vue'), 'utf8')
+// Grok Build 1.0.62's real screens (fixtures/grokDeviceLogin.json says how
+// they were read), at three pane widths.
+const { screens } = JSON.parse(readFileSync(join(__dirname, 'fixtures', 'grokDeviceLogin.json'), 'utf8'))
+const read = (s) => detectDeviceLogin(s.lines, { wrapped: s.wrapped, cols: s.cols })
+const GROK_URL = 'https://accounts.x.ai/oauth2/device?user_code=K7Q2-M9XD'
 
-const grokFirst = [
-  '',
-  '     Approve in your browser to finish signing in.',
-  '',
-  '                       ABCD-1234',
-  '',
-  "     Make sure your browser shows this code.",
-  "     If it doesn't open, click here to copy.",
-  '',
-  '   Copying not working? Click here to show full URL.',
-  '',
-  '                    Waiting for approval...'
-]
-const grokSecond = [
-  '       Select the URL below with your mouse and copy manually.',
-  '',
-  '     https://accounts.x.ai/oauth2/device?user_code=ABCD-1234',
-  '                      ctrl+q  go back'
-]
+describe('Grok, on its real screens', () => {
+  it('before its URL: the code, and the first row of "show full URL" at every width', () => {
+    // The first cell that answered a click on the real Grok: row 24 col 37 at
+    // 120 columns, row 25 col 12 at 60, row 25 col 10 at 44 (index + 1 here).
+    for (const [name, row, index] of [
+      ['first120', 24, 36],
+      ['first60', 25, 11],
+      ['first44', 25, 9]
+    ]) {
+      const r = read(screens[name])
+      expect(r, name).toMatchObject({ provider: 'grok', label: 'Grok', url: null, code: 'K7Q2-M9XD', known: false })
+      expect(r.showUrl, name).toEqual({ row, index })
+      expect(screens[name].lines[row - 1].slice(index)).toMatch(/^Copying not working\?/)
+    }
+  })
+  it('its URL screen: the page, known, with the code; a URL Grok wrapped itself is whole again', () => {
+    for (const name of ['url120', 'url44']) {
+      const r = read(screens[name])
+      expect(r, name).toMatchObject({ provider: 'grok', label: 'Grok', host: 'accounts.x.ai', page: 'https://accounts.x.ai/oauth2/device', url: GROK_URL, code: 'K7Q2-M9XD', known: true, showUrl: null })
+    }
+    // Without the width the cut rows are not joined: the half URL is never
+    // named as Grok's page, and it is shown whole (what would open).
+    const cut = detectDeviceLogin(screens.url44.lines, { wrapped: screens.url44.wrapped })
+    expect(cut.known).toBe(false)
+    expect(cut.page).toBe(cut.url)
+  })
+})
 
-describe('detectDeviceLogin', () => {
-  it('Grok before its URL: the code, and the cell of "here" in show full URL', () => {
-    const r = detectDeviceLogin(grokFirst)
-    expect(r.provider).toBe('grok')
-    expect(r.url).toBeNull()
-    expect(r.code).toBe('ABCD-1234')
-    expect(r.showUrl).toEqual({ row: 9, index: 30 })
-    expect(grokFirst[8].slice(30, 34)).toBe('here')
-  })
-  it('Grok with its URL: host, and the code from user_code', () => {
-    const r = detectDeviceLogin(grokSecond)
-    expect(r.url).toBe('https://accounts.x.ai/oauth2/device?user_code=ABCD-1234')
-    expect(r.host).toBe('accounts.x.ai')
-    expect(r.known).toBe(true)
-    expect(r.page).toBe('https://accounts.x.ai/oauth2/device')
-    expect(r.code).toBe('ABCD-1234')
-    expect(r.showUrl).toBeNull()
-  })
+describe('other programs', () => {
   it('GitHub CLI: the code, and the fixed device page', () => {
+    const r = detectDeviceLogin(['! First copy your one-time code: 1A2B-3C4D', 'Press Enter to open github.com in your browser...'])
+    expect(r).toMatchObject({ provider: 'github', url: 'https://github.com/login/device', code: '1A2B-3C4D', known: true })
+  })
+  it('Codex device code (its own words)', () => {
     const r = detectDeviceLogin([
-      '! First copy your one-time code: 1A2B-3C4D',
-      'Press Enter to open github.com in your browser...'
+      'Finish signing in via your browser',
+      '',
+      '  1. Open this link in your browser and sign in',
+      '     https://auth.openai.com/codex/device',
+      '',
+      '  2. Enter this one-time code after you are signed in (expires in 15 minutes)',
+      '     ABCD-12345'
     ])
-    expect(r.provider).toBe('github')
-    expect(r.url).toBe('https://github.com/login/device')
-    expect(r.code).toBe('1A2B-3C4D')
+    expect(r).toMatchObject({ provider: 'codex', label: 'Codex', known: true, url: 'https://auth.openai.com/codex/device', code: 'ABCD-12345' })
   })
-  it('Codex device code', () => {
-    const r = detectDeviceLogin([
-      'Follow these steps to sign in with ChatGPT using device code authorization:',
-      '1. Open this link in your browser and sign in to your account',
-      '   https://auth.openai.com/codex/device',
-      '2. Enter this one-time code (expires in 15 minutes)',
-      '   ABCD-12345'
-    ])
-    expect(r.provider).toBe('codex')
-    expect(r.code).toBe('ABCD-12345')
-  })
-  it('Claude Code and Gemini: a page to open, no device code', () => {
-    const c = detectDeviceLogin([
-      "Browser didn't open? Use the url below to sign in",
-      'https://claude.ai/oauth/authorize?code=true&client_id=x'
-    ])
-    expect(c.provider).toBe('claude')
-    expect(c.code).toBeNull()
-    const g = detectDeviceLogin([
-      'Please visit the following URL to authorize the application:',
-      'https://accounts.google.com/o/oauth2/v2/auth?client_id=x',
-      'Enter the authorization code:'
-    ])
-    expect(g.provider).toBe('gemini')
-  })
-  it('an unknown host still shows, as unknown, with its name', () => {
-    const r = detectDeviceLogin(['Enter the code', 'ABCD-1234', 'https://login.example.org/device'])
-    expect(r.known).toBe(false)
-    expect(r.host).toBe('login.example.org')
+  it('Claude Code and Gemini: a page to open whole, no device code, not named', () => {
+    const c = detectDeviceLogin(["Browser didn't open? Use the url below to sign in", 'https://claude.ai/oauth/authorize?code=true&client_id=x&state=y'])
+    expect(c).toMatchObject({ provider: 'other', label: '', known: false, code: null })
+    expect(c.page).toBe('https://claude.ai/oauth/authorize?code=true&client_id=x&state=y')
+    expect(c.url).toBe(c.page)
+    const g = detectDeviceLogin(['Please visit the following URL to authorize the application:', 'https://accounts.google.com/o/oauth2/v2/auth?client_id=x', 'Enter the authorization code:'])
+    expect(g).toMatchObject({ provider: 'other', known: false, host: 'accounts.google.com' })
   })
   it('no banner for ordinary URLs, http, credentials or plain text', () => {
     expect(detectDeviceLogin(['see https://example.com/docs for more'])).toBeNull()
@@ -91,35 +72,45 @@ describe('detectDeviceLogin', () => {
   })
 })
 
-describe('what a known host vouches for', () => {
-  it('a hostile OAuth page on github.com is not the device flow', () => {
-    const r = detectDeviceLogin(['Approve in your browser', 'https://github.com/login/oauth/authorize?client_id=evil&scope=repo', 'ABCD-1234'])
-    expect(r.known).toBe(false)
-    expect(r.label).toBe('')
-    expect(r.page).toBe('https://github.com/login/oauth/authorize')
+describe('what is shown is what opens', () => {
+  it('only the exact device page of a provider is named', () => {
+    for (const u of [
+      'https://github.com/login/oauth/authorize?client_id=evil&scope=repo',
+      'https://github.com/evil/device',
+      'https://evil.x.ai.example.com/oauth2/device',
+      'https://accounts.x.ai/oauth2/device/../evil',
+      'https://storage.googleapis.com/b/device'
+    ]) {
+      const r = detectDeviceLogin(['Approve in your browser', u, 'ABCD-1234'])
+      expect(r, u).toMatchObject({ known: false, label: '', provider: 'other' })
+      expect(r.page, u).toBe(r.url)
+    }
   })
-  it('storage.googleapis.com is not Gemini, and a port shows in the page', () => {
-    const r = detectDeviceLogin(['Enter the code', 'https://storage.googleapis.com/b/page.html'])
-    expect(r.known).toBe(false)
-    expect(r.provider).toBe('other')
-    const p = detectDeviceLogin(['Enter the code ABCD-1234', 'https://accounts.x.ai:8443/oauth2/device'])
-    expect(p.page).toBe('https://accounts.x.ai:8443/oauth2/device')
+  it('a known page with anything more than its code is shown whole, not named', () => {
+    for (const u of ['https://accounts.x.ai/oauth2/device?user_code=ABCD-1234&continue=https://evil.test', 'https://accounts.x.ai/oauth2/device#x', 'https://accounts.x.ai:8443/oauth2/device']) {
+      const r = detectDeviceLogin(['Approve in your browser', u])
+      expect(r.known, u).toBe(false)
+      expect(r.page, u).toBe(r.url)
+      expect(r.url, u).toBe(new URL(u).href)
+    }
   })
-})
-
-describe('several pages, wrapped URLs, and the code near the prompt', () => {
+  it('a known page opens as its page and its code only', () => {
+    const r = detectDeviceLogin(['Approve in your browser', 'https://accounts.x.ai/oauth2/device/?user_code=abcd-1234'])
+    expect(r).toMatchObject({ known: true, page: 'https://accounts.x.ai/oauth2/device/', url: 'https://accounts.x.ai/oauth2/device/?user_code=abcd-1234', code: 'ABCD-1234' })
+  })
   it('two different https pages: no banner', () => {
     expect(detectDeviceLogin(['Enter the code ABCD-1234', 'https://github.com/login/device', 'https://evil.test/x'])).toBeNull()
   })
-  it('a URL wrapped by the terminal is whole again', () => {
-    const r = detectDeviceLogin(['Approve in your browser', 'https://accounts.x.ai/oauth2/dev', 'ice?user_code=ABCD-1234'], [false, false, true])
+  it('a URL the terminal wrapped is whole again; a full row only joins a URL that goes on', () => {
+    const r = detectDeviceLogin(['Approve in your browser', 'https://accounts.x.ai/oauth2/dev', 'ice?user_code=ABCD-1234'], { wrapped: [false, false, true] })
     expect(r.url).toBe('https://accounts.x.ai/oauth2/device?user_code=ABCD-1234')
+    const notUrl = detectDeviceLogin(['Approve in your browser to finish', 'ABCD-1234', 'https://github.com/login/device'], { cols: 33 })
+    expect(notUrl.code).toBe('ABCD-1234')
   })
   it('a code far from the prompt (a log or listing) is not offered', () => {
     const far = ['Enter the code', 'https://github.com/login/device', ...Array(10).fill('x'), 'build ABCD-1234']
     expect(detectDeviceLogin(far).code).toBeNull()
-    const near = ['Enter the code', 'https://github.com/login/device', 'ABCD-1234']
-    expect(detectDeviceLogin(near).code).toBe('ABCD-1234')
+    expect(detectDeviceLogin(['Enter the code', 'https://github.com/login/device', 'ABCD-1234']).code).toBe('ABCD-1234')
   })
 })
 
@@ -128,8 +119,7 @@ describe('columnOfIndex', () => {
   const row = (cells) => ({ length: cells.length, getCell: (x) => cells[x] })
   it('counts cells, not string positions, past wide characters and surrogate pairs', () => {
     const r = row([cell('日', 2), cell('', 0), cell('😀', 2), cell('', 0), cell(' '), cell('h'), cell('e')])
-    const text = '日😀 he'
-    expect(text.indexOf('h')).toBe(4)
+    expect('日😀 he'.indexOf('h')).toBe(4)
     expect(columnOfIndex(r, 4)).toBe(6)
   })
   it('an empty cell is one blank', () => {
@@ -150,32 +140,32 @@ describe('mouse helpers', () => {
   })
 })
 
-describe('TerminalPane sign-in banner and link clicks', () => {
+describe('TerminalPane sign-in banner and clicks', () => {
   it('scans on output, skips Live Share, never opens by itself', () => {
     expect(pane).toContain('scheduleSignInScan()')
     expect(pane).toMatch(/function scheduleSignInScan\(\) \{\s*if \(signInTimer \|\| props\.node\.backend === 'liveshare' \|\| props\.node\.liveShare\) return/)
     expect(pane).toContain('data-test="device-login-banner"')
     expect(pane).toContain('openLink(s.url, event, true)')
+    expect(pane).toContain('detectDeviceLogin(lines, { wrapped, cols: term.cols })')
   })
   it('the link gate and the hover hint', () => {
-    expect(pane).toContain('if (!force && !linkClickOpens(term && term.modes.mouseTrackingMode, event)) return')
+    expect(pane).toContain("const mouseTaken = !force && !!term && term.modes.mouseTrackingMode !== 'none'")
+    expect(pane).toContain('if (mouseTaken && !linkClickOpens(term.modes.mouseTrackingMode, event)) return')
     expect(pane).toContain("t('pane.link.ctrlClick', 'Shift+click to open')")
-    // Shift/Cmd/Ctrl lets the click through; the router's other-browser flag is not used.
-    expect(pane).toContain("event: term && term.modes.mouseTrackingMode !== 'none' ? undefined : event")
+    // Shift/Cmd/Ctrl lets a terminal click through; the router's other-browser flag is not used.
+    expect(pane).toContain('ctx.openTarget(uri, { event: mouseTaken ? undefined : event })')
   })
-  it('remembers an SGR mouse request even when Always select drops it', () => {
+  it('remembers a mouse request even when Always select drops it', () => {
     expect(pane).toContain('mouseAsked.add(m)')
-  })
-  it('the synthetic click: cells, a fresh read, a program holding the mouse, the alternate screen', () => {
-    expect(pane).toContain('columnOfIndex(buf.getLine(buf.baseY + found.showUrl.row - 1)')
-    expect(pane).toMatch(/const now = readSignIn\(\)\s+if \(!now \|\| !now\.showUrl \|\| !mouseClickable\(\)\)/)
-    expect(pane).toContain("term.buffer.active.type === 'alternate'")
     expect(pane).toContain('if (m === 1049 || m === 1047 || m === 47) mouseAsked.clear()')
   })
-  it('Settings > Terminal explains plain clicks and Shift/Cmd+click, in English and French', () => {
-    const set = readFileSync(join(__dirname, '..', 'components', 'settings', 'SettingsTerminal.vue'), 'utf8')
-    expect(set).toContain('settings.terminal.mouseProgramsHint')
-    const fr = readFileSync(join(__dirname, '..', 'i18n', 'locales', 'fr', 'settings.json'), 'utf8')
-    expect(fr).toContain('"mouseProgramsHint"')
+  it('the banner click: the cell itself, a fresh read, a program holding the mouse, the alternate screen', () => {
+    expect(pane).toContain('found.showUrl = col ? { row: found.showUrl.row, col } : null')
+    expect(pane).toMatch(/const now = readSignIn\(\)\s+if \(!now \|\| !now\.showUrl \|\| !mouseClickable\(\)\)/)
+    expect(pane).toContain("term.buffer.active.type === 'alternate'")
+  })
+  it('French for the banner', () => {
+    const frPanes = JSON.parse(readFileSync(join(__dirname, '..', 'i18n', 'locales', 'fr', 'panes.json'), 'utf8'))
+    expect(JSON.stringify(frPanes)).toContain('"showFirst"')
   })
 })

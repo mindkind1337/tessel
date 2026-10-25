@@ -3015,7 +3015,7 @@ function onEscapeMenu(e) {
 const signIn = ref(null)
 const signInDismissed = ref('')
 const signInShown = computed(() => !!signIn.value && signInDismissed.value !== signIn.value.key)
-const mouseSgrAskedRef = ref(false)
+const signInCanClick = ref(false)
 // Mouse modes the program asked for and has not reset (even when Always
 // select dropped them), for the sign-in banner's click.
 const MOUSE_TRACKING = [9, 1000, 1002, 1003]
@@ -3040,7 +3040,7 @@ function scheduleSignInScan() {
   }, 400)
 }
 // The live screen's rows, read for a sign-in (null when there is none). The
-// click cell of Grok's "here" is worked out on the cells.
+// cell to click for Grok's "show full URL" is worked out on the cells.
 function readSignIn() {
   if (!term) return null
   const buf = term.buffer.active
@@ -3051,10 +3051,10 @@ function readSignIn() {
     lines.push(line ? line.translateToString(true) : '')
     wrapped.push(!!(line && line.isWrapped))
   }
-  const found = detectDeviceLogin(lines, wrapped)
+  const found = detectDeviceLogin(lines, { wrapped, cols: term.cols })
   if (found && found.showUrl) {
     const col = columnOfIndex(buf.getLine(buf.baseY + found.showUrl.row - 1), found.showUrl.index)
-    found.showUrl = col ? { row: found.showUrl.row, col: col + 1 } : null
+    found.showUrl = col ? { row: found.showUrl.row, col } : null
     if (!found.showUrl && !found.url) return null
   }
   return found
@@ -3062,7 +3062,7 @@ function readSignIn() {
 function scanSignIn() {
   if (!term) return
   const found = readSignIn()
-  mouseSgrAskedRef.value = mouseClickable()
+  signInCanClick.value = mouseClickable()
   const was = signIn.value
   if (!found && !was) return
   if (found && was && found.key === was.key && JSON.stringify(found.showUrl) === JSON.stringify(was.showUrl)) return
@@ -3073,11 +3073,10 @@ function signInText() {
   const s = signIn.value
   if (!s) return ''
   const who = s.label || ''
-  if (!s.url)
-    return t('pane.signin.needUrl', 'Sign-in on this server: click “show full URL” in the terminal, then it appears here.')
-  if (s.known)
-    return t('pane.signin.ready', 'Sign-in on this server ({{who}}): open {{page}} on this PC, then enter the code.', { who, page: s.page })
-  return t('pane.signin.readyOther', 'Sign-in on this server: this page is {{page}}. Check the name before you open it.', { page: s.page })
+  if (!s.url && s.showUrl && signInCanClick.value) return t('pane.signin.showFirst', '{{who}} asks you to sign in: Show the URL brings its page here.', { who })
+  if (!s.url) return t('pane.signin.needUrl', 'Sign-in: click “show full URL” in the terminal, then its page appears here.')
+  if (s.known) return t('pane.signin.ready', '{{who}} sign-in: open {{page}} on this PC, then enter the code. Only if you started this sign-in.', { who, page: s.page })
+  return t('pane.signin.readyOther', 'Sign-in page from this terminal: {{page}}. Check the address, and open it only if you started this sign-in.', { page: s.page })
 }
 function openSignIn(event) {
   const s = signIn.value
@@ -3110,18 +3109,20 @@ function dismissSignIn() {
 // dropped there. Without it, the system browser (the main process only lets
 // http, https and mailto through). In a Live Share host's pane: filtered,
 // in the Live Share browser (App.vue openGuestUrl), never the router.
+// force: the sign-in banner's button (not a click in the terminal).
 function openLink(uri, event, force = false) {
   if (props.node.backend === 'liveshare') {
     if (ctx.openGuestUrl) ctx.openGuestUrl(uri, { fromId: props.node.id, session: props.node.liveShare ? props.node.liveShare.session : null })
     return
   }
   // A program with the mouse owns plain clicks: Ctrl/Cmd/Shift opens.
-  if (!force && !linkClickOpens(term && term.modes.mouseTrackingMode, event)) return
+  const mouseTaken = !force && !!term && term.modes.mouseTrackingMode !== 'none'
+  if (mouseTaken && !linkClickOpens(term.modes.mouseTrackingMode, event)) return
   // Web pages and mail addresses only: a file: (or any other) link a program
   // prints never opens from here, whatever computer the program runs on.
   if (!/^(https?:\/\/|mailto:)/i.test(String(uri || '').trim())) return
   // With the mouse taken, Shift/Cmd/Ctrl only lets the click through: the default browser.
-  if (ctx.openTarget) return ctx.openTarget(uri, { event: term && term.modes.mouseTrackingMode !== 'none' ? undefined : event })
+  if (ctx.openTarget) return ctx.openTarget(uri, { event: mouseTaken ? undefined : event })
   if (window.shellApi.openExternal) window.shellApi.openExternal(uri)
 }
 // The real address of a link a program writes with a text of its own (OSC 8):
@@ -4560,8 +4561,8 @@ const paneMenuBindings = computed(() => ({
     <div v-if="signIn && signInShown && !node.failed" class="root-note signin-note" :style="{ top: `${signInNoteTop}px` }" data-test="device-login-banner" role="status" @mousedown.stop>
       <span class="root-note-text" data-test="device-login-text">{{ signInText() }}</span>
       <button v-if="signIn.url" class="exit-btn primary" data-test="device-login-open" :title="signIn.url" @click="openSignIn($event)">{{ t('pane.signin.open', 'Open the page here') }}</button>
-      <button v-else-if="signIn.showUrl && mouseSgrAskedRef" class="exit-btn primary" data-test="device-login-show" @click="showSignInUrl">{{ t('pane.signin.showUrl', 'Show the URL') }}</button>
-      <button v-if="signIn.code" class="exit-btn" data-test="device-login-copy" @click="copySignInCode">{{ t('pane.signin.copyCode', 'Copy the code') }}</button>
+      <button v-else-if="signIn.showUrl && signInCanClick" class="exit-btn primary" data-test="device-login-show" @click="showSignInUrl">{{ t('pane.signin.showUrl', 'Show the URL') }}</button>
+      <button v-if="signIn.code" class="exit-btn" data-test="device-login-copy" :title="signIn.code" @click="copySignInCode">{{ t('pane.signin.copyCode', 'Copy the code') }}</button>
       <button class="pane-nav-btn" data-test="device-login-close" :title="t('pane.rootNoYolo.close', 'Close')" :aria-label="t('pane.rootNoYolo.close', 'Close')" @click="dismissSignIn">
         <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true">
           <path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
