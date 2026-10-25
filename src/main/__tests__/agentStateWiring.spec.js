@@ -11,7 +11,7 @@ import { newTeamSecret, setTeamSecret, revokeTeamSecret, teamSecretOf, _resetTea
 import { wakeLaunchArgs, WAKE_LAUNCH_PROMPT } from '../../shared/orchestration'
 import { STATUS_PROVIDERS } from '../../shared/agentStateModel'
 import { trimBuffer } from '../ptyProtocol'
-import { claudeStartChoice, codexResumes, hasClaudeYoloFlag, rootSafeClaudeArgs } from '../../renderer/src/remoteAgentLaunch'
+import { claudeStartChoice, codexResumes, hasClaudeYoloFlag, rootSafeClaudeArgs, hostCodexNoDaemon, remoteCodexNoDaemon } from '../../renderer/src/remoteAgentLaunch'
 // Claude Code and Codex panes: status from their hooks from launch.
 const managedAgentStatus = (leaf) => !!leaf.agentLaunchToken
 
@@ -441,6 +441,15 @@ function wakeSandbox(over = {}) {
     // createLeaf's host agent check asked early (an agent started again in
     // place, opts.restart): none here, the launch block asks it itself.
     earlyCommand: null,
+    // createLeaf's early ask whether the conversation is still on the host
+    // (main keeps the answer for the start line): nothing to ask here.
+    askConversationEarly: () => {},
+    // A Codex on an SSH host: --no-daemon from that host's own Codex
+    // (remoteAgentLaunch.js); nothing known about any host here.
+    hostCodexNoDaemon,
+    remoteCodexNoDaemon,
+    remoteAgentTools: {},
+    watchCodexNoDaemonRefusal: vi.fn(),
     // Claude Code's Yolo as root (remoteAgentLaunch.js): no root host here.
     hasClaudeYoloFlag,
     rootSafeClaudeArgs,

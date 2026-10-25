@@ -32,11 +32,15 @@ describe('an agent whose team tools ran since it started', () => {
     // A local agent's tools that stopped are down.
     expect(toolsRanSince(res, 'p1', local)).toBe(false)
   })
-  it('a file from before this launch (the same pane id restarted) or none: no', () => {
-    expect(toolsRanSince({ ok: true, alive: { p1: null }, seen: { p1: launchedAt - 60_000 } }, 'p1', remote)).toBe(false)
+  it('a file of another launch (the same pane id restarted) or none: no', () => {
+    expect(toolsRanSince({ ok: true, alive: { p1: null }, seen: { p1: launchedAt - 60_000 }, sameLaunch: { p1: false } }, 'p1', remote)).toBe(false)
     expect(toolsRanSince({ ok: true, alive: { p1: null }, seen: { p1: null } }, 'p1', remote)).toBe(false)
     expect(toolsRanSince({ ok: false }, 'p1', remote)).toBe(false)
     expect(toolsRanSince({ ok: true, alive: {}, seen: {} }, 'p1', null)).toBe(false)
+  })
+  it('older tools whose file does not say its launch (running from before an update, or idle since): never reported missing', () => {
+    expect(toolsRanSince({ ok: true, alive: { p1: null }, seen: { p1: launchedAt - 3_600_000 }, sameLaunch: { p1: null } }, 'p1', remote)).toBe(true)
+    expect(toolsRanSince({ ok: true, alive: { p1: null }, seen: { p1: launchedAt - 3_600_000 } }, 'p1', remote)).toBe(true)
   })
 })
 

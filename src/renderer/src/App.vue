@@ -9443,8 +9443,10 @@ async function checkTeamTools(round) {
 // the link is idle (30 min) or drops, and its shim (tessel-shim.cjs 1.4+)
 // opens them again on its next call: server.cjs keeps their file there.
 // Tools of another launch of the same pane (started again in place) never
-// count: their file says which launch they belong to (sameLaunch); a file
-// from older tools that does not say: by the time, as before.
+// count: their file says which launch they belong to (sameLaunch). A file
+// from older tools that does not say which launch (tools still running from
+// before an update, or an agent idle since): Tessel cannot tell, so it is
+// never reported as missing; only no file at all, or one of another launch.
 function toolsRanSince(res, id, leaf) {
   if (!res || !res.ok || !leaf) return false
   const same = res.sameLaunch ? res.sameLaunch[id] : null
@@ -9452,7 +9454,7 @@ function toolsRanSince(res, id, leaf) {
   if (res.alive && res.alive[id]) return true
   const at = leaf.remoteHostId && res.seen ? res.seen[id] : null
   if (!Number.isFinite(at)) return false
-  return same === true || at >= (leaf.restartedAt || leaf.launchedAt || 0) - 5000
+  return same === true || same === null
 }
 // Each pane's launch token, for toolsAlive to tell its launch's tools.
 function launchTokens(ids) {
