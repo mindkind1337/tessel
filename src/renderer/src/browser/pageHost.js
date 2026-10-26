@@ -171,7 +171,7 @@ export const REVEAL_OPACITY = '0.01'
 export const UNSEEN_CLASS = 'bp-unseen'
 // A capture the main process never said was over ends by itself after this.
 export const CAPTURE_TTL_MS = 15000
-const REVEALED = ['visibility', 'opacity', 'pointerEvents', 'translate']
+const REVEALED = ['visibility', 'opacity', 'pointerEvents', 'translate', 'filter']
 
 // On screen as it is: visible, of some size, at least partly in the viewport.
 function onScreen(box) {
@@ -264,6 +264,10 @@ function applyReveal(page) {
   markUnseen(page, true)
   s.visibility = 'visible'
   s.opacity = REVEAL_OPACITY
+  // Black, so what the page shows (a game, a picture) never shows through a
+  // see-through terminal over it: only the shade of 1% remains. The page's
+  // own capture is not touched by the box's filter.
+  s.filter = 'brightness(0)'
   s.pointerEvents = 'none'
   s.translate = 'none'
   // Into the viewport, at its top left corner, whatever moved its layer away.
