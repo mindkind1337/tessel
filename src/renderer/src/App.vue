@@ -6221,6 +6221,10 @@ async function applyLocalFolder(ws, picked) {
     return false
   }
   const old = ws.cwd
+  // A chat agent started in the old folder restarts in the new one.
+  forEachLeaf(ws.tree, (l) => {
+    if (old && l.cwd === old) l.cwd = verdict.path
+  })
   ws.cwd = verdict.path
   // A folder imported with the repositories inside it: those were the old folder's.
   ws.group = null
@@ -6295,8 +6299,17 @@ async function chooseRemoteFolder(picked) {
 }
 function applyRemoteFolder(ws, path) {
   if (!ws.remote || liveShare.isGuestWs(ws)) return false
+  // The panes that were started in the old folder start in the new one when
+  // they restart (and after a reboot): they would else open in the old folder
+  // while the Files panel and git follow the new one. A pane running now keeps
+  // its program where it is.
+  const from = ws.remote.path
+  const hostId = ws.remote.hostId
+  forEachLeaf(ws.tree, (l) => {
+    if (l.remoteHostId === hostId && l.remotePath === from) l.remotePath = path
+  })
   // A new object, so everything watching ws.remote (git, roots, the layout) sees it.
-  ws.remote = { hostId: ws.remote.hostId, path }
+  ws.remote = { hostId, path }
   return true
 }
 
