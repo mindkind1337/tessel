@@ -139,6 +139,7 @@ const options = computed(() => ({
   hideDefaultBranchWorkspace: settings.hideDefaultBranchWorkspace,
   filterRepoIds: settings.sidebarFilterRepoIds,
   collapsedGroups: settings.sidebarCollapsedGroups,
+  folders: settings.sidebarFolders,
   expandedBranches: settings.sidebarExpandedBranches,
   shownWorktrees: settings.sidebarShownWorktrees,
   dismissedWorktreeLines: settings.sidebarDismissedWorktreeLines,
@@ -894,6 +895,7 @@ function projectActionItems(project) {
   const wsId = project.id
   return [
     ...projectEditItems(project),
+    ...groupItem(project),
     { type: 'separator' },
     {
       type: 'item',
@@ -1154,6 +1156,87 @@ function rowMenuItems(row, card) {
 function openOptions(e) {
   optionsOpen.value = optionsOpen.value ? null : rectOf(e)
 }
+
+// --- Your groups of projects ----------------------------------------------------
+// A project goes in one group (its menu: Group), a group folds its projects
+// into one row. Kept in settings (sidebarFolders).
+const folderDialog = ref(null) // { projectId } (a new group) | { folderId } (rename)
+const folderOfProject = (id) => settings.sidebarFolders.find((f) => f.projectIds.includes(id)) || null
+function setFolders(next) {
+  settings.sidebarFolders = next
+}
+function moveToFolder(projectId, folderId) {
+  setFolders(
+    settings.sidebarFolders.map((f) => {
+      const without = f.projectIds.filter((x) => x !== projectId)
+      return f.id === folderId ? { ...f, projectIds: [...without, projectId] } : { ...f, projectIds: without }
+    })
+  )
+}
+function saveFolderDialog(name) {
+  const d = folderDialog.value
+  folderDialog.value = null
+  if (!d || !name) return
+  if (d.folderId) {
+    setFolders(settings.sidebarFolders.map((f) => (f.id === d.folderId ? { ...f, name } : f)))
+    return
+  }
+  const id = `f${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`
+  setFolders([...settings.sidebarFolders.map((f) => ({ ...f, projectIds: f.projectIds.filter((x) => x !== d.projectId) })), { id, name, projectIds: d.projectId ? [d.projectId] : [] }])
+}
+function ungroup(folderId) {
+  setFolders(settings.sidebarFolders.filter((f) => f.id !== folderId))
+  settings.sidebarCollapsedGroups = settings.sidebarCollapsedGroups.filter((k) => k !== `folder:${folderId}`) // i18n-ignore
+}
+const folderDialogName = computed(() => {
+  const d = folderDialog.value
+  return d && d.folderId ? settings.sidebarFolders.find((f) => f.id === d.folderId)?.name || '' : ''
+})
+function groupItem(project) {
+  const current = folderOfProject(project.id)
+  return [
+    {
+      type: 'sub',
+      icon: Folder,
+      label: t('sidebar.folder.group', 'Group'),
+      hint: current ? current.name : '',
+      width: 220,
+      children: [
+        ...settings.sidebarFolders.map((f) => ({
+          type: 'radio',
+          label: f.name,
+          checked: !!current && current.id === f.id,
+          onSelect: () => moveToFolder(project.id, f.id)
+        })),
+        ...(settings.sidebarFolders.length ? [{ type: 'separator' }] : []),
+        {
+          type: 'item',
+          label: t('sidebar.folder.new', 'New group…'),
+          onSelect: () => (folderDialog.value = { projectId: project.id })
+        },
+        {
+          type: 'item',
+          label: t('sidebar.folder.none', 'Out of its group'),
+          disabled: !current,
+          onSelect: () => moveToFolder(project.id, null)
+        }
+      ]
+    }
+  ]
+}
+function openFolderActions(folder, e) {
+  openMenu(
+    'folder',
+    rectOf(e),
+    [
+      { type: 'item', icon: Pencil, label: t('sidebar.folder.rename', 'Rename group…'), onSelect: () => (folderDialog.value = { folderId: folder.id }) },
+      { type: 'separator' },
+      { type: 'item', icon: Trash2, label: t('sidebar.folder.ungroup', 'Ungroup (keeps the projects)'), danger: true, onSelect: () => ungroup(folder.id) }
+    ],
+    { align: 'end', label: folder.name }
+  )
+}
+
 function openProjectActions(project, e) {
   openMenu('project', rectOf(e), projectActionItems(project), {
     align: 'end',
@@ -1337,7 +1420,32 @@ defineExpose({
         <!-- Where a dragged project lands. -->
         <div v-if="projectDrag && projectDrag.active && projectDrag.line !== null" class="osb-drop-line" :style="{ top: projectDrag.line + 'px' }" aria-hidden="true" data-test="project-drop-line"></div>
         <template v-for="r in rows" :key="r.key">
-          <div v-if="r.type === 'header'" class="osb-group" :class="{ first: r === rows[0] }">
+          <div v-if="r.type === 'folder'" class="osb-folder" data-test="sidebar-folder">
+            <div
+              class="osb-folder-header"
+              role="button"
+              tabindex="0"
+              :aria-expanded="!r.collapsed"
+              @click="toggleGroup(r.key)"
+              @keydown.enter.prevent="toggleGroup(r.key)"
+              @keydown.space.prevent="toggleGroup(r.key)"
+              @contextmenu.prevent="openFolderActions(r.folder, $event)"
+            >
+              <ChevronDown :size="14" class="osb-folder-chev" :class="{ collapsed: r.collapsed }" aria-hidden="true" />
+              <span class="osb-folder-label" :title="r.label">{{ r.label }}</span>
+              <span class="osb-folder-count">{{ r.count }}</span>
+              <button
+                type="button"
+                class="osb-header-action"
+                :aria-label="t('sidebar.folder.actionsFor', 'Group actions for {{name}}', { name: r.label })"
+                aria-haspopup="menu"
+                @click.stop="openFolderActions(r.folder, $event)"
+              >
+                <Ellipsis :size="14" aria-hidden="true" />
+              </button>
+            </div>
+          </div>
+          <div v-else-if="r.type === 'header'" class="osb-group" :class="{ first: r === rows[0], 'in-folder': !!r.folderId }">
             <div
               class="osb-section-header"
               :class="{
@@ -1683,6 +1791,15 @@ defineExpose({
         :name="renameDialogProject.name"
         @save="saveRenameDialog"
         @close="renameDialogId = null"
+      />
+      <RenameProjectDialog
+        v-if="folderDialog"
+        :name="folderDialogName"
+        :title="folderDialog.folderId ? t('sidebar.folder.renameTitle', 'Rename group') : t('sidebar.folder.newTitle', 'New group')"
+        :label="t('sidebar.folder.nameLabel', 'Group name')"
+        :empty="t('sidebar.folder.empty', 'Enter a name for this group.')"
+        @save="saveFolderDialog"
+        @close="folderDialog = null"
       />
       <HiddenWorktreesDialog
         v-if="hiddenDialog"

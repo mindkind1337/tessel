@@ -174,6 +174,7 @@ describe('left sidebar', () => {
     expect(labels).toEqual([
       'Rename',
       'Change Project Folder…',
+      'Group',
       'New Task…',
       'Message All Agents…',
       'New Team…',

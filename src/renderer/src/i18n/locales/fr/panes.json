@@ -290,6 +290,18 @@
       "titleActive": "Options des espaces de travail ({{filters}} actifs)",
       "titleFilters": "Options des espaces de travail ({{filters}})"
     },
+    "folder": {
+      "group": "Groupe",
+      "new": "Nouveau groupe…",
+      "none": "Hors de son groupe",
+      "rename": "Renommer le groupe…",
+      "ungroup": "Dégrouper (garde les projets)",
+      "actionsFor": "Actions du groupe {{name}}",
+      "renameTitle": "Renommer le groupe",
+      "newTitle": "Nouveau groupe",
+      "nameLabel": "Nom du groupe",
+      "empty": "Saisissez un nom pour ce groupe."
+    },
     "renameDialog": {
       "title": "Renommer le projet",
       "label": "Nom du projet",

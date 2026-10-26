@@ -199,6 +199,8 @@ export const DEFAULT_SETTINGS = Object.freeze({
   hideDefaultBranchWorkspace: false,
   sidebarFilterRepoIds: [],
   sidebarCollapsedGroups: [],
+  // Your own groups of projects in the sidebar: [{ id, name, projectIds }].
+  sidebarFolders: [],
   // Projects whose "Hiding N discovered worktrees" line is unfolded (folded
   // by default), the worktrees you chose to show per project (project group
   // key 'repo:<id>' -> paths; Tessel hides the ones it did not make), and the
@@ -377,6 +379,7 @@ const fresh = () => ({
   hiddenUsageProviders: [],
   sidebarFilterRepoIds: [],
   sidebarCollapsedGroups: [],
+  sidebarFolders: [],
   sidebarExpandedBranches: [],
   sidebarShownWorktrees: {},
   sidebarDismissedWorktreeLines: [],
@@ -445,6 +448,10 @@ export function loadSettings(saved) {
       continue
     if (key === 'quickCommands') {
       if (Array.isArray(v)) settings.quickCommands = v.filter(validQuickCommand).slice(0, 100)
+      continue
+    }
+    if (key === 'sidebarFolders') {
+      settings.sidebarFolders = validSidebarFolders(v)
       continue
     }
     if (key === 'sidebarShownWorktrees') {
@@ -548,6 +555,25 @@ export function resetSettings() {
 // { [agent id]: { enabled?, command?, args?, env? } } from storage: only
 // well-formed entries, strings trimmed to sane sizes.
 // sidebarShownWorktrees: { 'repo:<id>': [paths] }, anything else dropped.
+// [{ id, name, projectIds }] from storage: bounded, one group per project.
+export function validSidebarFolders(v) {
+  if (!Array.isArray(v)) return []
+  const out = []
+  const seenIds = new Set()
+  const taken = new Set()
+  for (const f of v.slice(0, 60)) {
+    if (!f || typeof f.id !== 'string' || !f.id || f.id.length > 64 || seenIds.has(f.id)) continue
+    const name = typeof f.name === 'string' ? f.name.trim().slice(0, 80) : ''
+    if (!name) continue
+    seenIds.add(f.id)
+    const ids = Array.isArray(f.projectIds) ? f.projectIds : []
+    const projectIds = [...new Set(ids.filter((x) => typeof x === 'string' && x && x.length <= 200 && !taken.has(x)))].slice(0, 300)
+    projectIds.forEach((x) => taken.add(x))
+    out.push({ id: f.id, name, projectIds })
+  }
+  return out
+}
+
 export function validShownWorktrees(v) {
   const out = {}
   if (!v || typeof v !== 'object' || Array.isArray(v)) return out

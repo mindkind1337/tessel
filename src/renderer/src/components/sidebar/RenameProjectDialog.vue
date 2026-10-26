@@ -7,7 +7,13 @@ import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { t } from '../../i18n'
 import { cleanProjectName } from '../../projectFolder'
 
-const props = defineProps({ name: { type: String, default: '' } })
+const props = defineProps({
+  name: { type: String, default: '' },
+  // Reused to name a group of projects.
+  title: { type: String, default: '' },
+  label: { type: String, default: '' },
+  empty: { type: String, default: '' }
+})
 const emit = defineEmits(['save', 'close'])
 
 const draft = ref(props.name)
@@ -29,7 +35,7 @@ onUnmounted(() => {
 
 function save() {
   if (!cleaned.value) {
-    hint.value = t('sidebar.renameDialog.empty', 'Enter a name for this project.')
+    hint.value = props.empty || t('sidebar.renameDialog.empty', 'Enter a name for this project.')
     inputEl.value?.focus()
     return
   }
@@ -63,7 +69,7 @@ function trapTab(event) {
       @keydown.escape.prevent.stop="emit('close')"
       @keydown.tab.stop="trapTab"
     >
-      <h2 id="rnp-title" class="confirm-title" v-text="t('sidebar.renameDialog.title', 'Rename project')"></h2>
+      <h2 id="rnp-title" class="confirm-title" v-text="title || t('sidebar.renameDialog.title', 'Rename project')"></h2>
       <input
         ref="inputEl"
         v-model="draft"
@@ -71,7 +77,7 @@ function trapTab(event) {
         type="text"
         data-test="rename-project-input"
         :maxlength="MAX * 2"
-        :aria-label="t('sidebar.renameDialog.label', 'Project name')"
+        :aria-label="label || t('sidebar.renameDialog.label', 'Project name')"
         :aria-invalid="hint ? 'true' : 'false'"
         spellcheck="false"
         autocomplete="off"

@@ -527,6 +527,7 @@ export const DEFAULT_SIDEBAR_OPTIONS = Object.freeze({
   hideDefaultBranchWorkspace: false,
   filterRepoIds: [],
   collapsedGroups: [],
+  folders: [], // your groups of projects: { id, name, projectIds }
   expandedBranches: [], // projects whose hidden-worktrees line is unfolded
   shownWorktrees: {}, // project group key -> the worktree paths you chose to show
   dismissedWorktreeLines: [], // projects whose hidden-worktrees line you closed for good
@@ -580,7 +581,7 @@ export function buildSidebarRows(projects, options = {}, now = Date.now()) {
     return rows
   }
   if (opts.projectOrderBy === 'recent') groups.sort((a, b) => b.lastActivityAt - a.lastActivityAt || a.index - b.index)
-  for (const g of groups) {
+  const emitProject = (g, folderId) => {
     const key = `repo:${g.project.id}` // i18n-ignore
     rows.push({
       type: 'header',
@@ -590,9 +591,10 @@ export function buildSidebarRows(projects, options = {}, now = Date.now()) {
       count: g.cards.length,
       hidden: g.hidden,
       hiddenWorktrees: g.worktrees.hidden,
-      collapsed: collapsed.has(key)
+      collapsed: collapsed.has(key),
+      ...(folderId ? { folderId } : {})
     })
-    if (collapsed.has(key)) continue
+    if (collapsed.has(key)) return
     // Every workspace of it hidden by the filters: a way back, not a dead end.
     if (!g.cards.length && g.hidden) rows.push({ type: 'hidden', key: `${key}:hidden`, project: g.project, count: g.hidden }) // i18n-ignore
     for (const card of g.cards) rows.push({ type: 'card', key: card.key, card, project: g.project })
@@ -604,6 +606,33 @@ export function buildSidebarRows(projects, options = {}, now = Date.now()) {
       const preview = open ? hiddenWorktreesPreview(g.worktrees.inbox, (opts.openWorktreeGroups || {})[key]) : { groups: [], moreGroups: 0 }
       rows.push({ type: 'others', key: `${key}:others`, groupKey: key, project: g.project, count: g.worktrees.inbox.length, open, ...preview }) // i18n-ignore
     }
+  }
+  // Your groups of projects: a row for each, then its projects (folded: only
+  // the row). A group stands where its first project is; a project in no group
+  // keeps its own place.
+  const folderOf = new Map()
+  for (const f of opts.folders || []) for (const id of f.projectIds || []) if (!folderOf.has(id)) folderOf.set(id, f)
+  const doneFolders = new Set()
+  const folderRow = (f, members) => {
+    const key = `folder:${f.id}` // i18n-ignore
+    rows.push({ type: 'folder', key, folder: f, label: f.name, count: members.length, collapsed: collapsed.has(key) })
+    return !collapsed.has(key)
+  }
+  for (const g of groups) {
+    const f = folderOf.get(g.project.id)
+    if (!f) {
+      emitProject(g, null)
+      continue
+    }
+    if (doneFolders.has(f.id)) continue
+    doneFolders.add(f.id)
+    const members = groups.filter((x) => folderOf.get(x.project.id) === f)
+    if (folderRow(f, members)) for (const m of members) emitProject(m, f.id)
+  }
+  // A group with no project yet is still shown: it is where you put some.
+  for (const f of opts.folders || []) {
+    if (doneFolders.has(f.id) || (f.projectIds || []).some((id) => projects.some((p) => p.id === id))) continue
+    folderRow(f, [])
   }
   return rows
 }
