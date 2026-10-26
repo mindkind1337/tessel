@@ -3089,7 +3089,14 @@ const POPUP_SELECTOR =
 let popupFrame = 0
 function checkPopups() {
   popupFrame = 0
-  document.body.classList.toggle('popup-open', !!document.querySelector(POPUP_SELECTOR))
+  // Only a popup that is drawn counts: one kept in the page hidden or empty
+  // (a popper wrapper left behind) must not stop the toolbar from moving the
+  // window.
+  const open = Array.from(document.querySelectorAll(POPUP_SELECTOR)).some(el => {
+    const r = el.getBoundingClientRect()
+    return r.width > 0 && r.height > 0 && getComputedStyle(el).visibility !== 'hidden'
+  })
+  document.body.classList.toggle('popup-open', open)
 }
 const popupObserver = typeof MutationObserver === 'undefined' ? null : new MutationObserver(() => {
   if (!popupFrame) popupFrame = requestAnimationFrame(checkPopups)
