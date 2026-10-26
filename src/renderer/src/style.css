@@ -13481,3 +13481,9 @@ body:has(.settings-page) > .orca-menu {
   color: var(--danger, #e5484d);
   font-size: 12px;
 }
+/* The sign-in banner's text can be selected and copied by hand too. */
+.signin-note .root-note-text {
+  -webkit-user-select: text;
+  user-select: text;
+  cursor: text;
+}

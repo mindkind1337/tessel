@@ -3115,6 +3115,12 @@ function copySignInCode() {
   window.shellApi.writeClipboard(s.code)
   if (ctx.toast) ctx.toast(t('pane.osc52.copiedText', 'Copied "{{text}}"', { text: s.code }), { timeout: 2500 })
 }
+function copySignInUrl() {
+  const s = signIn.value
+  if (!s || !s.url || !window.shellApi.writeClipboard) return
+  window.shellApi.writeClipboard(s.url)
+  if (ctx.toast) ctx.toast(t('pane.signin.linkCopied', 'Link copied'), { timeout: 2500 })
+}
 function showSignInUrl() {
   const s = signIn.value
   if (!s || !s.showUrl) return
@@ -4660,6 +4666,7 @@ const paneMenuBindings = computed(() => ({
       >
       <button v-if="signIn.url" class="exit-btn primary" data-test="device-login-open" :title="signIn.url" @click="openSignIn($event)">{{ t('pane.signin.open', 'Open the page here') }}</button>
       <button v-else-if="signIn.showUrl && signInCanClick" class="exit-btn primary" data-test="device-login-show" @click="showSignInUrl">{{ t('pane.signin.showUrl', 'Show the URL') }}</button>
+      <button v-if="signIn.url" class="exit-btn" data-test="device-login-copy-url" :title="signIn.url" @click="copySignInUrl">{{ t('pane.signin.copyLink', 'Copy the link') }}</button>
       <button v-if="signIn.code" class="exit-btn" data-test="device-login-copy" :title="signIn.code" @click="copySignInCode">{{ t('pane.signin.copyCode', 'Copy the code') }}</button>
       <button class="pane-nav-btn" data-test="device-login-close" :title="t('pane.rootNoYolo.close', 'Close')" :aria-label="t('pane.rootNoYolo.close', 'Close')" @click="dismissSignIn">
         <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true">

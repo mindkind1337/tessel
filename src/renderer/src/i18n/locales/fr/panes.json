@@ -828,6 +828,8 @@
     "signin": {
       "open": "Ouvrir la page ici",
       "copyCode": "Copier le code",
+      "copyLink": "Copier le lien",
+      "linkCopied": "Lien copié",
       "showUrl": "Afficher l'URL",
       "showFirst": "Une connexion attend dans ce terminal : Afficher l'URL amène sa page ici.",
       "needUrl": "Connexion : cliquez sur « show full URL » dans le terminal, puis sa page apparaît ici.",
