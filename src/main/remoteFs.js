@@ -895,7 +895,12 @@ export function createRemoteFs({
         return callOnce(hostId, fn, args, { ...inSession, ...(lane === 'pane' ? { first: true } : {}) })
       // A guest on a host with the system ssh: in its open session, behind the
       // host's own requests, as before; never a new connection or a sign-in.
-      if (res && res.laneFailed && lane === 'guest' && res.code === 'system') {
+      // The same when no guests' lane can be had: the host's sshd refuses one
+      // more channel on the live connection (code 'ssh': MaxSessions reached
+      // by its terminals and sessions), it was refused a moment ago, or the
+      // terminal host is older. The guest's Files panel works, behind the
+      // host's own work, rather than showing "the host could not do this".
+      if (res && res.laneFailed && lane === 'guest' && (res.code === 'system' || res.code === 'ssh' || res.code === 'no-lane')) {
         const r = await callOnce(hostId, fn, args, { ...inSession, guest: false, ifOpen: true, background: true })
         return r && r.skipped ? { error: sessionErrorText(hostId, laneError('not-connected')), code: 'not-connected' } : r
       }

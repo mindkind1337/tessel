@@ -294,15 +294,15 @@ describe('a lane\'s life', () => {
 })
 
 describe('a lane that cannot be had', () => {
-  it('an older terminal host (no onlyLive): the pane\'s and background work go in the Files session; guests get no lane', async () => {
+  it('an older terminal host (no onlyLive): the pane\'s and background work go in the Files session; guests are served in the Files session', async () => {
     const { rfs, host, spawnOpts } = setup({ onlyLive: false, out: { __t_agents: 'claude -\n', __t_ls: '' } })
     rfs.allow(HOST)
     await rfs.agentTools(HOST, ['claude'], { first: true })
     await rfs.listDir({ root: ROOT, background: true })
     expect(host.children).toHaveLength(1)
     expect(spawnOpts.every((o) => !o || !o.onlyLive)).toBe(true)
-    expect(await rfs.guest.stat({ root: ROOT, rel: 'a.txt' })).toEqual({ ok: false, code: 'no-lane' })
-    expect(host.children[0].ran).toEqual(['__t_agents', '__t_ls'])
+    expect(await rfs.guest.stat({ root: ROOT, rel: 'a.txt' })).toMatchObject({ ok: true })
+    expect(host.children[0].ran).toEqual(['__t_agents', '__t_ls', '__t_gst'])
     rfs.close()
   })
 
@@ -317,9 +317,9 @@ describe('a lane that cannot be had', () => {
     expect(warned.filter((m) => /bg lane .* could not open/.test(m))).toHaveLength(1)
     const files = host.children.find((c) => c.ran.length)
     expect(files.ran).toEqual(['__t_ls', '__t_ls', '__t_ls'])
-    // A guest meanwhile: no lane (never the Files session).
-    expect(await rfs.guest.stat({ root: ROOT, rel: 'a.txt' })).toMatchObject({ ok: false })
-    expect(files.ran).toEqual(['__t_ls', '__t_ls', '__t_ls'])
+    // A guest meanwhile: no lane, so in the Files session (the host's open one).
+    expect(await rfs.guest.stat({ root: ROOT, rel: 'a.txt' })).toMatchObject({ ok: true })
+    expect(files.ran).toEqual(['__t_ls', '__t_ls', '__t_ls', '__t_gst'])
     // Later: tried again.
     state.failLane = false
     clock += LANE_RETRY_MS + 1
@@ -343,6 +343,16 @@ describe('a lane that cannot be had', () => {
     expect(files.ran).toEqual(['__t_tread'])
     rfs.close()
     await Promise.all(held)
+  })
+
+  it('the server refuses the guest channel (MaxSessions): the guest is served in the host session, none open: not connected', async () => {
+    const { rfs, state } = setup({ out: { __t_ls: '', __t_gst: '4 1700000000 9 644\n' } })
+    state.failLane = true
+    expect(await rfs.guest.stat({ root: ROOT, rel: 'a.txt' })).toEqual({ ok: false, code: 'not-connected' })
+    rfs.allow(HOST)
+    await rfs.listDir({ root: ROOT })
+    expect(await rfs.guest.stat({ root: ROOT, rel: 'a.txt' })).toMatchObject({ ok: true, exists: true, size: 4 })
+    rfs.close()
   })
 
   it('the system ssh: a guest in the host\'s open session as before, never a new connection; none open: not connected', async () => {
