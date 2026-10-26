@@ -208,7 +208,8 @@ describe('the folder dialog', () => {
 describe('App.vue', () => {
   it('moves a remote project to the folder the host listed, in place (same project, panes stay)', () => {
     expect(src).toMatch(/api\.browse\(hostId, picked\)/)
-    expect(src).toMatch(/ws\.remote = \{ hostId: ws\.remote\.hostId, path \}/)
+    expect(src).toMatch(/ws\.remote = \{ hostId, path \}/)
+    expect(src).toMatch(/l\.remotePath === from\) l\.remotePath = path/)
     // never the local folder picker for a remote project
     const at = src.indexOf('async function setWorkspaceFolder')
     const fn = src.slice(at, at + 1800)
