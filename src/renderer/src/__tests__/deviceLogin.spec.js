@@ -64,6 +64,11 @@ describe('other programs', () => {
     const g = detectDeviceLogin(['Please visit the following URL to authorize the application:', 'https://accounts.google.com/o/oauth2/v2/auth?client_id=x', 'Enter the authorization code:'])
     expect(g).toMatchObject({ provider: 'other', known: false, host: 'accounts.google.com' })
   })
+  it('Antigravity: its Google page (wrapped on two rows) to open or copy whole, no device code', () => {
+    const u = 'https://accounts.google.com/o/oauth2/auth?access_type=offline&client_id=x&state=p_MUDc54'
+    const a = detectDeviceLogin(['Open the URL below in your browser:', u.slice(0, 50), u.slice(50), 'After authenticating, copy the code displayed in the browser and paste it below:'], { wrapped: [false, false, true, false], cols: 50 })
+    expect(a).toMatchObject({ provider: 'other', known: false, host: 'accounts.google.com', code: null, url: u })
+  })
   it('no banner for ordinary URLs, http, credentials or plain text', () => {
     expect(detectDeviceLogin(['see https://example.com/docs for more'])).toBeNull()
     expect(detectDeviceLogin(['Enter the code', 'http://accounts.x.ai/oauth2/device?user_code=ABCD-1234'])).toBeNull()

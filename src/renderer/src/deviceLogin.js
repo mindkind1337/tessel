@@ -44,6 +44,8 @@ const TRIGGERS = [
   /open this link in your browser/i,
   /github\.com in your browser/i,
   /select the url below/i,
+  /open the url below in your browser/i,
+  /copy the code displayed in the browser/i,
   /https:\/\/\S*(?:[?&]user_code=|\/login\/device|\/oauth2\/device|\/codex\/device)/i
 ]
 
