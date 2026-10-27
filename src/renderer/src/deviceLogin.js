@@ -27,9 +27,6 @@ const URL_TEXT = /https:\/\/[^\s<>"'`)\]]+/g
 const URL_GOES_ON = /^[A-Za-z0-9\-._~:/?#[\]@!$&'()*+,;=%]/
 const URL_AT_END = /https:\/\/[^\s<>"'`)\]]*$/
 const MAX_URL = 4096
-// A program that wraps a URL itself (Antigravity) stops a few columns short of
-// the last one: a row this close to it, with a single word on the next, goes on.
-const WRAP_SLACK = 12
 // Rows between a sign-in phrase and the code it goes with.
 const CODE_NEAR = 6
 const SHOW_URL = /\bclick here to show full URL\b/i
@@ -97,10 +94,20 @@ function knownPage(u) {
 function logicalLines(lines, wrapped, cols) {
   const out = []
   lines.forEach((line, i) => {
-    const goesOn =
-      out.length > 0 &&
-      ((wrapped && wrapped[i]) || (cols > 0 && URL_AT_END.test(out[out.length - 1]) && URL_GOES_ON.test(line) && (String(lines[i - 1]).length >= cols || (String(lines[i - 1]).length >= cols - WRAP_SLACK && !/\s/.test(line)))))
-    if (goesOn) out[out.length - 1] += line
+    let add = null
+    if (out.length > 0) {
+      const prevLen = String(lines[i - 1]).length
+      const body = line.trim()
+      if (wrapped && wrapped[i]) add = line
+      else if (URL_AT_END.test(out[out.length - 1])) {
+        if (cols > 0 && prevLen >= cols && URL_GOES_ON.test(line)) add = line
+        // A program that wraps its URL itself (Antigravity): rows of its own width,
+        // each indented (a row that starts at the margin is not this), however wide the pane. A long row that ends in a URL, then
+        // one word of URL characters (some of % & = / ? +) is the rest of it.
+        else if (prevLen >= 40 && /^\s/.test(line) && body && !/\s/.test(body) && URL_GOES_ON.test(body) && /[%&=/?+]/.test(body)) add = body
+      }
+    }
+    if (add !== null) out[out.length - 1] += add
     else out.push(line)
   })
   return out

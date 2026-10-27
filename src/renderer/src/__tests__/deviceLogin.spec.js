@@ -69,11 +69,21 @@ describe('other programs', () => {
     const a = detectDeviceLogin(['Open the URL below in your browser:', u.slice(0, 50), u.slice(50), 'After authenticating, copy the code displayed in the browser and paste it below:'], { wrapped: [false, false, true, false], cols: 50 })
     expect(a).toMatchObject({ provider: 'other', known: false, host: 'accounts.google.com', code: null, url: u })
   })
-  it('Antigravity wraps its URL itself, a few columns short of the last: the rows are one URL again (not cut at the first)', () => {
-    const u = 'https://accounts.google.com/o/oauth2/auth?access_type=offline&client_id=1071006060591-tmhssin2h21lcre235vtolojh4g403ep&response_type=code&scope=openid&state=p_MUDc54XluoTVqyXtEgKg'
-    const rows = [u.slice(0, 60), u.slice(60, 120), u.slice(120)]
-    const a = detectDeviceLogin(['Open the URL below in your browser:', ...rows, 'Copy and paste the URL or click on the link below:'], { wrapped: [false, false, false, false, false], cols: 66 })
-    expect(a.url).toBe(u)
+  it('Antigravity wraps its URL itself, indented, in rows narrower than the pane: one URL again (not cut at the first row)', () => {
+    // Its real screen (the rows as it printed them, 131 columns wide).
+    const rows = [
+      ' https://accounts.google.com/o/oauth2/auth?access_type=offline&client_id=1071006060591-tmhssin2h21lcre235vto',
+      ' lojh4g403ep.apps.googleusercontent.com&code_challenge=PGUVrR1DZICgCBQCupwN6juCz49SGDBplP5kopurr2s&code_chal',
+      ' lenge_method=S256&prompt=consent&redirect_uri=https%3A%2F%2Fantigravity.google%2Foauth-callback&response_ty',
+      ' pe=code&scope=https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fcloud-platform+https%3A%2F%2Fwww.googleapis.com%2Fa',
+      ' uth%2Fuserinfo.email+https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fuserinfo.profile+https%3A%2F%2Fwww.googleapi',
+      ' s.com%2Fauth%2Fcclog+https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fexperimentsandconfigs+https%3A%2F%2Fwww.goog',
+      ' leapis.com%2Fauth%2Faicode+openid&state=T2vQ5-MUk-9btBXTIOu6Jw'
+    ]
+    const a = detectDeviceLogin(['Open the URL below in your browser:', ' ───────────', ...rows, ' ───────────', '', ' Copy and paste the URL or click on the link below:', ' → Click here to authenticate', '', ' After authenticating, copy the code displayed in the browser and paste it below:'], { wrapped: Array(14).fill(false), cols: 131 })
+    expect(a.url).toBe(rows.map((r) => r.trim()).join(''))
+    expect(a.url).toContain('&response_type=code&scope=')
+    expect(a.url.endsWith('&state=T2vQ5-MUk-9btBXTIOu6Jw')).toBe(true)
   })
   it('no banner for ordinary URLs, http, credentials or plain text', () => {
     expect(detectDeviceLogin(['see https://example.com/docs for more'])).toBeNull()
