@@ -69,6 +69,12 @@ describe('other programs', () => {
     const a = detectDeviceLogin(['Open the URL below in your browser:', u.slice(0, 50), u.slice(50), 'After authenticating, copy the code displayed in the browser and paste it below:'], { wrapped: [false, false, true, false], cols: 50 })
     expect(a).toMatchObject({ provider: 'other', known: false, host: 'accounts.google.com', code: null, url: u })
   })
+  it('Antigravity wraps its URL itself, a few columns short of the last: the rows are one URL again (not cut at the first)', () => {
+    const u = 'https://accounts.google.com/o/oauth2/auth?access_type=offline&client_id=1071006060591-tmhssin2h21lcre235vtolojh4g403ep&response_type=code&scope=openid&state=p_MUDc54XluoTVqyXtEgKg'
+    const rows = [u.slice(0, 60), u.slice(60, 120), u.slice(120)]
+    const a = detectDeviceLogin(['Open the URL below in your browser:', ...rows, 'Copy and paste the URL or click on the link below:'], { wrapped: [false, false, false, false, false], cols: 66 })
+    expect(a.url).toBe(u)
+  })
   it('no banner for ordinary URLs, http, credentials or plain text', () => {
     expect(detectDeviceLogin(['see https://example.com/docs for more'])).toBeNull()
     expect(detectDeviceLogin(['Enter the code', 'http://accounts.x.ai/oauth2/device?user_code=ABCD-1234'])).toBeNull()

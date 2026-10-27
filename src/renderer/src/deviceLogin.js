@@ -27,6 +27,9 @@ const URL_TEXT = /https:\/\/[^\s<>"'`)\]]+/g
 const URL_GOES_ON = /^[A-Za-z0-9\-._~:/?#[\]@!$&'()*+,;=%]/
 const URL_AT_END = /https:\/\/[^\s<>"'`)\]]*$/
 const MAX_URL = 4096
+// A program that wraps a URL itself (Antigravity) stops a few columns short of
+// the last one: a row this close to it, with a single word on the next, goes on.
+const WRAP_SLACK = 12
 // Rows between a sign-in phrase and the code it goes with.
 const CODE_NEAR = 6
 const SHOW_URL = /\bclick here to show full URL\b/i
@@ -96,7 +99,7 @@ function logicalLines(lines, wrapped, cols) {
   lines.forEach((line, i) => {
     const goesOn =
       out.length > 0 &&
-      ((wrapped && wrapped[i]) || (cols > 0 && String(lines[i - 1]).length >= cols && URL_AT_END.test(out[out.length - 1]) && URL_GOES_ON.test(line)))
+      ((wrapped && wrapped[i]) || (cols > 0 && URL_AT_END.test(out[out.length - 1]) && URL_GOES_ON.test(line) && (String(lines[i - 1]).length >= cols || (String(lines[i - 1]).length >= cols - WRAP_SLACK && !/\s/.test(line)))))
     if (goesOn) out[out.length - 1] += line
     else out.push(line)
   })
