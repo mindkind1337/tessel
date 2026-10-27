@@ -13541,3 +13541,27 @@ body:has(.settings-page) > .orca-menu {
     transition: none;
   }
 }
+
+/* The editor's right-click menu (Monaco draws it outside the editor, where its
+   theme variables may not reach): the theme's colours when it has them,
+   Tessel's own otherwise, so it never shows black text on nothing. */
+.context-view .monaco-menu {
+  background: var(--vscode-menu-background, var(--surface));
+  color: var(--vscode-menu-foreground, var(--text));
+  border: 1px solid var(--vscode-menu-border, var(--border));
+  border-radius: 6px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35);
+}
+.context-view .monaco-menu .monaco-action-bar .action-item .action-menu-item,
+.context-view .monaco-menu .monaco-action-bar .action-item .action-label {
+  color: var(--vscode-menu-foreground, var(--text));
+}
+.context-view .monaco-menu .monaco-action-bar .action-item .keybinding {
+  color: var(--vscode-descriptionForeground, var(--text-dim));
+}
+.context-view .monaco-menu .monaco-action-bar .action-item.focused > .action-menu-item {
+  background: var(--vscode-menu-selectionBackground, color-mix(in srgb, var(--accent) 22%, transparent));
+}
+.context-view .monaco-menu .monaco-action-bar .action-item.disabled .action-label {
+  opacity: 0.5;
+}
