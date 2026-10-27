@@ -29,7 +29,8 @@ const { Client } = ssh2
 
 export const CONNECT_TIMEOUT_MS = 30_000
 export const KEEPALIVE_INTERVAL_MS = 15_000
-export const KEEPALIVE_COUNT_MAX = 3
+// 12 x 15 s: a stall of up to 3 min on the link no longer kills the shells (and the agents) on it.
+export const KEEPALIVE_COUNT_MAX = 12
 const MAX_PASSWORD_TRIES = 3
 const MAX_PASSPHRASE_TRIES = 3
 const MAX_KBD_ATTEMPTS = 3
