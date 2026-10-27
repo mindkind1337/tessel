@@ -839,6 +839,8 @@
     },
     "signin": {
       "open": "Ouvrir la page ici",
+      "openTessel": "Ouvrir dans Tessel",
+      "openSystem": "Ouvrir dans mon navigateur",
       "copyCode": "Copier le code",
       "copyLink": "Copier le lien",
       "linkCopied": "Lien copié",

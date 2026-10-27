@@ -209,7 +209,7 @@ export function createLinkRouter(deps = {}) {
     const mode = URL_MODES.includes(asked) ? asked : 'builtin'
     const e = opts.event
     const other = !!(e && (e.ctrlKey || e.metaKey))
-    const where = opts.external === true ? 'system' : (mode === 'builtin') !== other ? 'builtin' : 'system'
+    const where = opts.external === true ? 'system' : opts.builtin === true ? 'builtin' : (mode === 'builtin') !== other ? 'builtin' : 'system'
     if (where === 'builtin' && has('openUrlBuiltin')) {
       const leaf = await call('openUrlBuiltin', t.url)
       if (leaf !== false && leaf !== null) return true

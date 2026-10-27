@@ -216,6 +216,17 @@ export function detectDeviceLogin(lines, { wrapped = null, cols = 0 } = {}) {
   }
 }
 
+// A click on a sign-in URL in the terminal: a program that wraps the URL in
+// rows of its own (Antigravity) leaves only its first row as the link. When
+// what was clicked is the start of the sign-in page on the screen, that page
+// opens whole; any other link stays as it is.
+export function wholeSignInUrl(clicked, signInUrl) {
+  const c = String(clicked || '')
+  const s = String(signInUrl || '')
+  if (!s || c.length < 20 || !/^https:\/\//i.test(c)) return c
+  return s.length > c.length && s.startsWith(c) ? s : c
+}
+
 // The terminal column (1-based) of a string index in a buffer row: walks the
 // cells, so wide characters and surrogate pairs do not shift it. A cell with
 // no characters is one blank in translateToString; a wide char's trailing

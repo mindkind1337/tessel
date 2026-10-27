@@ -2765,6 +2765,11 @@ kbd {
 .signin-note .exit-btn {
   flex: none;
 }
+/* A sign-in link clicked in the terminal: the banner asks where to open it. */
+.signin-note.signin-ask {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
 
 /* ================= Find bar ================= */
 .find-bar {

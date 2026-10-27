@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { detectDeviceLogin, columnOfIndex, mouseClickBytes, linkClickOpens, clickPassesThrough } from '../deviceLogin'
+import { detectDeviceLogin, wholeSignInUrl, columnOfIndex, mouseClickBytes, linkClickOpens, clickPassesThrough } from '../deviceLogin'
 
 const pane = readFileSync(join(__dirname, '..', 'components', 'TerminalPane.vue'), 'utf8')
 // Grok Build 1.0.62's real screens (fixtures/grokDeviceLogin.json says how
@@ -84,6 +84,20 @@ describe('other programs', () => {
     expect(a.url).toBe(rows.map((r) => r.trim()).join(''))
     expect(a.url).toContain('&response_type=code&scope=')
     expect(a.url.endsWith('&state=T2vQ5-MUk-9btBXTIOu6Jw')).toBe(true)
+  })
+  it('a click on the first row of a wrapped sign-in URL opens the whole page; other links stay', () => {
+    const whole = 'https://accounts.google.com/o/oauth2/auth?access_type=offline&client_id=1071-x&response_type=code&state=s'
+    expect(wholeSignInUrl(whole.slice(0, 60), whole)).toBe(whole)
+    expect(wholeSignInUrl(whole, whole)).toBe(whole)
+    expect(wholeSignInUrl('https://example.com/other/page', whole)).toBe('https://example.com/other/page')
+    expect(wholeSignInUrl('https://acc', whole)).toBe('https://acc')
+    expect(wholeSignInUrl(whole.slice(0, 60), null)).toBe(whole.slice(0, 60))
+    // A sign-in link clicked in the terminal: the banner asks (Tessel or my browser).
+    expect(pane).toContain('wholeSignInUrl(uri, signIn.value.url) === signIn.value.url')
+    expect(pane).toContain('askWhereSignIn()')
+    expect(pane).toContain("@click=\"openSignIn($event, 'builtin')\"")
+    expect(pane).toContain("@click=\"openSignIn($event, 'system')\"")
+    expect(pane).toContain("external: where === 'system', builtin: where === 'builtin'")
   })
   it('no banner for ordinary URLs, http, credentials or plain text', () => {
     expect(detectDeviceLogin(['see https://example.com/docs for more'])).toBeNull()
@@ -184,7 +198,7 @@ describe('TerminalPane sign-in banner and clicks', () => {
     expect(pane).toContain('scheduleSignInScan()')
     expect(pane).toMatch(/function scheduleSignInScan\(\) \{\s*if \(signInTimer \|\| props\.node\.backend === 'liveshare' \|\| props\.node\.liveShare\) return/)
     expect(pane).toContain('data-test="device-login-banner"')
-    expect(pane).toContain('openLink(s.url, event, true)')
+    expect(pane).toContain('openLink(s.url, event, true, where)')
     expect(pane).toContain('detectDeviceLogin(lines, { wrapped, cols: term.cols })')
   })
   it('the link gate and the hover hint', () => {
@@ -192,7 +206,7 @@ describe('TerminalPane sign-in banner and clicks', () => {
     expect(pane).toContain('if (mouseTaken && !linkClickOpens(term.modes.mouseTrackingMode, event)) return')
     expect(pane).toContain("t('pane.link.ctrlClick', 'Shift+click to open')")
     // Shift/Cmd/Ctrl lets a terminal click through; the router's other-browser flag is not used.
-    expect(pane).toContain('ctx.openTarget(uri, { event: mouseTaken ? undefined : event })')
+    expect(pane).toContain("ctx.openTarget(uri, { event: mouseTaken || where ? undefined : event, external: where === 'system', builtin: where === 'builtin' })")
   })
   it('remembers a mouse request even when Always select drops it', () => {
     expect(pane).toContain('mouseAsked.add(m)')
@@ -221,7 +235,7 @@ describe('TerminalPane sign-in banner and clicks', () => {
     expect(fn).toContain('window.shellApi.writePty(props.node.id, mouseClickBytes(up.col, up.row))')
     expect(pane).toContain("hostEl.value.addEventListener('mouseup', onPassUp, { passive: true })")
     // Set first in openLink, before the Live Share branch.
-    const open = pane.slice(pane.indexOf('function openLink(uri'), pane.indexOf('function openLink(uri') + 200)
+    const open = pane.slice(pane.indexOf('function openLink(uri'), pane.indexOf('function openLink(uri') + 1200)
     expect(open.indexOf('linkClickAt = performance.now()')).toBeGreaterThan(0)
     expect(open.indexOf('linkClickAt = performance.now()')).toBeLessThan(open.indexOf("backend === 'liveshare'"))
   })

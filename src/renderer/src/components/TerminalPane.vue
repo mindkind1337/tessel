@@ -19,7 +19,7 @@ import { terminalTheme } from '../themes'
 // Mouse-reporting modes (X10, normal, button, any-event, UTF-8, SGR, urxvt).
 const MOUSE_MODES = [9, 1000, 1002, 1003, 1005, 1006, 1015]
 import { registerPane, unregisterPane, getPane } from '../paneRegistry'
-import { detectDeviceLogin, columnOfIndex, mouseClickBytes, linkClickOpens, clickPassesThrough } from '../deviceLogin'
+import { detectDeviceLogin, wholeSignInUrl, columnOfIndex, mouseClickBytes, linkClickOpens, clickPassesThrough } from '../deviceLogin'
 import {
   setAgentStatus,
   setAttention,
@@ -3023,6 +3023,16 @@ function onEscapeMenu(e) {
 // opened by itself, none in a Live Share pane, closable.
 const signIn = ref(null)
 const signInDismissed = ref('')
+// The banner asks again (a sign-in link clicked in the terminal): it shows,
+// lit up for a moment, for the person to choose where the page opens.
+const signInAsk = ref(false)
+let signInAskTimer = null
+function askWhereSignIn() {
+  signInDismissed.value = ''
+  signInAsk.value = true
+  clearTimeout(signInAskTimer)
+  signInAskTimer = setTimeout(() => (signInAsk.value = false), 1600)
+}
 const signInShown = computed(() => !!signIn.value && signInDismissed.value !== signIn.value.key)
 const signInCanClick = ref(false)
 // Mouse modes the program asked for and has not reset (even when Always
@@ -3105,9 +3115,10 @@ function signInPage() {
     return null
   }
 }
-function openSignIn(event) {
+// where: 'builtin' (Tessel's browser) or 'system' (the person's own).
+function openSignIn(event, where) {
   const s = signIn.value
-  if (s && s.url) openLink(s.url, event, true)
+  if (s && s.url) openLink(s.url, event, true, where)
 }
 function copySignInCode() {
   const s = signIn.value
@@ -3143,8 +3154,15 @@ function dismissSignIn() {
 // http, https and mailto through). In a Live Share host's pane: filtered,
 // in the Live Share browser (App.vue openGuestUrl), never the router.
 // force: the sign-in banner's button (not a click in the terminal).
-function openLink(uri, event, force = false) {
+function openLink(uri, event, force = false, where = null) {
   linkClickAt = performance.now()
+  // The sign-in page clicked in the terminal (or only the first row of it, a
+  // URL the program wrapped itself): the banner asks where to open it whole.
+  if (!force && signIn.value && signIn.value.url && props.node.backend !== 'liveshare' && wholeSignInUrl(uri, signIn.value.url) === signIn.value.url) {
+    const mouseOwned = !!term && term.modes.mouseTrackingMode !== 'none'
+    if (!mouseOwned || linkClickOpens(term.modes.mouseTrackingMode, event)) askWhereSignIn()
+    return
+  }
   if (props.node.backend === 'liveshare') {
     if (ctx.openGuestUrl) ctx.openGuestUrl(uri, { fromId: props.node.id, session: props.node.liveShare ? props.node.liveShare.session : null })
     return
@@ -3156,7 +3174,7 @@ function openLink(uri, event, force = false) {
   // prints never opens from here, whatever computer the program runs on.
   if (!/^(https?:\/\/|mailto:)/i.test(String(uri || '').trim())) return
   // With the mouse taken, Shift/Cmd/Ctrl only lets the click through: the default browser.
-  if (ctx.openTarget) return ctx.openTarget(uri, { event: mouseTaken ? undefined : event })
+  if (ctx.openTarget) return ctx.openTarget(uri, { event: mouseTaken || where ? undefined : event, external: where === 'system', builtin: where === 'builtin' })
   if (window.shellApi.openExternal) window.shellApi.openExternal(uri)
 }
 // "Always select with the mouse" (deviceLogin.js clickPassesThrough): a
@@ -4660,11 +4678,12 @@ const paneMenuBindings = computed(() => ({
       <button class="exit-btn" data-test="host-account-keep" :title="t('pane.account.keepHint', 'Keeps {{saved}}: its next restart starts there', accountMismatch)" @click="resolveAccountMismatch(false)">{{ t('pane.account.keep', 'Keep') }}</button>
     </div>
 
-    <div v-if="signIn && signInShown && !node.failed" class="root-note signin-note" :style="{ top: `${signInNoteTop}px` }" data-test="device-login-banner" role="status" @mousedown.stop>
+    <div v-if="signIn && signInShown && !node.failed" class="root-note signin-note" :class="{ 'signin-ask': signInAsk }" :style="{ top: `${signInNoteTop}px` }" data-test="device-login-banner" role="status" @mousedown.stop>
       <span class="root-note-text" data-test="device-login-text"
         >{{ signInText() }}<span v-if="signInPage()" class="signin-page" data-test="device-login-page"><b>{{ signInPage().host }}</b>{{ signInPage().rest }}</span></span
       >
-      <button v-if="signIn.url" class="exit-btn primary" data-test="device-login-open" :title="signIn.url" @click="openSignIn($event)">{{ t('pane.signin.open', 'Open the page here') }}</button>
+      <button v-if="signIn.url" class="exit-btn primary" data-test="device-login-open" :title="signIn.url" @click="openSignIn($event, 'builtin')">{{ t('pane.signin.openTessel', 'Open in Tessel') }}</button>
+      <button v-if="signIn.url" class="exit-btn" data-test="device-login-open-system" :title="signIn.url" @click="openSignIn($event, 'system')">{{ t('pane.signin.openSystem', 'Open in my browser') }}</button>
       <button v-else-if="signIn.showUrl && signInCanClick" class="exit-btn primary" data-test="device-login-show" @click="showSignInUrl">{{ t('pane.signin.showUrl', 'Show the URL') }}</button>
       <button v-if="signIn.url" class="exit-btn" data-test="device-login-copy-url" :title="signIn.url" @click="copySignInUrl">{{ t('pane.signin.copyLink', 'Copy the link') }}</button>
       <button v-if="signIn.code" class="exit-btn" data-test="device-login-copy" :title="signIn.code" @click="copySignInCode">{{ t('pane.signin.copyCode', 'Copy the code') }}</button>
