@@ -2765,6 +2765,31 @@ kbd {
 .signin-note .exit-btn {
   flex: none;
 }
+/* The sign-in banner: its words and the close button on top, the page on one
+   line (cut with an ellipsis, whole on hover), the buttons under them. */
+.root-note.signin-note {
+  flex-wrap: wrap;
+  align-items: flex-start;
+  row-gap: 10px;
+}
+.signin-note .root-note-text {
+  display: block;
+  flex: 1 1 calc(100% - 40px);
+  min-width: 0;
+}
+.signin-note .signin-page {
+  margin-top: 4px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.signin-note .pane-nav-btn {
+  order: 1;
+  flex: none;
+}
+.signin-note .exit-btn {
+  order: 2;
+}
 /* A sign-in link clicked in the terminal: the banner asks where to open it. */
 .signin-note.signin-ask {
   outline: 2px solid var(--accent);

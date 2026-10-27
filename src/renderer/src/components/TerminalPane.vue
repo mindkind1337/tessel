@@ -4680,7 +4680,7 @@ const paneMenuBindings = computed(() => ({
 
     <div v-if="signIn && signInShown && !node.failed" class="root-note signin-note" :class="{ 'signin-ask': signInAsk }" :style="{ top: `${signInNoteTop}px` }" data-test="device-login-banner" role="status" @mousedown.stop>
       <span class="root-note-text" data-test="device-login-text"
-        >{{ signInText() }}<span v-if="signInPage()" class="signin-page" data-test="device-login-page"><b>{{ signInPage().host }}</b>{{ signInPage().rest }}</span></span
+        >{{ signInText() }}<span v-if="signInPage()" class="signin-page" data-test="device-login-page" :title="signIn.url || signIn.page"><b>{{ signInPage().host }}</b>{{ signInPage().rest }}</span></span
       >
       <button v-if="signIn.url" class="exit-btn primary" data-test="device-login-open" :title="signIn.url" @click="openSignIn($event, 'builtin')">{{ t('pane.signin.openTessel', 'Open in Tessel') }}</button>
       <button v-if="signIn.url" class="exit-btn" data-test="device-login-open-system" :title="signIn.url" @click="openSignIn($event, 'system')">{{ t('pane.signin.openSystem', 'Open in my browser') }}</button>
