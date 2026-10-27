@@ -268,6 +268,12 @@ function applyTheme() {
         }
   })
   monaco.editor.setTheme('tessel')
+  // The right-click menu is drawn outside the editor, where Monaco's theme
+  // variables do not reach: give them to the page itself (opaque, VS Code's).
+  const cols = tm ? tm.allColours(dark) : { 'menu.background': dark ? '#202122' : '#ffffff', 'menu.foreground': fg }
+  for (const [k, v] of Object.entries(cols)) {
+    if (/^(menu|descriptionForeground)/.test(k)) document.documentElement.style.setProperty('--vscode-' + k.replace(/\./g, '-'), v)
+  }
 }
 function editorOptions() {
   return editorOptionsFor(settings)

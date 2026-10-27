@@ -13546,7 +13546,7 @@ body:has(.settings-page) > .orca-menu {
    theme variables may not reach): the theme's colours when it has them,
    Tessel's own otherwise, so it never shows black text on nothing. */
 .context-view .monaco-menu {
-  background: var(--vscode-menu-background, var(--surface));
+  background: var(--vscode-menu-background, #202122);
   color: var(--vscode-menu-foreground, var(--text));
   border: 1px solid var(--vscode-menu-border, var(--border));
   border-radius: 6px;
