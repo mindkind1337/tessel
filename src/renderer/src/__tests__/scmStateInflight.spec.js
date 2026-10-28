@@ -1,8 +1,8 @@
 // The Changes status of a folder: one request at a time, and refreshes
 // asked meanwhile share one more (a slow remote host never gets a pile of
 // git status requests from focus events, polls and change notices).
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { refreshStatus, statusOf, forgetStatus } from '../scmState'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+import { refreshStatus, statusOf, forgetStatus, SLOW_STATUS_MS } from '../scmState'
 
 let calls
 let releases
@@ -49,5 +49,40 @@ describe('refreshStatus while one runs', () => {
     expect(calls).toBe(2)
     releases.shift()()
     await expect(b).resolves.toMatchObject({ n: 2 })
+  })
+})
+
+describe('after a slow status', () => {
+  afterEach(() => vi.useRealTimers())
+  it('a read by itself (a change notice) waits three times as long as it took; one the person asks for runs now', async () => {
+    vi.useFakeTimers()
+    const first = refreshStatus('C:\proj', { background: true })
+    vi.advanceTimersByTime(SLOW_STATUS_MS * 2)
+    releases.shift()()
+    await first
+    expect(calls).toBe(1)
+    // A file changed on the server: put off, and several share one read.
+    const a = refreshStatus('C:\proj', { background: true })
+    const b = refreshStatus('C:\proj', { background: true })
+    await vi.advanceTimersByTimeAsync(SLOW_STATUS_MS * 2 * 3 - 100)
+    expect(calls).toBe(1)
+    await vi.advanceTimersByTimeAsync(200)
+    expect(calls).toBe(2)
+    releases.shift()()
+    expect((await a).n).toBe(2)
+    expect((await b).n).toBe(2)
+    // The person opens the tab or stages: no wait.
+    const c = refreshStatus('C:\proj')
+    expect(calls).toBe(3)
+    releases.shift()()
+    await c
+  })
+  it('a fast status puts nothing off', async () => {
+    const a = refreshStatus('C:\proj', { background: true })
+    releases.shift()()
+    await a
+    refreshStatus('C:\proj', { background: true })
+    expect(calls).toBe(2)
+    releases.shift()()
   })
 })

@@ -30,13 +30,41 @@ export function statusOf(root) {
 // a poll, two panels) share that next one. On a slow host (a remote
 // project) they would otherwise pile up behind each other there.
 const runs = {} // key -> { running, next }
+// A status that took long (a huge repository, a busy server) spaces out the
+// reads that come by themselves (a change notice, the panel's count): the
+// next waits three times as long as it took, up to 5 minutes. A server that
+// writes files all the time otherwise had git running back to back on it.
+// What the person does (a stage, a commit, the tab opened) never waits.
+export const SLOW_STATUS_MS = 3000
+export const MAX_STATUS_GAP_MS = 5 * 60 * 1000
+const timing = {} // key -> { took, ended }
+const waiting = {} // key -> { timer, promise } (a background read put off)
+export function backgroundGap(k, now = Date.now()) {
+  const tm = timing[k]
+  if (!tm || tm.took < SLOW_STATUS_MS) return 0
+  return Math.max(0, tm.ended + Math.min(tm.took * 3, MAX_STATUS_GAP_MS) - now)
+}
 function startRun(k, root, background = false) {
   const entry = { running: null, next: null }
   runs[k] = entry
+  const began = Date.now()
   entry.running = readStatus(root, background).finally(() => {
+    timing[k] = { took: Date.now() - began, ended: Date.now() }
     if (runs[k] === entry && !entry.next) delete runs[k]
   })
   return entry.running
+}
+function putOff(k, root, ms) {
+  if (waiting[k]) return waiting[k].promise
+  const w = { timer: 0, promise: null }
+  w.promise = new Promise((resolve) => {
+    w.timer = setTimeout(() => {
+      if (waiting[k] === w) delete waiting[k]
+      resolve(refreshStatus(root, { background: true }))
+    }, ms)
+  })
+  waiting[k] = w
+  return w.promise
 }
 // background: read by itself (a change notice, the side panel shown): on a
 // remote host it is background work, never in front of a click.
@@ -44,10 +72,26 @@ export function refreshStatus(root, { background = false } = {}) {
   if (!root || !api()) return Promise.resolve(null)
   const k = rootKey(root)
   const r = runs[k]
-  if (!r) return startRun(k, root, background)
+  if (!r) {
+    const gap = background ? backgroundGap(k) : 0
+    if (gap > 0) return putOff(k, root, gap)
+    return startRun(k, root, background)
+  }
   // Asked after the running one started (a stage, a save…): its answer may
   // be stale, so the next run is the one that counts.
-  if (!r.next) r.next = r.running.catch(() => null).then(() => startRun(k, root, background))
+  // A read by itself waits the gap after a slow one; once anyone asks for
+  // the next run themselves, it does not.
+  if (!r.next) {
+    r.nextAsked = !background
+    r.next = r.running
+      .catch(() => null)
+      .then(() => {
+        const gap = r.nextAsked ? 0 : backgroundGap(k)
+        if (gap <= 0) return startRun(k, root, !r.nextAsked)
+        if (runs[k] === r) delete runs[k]
+        return putOff(k, root, gap)
+      })
+  } else if (!background) r.nextAsked = true
   return r.next
 }
 
@@ -83,6 +127,11 @@ async function readStatus(root, background = false) {
 // Nothing more for this folder: a late answer is dropped.
 export function forgetStatus(root) {
   const k = rootKey(root)
+  if (waiting[k]) {
+    clearTimeout(waiting[k].timer)
+    delete waiting[k]
+  }
+  delete timing[k]
   seqs[k] = (seqs[k] || 0) + 1
   delete scmStatus[k]
 }

@@ -25,6 +25,11 @@ const BULK = 100 // pathspecs per git call (Orca's BULK_CHUNK_SIZE)
 // thousands of untracked files went to the window, which drew every row and
 // grew by 7 GB in a minute until it froze.
 export const STATUS_ENTRIES_MAX = 5000
+// Line counts (+12 -3) only up to this many changes. 2026-10-28, a FiveM
+// server with 50,000 changed binary assets: git diff --numstat read every one
+// of them from its history, 30 s or more at 100 % of a core and 10 GB of
+// memory, again and again. Above it the list comes without counts.
+export const LINE_COUNTS_MAX = 2000
 
 // git never waits for a password or an editor in the background.
 function gitEnv() {
@@ -538,21 +543,31 @@ export function createScm(b) {
     if (r.notRepo) return { ok: true, repo: false }
     if (r.error) return { ok: false, error: r.error }
     const top = r.top
-    const [st, un, stg, operation, remotes] = await Promise.all([
+    const [st, operation, remotes] = await Promise.all([
       git(top, ['status', '--porcelain=v2', '--branch', '-z', UNTRACKED], { timeout: 20000 }),
-      git(top, ['diff', '--numstat', '-z', '--no-ext-diff', '--no-textconv']),
-      git(top, ['diff', '--cached', '--numstat', '-z', '--no-ext-diff', '--no-textconv']),
       b.operation(top),
       git(top, ['remote'])
     ])
     if (!st.ok) return { ok: false, error: gitMessage(st, t('main.scm.statusFailed', 'Git status failed.')) }
     const info = parseStatusV2(st.stdout)
     const capped = capStatusEntries(info.entries)
+    // The line counts after the status, and only for a number of changes they
+    // are worth reading for (LINE_COUNTS_MAX).
+    const withCounts = info.entries.length <= LINE_COUNTS_MAX
+    const none = { ok: false, stdout: '' }
+    const [un, stg] = withCounts
+      ? await Promise.all([
+          git(top, ['diff', '--numstat', '-z', '--no-ext-diff', '--no-textconv'], { timeout: 20000 }),
+          git(top, ['diff', '--cached', '--numstat', '-z', '--no-ext-diff', '--no-textconv'], { timeout: 20000 })
+        ])
+      : [none, none]
     const counts = { unstaged: un.ok ? parseNumstatZ(un.stdout) : {}, staged: stg.ok ? parseNumstatZ(stg.stdout) : {} }
-    const untracked = await b.untracked(
-      top,
-      capped.entries.filter((e) => e.area === 'untracked').map((e) => e.path)
-    )
+    const untracked = withCounts
+      ? await b.untracked(
+          top,
+          capped.entries.filter((e) => e.area === 'untracked').map((e) => e.path)
+        )
+      : new Map()
     const entries = capped.entries.map((e) => {
       if (e.area === 'untracked') {
         const u = untracked.get(e.path)
@@ -576,7 +591,8 @@ export function createScm(b) {
       operation,
       remotes: remotes.ok ? remotes.stdout.split(/\r?\n/).map((s) => s.trim()).filter(Boolean) : [],
       entries,
-      ...(capped.truncated ? { truncated: true, totalEntries: capped.total } : {})
+      ...(capped.truncated ? { truncated: true, totalEntries: capped.total } : {}),
+      ...(withCounts ? {} : { noLineCounts: true })
     }
   }
 
