@@ -12,13 +12,14 @@ import MarkdownSizeGate from './MarkdownSizeGate.vue'
 import SheetView from './SheetView.vue'
 import DocView from './DocView.vue'
 import MediaView from './MediaView.vue'
+import PdfView from './PdfView.vue'
 import { resolveFrom } from '../../../shared/viewPaths'
 import { openTarget } from '../links/openTarget'
 import { t } from '../i18n'
 
 const props = defineProps({
   file: { type: String, required: true },
-  // 'markdown' | 'mermaid' | 'table' | 'image' | 'sheet' | 'doc' | 'slides' | 'audio' | 'video'
+  // 'markdown' | 'mermaid' | 'table' | 'image' | 'pdf' | 'sheet' | 'doc' | 'slides' | 'audio' | 'video'
   kind: { type: String, required: true },
   text: { type: String, default: '' }
 })
@@ -194,6 +195,7 @@ function onBodyClick(e) {
         v-text="t('editor.viewer.moreRows', '{{count}} more rows not shown. Source shows them all.', { count: table.more })"
       ></div>
     </div>
+    <PdfView v-else-if="kind === 'pdf'" :file="file" />
     <SheetView v-else-if="kind === 'sheet'" :file="file" />
     <DocView v-else-if="kind === 'doc' || kind === 'slides'" :file="file" :kind="kind" />
     <MediaView v-else-if="kind === 'audio' || kind === 'video'" :file="file" :kind="kind" />

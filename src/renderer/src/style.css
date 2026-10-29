@@ -13743,3 +13743,59 @@ body:has(.settings-page) > .orca-menu {
 .media-view audio {
   width: min(560px, 100%);
 }
+
+/* A PDF in an editor tab (PdfView.vue): its zoom bar, then the pages one
+   under the other on the editor's background. */
+.pdf-view {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+.pdf-bar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-dim);
+  font-size: 12px;
+}
+.pdf-spacer {
+  flex: 1;
+}
+.pdf-btn {
+  min-width: 26px;
+  height: 24px;
+  padding: 0 8px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: none;
+  color: var(--text);
+  cursor: pointer;
+}
+.pdf-btn:hover,
+.pdf-btn.active {
+  border-color: var(--border);
+  background: var(--surface);
+}
+.pdf-zoom {
+  min-width: 48px;
+  text-align: center;
+}
+.pdf-pages-wrap {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 16px 24px;
+}
+.pdf-page {
+  flex: none;
+  background: #fff;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.35);
+}

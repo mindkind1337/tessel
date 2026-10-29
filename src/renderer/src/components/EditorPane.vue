@@ -105,7 +105,7 @@ const diffInfo = computed(() => (activeFile.value && activeFile.value.diff) || n
 const kind = computed(() => (activeDocPath.value ? fileKind(activeDocPath.value) : 'text'))
 const RICH_KINDS = ['markdown', 'mermaid', 'table']
 // Read whole and shown in a view of their own (RichView), never as text.
-const VIEW_KINDS = ['image', 'sheet', 'doc', 'slides', 'audio', 'video']
+const VIEW_KINDS = ['image', 'pdf', 'sheet', 'doc', 'slides', 'audio', 'video']
 
 // --- View modes (Orca's markdown-preview-controls.ts getEditorToggleModes) ----------------
 // Internal modes: 'edit' (the code editor), 'rich' (rendered), 'changes'

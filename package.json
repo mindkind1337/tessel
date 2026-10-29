@@ -25,6 +25,7 @@
     "@tiptap/vue-3": "^3.31.3",
     "electron-updater": "^6.8.9",
     "node-pty": "^1.1.0",
+    "pdfjs-dist": "6.4.299",
     "shiki": "4.4.3",
     "ssh2": "1.17.0",
     "ws": "^8.21.0"

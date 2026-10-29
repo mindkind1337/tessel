@@ -117,9 +117,22 @@ describe('in the editor', () => {
   it('each kind opens in its own view, read whole like an image', () => {
     expect(['a.docx', 'a.odt', 'a.pptx', 'a.odp', 'a.ods', 'a.mp3', 'a.mp4', 'a.webm', 'a.avif'].map(fileKind)).toEqual(['doc', 'doc', 'slides', 'slides', 'sheet', 'audio', 'video', 'video', 'image'])
     for (const ext of ['docx', 'odt', 'pptx', 'odp', 'ods', 'mp3', 'mp4']) expect(BINARY_MIME[ext]).toBeTruthy()
-    expect(BYTE_KINDS).toEqual(['image', 'sheet', 'doc', 'slides', 'audio', 'video'])
-    expect(pane).toContain("const VIEW_KINDS = ['image', 'sheet', 'doc', 'slides', 'audio', 'video']")
+    expect(BYTE_KINDS).toEqual(['image', 'pdf', 'sheet', 'doc', 'slides', 'audio', 'video'])
+    expect(pane).toContain("const VIEW_KINDS = ['image', 'pdf', 'sheet', 'doc', 'slides', 'audio', 'video']")
     // Audio and video play from blob: URLs only (no data:, no other origin).
     expect(html).toContain("media-src 'self' blob:;")
+  })
+})
+
+describe('PDF in an editor tab', () => {
+  const app = readFileSync(join(__dirname, '..', 'App.vue'), 'utf8')
+  const view = readFileSync(join(__dirname, '..', 'components', 'PdfView.vue'), 'utf8')
+  it('opens in the editor first, its own window only when no workspace can hold an editor', () => {
+    const fn = app.slice(app.indexOf('async function viewFile('), app.indexOf('async function viewFile(') + 600)
+    expect(fn.indexOf("if (openInTesselEditor({ file, line: null, preview })) return")).toBeGreaterThan(0)
+    expect(fn.indexOf("if (openInTesselEditor({ file, line: null, preview })) return")).toBeLessThan(fn.indexOf('window.shellApi.openPdf'))
+  })
+  it("pdf.js never runs the PDF's scripts or XFA forms", () => {
+    expect(view).toContain('getDocument({ data: r.bytes, isEvalSupported: false, enableXfa: false })')
   })
 })

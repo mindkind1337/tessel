@@ -329,14 +329,16 @@ function openSettingsAt(section, anchor = null) {
   settingsAnchor.value = typeof anchor === 'string' ? anchor : null
   settingsOpen.value = true
 }
-// Markdown, diagrams, tables, JSON and images open as editor tabs with
-// Orca's view toggle (Preview | Source | Changes, Table, the picture); PDFs
-// in their own window (Chromium's viewer). The modal viewer (FileViewer.vue)
-// stays only as a fallback when no workspace can hold an editor pane.
+// Markdown, diagrams, tables, JSON, images and PDFs open as editor tabs with
+// Orca's view toggle (Preview | Source | Changes, Table, the picture, the PDF's
+// pages). A PDF goes to its own window (Chromium's viewer) only when no
+// workspace can hold an editor pane; the modal viewer (FileViewer.vue) is the
+// same fallback for the rest.
 const fileView = ref(null) // { file, label, line }
 async function viewFile({ file, label = '', line = null, preview = true }) {
   if (!file) return
   if (fileKind(file) === 'pdf') {
+    if (openInTesselEditor({ file, line: null, preview })) return
     // The PDF window reads a file of this computer: not a Live Share host's.
     if (isLsharePath(file)) return showToast(localOnlyText())
     const res = window.shellApi.openPdf ? await window.shellApi.openPdf(file).catch(() => null) : null

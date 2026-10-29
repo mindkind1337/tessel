@@ -434,6 +434,13 @@
     "media": {
       "unreadable": "Ce fichier n'a pas pu être lu.",
       "cannotPlay": "Ce fichier ne peut pas être lu ici (son format n'est pas pris en charge)."
+    },
+    "pdf": {
+      "unreadable": "Ce PDF n'a pas pu être lu.",
+      "pages": "{{count}} pages",
+      "zoomOut": "Zoom arrière",
+      "zoomIn": "Zoom avant",
+      "fitWidth": "Ajuster à la largeur"
     }
   },
   "explorer": {

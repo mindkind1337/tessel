@@ -53,11 +53,20 @@ export function readForView(file) {
 // maxBytes (optional, below MAX_IMAGE_BYTES): a smaller cap, checked before
 // anything is read (an image shown inline in a chat).
 export function readImageForView(file, { maxBytes } = {}) {
-  if (!BYTE_KINDS.includes(fileKind(file))) return { ok: false, error: t('main.file.notImage', 'Not an image.') }
+  const kind = fileKind(file)
+  if (!BYTE_KINDS.includes(kind)) return { ok: false, error: t('main.file.notImage', 'Not an image.') }
   if (Number.isSafeInteger(maxBytes) && maxBytes > 0 && maxBytes < MAX_IMAGE_BYTES) {
     const { st, error } = statFile(file)
     if (error) return { ok: false, error }
     if (st.size > maxBytes) return { ok: false, kind: 'image', tooLarge: true, error: t('main.file.imageTooLarge', 'This image is too large to show here.') }
+  }
+  // A PDF for the editor's tab (pdf.js): its bytes, where the file viewer
+  // only gets its size (readForView: Chromium's window reads the file itself).
+  if (kind === 'pdf') {
+    const { st, error } = statFile(file)
+    if (error) return { ok: false, error }
+    if (st.size > MAX_IMAGE_BYTES) return { ok: false, kind, error: t('main.file.viewTooLarge', 'This file is too large to show here (over 30 MB).') }
+    return { ok: true, kind, size: st.size, dataUrl: `data:${BINARY_MIME.pdf};base64,${fs.readFileSync(file).toString('base64')}` }
   }
   return readForView(file)
 }

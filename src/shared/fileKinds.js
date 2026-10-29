@@ -4,7 +4,7 @@
 //   table     CSV / TSV
 //   json      formatted JSON (JSON Lines: one value per line)
 //   image     png, jpg, gif, webp, bmp, ico, svg (svg shown as an image)
-//   pdf       Chromium's PDF viewer, in its own window
+//   pdf       an editor tab (pdf.js), its pages drawn as they come into view
 //   sheet     a workbook (.xlsx / .xlsm / .ods), its sheets as tables (read-only)
 //   doc       a document (.docx / .odt): its text, headings, lists, tables
 //   slides    a presentation (.pptx / .odp): the text of each slide
@@ -42,6 +42,7 @@ export const BINARY_MIME = {
   xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
   xlsm: 'application/vnd.ms-excel.sheet.macroEnabled.12',
   ods: 'application/vnd.oasis.opendocument.spreadsheet',
+  pdf: 'application/pdf',
   docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
   odt: 'application/vnd.oasis.opendocument.text',
   pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
@@ -62,7 +63,7 @@ export const BINARY_MIME = {
   mov: 'video/quicktime'
 }
 // The kinds read whole as bytes (an image, or one of the views above).
-export const BYTE_KINDS = ['image', 'sheet', 'doc', 'slides', 'audio', 'video']
+export const BYTE_KINDS = ['image', 'pdf', 'sheet', 'doc', 'slides', 'audio', 'video']
 
 export function extOf(file) {
   const m = /\.([A-Za-z0-9]{1,10})$/.exec(String(file || ''))
