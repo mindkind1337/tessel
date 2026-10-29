@@ -4,7 +4,7 @@
 import fs from 'fs'
 import { isAbsolute } from 'path'
 import { pathToFileURL } from 'url'
-import { fileKind, extOf, IMAGE_MIME } from '../shared/fileKinds'
+import { fileKind, extOf, IMAGE_MIME, BINARY_MIME } from '../shared/fileKinds'
 import { t } from './i18n'
 
 export const MAX_TEXT_BYTES = 20 * 1024 * 1024
@@ -33,9 +33,10 @@ export function readForView(file) {
   if (error) return { ok: false, error }
   const kind = fileKind(file)
   if (kind === 'pdf') return { ok: true, kind, size: st.size }
-  if (kind === 'image') {
+  // An image, or a workbook (read whole: the editor's sheet view unzips it).
+  if (kind === 'image' || kind === 'sheet') {
     if (st.size > MAX_IMAGE_BYTES) return { ok: false, kind, error: t('main.file.imageTooLarge', 'This image is too large to show here.') }
-    const mime = IMAGE_MIME[extOf(file)]
+    const mime = IMAGE_MIME[extOf(file)] || BINARY_MIME[extOf(file)]
     const data = fs.readFileSync(file)
     return { ok: true, kind, size: st.size, dataUrl: `data:${mime};base64,${data.toString('base64')}` }
   }
@@ -50,7 +51,7 @@ export function readForView(file) {
 // maxBytes (optional, below MAX_IMAGE_BYTES): a smaller cap, checked before
 // anything is read (an image shown inline in a chat).
 export function readImageForView(file, { maxBytes } = {}) {
-  if (fileKind(file) !== 'image') return { ok: false, error: t('main.file.notImage', 'Not an image.') }
+  if (fileKind(file) !== 'image' && fileKind(file) !== 'sheet') return { ok: false, error: t('main.file.notImage', 'Not an image.') }
   if (Number.isSafeInteger(maxBytes) && maxBytes > 0 && maxBytes < MAX_IMAGE_BYTES) {
     const { st, error } = statFile(file)
     if (error) return { ok: false, error }

@@ -113,14 +113,15 @@ function defaultMode(f) {
   if (!f) return 'edit'
   if (f.diff) return 'diff'
   const k = fileKind(docPathOf(f))
-  if (k === 'image') return 'image'
+  // A workbook is shown like an image: read whole, no text to edit.
+  if (k === 'image' || k === 'sheet') return 'image'
   return RICH_KINDS.includes(k) ? 'rich' : 'edit'
 }
 const mode = computed(() => (activeFile.value && activeFile.value.mode) || defaultMode(activeFile.value))
 const toggleModes = computed(() => {
   if (!activeFile.value) return []
   if (diffInfo.value) return kind.value === 'markdown' ? ['source', 'rich'] : []
-  if (kind.value === 'image') return []
+  if (kind.value === 'image' || kind.value === 'sheet') return []
   if (RICH_KINDS.includes(kind.value)) return ['source', 'rich', 'changes']
   return ['edit', 'changes']
 })
@@ -1303,7 +1304,7 @@ onBeforeUnmount(() => {
           :key="activeFile && activeFile.path"
           class="ed-host"
           :file="activeDocPath"
-          :kind="mode === 'image' ? 'image' : kind"
+          :kind="mode === 'image' ? (kind === 'sheet' ? 'sheet' : 'image') : kind"
           :text="richText"
           @open="openLinked"
           @source="setToggle('source')"

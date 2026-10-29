@@ -31,7 +31,7 @@ import { cleanEnv } from './cleanEnv'
 import { RISKY_CONFIG_ARGS, GUEST_FIXED_ARGS, parseRisky, hookEntries, neutralize, gitTrust } from './gitSafety'
 import { codexDayHint } from './remoteAgent/codexDayHint'
 import { parseRemotePath, remoteRoot, relativeTo, childPath, isRemotePath } from '../shared/remotePath'
-import { fileKind, extOf, IMAGE_MIME } from '../shared/fileKinds'
+import { fileKind, extOf, IMAGE_MIME, BINARY_MIME } from '../shared/fileKinds'
 import { sortEntries } from '../shared/explorerSort'
 import { t } from './i18n'
 import { validateCloneUrl, deriveCloneRepoName, cloneFailureMessage, errorText as addProjectErrorText } from './addProject'
@@ -1923,8 +1923,9 @@ ${q.root}`, () => sparseInfoNow(q))
   }
 
   // An image (Markdown pictures, the image view) as a data URL.
+  // An image, or a workbook for the editor's sheet view (read whole).
   async function readImage(file) {
-    if (fileKind(file) !== 'image') return { ok: false, error: t('main.file.notImage', 'Not an image.') }
+    if (fileKind(file) !== 'image' && fileKind(file) !== 'sheet') return { ok: false, error: t('main.file.notImage', 'Not an image.') }
     const loc = locateFile(file)
     if (!loc) return { ok: false, error: notInProject() }
     const res = await call(loc.hostId, '__t_read', [arg(loc.root.path), arg(loc.path), String(MAX_IMAGE)], { cap: MAX_IMAGE + HEADER_SLACK, timeoutMs: 120000, op: 'read', retry: true })
@@ -1933,7 +1934,7 @@ ${q.root}`, () => sparseInfoNow(q))
     if (res.rc !== 0 || res.truncated) return { ok: false, error: rcText(res, t('main.file.notFound', 'The file was not found.')) }
     const nl = res.out.indexOf(0x0a)
     const data = res.out.subarray(nl + 1)
-    return { ok: true, kind: 'image', size: data.length, dataUrl: `data:${IMAGE_MIME[extOf(file)]};base64,${data.toString('base64')}` }
+    return { ok: true, kind: 'image', size: data.length, dataUrl: `data:${IMAGE_MIME[extOf(file)] || BINARY_MIME[extOf(file)]};base64,${data.toString('base64')}` }
   }
 
   // --- Watching (polled: nothing like inotify reaches Windows over ssh) -----------

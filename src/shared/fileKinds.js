@@ -5,6 +5,7 @@
 //   json      formatted JSON (JSON Lines: one value per line)
 //   image     png, jpg, gif, webp, bmp, ico, svg (svg shown as an image)
 //   pdf       Chromium's PDF viewer, in its own window
+//   sheet     an Excel workbook (.xlsx / .xlsm), its sheets as tables (read-only)
 //   text      anything else that is text (shown with line numbers)
 const EXT = {
   markdown: ['md', 'markdown', 'mdx'],
@@ -12,7 +13,8 @@ const EXT = {
   table: ['csv', 'tsv'],
   json: ['json', 'jsonc', 'jsonl', 'ndjson'],
   image: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'ico', 'svg'],
-  pdf: ['pdf']
+  pdf: ['pdf'],
+  sheet: ['xlsx', 'xlsm']
 }
 
 export const IMAGE_MIME = {
@@ -26,12 +28,18 @@ export const IMAGE_MIME = {
   svg: 'image/svg+xml'
 }
 
+// Files read whole as bytes for a view of their own (sheet/xlsx.js).
+export const BINARY_MIME = {
+  xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  xlsm: 'application/vnd.ms-excel.sheet.macroEnabled.12'
+}
+
 export function extOf(file) {
   const m = /\.([A-Za-z0-9]{1,10})$/.exec(String(file || ''))
   return m ? m[1].toLowerCase() : ''
 }
 
-// -> 'markdown' | 'mermaid' | 'table' | 'json' | 'image' | 'pdf' | 'text'
+// -> 'markdown' | 'mermaid' | 'table' | 'json' | 'image' | 'pdf' | 'sheet' | 'text'
 export function fileKind(file) {
   const ext = extOf(file)
   for (const [kind, list] of Object.entries(EXT)) if (list.includes(ext)) return kind

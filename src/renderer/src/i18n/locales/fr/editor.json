@@ -419,6 +419,13 @@
     "state": {
       "saving": "Enregistrement…",
       "deletedOnDisk": "Supprimé sur le disque : l'enregistrement le recréera"
+    },
+    "sheet": {
+      "unreadable": "Ce classeur n'a pas pu être lu.",
+      "empty": "Ce classeur n'a aucune feuille.",
+      "emptySheet": "Cette feuille est vide.",
+      "moreRows": "Seules les {{max}} premières lignes sont affichées ({{count}} de plus).",
+      "readOnly": "Lecture seule"
     }
   },
   "explorer": {

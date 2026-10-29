@@ -13595,3 +13595,67 @@ body:has(.settings-page) > .orca-menu {
 .context-view .monaco-menu .monaco-action-bar .action-item.disabled .action-label {
   opacity: 0.5;
 }
+
+/* An Excel workbook in an editor tab (SheetView.vue): the table above, the
+   sheets as tabs along the bottom, as in Excel. */
+.sheet-view {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+.sheet-table-wrap {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+.sheet-table th {
+  text-align: center;
+  font-weight: 500;
+  color: var(--text-dim);
+  position: sticky;
+  top: 0;
+}
+.sheet-table td {
+  white-space: pre;
+  max-width: 420px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sheet-tabs {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 4px 8px;
+  border-top: 1px solid var(--border);
+  overflow-x: auto;
+}
+.sheet-tab {
+  flex: none;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 4px 12px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: none;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.sheet-tab:hover {
+  color: var(--text);
+}
+.sheet-tab.active {
+  color: var(--text-strong);
+  border-color: var(--border);
+  background: var(--surface);
+}
+.sheet-readonly {
+  margin-left: auto;
+  padding-left: 12px;
+  color: var(--text-dim);
+  font-size: 12px;
+  white-space: nowrap;
+}
