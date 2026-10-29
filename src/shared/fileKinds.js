@@ -5,16 +5,24 @@
 //   json      formatted JSON (JSON Lines: one value per line)
 //   image     png, jpg, gif, webp, bmp, ico, svg (svg shown as an image)
 //   pdf       Chromium's PDF viewer, in its own window
-//   sheet     an Excel workbook (.xlsx / .xlsm), its sheets as tables (read-only)
+//   sheet     a workbook (.xlsx / .xlsm / .ods), its sheets as tables (read-only)
+//   doc       a document (.docx / .odt): its text, headings, lists, tables
+//   slides    a presentation (.pptx / .odp): the text of each slide
+//   audio     Chromium's player (mp3, wav, ogg, m4a, flac...)
+//   video     Chromium's player (mp4, webm, ogv, mov...)
 //   text      anything else that is text (shown with line numbers)
 const EXT = {
   markdown: ['md', 'markdown', 'mdx'],
   mermaid: ['mmd', 'mermaid'],
   table: ['csv', 'tsv'],
   json: ['json', 'jsonc', 'jsonl', 'ndjson'],
-  image: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'ico', 'svg'],
+  image: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'ico', 'svg', 'avif'],
   pdf: ['pdf'],
-  sheet: ['xlsx', 'xlsm']
+  sheet: ['xlsx', 'xlsm', 'ods'],
+  doc: ['docx', 'odt'],
+  slides: ['pptx', 'odp'],
+  audio: ['mp3', 'wav', 'ogg', 'oga', 'opus', 'm4a', 'aac', 'flac', 'weba'],
+  video: ['mp4', 'm4v', 'webm', 'ogv', 'mov']
 }
 
 export const IMAGE_MIME = {
@@ -25,21 +33,43 @@ export const IMAGE_MIME = {
   webp: 'image/webp',
   bmp: 'image/bmp',
   ico: 'image/x-icon',
-  svg: 'image/svg+xml'
+  svg: 'image/svg+xml',
+  avif: 'image/avif'
 }
 
 // Files read whole as bytes for a view of their own (sheet/xlsx.js).
 export const BINARY_MIME = {
   xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-  xlsm: 'application/vnd.ms-excel.sheet.macroEnabled.12'
+  xlsm: 'application/vnd.ms-excel.sheet.macroEnabled.12',
+  ods: 'application/vnd.oasis.opendocument.spreadsheet',
+  docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  odt: 'application/vnd.oasis.opendocument.text',
+  pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+  odp: 'application/vnd.oasis.opendocument.presentation',
+  mp3: 'audio/mpeg',
+  wav: 'audio/wav',
+  ogg: 'audio/ogg',
+  oga: 'audio/ogg',
+  opus: 'audio/ogg',
+  m4a: 'audio/mp4',
+  aac: 'audio/aac',
+  flac: 'audio/flac',
+  weba: 'audio/webm',
+  mp4: 'video/mp4',
+  m4v: 'video/mp4',
+  webm: 'video/webm',
+  ogv: 'video/ogg',
+  mov: 'video/quicktime'
 }
+// The kinds read whole as bytes (an image, or one of the views above).
+export const BYTE_KINDS = ['image', 'sheet', 'doc', 'slides', 'audio', 'video']
 
 export function extOf(file) {
   const m = /\.([A-Za-z0-9]{1,10})$/.exec(String(file || ''))
   return m ? m[1].toLowerCase() : ''
 }
 
-// -> 'markdown' | 'mermaid' | 'table' | 'json' | 'image' | 'pdf' | 'sheet' | 'text'
+// -> 'markdown' | 'mermaid' | 'table' | 'json' | 'image' | 'pdf' | 'sheet' | 'doc' | 'slides' | 'audio' | 'video' | 'text'
 export function fileKind(file) {
   const ext = extOf(file)
   for (const [kind, list] of Object.entries(EXT)) if (list.includes(ext)) return kind

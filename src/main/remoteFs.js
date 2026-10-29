@@ -31,7 +31,7 @@ import { cleanEnv } from './cleanEnv'
 import { RISKY_CONFIG_ARGS, GUEST_FIXED_ARGS, parseRisky, hookEntries, neutralize, gitTrust } from './gitSafety'
 import { codexDayHint } from './remoteAgent/codexDayHint'
 import { parseRemotePath, remoteRoot, relativeTo, childPath, isRemotePath } from '../shared/remotePath'
-import { fileKind, extOf, IMAGE_MIME, BINARY_MIME } from '../shared/fileKinds'
+import { fileKind, extOf, IMAGE_MIME, BINARY_MIME, BYTE_KINDS } from '../shared/fileKinds'
 import { sortEntries } from '../shared/explorerSort'
 import { t } from './i18n'
 import { validateCloneUrl, deriveCloneRepoName, cloneFailureMessage, errorText as addProjectErrorText } from './addProject'
@@ -1923,9 +1923,10 @@ ${q.root}`, () => sparseInfoNow(q))
   }
 
   // An image (Markdown pictures, the image view) as a data URL.
-  // An image, or a workbook for the editor's sheet view (read whole).
+  // An image, or a file the editor shows in a view of its own (a workbook,
+  // a document, slides, audio, video): read whole.
   async function readImage(file) {
-    if (fileKind(file) !== 'image' && fileKind(file) !== 'sheet') return { ok: false, error: t('main.file.notImage', 'Not an image.') }
+    if (!BYTE_KINDS.includes(fileKind(file))) return { ok: false, error: t('main.file.notImage', 'Not an image.') }
     const loc = locateFile(file)
     if (!loc) return { ok: false, error: notInProject() }
     const res = await call(loc.hostId, '__t_read', [arg(loc.root.path), arg(loc.path), String(MAX_IMAGE)], { cap: MAX_IMAGE + HEADER_SLACK, timeoutMs: 120000, op: 'read', retry: true })

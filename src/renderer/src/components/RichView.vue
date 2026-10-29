@@ -10,13 +10,15 @@ import { renderMarkdown, renderMermaid } from '../markdownView'
 import { markdownPreviewState } from '../markdownSize'
 import MarkdownSizeGate from './MarkdownSizeGate.vue'
 import SheetView from './SheetView.vue'
+import DocView from './DocView.vue'
+import MediaView from './MediaView.vue'
 import { resolveFrom } from '../../../shared/viewPaths'
 import { openTarget } from '../links/openTarget'
 import { t } from '../i18n'
 
 const props = defineProps({
   file: { type: String, required: true },
-  // 'markdown' | 'mermaid' | 'table' | 'image' | 'sheet'
+  // 'markdown' | 'mermaid' | 'table' | 'image' | 'sheet' | 'doc' | 'slides' | 'audio' | 'video'
   kind: { type: String, required: true },
   text: { type: String, default: '' }
 })
@@ -193,6 +195,8 @@ function onBodyClick(e) {
       ></div>
     </div>
     <SheetView v-else-if="kind === 'sheet'" :file="file" />
+    <DocView v-else-if="kind === 'doc' || kind === 'slides'" :file="file" :kind="kind" />
+    <MediaView v-else-if="kind === 'audio' || kind === 'video'" :file="file" :kind="kind" />
     <div v-else-if="kind === 'image'" class="fview-image" data-test="image-view">
       <div v-if="imageError" class="fview-note error">{{ imageError }}</div>
       <img v-else-if="imageUrl" :src="imageUrl" :alt="file.split(/[\\/]/).pop()" draggable="false" />

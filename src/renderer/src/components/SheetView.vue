@@ -1,9 +1,11 @@
 <script setup>
-// An Excel workbook (.xlsx / .xlsm) in an editor tab, read-only: its sheets
+// A workbook (.xlsx / .xlsm / .ods) in an editor tab, read-only: its sheets
 // as tabs, each a table with the column letters and the row numbers
 // (sheet/xlsx.js reads it; formatting, charts and pictures are not shown).
 import { ref, computed, watch, onMounted } from 'vue'
-import { readWorkbook, colName, MAX_ROWS } from '../sheet/xlsx'
+import { readWorkbook, readOds, colName, MAX_ROWS } from '../sheet/xlsx'
+import { loadBytes } from '../office/bytes'
+import { extOf } from '../../../shared/fileKinds'
 import { t } from '../i18n'
 
 const props = defineProps({
@@ -18,14 +20,6 @@ const loading = ref(true)
 const sheet = computed(() => sheets.value[current.value] || null)
 const letters = computed(() => (sheet.value ? Array.from({ length: sheet.value.cols }, (_, i) => colName(i)) : []))
 
-function bytesOf(dataUrl) {
-  const b64 = String(dataUrl || '').replace(/^data:[^,]*,/, '')
-  const bin = atob(b64)
-  const out = new Uint8Array(bin.length)
-  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i)
-  return out
-}
-
 let seq = 0
 async function load() {
   const my = ++seq
@@ -34,13 +28,13 @@ async function load() {
   sheets.value = []
   current.value = 0
   try {
-    const r = window.shellApi && window.shellApi.viewImage ? await window.shellApi.viewImage(props.file) : null
+    const r = await loadBytes(props.file)
     if (my !== seq) return
-    if (!r || !r.ok || !r.dataUrl) {
-      error.value = (r && r.error) || t('editor.sheet.unreadable', 'This workbook could not be read.')
+    if (r.error !== undefined) {
+      error.value = r.error || t('editor.sheet.unreadable', 'This workbook could not be read.')
       return
     }
-    const wb = await readWorkbook(bytesOf(r.dataUrl))
+    const wb = extOf(props.file) === 'ods' ? await readOds(r.bytes) : await readWorkbook(r.bytes)
     if (my !== seq) return
     sheets.value = wb.sheets
   } catch {

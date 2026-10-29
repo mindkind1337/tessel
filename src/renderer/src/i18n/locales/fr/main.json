@@ -414,7 +414,8 @@
       "tooLarge": "Ce fichier est trop volumineux pour être affiché ici (plus de 20 Mo).",
       "binary": "C'est un fichier binaire : Tessel ne peut pas l'afficher.",
       "notImage": "Ce n'est pas une image.",
-      "notPdf": "Ce n'est pas un PDF."
+      "notPdf": "Ce n'est pas un PDF.",
+      "viewTooLarge": "Ce fichier est trop volumineux pour être affiché ici (plus de 30 Mo)."
     },
     "github": {
       "invalidField": "Valeur non valide : {{name}}.",

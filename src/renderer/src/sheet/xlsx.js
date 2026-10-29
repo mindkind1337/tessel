@@ -11,99 +11,8 @@
 
 export const MAX_ROWS = 5000
 export const MAX_COLS = 200
-// The parts this reads, inflated: none may grow past this (a zip bomb).
-const MAX_PART = 64 * 1024 * 1024
+import { zipEntries, readPart, xml, els, resolveTarget } from '../office/zip'
 
-const td = new TextDecoder()
-
-// --- Zip ------------------------------------------------------------------------------
-function u16(b, o) {
-  return b[o] | (b[o + 1] << 8)
-}
-function u32(b, o) {
-  return (b[o] | (b[o + 1] << 8) | (b[o + 2] << 16) | (b[o + 3] << 24)) >>> 0
-}
-
-// name -> { method, offset, size, csize }, from the central directory.
-export function zipEntries(bytes) {
-  const b = bytes
-  let eocd = -1
-  for (let i = b.length - 22; i >= Math.max(0, b.length - 22 - 65535); i--) {
-    if (u32(b, i) === 0x06054b50) {
-      eocd = i
-      break
-    }
-  }
-  if (eocd < 0) throw new Error('not a zip')
-  const count = u16(b, eocd + 10)
-  let p = u32(b, eocd + 16)
-  const out = new Map()
-  for (let i = 0; i < count; i++) {
-    if (p + 46 > b.length || u32(b, p) !== 0x02014b50) throw new Error('bad zip directory')
-    const method = u16(b, p + 10)
-    const csize = u32(b, p + 20)
-    const size = u32(b, p + 24)
-    const nameLen = u16(b, p + 28)
-    const extraLen = u16(b, p + 30)
-    const commentLen = u16(b, p + 32)
-    const offset = u32(b, p + 42)
-    const name = td.decode(b.subarray(p + 46, p + 46 + nameLen))
-    out.set(name, { method, offset, size, csize })
-    p += 46 + nameLen + extraLen + commentLen
-  }
-  return out
-}
-
-async function inflateRaw(data, limit) {
-  const source = new ReadableStream({
-    start(c) {
-      c.enqueue(data)
-      c.close()
-    }
-  })
-  const stream = source.pipeThrough(new DecompressionStream('deflate-raw'))
-  const reader = stream.getReader()
-  const chunks = []
-  let total = 0
-  for (;;) {
-    const { done, value } = await reader.read()
-    if (done) break
-    total += value.length
-    if (total > limit) {
-      reader.cancel().catch(() => {})
-      throw new Error('part too large')
-    }
-    chunks.push(value)
-  }
-  const out = new Uint8Array(total)
-  let o = 0
-  for (const c of chunks) {
-    out.set(c, o)
-    o += c.length
-  }
-  return out
-}
-
-async function readPart(bytes, entries, name) {
-  const e = entries.get(name)
-  if (!e) return null
-  const p = e.offset
-  if (u32(bytes, p) !== 0x04034b50) throw new Error('bad zip entry')
-  const start = p + 30 + u16(bytes, p + 26) + u16(bytes, p + 28)
-  const data = bytes.subarray(start, start + e.csize)
-  if (e.method === 0) return td.decode(data)
-  if (e.method !== 8) throw new Error('unsupported compression')
-  return td.decode(await inflateRaw(data, MAX_PART))
-}
-
-// --- XML ------------------------------------------------------------------------------
-function xml(text) {
-  return new DOMParser().parseFromString(text, 'application/xml')
-}
-// Elements by local name (the namespace prefixes vary between writers).
-function els(node, name) {
-  return Array.from(node.getElementsByTagNameNS('*', name))
-}
 function textOf(node) {
   // A rich string: its runs' <t>; phonetic runs (<rPh>) are not shown.
   const ts = els(node, 't').filter((t) => !t.closest || !t.closest('rPh'))
@@ -157,16 +66,6 @@ function numberText(v) {
 }
 
 // --- Workbook -------------------------------------------------------------------------
-function resolveTarget(base, target) {
-  if (target.startsWith('/')) return target.slice(1)
-  const parts = base.split('/').slice(0, -1)
-  for (const seg of target.split('/')) {
-    if (seg === '..') parts.pop()
-    else if (seg && seg !== '.') parts.push(seg)
-  }
-  return parts.join('/')
-}
-
 export async function readWorkbook(bytes) {
   const data = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes)
   const entries = zipEntries(data)
@@ -254,4 +153,60 @@ function readSheet(doc, name, shared, dateStyle, date1904) {
     }
   }
   return { name, rows, cols, more: Math.max(0, lastRow + 1 - MAX_ROWS) }
+}
+
+// --- OpenDocument spreadsheet (.ods) -------------------------------------------------------
+const TABLE_NS = 'urn:oasis:names:tc:opendocument:xmlns:table:1.0'
+const OFFICE_NS = 'urn:oasis:names:tc:opendocument:xmlns:office:1.0'
+function odsCellText(c) {
+  const type = c.getAttributeNS(OFFICE_NS, 'value-type') || ''
+  const ps = els(c, 'p')
+  const shown = ps.map((p) => p.textContent).join('\n')
+  if (shown) return shown
+  if (type === 'date') return (c.getAttributeNS(OFFICE_NS, 'date-value') || '').replace('T', ' ')
+  if (type === 'boolean') return (c.getAttributeNS(OFFICE_NS, 'boolean-value') || '').toUpperCase()
+  const v = c.getAttributeNS(OFFICE_NS, 'value')
+  return v ? numberText(Number(v)) : ''
+}
+// Rows and cells may say "repeated N times" (an empty tail is often a
+// million rows): repeats are cut at the caps, empty ones never stored.
+export async function readOds(bytes) {
+  const data = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes)
+  const entries = zipEntries(data)
+  const text = await readPart(data, entries, 'content.xml')
+  if (!text) throw new Error('not a spreadsheet')
+  const sheets = []
+  for (const tbl of els(xml(text), 'table')) {
+    if (tbl.namespaceURI !== TABLE_NS) continue
+    const rows = []
+    let cols = 0
+    let ri = 0
+    let total = 0
+    for (const tr of els(tbl, 'table-row')) {
+      const rep = Math.max(1, Number(tr.getAttributeNS(TABLE_NS, 'number-rows-repeated') || 1))
+      const row = []
+      let ci = 0
+      for (const c of Array.from(tr.children).filter((x) => x.localName === 'table-cell' || x.localName === 'covered-table-cell')) {
+        const crep = Math.max(1, Number(c.getAttributeNS(TABLE_NS, 'number-columns-repeated') || 1))
+        const t = odsCellText(c)
+        if (t !== '')
+          for (let k = 0; k < crep && ci + k < MAX_COLS; k++) {
+            while (row.length < ci + k) row.push('')
+            row[ci + k] = t
+          }
+        ci += crep
+      }
+      if (row.length) {
+        total = ri + rep
+        for (let k = 0; k < rep && ri + k < MAX_ROWS; k++) {
+          while (rows.length < ri + k) rows.push([])
+          rows[ri + k] = row
+        }
+        cols = Math.max(cols, row.length)
+      }
+      ri += rep
+    }
+    sheets.push({ name: tbl.getAttributeNS(TABLE_NS, 'name') || String(sheets.length + 1), rows, cols, more: Math.max(0, total - MAX_ROWS) })
+  }
+  return { sheets }
 }

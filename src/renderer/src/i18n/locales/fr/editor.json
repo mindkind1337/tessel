@@ -342,7 +342,11 @@
       "changedNotSaved": "{{name}} a été modifié sur le disque par un autre programme : vos modifications n'ont pas été enregistrées. Comparez, rechargez ou gardez-les.",
       "changedReloaded": "{{name}} a été modifié sur le disque par un autre programme : rechargé.",
       "saveFailed": "Impossible d'enregistrer {{name}} : {{error}}",
-      "reloadFailed": "Impossible de recharger {{name}} : {{error}}"
+      "reloadFailed": "Impossible de recharger {{name}} : {{error}}",
+      "unreadable": "Ce document n'a pas pu être lu.",
+      "noSlides": "Cette présentation n'a aucune diapositive.",
+      "slide": "Diapositive {{n}}",
+      "empty": "Ce document ne contient aucun texte."
     },
     "view": {
       "edit": "Édition",
@@ -426,6 +430,10 @@
       "emptySheet": "Cette feuille est vide.",
       "moreRows": "Seules les {{max}} premières lignes sont affichées ({{count}} de plus).",
       "readOnly": "Lecture seule"
+    },
+    "media": {
+      "unreadable": "Ce fichier n'a pas pu être lu.",
+      "cannotPlay": "Ce fichier ne peut pas être lu ici (son format n'est pas pris en charge)."
     }
   },
   "explorer": {
