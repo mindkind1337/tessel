@@ -965,6 +965,15 @@ async function act(what) {
   if (readOnly.value && WRITES.includes(what)) return refuseReadOnly()
   if (what === 'open' && e) emit('open', e.path)
   else if (what === 'editor' && e) emit('open-editor', e.path)
+  else if (what === 'download' && e && !e.dir && remote.value) {
+    try {
+      const res = await api().download(e.path)
+      if (res?.ok) emit('toast', t('explorer.download.done', 'File downloaded.'))
+      else if (!res?.canceled) emit('toast', res?.error || t('explorer.download.failed', 'The file could not be downloaded.'))
+    } catch {
+      emit('toast', t('explorer.download.failed', 'The file could not be downloaded.'))
+    }
+  }
   else if (what === 'external' && e) emit('open-external', e.path)
   else if (what === 'terminal') emit('terminal-here', menuDir.value)
   else if (what === 'insert' && e) emit('insert-path', quoted(relPath(e.path)))
@@ -1544,6 +1553,7 @@ function rowTitle(e) {
         <template v-if="menu.entry && !menu.entry.dir">
           <button role="menuitem" class="ctx-menu-item" @click="act('open')">{{ t('explorer.menu.open', 'Open') }}</button>
           <button role="menuitem" class="ctx-menu-item" @click="act('editor')">{{ t('explorer.menu.openInEditor', 'Open in editor') }}</button>
+          <button v-if="remote && api()?.download" role="menuitem" class="ctx-menu-item" data-test="explorer-menu-download" @click="act('download')">{{ t('explorer.menu.download', 'Download…') }}</button>
           <button v-if="!remote" role="menuitem" class="ctx-menu-item" data-test="explorer-menu-external" @click="act('external')">{{ t('explorer.menu.openInVsCode', 'Open in VS Code') }}</button>
         </template>
         <button v-if="!lshare" role="menuitem" class="ctx-menu-item" data-test="explorer-menu-terminal" @click="act('terminal')">{{ t('explorer.menu.terminalHere', 'Open a terminal here') }}</button>

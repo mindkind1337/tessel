@@ -214,3 +214,16 @@ describe('image transfer bounds', () => {
     expect((await h.fs.readImage('lshare://p1/poster.png')).code).toBe('bad-answer')
   })
 })
+
+
+describe('download validation', () => {
+  it('rejects malformed bytes, mismatched sizes, oversize replies and out-of-project paths', async () => {
+    for (const data of [{ size: 1, base64: '!!!!' }, { size: 2, base64: 'AA==' }, { size: LSHARE_LIMITS.downloadBytes + 1, base64: '' }]) {
+      expect((await host(() => data).fs.readDownload('lshare://p1/a.bin')).code).toBe('bad-answer')
+    }
+    const h = host(() => ({ size: 0, base64: '' }))
+    expect((await h.fs.readDownload('lshare://p1/../secret')).ok).toBe(false)
+    expect(h.calls).toHaveLength(0)
+    expect(await h.fs.readDownload('lshare://p1/empty')).toEqual({ ok: true, buf: Buffer.alloc(0) })
+  })
+})

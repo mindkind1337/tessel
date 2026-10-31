@@ -147,6 +147,16 @@ describe.skipIf(!gitSh())('a guest\'s requests on a fake host (real sh, real git
     expect(res.results[0]).toMatchObject({ ok: true, ignored: null })
   }, 30000)
 
+  it('downloads raw SSH bytes from an open project, including binary and empty files', async () => {
+    const bytes = Buffer.from([0, 255, 128, 13, 10, 0])
+    fs.writeFileSync(join(proj, 'download.bin'), bytes)
+    fs.writeFileSync(join(proj, 'empty.bin'), Buffer.alloc(0))
+    expect(await rfs.readDownload(root + '/download.bin')).toEqual({ ok: true, buf: bytes })
+    expect(await rfs.readDownload(root + '/empty.bin')).toEqual({ ok: true, buf: Buffer.alloc(0) })
+    expect((await rfs.readDownload('ssh://unknown/srv/download.bin')).ok).toBe(false)
+    expect((await rfs.readDownload(root + '/src')).ok).toBe(false)
+  }, 30000)
+
   it('reads a file, cut at the size asked; an ignored one, or one below an ignored folder, is missing', async () => {
     const read = await rfs.guest.read({ root, rel: 'src/main.js', max: 1024 })
     expect(read.ok).toBe(true)

@@ -166,6 +166,7 @@ const api = {
     reveal: (path) => ipcRenderer.invoke('chatFiles:reveal', { path })
   },
   explorer: {
+    download: (file) => ipcRenderer.invoke('explorer:download', file),
     list: (q) => ipcRenderer.invoke('explorer:list', q),
     listMany: (q) => ipcRenderer.invoke('explorer:listMany', q),
     status: (q) => ipcRenderer.invoke('explorer:status', q),

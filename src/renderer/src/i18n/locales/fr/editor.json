@@ -515,7 +515,8 @@
       "rename": "Renommer",
       "copyPath": "Copier le chemin",
       "copyRelPath": "Copier le chemin relatif",
-      "reveal": "Révéler dans l'explorateur de fichiers"
+      "reveal": "Révéler dans l'explorateur de fichiers",
+      "download": "Télécharger…"
     },
     "trash": {
       "action": "Mettre à la Corbeille",
@@ -663,6 +664,10 @@
       "years": "{{count}} ans",
       "yearAgo": "il y a {{count}} an",
       "yearsAgo": "il y a {{count}} ans"
+    },
+    "download": {
+      "done": "Fichier téléchargé.",
+      "failed": "Le fichier n’a pas pu être téléchargé."
     }
   },
   "notes": {

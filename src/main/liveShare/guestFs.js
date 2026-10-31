@@ -383,6 +383,18 @@ export function createGuestFs({ request } = {}) {
     })
   }
 
+  function readDownload(file) {
+    const loc = locate(null, file)
+    if (!loc || !loc.rel) return Promise.resolve(outside())
+    return call('fs.download', loc.project, { path: loc.rel }, (d) => {
+      if (!Number.isSafeInteger(d.size) || d.size < 0 || d.size > L.downloadBytes ||
+          typeof d.base64 !== 'string' || d.base64.length > 4 * Math.ceil(L.downloadBytes / 3) ||
+          d.base64.length % 4 !== 0 || !/^[A-Za-z0-9+/]*={0,2}$/.test(d.base64)) return null
+      const buf = Buffer.from(d.base64, 'base64')
+      return buf.length === d.size ? { buf } : null
+    })
+  }
+
   // An image for the viewer: { ok, kind: 'image', size, dataUrl }.
   function readImage(file) {
     const loc = locate(null, file)
@@ -680,6 +692,7 @@ export function createGuestFs({ request } = {}) {
     writeForEdit,
     headContent,
     readImage,
+    readDownload,
     readForView,
     // notes
     loadNotes,

@@ -1777,6 +1777,22 @@ ${q.root}`, () => sparseInfoNow(q))
   }
   const notInProject = () => t('main.remoteFs.noProject', 'This remote file is not in an open remote project.')
 
+  // Raw bytes for Save as, bounded and scoped to an open SSH project.
+  async function readDownload(file) {
+    const loc = locateFile(file)
+    if (!loc) return { ok: false, error: notInProject() }
+    const res = await call(loc.hostId, '__t_read', [arg(loc.root.path), arg(loc.path), String(MAX_EDIT_BYTES)], {
+      cap: MAX_EDIT_BYTES + HEADER_SLACK, timeoutMs: 120000, op: 'read', retry: true
+    })
+    if (res.rc === RC.TOO_LARGE) return { ok: false, code: 'too-large' }
+    if (res.error || res.rc !== 0 || res.truncated) return { ok: false, error: res.error || rcText(res, t('main.download.readFailed', 'The remote file could not be downloaded.')) }
+    const nl = res.out.indexOf(0x0a)
+    const st = nl < 0 ? null : parseStat(res.out.subarray(0, nl).toString('latin1'))
+    if (!st) return { ok: false }
+    const buf = res.out.subarray(nl + 1)
+    return buf.length <= MAX_EDIT_BYTES ? { ok: true, buf } : { ok: false, code: 'too-large' }
+  }
+
   // -> { ok, text, bom, size, mtimeMs, sig, hash } | { ok: false, error, code }
   async function readForEdit(file) {
     const loc = locateFile(file)
@@ -2651,6 +2667,7 @@ ${root}`, () => gitWorktreesNow(root))
     create,
     rename,
     trash,
+    readDownload,
     readForEdit,
     statForEdit,
     statLinks,

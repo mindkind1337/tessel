@@ -574,6 +574,21 @@ op('fs.head', {
   }
 })
 
+// Download uses the same project/path checks as reading, including hidden files.
+op('fs.download', {
+  bulk: true,
+  keep: ['base64'],
+  maxBytes: 4 * Math.ceil(L.downloadBytes / 3) + 1024,
+  args: { path: A.path },
+  async run(a, env) {
+    const r = await env.resolve(a.path, { kind: 'file' })
+    if (!r.ok) return fail(r.code)
+    const got = env.scope.readResolved(r, L.downloadBytes)
+    if (!got.ok) return fail(got.code)
+    return done({ size: got.buf.length, base64: got.buf.toString('base64') })
+  }
+})
+
 op('fs.image', {
   bulk: true,
   maxBytes: 4 * Math.ceil(L.imageBytes / 3) + 1024,

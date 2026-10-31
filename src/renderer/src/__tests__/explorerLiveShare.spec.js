@@ -237,3 +237,25 @@ describe("the Timeline of a Live Share host's file", () => {
     expect(window.shellApi.localHistory.add).not.toHaveBeenCalled()
   })
 })
+
+
+describe('download menu', () => {
+  it.each(['lshare://p1', 'ssh://ssh-box/srv/project'])('downloads a file from %s without needing edit rights', async (root) => {
+    const download = vi.fn(async () => ({ ok: true }))
+    api({ download })
+    await make({ root })
+    await openMenuOn('a.js')
+    await w.get('[data-test="explorer-menu-download"]').trigger('click')
+    await flushPromises()
+    expect(download).toHaveBeenCalledWith(`${root}\\a.js`)
+    expect(w.emitted('toast').at(-1)).toEqual(['File downloaded.'])
+    await openMenuOn('src')
+    expect(has('explorer-menu-download')).toBe(false)
+  })
+  it('does not offer remote download for local files', async () => {
+    api({ download: vi.fn() })
+    await make({ root: 'C:/project' })
+    await openMenuOn('a.js')
+    expect(has('explorer-menu-download')).toBe(false)
+  })
+})

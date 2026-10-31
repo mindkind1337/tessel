@@ -1,3 +1,4 @@
+import { createFileDownload } from './fileDownload'
 import { app, BrowserWindow, Menu, ipcMain, clipboard, nativeImage, dialog, Notification, shell, powerSaveBlocker, powerMonitor, safeStorage, webContents, session, utilityProcess } from 'electron'
 import { holdClaudeDefaultModel } from './claudeDefaultModel'
 import { join, isAbsolute, dirname, basename, resolve as resolvePath, sep } from 'path'
@@ -2256,6 +2257,8 @@ const remoteArg = (q) => (q && typeof q === 'object' ? isRemotePath(q.root) || i
 // (liveShare/guestFs.js); a session not there answers that the host did not.
 const offlineFs = createGuestFs({ request: () => Promise.reject(new Error('offline')) })
 const guestFs = () => (liveShare && liveShare.guestFs) || offlineFs
+const downloadFile = createFileDownload({ dialog, getWindow: () => mainWindow, downloadsDir: () => app.getPath('downloads'), remote: remoteFs, guest: guestFs })
+ipcMain.handle('explorer:download', (_event, file) => downloadFile(file))
 // Add a project (addProject.js): clone from a URL, create a new one, find the
 // repositories in a folder.
 registerAddProject({ ipcMain, service: createAddProject({ send: (channel, payload) => send(channel, payload) }) })

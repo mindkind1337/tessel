@@ -420,3 +420,16 @@ describe('large image previews', () => {
     expect((await ask('fs.image', { path: 'poster.png' })).code).toBe('too-large')
   })
 })
+
+
+describe('file downloads', () => {
+  it('reads binary bytes without text decoding, keeping project restrictions and size bounds', async () => {
+    const bytes = Buffer.from([0, 255, 13, 10, 0, 128])
+    put(root, 'file.bin', bytes)
+    expect(await ask('fs.download', { path: 'file.bin' })).toEqual({ ok: true, data: { size: bytes.length, base64: bytes.toString('base64') } })
+    expect((await ask('fs.download', { path: '.env' })).ok).toBe(false)
+    expect((await ask('fs.download', { path: '../outside/secret.txt' })).ok).toBe(false)
+    put(root, 'big.bin', Buffer.alloc(L.downloadBytes + 1))
+    expect((await ask('fs.download', { path: 'big.bin' })).code).toBe('too-large')
+  })
+})

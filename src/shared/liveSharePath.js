@@ -132,6 +132,7 @@ export const LSHARE_LIMITS = Object.freeze({
   textBytes: 2 * 1024 * 1024, // a file opened in the editor, a diff side
   // Base64 plus metadata stays below the 12 MB channel answer limit.
   imageBytes: 8 * 1024 * 1024,
+  downloadBytes: 8 * 1024 * 1024, // raw file; base64 fits the channel budget
   notesBytes: 512 * 1024,
   writeBytes: 768 * 1024, // a save: under the 1 MB a guest's message may be
   scmEntries: 5000, // the Changes list, a commit's or a branch's files

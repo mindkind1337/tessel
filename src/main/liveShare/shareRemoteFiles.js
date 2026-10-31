@@ -59,6 +59,7 @@ export const REMOTE_OPS = Object.freeze([
   'fs.stat',
   'fs.read',
   'fs.image',
+  'fs.download',
   'fs.write',
   'fs.searchNames',
   'fs.searchContent',
@@ -413,6 +414,12 @@ export function createRemoteShareFiles({ remote, log = null, now = () => Date.no
     'fs.stat': (svc, a, st, c) => opStat(svc, a, st, c.settings),
     'fs.read': (svc, a, st, c) => opRead(svc, a, st, c.settings, c.rights),
     'fs.image': (svc, a, st, c) => opImage(svc, a, st, c.settings),
+    'fs.download': async (svc, a, st, c) => {
+      if (hiddenFor(st, a.path, c.settings)) return fail('not-found')
+      const res = await svc.guest.read({ root: st.root, rel: a.path, max: L.downloadBytes, ignore: hidesPrivate(c.settings) })
+      if (!res || !res.ok) return fail(readCode(svc, st, res && res.code))
+      return done({ size: res.buf.length, base64: res.buf.toString('base64') })
+    },
     'fs.write': (svc, a, st, c) => opWrite(svc, a, st, c.settings, c.rights, c),
     'fs.searchNames': (svc, a, st, c) => opSearchNames(svc, a, st, c.settings),
     'fs.searchContent': (svc, a, st, c) => opSearchContent(svc, a, st, c.settings)
@@ -463,7 +470,7 @@ export function createRemoteShareFiles({ remote, log = null, now = () => Date.no
     }
     if (!res || typeof res !== 'object') return fail('failed')
     if (!res.ok) return fail(typeof res.code === 'string' ? res.code : 'failed')
-    const keep = name === 'fs.read' ? ['text'] : name === 'fs.image' ? ['dataUrl'] : []
+    const keep = name === 'fs.read' ? ['text'] : name === 'fs.image' ? ['dataUrl'] : name === 'fs.download' ? ['base64'] : []
     const { value, hits } = assertNoHostPaths(res.data, [st.path, root], { keep })
     if (hits && log && log.warn) log.warn(`answer to ${name}: ${hits} host path(s) replaced`) // i18n-ignore log line
     return done(value)

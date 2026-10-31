@@ -1098,6 +1098,13 @@
       "listUnreadable": "Impossible de lire la liste des plugins de Muse Code.",
       "setFailed": "Muse Code n'a pas pu modifier ce plugin.",
       "removeFailed": "Muse Code n'a pas pu désinstaller ce plugin."
+    },
+    "download": {
+      "busy": "Un téléchargement est déjà en cours.",
+      "title": "Télécharger le fichier",
+      "tooLarge": "Ce fichier dépasse la limite de téléchargement ({{mb}} Mo).",
+      "readFailed": "Le fichier distant n’a pas pu être téléchargé.",
+      "failed": "Le fichier n’a pas pu être téléchargé ou enregistré à cet endroit."
     }
   },
   "main.chat.image.tooLarge": "Cette image dépasse {{mb}} Mo.",

@@ -548,3 +548,16 @@ describe('large remote image previews', () => {
     expect((await guest.readImage('lshare://p1/poster.png')).code).toBe('too-large')
   })
 })
+
+
+describe('shared SSH downloads', () => {
+  it('preserves binary bytes through the guest and refuses secret files', async () => {
+    const bytes = Buffer.from([0, 255, 128, 0, 10])
+    remote.state.tree['download.bin'] = { buf: bytes }
+    const guest = createGuestFs({ request: (op, project, args) => ask(op, args) })
+    expect(await guest.readDownload('lshare://p1/download.bin')).toEqual({ ok: true, buf: bytes })
+    expect((await guest.readDownload('lshare://p1/.env')).ok).toBe(false)
+    remote.state.tree['download.bin'] = { buf: Buffer.alloc(L.downloadBytes + 1) }
+    expect((await guest.readDownload('lshare://p1/download.bin')).code).toBe('too-large')
+  })
+})
