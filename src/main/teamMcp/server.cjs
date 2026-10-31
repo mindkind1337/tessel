@@ -1369,6 +1369,11 @@ BROWSER_TOOLS.push({
   description: 'Download original files in this page authenticated session. While you control a page, downloads automatically save in local Downloads/Tessel without a dialog. To choose a name or folder, BEFORE clicking call with saveAs (absolute LOCAL file path including desired filename). This overrides the destination for one download, expires after 60 seconds, and applies only to this page. Then click and call without saveAs to read id, state, byte progress, final path, errors or cancellation. Verify completed and the saved path before reporting success. Duplicate names receive a numeric suffix; nothing is overwritten. Do not put medical data, cookies or tokens in logs.',
   inputSchema: { type: 'object', properties: { ...PAGE_ARG, saveAs: { type: 'string', description: 'Absolute local destination file path, including filename; prepares the next download only. Parent folders are created.' }, clearDestination: { type: 'boolean', description: 'Forget your prepared destination without downloading.' }, cancel: { type: 'string', description: 'Download id to cancel (optional)' } } }
 })
+BROWSER_TOOLS.push({
+  name: 'browser_login',
+  description: 'List accounts explicitly authorized by the user for agents on the current HTTPS origin (no passwords returned). Pass credentialId to fill that account into a visible login form without submitting. Local vault only; unavailable during Live Share or in guest tabs. Never request, print or extract passwords. If no authorized account is available, let the user sign in or enable agent access in the password manager.',
+  inputSchema: { type: 'object', properties: { ...PAGE_ARG, credentialId: { type: 'string', description: 'ID returned by browser_login; omit to list authorized accounts for this site.' } } }
+})
 const BROWSER_OPS = Object.fromEntries(BROWSER_TOOLS.map((t) => [t.name, t.name.slice('browser_'.length)]))
 TOOLS.push(...BROWSER_TOOLS)
 

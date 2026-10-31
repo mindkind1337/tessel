@@ -76,12 +76,13 @@ import { AGENT_INSTALLS, checkInstall } from './agentInstalls'
 import { createInstallLogs } from './installLog'
 import { writeBoardRule } from './agentMemory'
 import { claudeImageFile, codexImageFile, isPastedImage, isSavedPaste, PASTE_DIR } from './pastedImages'
-import { createBrowserGuests, BROWSER_PARTITION } from './browserGuest'
+import { createBrowserGuests, BROWSER_PARTITION, BROWSER_PARTITION_AGENT } from './browserGuest'
 import { listBrowsersForImport, importFromProfile, importFromFile } from './cookieImport/importer'
 import { detectBrowsers as detectBrowsersForImport } from './cookieImport/detect'
 import { cleanStaleCopies } from './cookieImport/chromium'
 import { createFileTokens } from './cookieImport/fileTokens'
 import { createImportHistory } from './cookieImport/history'
+import { registerPasswordManager } from './browserPasswordManager'
 import { createAgentBrowser } from './agentBrowser'
 import { createAgentTerminal } from './agentTerminal'
 import { createAgentAccounts } from './agentAccounts'
@@ -3728,6 +3729,13 @@ const browserGuests = createBrowserGuests({
   onGuest: (guest) => agentBrowser.watchGuest(guest)
 })
 browserGuests.register(ipcMain)
+const passwordManager = registerPasswordManager({
+  ipcMain, safeStorage, dialog, dataDir: app.getPath('userData'), getWindow: () => mainWindow,
+  guestFor: (event, id) => browserGuests.guestFor(event, id),
+  sharingActive: () => !!liveShare?.credentialsSharingActive(),
+  allowedPage: (guest) => !liveShare?.credentialsSharingActive() && !guest.isDestroyed() &&
+    (guest.session === browserGuests.browserSession(BROWSER_PARTITION) || guest.session === browserGuests.browserSession(BROWSER_PARTITION_AGENT))
+})
 // Importing cookies from another browser into Tessel's browser session, so the
 // user stays signed in to their sites in the built-in browser
 // (src/main/cookieImport). Only counts and domain names leave the main
@@ -3818,6 +3826,7 @@ const agentBrowser = createAgentBrowser({
   enabled: () => agentBrowserEnabled,
   ask: (method, params) => cliBridge.ask(method, params),
   guestById: (id) => browserGuests.guestById(id),
+  login: (guest, id) => passwordManager.login(guest, id),
   downloads: (id, options, allowed) => {
     if (Object.hasOwn(options, 'saveAs')) return browserGuests.downloads.prepare(id, options.saveAs, options.owner, allowed)
     if (options.cancel) browserGuests.downloads.cancel(id, options.cancel)

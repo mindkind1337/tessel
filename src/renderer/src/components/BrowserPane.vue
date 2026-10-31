@@ -25,6 +25,7 @@
 // browser's guest session, with none of your logins.
 import { ref, shallowRef, computed, watch, inject, nextTick, onMounted, onBeforeUnmount } from 'vue'
 import BrowserDownloads from './BrowserDownloads.vue'
+import BrowserPasswords from './BrowserPasswords.vue'
 import {
   ArrowLeft,
   ArrowRight,
@@ -1358,6 +1359,7 @@ defineExpose({ navigate, focusAddress })
         >
           <Cookie :size="16" />
         </button>
+        <BrowserPasswords :guest-id="guestId" />
         <button
           type="button"
           class="bp-btn"

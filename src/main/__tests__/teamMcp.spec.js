@@ -190,6 +190,7 @@ describe('Tessel team tools (background messages)', () => {
       'browser_console',
       'browser_wait',
       'browser_downloads',
+      'browser_login',
       'run_in_terminal',
       'get_terminal_output',
       'send_to_terminal',

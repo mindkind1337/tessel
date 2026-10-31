@@ -63,11 +63,12 @@ export function firefoxProfilesDir(browser, { platform = process.platform, env =
 // A profile: { dir (absolute, where the Cookies database is), name (shown),
 // lastUsed }. Reads the "User Data" folder's "Local State" for the names and
 // the last-used profile.
-export function chromiumProfiles(userDataDir, browser) {
+export function chromiumProfiles(userDataDir, browser, { includePasswords = false } = {}) {
+  const usable = (dir) => hasCookies(dir) || (includePasswords && (safeIsFile(join(dir, 'Login Data')) || safeIsFile(join(dir, 'Login Data For Account'))))
   if (!userDataDir || !safeIsDir(userDataDir)) return []
   if (browser.single) {
     // Opera: the folder itself is the one profile (its Cookies is in Network/).
-    return hasCookies(userDataDir) ? [{ dir: userDataDir, name: browser.name, lastUsed: true }] : []
+    return usable(userDataDir) ? [{ dir: userDataDir, name: browser.name, lastUsed: true }] : []
   }
   const info = readLocalState(join(userDataDir, 'Local State'))
   const names = info.names
@@ -82,7 +83,7 @@ export function chromiumProfiles(userDataDir, browser) {
     if (!e.isDirectory()) continue
     if (e.name !== 'Default' && !/^Profile[ _]?\d+$/i.test(e.name) && !/^Profile /i.test(e.name)) continue
     const dir = join(userDataDir, e.name)
-    if (!hasCookies(dir)) continue
+    if (!usable(dir)) continue
     out.push({ dir, profileDir: e.name, name: names[e.name] || e.name, lastUsed: info.lastUsed === e.name })
   }
   // If none was marked, the first is the default.
@@ -180,12 +181,12 @@ function safeIsFile(p) {
 // profiles: [{ dir, name, lastUsed, cookiesPath }], default: bool }. The
 // system default (if known) is marked and sorted first, its last-used (or
 // first) profile marked default too.
-export async function detectBrowsers({ platform = process.platform, env = process.env, defaultProgId = null } = {}) {
+export async function detectBrowsers({ platform = process.platform, env = process.env, defaultProgId = null, includePasswords = false } = {}) {
   const progId = defaultProgId != null ? defaultProgId : platform === 'win32' ? await readWindowsDefaultProgId().catch(() => null) : null
   const found = []
   for (const b of CHROMIUM_BROWSERS) {
     const dir = chromiumUserDataDir(b, { platform, env })
-    const profiles = chromiumProfiles(dir, b).map((p) => ({ ...p, cookiesPath: chromiumCookiesPath(p.dir) }))
+    const profiles = chromiumProfiles(dir, b, { includePasswords }).map((p) => ({ ...p, cookiesPath: chromiumCookiesPath(p.dir) }))
     if (profiles.length) found.push({ id: b.id, name: b.name, family: 'chromium', localStatePath: dir ? join(dir, 'Local State') : null, profiles, isDefault: matchesProgId(b, progId) })
   }
   for (const b of FIREFOX_BROWSERS) {

@@ -536,6 +536,12 @@ const api = {
   // devtools, and what a page asked for (a new window, a download, a
   // permission, a browser shortcut pressed in it).
   browser: {
+    passwordSources: () => ipcRenderer.invoke('browser:passwordSources'),
+    passwordList: () => ipcRenderer.invoke('browser:passwordList'),
+    passwordChange: (opts) => ipcRenderer.invoke('browser:passwordChange', opts),
+    passwordImportProfile: (opts) => ipcRenderer.invoke('browser:passwordImportProfile', opts),
+    passwordImportCsv: () => ipcRenderer.invoke('browser:passwordImportCsv'),
+    passwordFill: (page, id) => ipcRenderer.invoke('browser:passwordFill', page, id),
     downloads: (id) => ipcRenderer.invoke('browser:downloads', id),
     cancelDownload: (id, downloadId) => ipcRenderer.invoke('browser:cancelDownload', id, downloadId),
     revealDownload: (id, downloadId) => ipcRenderer.invoke('browser:revealDownload', id, downloadId),

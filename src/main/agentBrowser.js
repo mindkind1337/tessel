@@ -65,7 +65,7 @@ import {
 import { shortcutOf, quietContextMenu } from './browserGuest'
 import { leaseDebugger } from './pageDebugger'
 
-export const AGENT_OPS = ['pages', 'open', 'navigate', 'snapshot', 'click', 'mouse', 'fill', 'type', 'press', 'scroll', 'screenshot', 'console', 'wait', 'downloads']
+export const AGENT_OPS = ['pages', 'open', 'navigate', 'snapshot', 'click', 'mouse', 'fill', 'type', 'press', 'scroll', 'screenshot', 'console', 'wait', 'downloads', 'login']
 // An answer's text, at most (characters).
 export const MAX_RESULT_CHARS = 64000
 // A screenshot sent back as an image, at most (base64 characters); larger
@@ -201,7 +201,7 @@ export function consoleEntry(args) {
 //   send(channel, payload)     to the window: 'browser:agentControl'
 //   windowState() -> { minimized, visible } | null   Tessel's window (for the answer when a capture fails)
 //   nativeImage, screenshotDir, log
-export function createAgentBrowser({ verify, enabled = () => true, ask, guestById, downloads = () => [], send = () => {}, windowState = () => null, nativeImage = null, screenshotDir = null, log = null }) {
+export function createAgentBrowser({ verify, enabled = () => true, ask, guestById, downloads = () => [], login = () => ({ ok: false, code: 'unavailable' }), send = () => {}, windowState = () => null, nativeImage = null, screenshotDir = null, log = null }) {
   // guest id -> { refMap, navKey, queue, idle, agent, console: [], attached, listener }
   const pages = new Map()
   const revoked = new Set() // guest ids the user stopped
@@ -812,6 +812,7 @@ export function createAgentBrowser({ verify, enabled = () => true, ask, guestByI
   }
 
   async function run(op, guest, s, args, pane) {
+    if (op === 'login') return { text: JSON.stringify(await login(guest, typeof args.credentialId === 'string' ? args.credentialId : null)) }
     if (op === 'downloads') {
       const options = { cancel: typeof args.cancel === 'string' ? args.cancel : null, owner: pane }
       if (Object.hasOwn(args, 'saveAs')) options.saveAs = args.saveAs

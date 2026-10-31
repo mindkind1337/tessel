@@ -3764,6 +3764,8 @@ export function registerLiveShare({
       return resumed || Promise.resolve([false, false])
     },
     resume: takeBack,
+    // Password vault access is local-only and suspended during host sharing.
+    credentialsSharingActive: () => !!sharing || !!joined,
     // Host: every terminal's output, exit and size, as Tessel gets them.
     onPtyData: (id, data) => sharing?.server?.sendData(id, data),
     onPtyExit: (id, exitCode) => sharing?.server?.sendExit(id, exitCode),
