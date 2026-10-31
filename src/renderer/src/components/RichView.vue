@@ -4,7 +4,9 @@
 // Copyright (c) 2026 Lovecast Inc.): Markdown (sanitized with DOMPurify,
 // Mermaid blocks drawn), a Mermaid diagram, a CSV/TSV table, or an image.
 // The text comes from the tab's document, so it follows unsaved edits.
-import { ref, computed, watch, nextTick, onMounted } from 'vue'
+import { ref, computed, watch, nextTick, onMounted, inject } from 'vue'
+import OrcaMenu from './OrcaMenu.vue'
+import { isVirtualPath } from '../../../shared/liveSharePath'
 import { parseTable } from '../../../shared/fileKinds'
 import { renderMarkdown, renderMermaid } from '../markdownView'
 import { markdownPreviewState } from '../markdownSize'
@@ -50,6 +52,46 @@ const mermaidSvg = ref('')
 const mermaidError = ref('')
 const imageUrl = ref('')
 const imageError = ref('')
+const panelCtx = inject('panelCtx', null)
+const imageMenu = ref(null)
+const downloading = ref(false)
+const downloadNotice = ref('')
+function imageContextMenu(event) {
+  const api = window.shellApi
+  const remote = isVirtualPath(props.file)
+  if (!(remote ? api?.explorer?.download : api?.chat?.imageSaveAs)) return
+  event.preventDefault()
+  event.stopPropagation()
+  imageMenu.value = { x: event.clientX, y: event.clientY, file: props.file, src: imageUrl.value }
+}
+async function downloadImage(target) {
+  if (!target || downloading.value) return
+  downloading.value = true
+  downloadNotice.value = ''
+  try {
+    const api = window.shellApi
+    const res = isVirtualPath(target.file)
+      ? await api.explorer.download(target.file)
+      : await api.chat.imageSaveAs({ dataUrl: target.src, name: target.file.split(/[\\/]/).pop() })
+    if (!res?.canceled) {
+      const message = res?.ok ? t('explorer.download.done', 'File downloaded.') : res?.error || t('explorer.download.failed', 'The file could not be downloaded.')
+      if (panelCtx?.toast) panelCtx.toast(message)
+      else downloadNotice.value = message
+    }
+  } catch {
+    downloadNotice.value = t('explorer.download.failed', 'The file could not be downloaded.')
+  } finally {
+    downloading.value = false
+  }
+}
+const imageMenuItems = computed(() => {
+  const target = imageMenu.value
+  return [{ type: 'item', label: t('explorer.menu.download', 'Download…'), disabled: downloading.value, onSelect: () => downloadImage(target) }]
+})
+watch(() => props.file, () => {
+  imageMenu.value = null
+  downloadNotice.value = ''
+})
 
 function isDark() {
   const c = getComputedStyle(document.body).backgroundColor.match(/\d+(\.\d+)?/g)
@@ -201,8 +243,10 @@ function onBodyClick(e) {
     <MediaView v-else-if="kind === 'audio' || kind === 'video'" :file="file" :kind="kind" />
     <div v-else-if="kind === 'image'" class="fview-image" data-test="image-view">
       <div v-if="imageError" class="fview-note error">{{ imageError }}</div>
-      <img v-else-if="imageUrl" :src="imageUrl" :alt="file.split(/[\\/]/).pop()" draggable="false" />
+      <img v-else-if="imageUrl" :src="imageUrl" :alt="file.split(/[\\/]/).pop()" draggable="false" @contextmenu="imageContextMenu" />
       <div v-else class="fview-note">{{ t('editor.viewer.reading', 'Reading…') }}</div>
+      <div v-if="downloadNotice" class="fview-note" role="status">{{ downloadNotice }}</div>
+      <OrcaMenu :open="!!imageMenu" :anchor="imageMenu" :items="imageMenuItems" @close="imageMenu = null" />
     </div>
   </div>
 </template>
