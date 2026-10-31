@@ -792,7 +792,15 @@ function rewriteProse(text) {
     .map((part, i) =>
       i % 2 === 1
         ? part
-        : part.replace(LINK_DESTINATION, (whole, destination, title = '') => {
+        : part.replace(/:{1,2}codex-file-citation\{([^{}]{1,8192})\}/g, (whole, attributes) => {
+            const attrs = Object.fromEntries([...attributes.matchAll(/([\w-]+)\s*=\s*(?:"([^"]*)"|'([^']*)')/g)].map((m) => [m[1], m[2] ?? m[3]]))
+            if (!attrs.path || /[\r\n\x00]/.test(attrs.path)) return whole
+            const route = routeNativeChatHref(attrs.path)
+            if (route.kind !== 'file') return whole
+            const name = attrs.path.replace(/\\/g, '/').split('/').pop()
+            const label = name.replace(/[\\`*_[\]<>]/g, '\\$&')
+            return `[${label}](${createNativeChatFileHref(formatFileLinkLocation(route))})`
+          }).replace(LINK_DESTINATION, (whole, destination, title = '') => {
             const href = localDestinationHref(destination)
             return href ? `](${href}${title})` : whole
           })
@@ -830,7 +838,7 @@ export function linkImageMarkers(markdown) {
 
 export function protectLocalMarkdownLinks(markdown) {
   const text = String(markdown ?? '')
-  if (!/\]\(/.test(text)) return text
+  if (!/\]\(|:codex-file-citation\{/.test(text)) return text
   const out = []
   let fence = null
   let prose = []

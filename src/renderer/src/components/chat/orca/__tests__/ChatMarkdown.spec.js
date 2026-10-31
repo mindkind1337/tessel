@@ -51,6 +51,25 @@ afterEach(() => {
 })
 
 describe('ChatMarkdown (CommentMarkdown)', () => {
+  it('renders Codex file citation directives as named file links, including paths with spaces', () => {
+    const onLinkClick = vi.fn()
+    const path = 'C:/Documents/My reports/original.pdf'
+    const root = render({ content: `Source :codex-file-citation{path="${path}"\npurpose="source"}`, onLinkClick })
+    const link = root.querySelector('a')
+    expect(link.textContent).toBe('original.pdf')
+    expect(root.textContent).not.toContain('codex-file-citation')
+    expect(routeNativeChatHref(link.getAttribute('href'))).toMatchObject({ kind: 'file', pathText: path })
+    click(link)
+    expect(onLinkClick).toHaveBeenCalled()
+  })
+
+  it('leaves citation examples in code and unsafe citation destinations unlinked', () => {
+    const directive = ':codex-file-citation{path="C:/reports/example.pdf" purpose="source"}'
+    const root = render({ content: `\`${directive}\`\n\n\`\`\`text\n${directive}\n\`\`\`\n\n:codex-file-citation{path="javascript:alert(1)"}` })
+    expect(root.querySelectorAll('a')).toHaveLength(0)
+    expect(root.textContent).toContain(directive)
+  })
+
   it('marks compact headings so a parent can opt into block flow', () => {
     const root = render({ content: '## Walkthrough\n\nAdds verify:changed, which collects.' })
     const heading = root.querySelector('[role="heading"]')
