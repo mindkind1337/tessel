@@ -1,6 +1,27 @@
 import { it, expect, vi } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
+import { isProxy } from 'vue'
 import BrowserPasswords from '../components/BrowserPasswords.vue'
+
+it('sends a cloneable plain profile across Electron IPC instead of a Vue proxy', async () => {
+  const passwordImportProfile = vi.fn(async (opts) => {
+    expect(isProxy(opts)).toBe(false)
+    expect(JSON.parse(JSON.stringify(opts))).toEqual({ browserId: 'chrome', profileDir: 'C:/fixture/Default' })
+    return { ok: true, imported: 1, skipped: 0 }
+  })
+  window.shellApi = { browser: {
+    passwordSources: async () => ({ ok: true, sources: [{ id: 'chrome', name: 'Chrome', profiles: [{ dir: 'C:/fixture/Default', name: 'Default' }] }] }),
+    passwordList: async () => ({ ok: true, entries: [] }),
+    passwordImportProfile
+  } }
+  const wrapper = mount(BrowserPasswords, { global: { stubs: { teleport: true } } })
+  try {
+    await wrapper.find('[data-test=browser-passwords]').trigger('click'); await flushPromises()
+    await wrapper.findAll('button').find((b) => b.text() === 'Import from browser').trigger('click'); await flushPromises()
+    expect(passwordImportProfile).toHaveBeenCalledOnce()
+    expect(wrapper.text()).toContain('1 imported')
+  } finally { wrapper.unmount(); delete window.shellApi }
+})
 
 it('offers import and explicit opt-in without displaying a password', async () => {
   const entry = { id: 'test', origin: 'https://example.test', username: 'fixture-user', allowAgents: false }

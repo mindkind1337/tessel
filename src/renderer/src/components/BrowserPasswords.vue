@@ -11,6 +11,10 @@ const errors = {
   'vault-unavailable': ['vault', 'The encrypted vault could not be opened.'],
   'locked': ['locked', 'The browser database is locked. Close that browser and retry, or import its CSV export.'],
   'access-denied': ['denied', 'Browser protection or permissions prevent access. Use a CSV export.'],
+  'no-sqlite': ['sqlite', 'This version cannot read browser databases. Update Tessel or import a CSV export.'],
+  'unreadable': ['unreadable', 'The browser database could not be read. Import a CSV export instead.'],
+  'missing': ['missing', 'The browser database no longer exists. Reopen this dialog and choose a profile.'],
+  'not-found': ['missing', 'The browser database no longer exists. Reopen this dialog and choose a profile.'],
   'format': ['format', 'Expected a CSV export with url, username and password columns.'],
   'no-login-form': ['form', 'No single visible password field was found. Open the login form first.'],
   'unsafe-form': ['unsafe', 'This form sends credentials to another site or cannot be verified.'],
@@ -43,6 +47,12 @@ async function run(action, success) {
 }
 const imported = (r) => t('browser.passwords.imported', '{{count}} imported; {{skipped}} skipped; {{protected}} protected (use CSV export).', { count: r.imported, skipped: r.skipped, protected: r.protectedCount || 0 })
 const changed = () => t('browser.passwords.updated', 'Updated.')
+function importSelectedProfile() {
+  const source = sources.value[Number(selected.value)]
+  if (!source) return
+  // Vue proxies cannot be cloned across Electron IPC. Send only plain strings.
+  return run(() => api().passwordImportProfile({ browserId: source.browserId, profileDir: source.profileDir }), imported)
+}
 watch(() => props.guestId, () => { open.value = false; entries.value = [] })
 </script>
 
@@ -55,7 +65,7 @@ watch(() => props.guestId, () => { open.value = false; entries.value = [] })
         <p>{{ t('browser.passwords.local', 'Encrypted on this computer, outside your projects. Never sent through Live Share. Agent access is off for every imported account until you enable it.') }}</p>
         <div class="password-actions">
           <select v-model="selected" :disabled="busy || !sources.length" :aria-label="t('browser.passwords.profile', 'Browser profile')"><option v-for="(source, i) in sources" :key="i" :value="String(i)">{{ source.label }}</option></select>
-          <button type="button" :disabled="busy || selected === ''" @click="run(() => api().passwordImportProfile(sources[Number(selected)]), imported)">{{ t('browser.passwords.importBrowser', 'Import from browser') }}</button>
+          <button type="button" :disabled="busy || selected === ''" @click="importSelectedProfile">{{ t('browser.passwords.importBrowser', 'Import from browser') }}</button>
           <button type="button" :disabled="busy" @click="run(() => api().passwordImportCsv(), imported)">{{ t('browser.passwords.importCsv', 'Import CSV…') }}</button>
         </div>
         <p class="password-hint">{{ t('browser.passwords.csvHint', 'If browser protection blocks import, export passwords from its password manager and select that CSV here. The export contains readable passwords; remove it after import when no longer needed. Passkeys and verification codes are not imported.') }}</p>

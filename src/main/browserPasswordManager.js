@@ -12,7 +12,7 @@ export function registerPasswordManager({ ipcMain, safeStorage, dialog, dataDir,
   const safe = (action) => async (event, ...args) => {
     if (!local(event)) return { ok: false, code: 'private-page-required' }
     try { return await action(event, ...args) } catch (error) {
-      const codes = ['locked', 'access-denied', 'missing', 'format', 'too-big', 'encryption-unavailable', 'vault-unavailable', 'not-found']
+      const codes = ['locked', 'access-denied', 'missing', 'no-sqlite', 'unreadable', 'format', 'too-big', 'encryption-unavailable', 'vault-unavailable', 'not-found']
       return { ok: false, code: codes.includes(error?.code) ? error.code : 'failed' }
     }
   }
