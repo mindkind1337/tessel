@@ -576,6 +576,7 @@ op('fs.head', {
 
 op('fs.image', {
   bulk: true,
+  maxBytes: 4 * Math.ceil(L.imageBytes / 3) + 1024,
   keep: ['dataUrl'],
   args: { path: A.path },
   async run(a, env) {

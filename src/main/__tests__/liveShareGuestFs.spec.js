@@ -206,3 +206,11 @@ describe('the guest handlers', () => {
     expect(h.calls.find((c) => c.op === 'fs.listMany').args).toEqual({ dirs: ['src', 'gone'], dotfiles: true, chain: true })
   })
 })
+
+
+describe('image transfer bounds', () => {
+  it('refuses a host image whose decoded bytes exceed the limit, even with a false size', async () => {
+    const h = host(() => ({ size: 1, dataUrl: 'data:image/png;base64,' + Buffer.alloc(LSHARE_LIMITS.imageBytes + 1).toString('base64') }))
+    expect((await h.fs.readImage('lshare://p1/poster.png')).code).toBe('bad-answer')
+  })
+})

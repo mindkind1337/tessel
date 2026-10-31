@@ -3100,13 +3100,14 @@ kbd {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  max-width: 420px;
+  width: min(420px, calc(100vw - 32px));
   pointer-events: none;
 }
 
 .toast {
-  display: flex;
-  align-items: center;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
   gap: 10px;
   padding: 10px 8px 10px 14px;
   border: 1px solid var(--border-strong);
@@ -3129,15 +3130,26 @@ kbd {
 }
 
 .toast-text {
-  flex: 1 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
   line-height: 1.4;
 }
 
+.toast-actions {
+  grid-column: 1 / -1;
+  grid-row: 2;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
 .toast-action {
-  flex-shrink: 0;
-  white-space: nowrap;
-  height: 26px;
-  padding: 0 10px;
+  min-width: 0;
+  max-width: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  min-height: 26px;
+  padding: 4px 10px;
   border: 1px solid var(--border-strong);
   border-radius: 6px;
   background: var(--surface-3);
@@ -3151,6 +3163,8 @@ kbd {
 }
 
 .toast-close {
+  grid-column: 2;
+  grid-row: 1;
   display: inline-grid;
   place-items: center;
   width: 22px;

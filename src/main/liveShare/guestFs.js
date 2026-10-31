@@ -391,6 +391,8 @@ export function createGuestFs({ request } = {}) {
     return call('fs.image', loc.project, { path: loc.rel }, (d) => {
       const max = Math.ceil((L.imageBytes * 4) / 3) + 64
       if (typeof d.dataUrl !== 'string' || d.dataUrl.length > max || !IMAGE_URL.test(d.dataUrl)) return null
+      const encoded = d.dataUrl.slice(d.dataUrl.indexOf(',') + 1)
+      if (Buffer.byteLength(encoded, 'base64') > L.imageBytes) return null
       return { kind: 'image', size: count(d.size), dataUrl: d.dataUrl }
     })
   }

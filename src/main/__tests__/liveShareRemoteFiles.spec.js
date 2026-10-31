@@ -534,3 +534,17 @@ describe("the guest's side", () => {
     expect(await gfs.readForEdit('lshare://p1\\src\\main.js')).toMatchObject({ ok: true, text: 'main', readOnly: true })
   })
 })
+
+
+describe('large remote image previews', () => {
+  it('carries an 8 MB SSH image through to the guest and keeps the upper bound', async () => {
+    const bytes = Buffer.alloc(L.imageBytes, 97)
+    remote.state.tree['poster.png'] = { buf: bytes }
+    const guest = createGuestFs({ request: (op, project, args) => ask(op, args) })
+    const res = await guest.readImage('lshare://p1/poster.png')
+    expect(res.ok).toBe(true)
+    expect(Buffer.from(res.dataUrl.split(',')[1], 'base64').equals(bytes)).toBe(true)
+    remote.state.tree['poster.png'] = { buf: Buffer.alloc(L.imageBytes + 1) }
+    expect((await guest.readImage('lshare://p1/poster.png')).code).toBe('too-large')
+  })
+})

@@ -168,7 +168,7 @@ const tabLabel = (f) => sharedTabLabel(f, files.value)
 
 // What the body shows instead of the editor (loading, an error).
 const message = computed(() => {
-  if (loadError.value) return loadError.value
+  if (mode.value !== 'image' && loadError.value) return loadError.value
   if (!files.value.length) return t('editor.pane.noFile', 'No file open. Open one from Jump to file (Ctrl+Shift+J) or the file explorer.')
   if (mode.value === 'image') return ''
   if (diffInfo.value) {
@@ -993,6 +993,24 @@ onMounted(async () => {
   paneApi = { focus: focusEditor, closeActiveTab, activePath: () => props.node.activePath, activate, closeTab, pin, publish: () => publishActive(true) }
   registerEditorPane(props.node.id, paneApi)
   if (rootEl.value) rootEl.value.addEventListener('keydown', onKeydownCapture, true)
+  await ensureEditor()
+})
+
+// Binary previews have their own readers and must work without Monaco.
+let editorStarting = false
+async function ensureEditor() {
+  if (!mounted || editor || editorStarting || !activeFile.value || mode.value === 'image') return
+  editorStarting = true
+  loadError.value = ''
+  try {
+    await startEditor()
+  } finally {
+    editorStarting = false
+  }
+}
+watch(() => [props.node.activePath, mode.value], () => ensureEditor())
+
+async function startEditor() {
   try {
     monaco = await loadMonaco()
   } catch (err) {
@@ -1034,7 +1052,7 @@ onMounted(async () => {
   showActive()
   // Not under the floating terminal while it has the keyboard.
   if (isActive.value && !(ctx.floatingHasKeyboard && ctx.floatingHasKeyboard())) focusEditor()
-})
+}
 
 onBeforeUnmount(() => {
   mounted = false

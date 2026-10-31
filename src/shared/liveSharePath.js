@@ -130,7 +130,8 @@ export const LSHARE_LIMITS = Object.freeze({
   contentQuery: 1000, // a content search's text
   fileList: 20000, // Jump to file's list
   textBytes: 2 * 1024 * 1024, // a file opened in the editor, a diff side
-  imageBytes: 2 * 1024 * 1024,
+  // Base64 plus metadata stays below the 12 MB channel answer limit.
+  imageBytes: 8 * 1024 * 1024,
   notesBytes: 512 * 1024,
   writeBytes: 768 * 1024, // a save: under the 1 MB a guest's message may be
   scmEntries: 5000, // the Changes list, a commit's or a branch's files

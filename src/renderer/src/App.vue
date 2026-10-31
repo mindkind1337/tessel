@@ -14957,12 +14957,14 @@ onBeforeUnmount(() => {
       <UpdateCard :status="updateStatus" :release-url="updateReleaseUrl" @update="updateOpen = true" />
       <div v-for="toast in toasts" :key="toast.id" class="toast" :class="toast.kind">
         <span class="toast-text">{{ toast.text }}</span>
-        <button v-if="toast.action" class="toast-action" @click="runToastAction(toast)">
-          {{ toast.action.label }}
-        </button>
-        <button v-for="(a, i) in toast.actions" :key="i" class="toast-action" @click="runToastAction(toast, a)">
-          {{ a.label }}
-        </button>
+        <div v-if="toast.action || toast.actions.length" class="toast-actions">
+          <button v-if="toast.action" class="toast-action" @click="runToastAction(toast)">
+            {{ toast.action.label }}
+          </button>
+          <button v-for="(a, i) in toast.actions" :key="i" class="toast-action" @click="runToastAction(toast, a)">
+            {{ a.label }}
+          </button>
+        </div>
         <button class="toast-close" :title="t('app.toast.dismiss', 'Dismiss')" @click="dismissToast(toast.id)">
           <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true">
             <path

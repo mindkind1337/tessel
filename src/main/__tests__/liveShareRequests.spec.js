@@ -12,7 +12,7 @@ import os from 'os'
 import { join } from 'path'
 import { execFileSync } from 'child_process'
 import { createShareRequests, requiredRight, mayRun, parseArgs, fromTop, toTop, maskUrl, SHARE_OPS } from '../liveShare/shareRequests'
-import { LSHARE_CODES } from '../../shared/liveSharePath'
+import { LSHARE_LIMITS as L, LSHARE_CODES } from '../../shared/liveSharePath'
 import { hashOf } from '../editorFiles'
 
 vi.setConfig({ testTimeout: 60000, hookTimeout: 60000 })
@@ -405,5 +405,18 @@ describe('changes', () => {
     expect((await ask('notes.load', {})).data).toEqual({ exists: false, text: '', mtime: null })
     expect((await ask('notes.save', { text: 'first' }, { rights: NOTES })).ok).toBe(true)
     expect(fs.readFileSync(join(root, '.tessel', 'notes.md'), 'utf8')).toBe('first')
+  })
+})
+
+
+describe('large image previews', () => {
+  it('serves an 8 MB image including its base64 overhead, but refuses larger files', async () => {
+    const bytes = Buffer.alloc(L.imageBytes, 97)
+    put(root, 'poster.png', bytes)
+    const res = await ask('fs.image', { path: 'poster.png' })
+    expect(res.ok).toBe(true)
+    expect(Buffer.from(res.data.dataUrl.split(',')[1], 'base64').equals(bytes)).toBe(true)
+    put(root, 'poster.png', Buffer.alloc(L.imageBytes + 1))
+    expect((await ask('fs.image', { path: 'poster.png' })).code).toBe('too-large')
   })
 })

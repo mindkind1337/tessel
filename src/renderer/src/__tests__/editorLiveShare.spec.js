@@ -96,12 +96,13 @@ const fakeMonaco = {
   }
 }
 vi.mock('../editor/loadMonaco', () => ({
-  loadMonaco: () => Promise.resolve(fakeMonaco),
+  loadMonaco: vi.fn(() => Promise.resolve(fakeMonaco)),
   monacoIfLoaded: () => fakeMonaco,
   textmateIfLoaded: () => null,
   outlineIfLoaded: () => null
 }))
 
+import { loadMonaco } from '../editor/loadMonaco'
 import * as docsMod from '../editor/documents'
 import EditorPane from '../components/EditorPane.vue'
 import { setLshareAccess, endLshareSession, forgetLshareAccess } from '../liveShareGuestAccess'
@@ -290,6 +291,39 @@ describe("the editor pane on a Live Share host's file", () => {
     w?.unmount()
     w = null
     document.body.innerHTML = ''
+  })
+
+  it('opens a remote PNG without loading Monaco, then initializes it for a text tab', async () => {
+    const image = 'ssh://ssh-test/srv/output/poster.png'
+    loadMonaco.mockClear()
+    const node = mountPane(image)
+    await flushPromises()
+    expect(loadMonaco).not.toHaveBeenCalled()
+    expect(w.findComponent({ name: 'RichView' }).props('file')).toBe(image)
+    const text = 'C:/p/after-image.js'
+    disk.set(text, { text: 'hello', sig: 's1' })
+    node.files.push({ path: text })
+    node.activePath = text
+    await flushPromises()
+    expect(loadMonaco).toHaveBeenCalled()
+    expect(w.get('[data-test="editor-host"]').isVisible()).toBe(true)
+  })
+
+  it('shows an image even after Monaco failed for a text tab', async () => {
+    loadMonaco.mockImplementation(() => Promise.reject(new Error('module unavailable')))
+    try {
+      const node = mountPane('C:/p/failed-editor.js')
+      await flushPromises()
+      expect(w.text()).toContain('module unavailable')
+      const image = 'ssh://ssh-test/srv/output/after-error.png'
+      node.files.push({ path: image })
+      node.activePath = image
+      await flushPromises()
+      expect(w.findComponent({ name: 'RichView' }).props('file')).toBe(image)
+      expect(w.text()).not.toContain('module unavailable')
+    } finally {
+      loadMonaco.mockImplementation(() => Promise.resolve(fakeMonaco))
+    }
   })
 
   it('Monaco is read-only and says so until the host gives Edit files, then editable, then read-only again: live', async () => {
