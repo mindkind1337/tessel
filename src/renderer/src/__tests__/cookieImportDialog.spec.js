@@ -94,7 +94,17 @@ describe('CookieImportDialog', () => {
     const wrapper = await open()
     await wrapper.find('[data-test="cookie-import"]').trigger('click')
     await flushPromises()
-    expect(wrapper.text()).toMatch(/Close that browser first/i)
+    expect(wrapper.text()).toMatch(/blocked by a database or file lock/i)
+  })
+
+  it('does not prescribe closing the browser for a permissions failure', async () => {
+    api.importCookies.mockResolvedValue({ ok: false, code: 'access-denied' })
+    const wrapper = await open()
+    await wrapper.find('[data-test="cookie-import"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toMatch(/protection or file permissions/i)
+    expect(wrapper.text()).toMatch(/closing the browser may not resolve this/i)
+    expect(wrapper.text()).not.toMatch(/blocked by a database or file lock/i)
   })
 
   it("turns on the agents' separate session at the first import, and says so", async () => {

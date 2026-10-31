@@ -68,7 +68,10 @@ describe('temp database copies', () => {
     try {
       const tmpRoot = join(root, 'cookie-import-tmp') // created on demand
       const src = join(root, 'Cookies')
-      fs.writeFileSync(src, 'db')
+      const { DatabaseSync } = process.getBuiltinModule('node:sqlite')
+      const db = new DatabaseSync(src)
+      db.exec('CREATE TABLE fixture (id INTEGER)')
+      db.close()
       let seen
       await withDatabaseCopy(
         src,

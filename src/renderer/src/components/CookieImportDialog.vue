@@ -110,7 +110,9 @@ async function importFile() {
 }
 
 function codeMessage(code) {
-  if (code === 'locked') return t('browser.cookieImport.locked', 'Close that browser first, then try again (it keeps its cookies locked while open).')
+  if (code === 'locked') return t('browser.cookieImport.lockDetected', 'Reading was blocked by a database or file lock. Retry; if it persists, close that browser and try again.')
+  if (code === 'access-denied') return t('browser.cookieImport.accessDenied', 'Access to the cookie database was denied. Browser protection or file permissions may prevent reading it; closing the browser may not resolve this.')
+  if (code === 'unreadable') return t('browser.cookieImport.unreadable', 'The cookie database could not be read. This does not necessarily mean the browser must be closed.')
   if (code === 'format') return t('browser.cookieImport.badFile', 'That file is not a cookie export Tessel understands (a JSON export or a cookies.txt).')
   if (code === 'too-big') return t('browser.cookieImport.tooBig', 'That file is too large.')
   if (code === 'refused') return t('browser.cookieImport.refusedFile', 'Choose a cookie file on this computer (not on a network share), then try again.')

@@ -3,10 +3,9 @@
 // decryption.ts and browser-cookie-sqlite.ts (MIT, Copyright (c) 2026
 // Lovecast Inc.).
 //
-// - The database is copied first (the browser keeps it open) to a folder of
-//   its own in the temp folder, read with Node's built-in sqlite, and the copy
-//   is deleted right after, whatever happens. Only the copy is opened, read
-//   only. Nothing decrypted is ever written anywhere.
+// - SQLite's online backup reads the source read-only, including committed
+//   WAL entries while the browser is running. The temporary snapshot is
+//   deleted after use. Nothing decrypted is ever written anywhere.
 // - Windows: the values are AES-256-GCM ("v10"/"v11") with a key kept in the
 //   profile's "Local State", itself sealed by Windows (DPAPI, this user only:
 //   dpapi.js unseals it). Linux: "v10" with Chromium's fixed key ("peanuts").
@@ -65,27 +64,42 @@ export function cleanStaleCopies(roots) {
   return n
 }
 
-// A database (and its -wal / -journal next to it) copied to a fresh folder:
-// fn(copyPath) runs, then the folder goes. code 'locked' when the browser
-// holds the file shut (Chrome on Windows while it runs).
+// Never treat permissions as proof of a browser lock. No raw error messages
+// (which can contain profile paths) leave this module.
+export function databaseReadCode(error) {
+  const sqliteCode = Number(error?.errcode) & 255
+  if (error?.code === 'EBUSY' || sqliteCode === 5 || sqliteCode === 6) return 'locked'
+  if (error?.code === 'EACCES' || error?.code === 'EPERM') return 'access-denied'
+  if (error?.code === 'ENOENT') return 'missing'
+  if (error?.code === 'no-sqlite') return 'no-sqlite'
+  if (sqliteCode === 14) return 'access-denied'
+  return 'unreadable'
+}
+
+// A consistent snapshot, not separate copies of a live database and its WAL.
+// No process detection or forced browser shutdown: attempt a real read first.
 export async function withDatabaseCopy(file, fn, { tmpRoot = os.tmpdir() } = {}) {
   fs.mkdirSync(tmpRoot, { recursive: true })
   const dir = fs.mkdtempSync(join(tmpRoot, COPY_PREFIX))
   activeCopies.add(dir)
   const copy = join(dir, 'db.sqlite')
   try {
+    let source
     try {
-      await fs.promises.copyFile(file, copy)
+      // Distinguish filesystem failures before SQLite turns them into CANTOPEN.
+      fs.closeSync(fs.openSync(file, 'r'))
+      const sqlite = sqliteModule()
+      if (typeof sqlite.backup !== 'function') throw Object.assign(new Error('no sqlite backup'), { code: 'no-sqlite' })
+      source = new sqlite.DatabaseSync(file, { readOnly: true })
+      source.exec('PRAGMA busy_timeout = 1500')
+      source.prepare('SELECT name FROM sqlite_master LIMIT 1').get()
+      // One backup step avoids repeated restarts on an actively written WAL.
+      await sqlite.backup(source, copy, { rate: 2147483647 })
     } catch (err) {
-      const code = err && (err.code === 'EBUSY' || err.code === 'EPERM' || err.code === 'EACCES') ? 'locked' : err && err.code === 'ENOENT' ? 'missing' : 'unreadable'
+      const code = databaseReadCode(err)
       throw Object.assign(new Error(code), { code })
-    }
-    for (const ext of ['-wal', '-journal']) {
-      try {
-        await fs.promises.copyFile(file + ext, copy + ext)
-      } catch {
-        // none, or busy: the main file is enough
-      }
+    } finally {
+      source?.close()
     }
     return await fn(copy)
   } finally {
