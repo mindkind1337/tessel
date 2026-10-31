@@ -1366,8 +1366,8 @@ const BROWSER_TOOLS = [
 ]
 BROWSER_TOOLS.push({
   name: 'browser_downloads',
-  description: 'List downloads for this page: id, state, byte progress, saved path on completion, error or cancellation. Downloads retain the page session and prompt the user for a destination. Optionally cancel an active download by id. Do not copy private filenames or paths into logs.',
-  inputSchema: { type: 'object', properties: { ...PAGE_ARG, cancel: { type: 'string', description: 'Download id to cancel (optional)' } } }
+  description: 'Download original files in this page authenticated session. BEFORE clicking the download button, call with saveAs (absolute LOCAL file path including desired filename) to save the next download without a dialog. The destination expires after 60 seconds and applies once, only to this page. Then click and call without saveAs to read id, state, byte progress, final path, errors or cancellation. Duplicate names receive a numeric suffix; nothing is overwritten. Without a prepared destination, downloads prompt the user. Do not put medical data, cookies or tokens in logs.',
+  inputSchema: { type: 'object', properties: { ...PAGE_ARG, saveAs: { type: 'string', description: 'Absolute local destination file path, including filename; prepares the next download only. Parent folders are created.' }, clearDestination: { type: 'boolean', description: 'Forget your prepared destination without downloading.' }, cancel: { type: 'string', description: 'Download id to cancel (optional)' } } }
 })
 const BROWSER_OPS = Object.fromEntries(BROWSER_TOOLS.map((t) => [t.name, t.name.slice('browser_'.length)]))
 TOOLS.push(...BROWSER_TOOLS)

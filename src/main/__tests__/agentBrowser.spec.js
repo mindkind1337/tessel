@@ -145,7 +145,7 @@ function signed(op, args = {}) {
   return mcp.browserRequest(op, args)
 }
 
-function setup({ guest = fakeGuest(11, { cdp: pageCdp() }), enabled = true, enabledFn = null, target = {}, onAsk = null, windowState = undefined, nativeImage = null } = {}) {
+function setup({ guest = fakeGuest(11, { cdp: pageCdp() }), enabled = true, enabledFn = null, target = {}, onAsk = null, windowState = undefined, nativeImage = null, downloads = () => [] } = {}) {
   const sentToWindow = []
   const ask = vi.fn(async (_m, p) => {
     if (onAsk) {
@@ -158,6 +158,7 @@ function setup({ guest = fakeGuest(11, { cdp: pageCdp() }), enabled = true, enab
   const ab = createAgentBrowser({
     verify: (body, pane) => verifyRequest(body, pane, 'browser'),
     enabled: enabledFn || (() => enabled),
+    downloads,
     ask,
     guestById: (id) => (guest && id === guest.id ? guest : null),
     send: (ch, payload) => sentToWindow.push([ch, payload]),
@@ -179,6 +180,19 @@ describe('agent browser: who may call', () => {
     delete process.env.TESSEL_TEAM_SECRET
     delete process.env.TESSEL_PANE_ID
     _resetTeamAuth()
+  })
+
+  it('prepares a page-scoped destination whose authority is revoked by Stop', async () => {
+    const downloads = vi.fn(() => ({ ok: true }))
+    const { call, ab, guest } = setup({ downloads })
+    await call('downloads', { saveAs: 'C:\\Downloads\\chosen.pdf' })
+    const [id, options, allowed] = downloads.mock.calls[0]
+    expect(id).toBe(guest.id)
+    expect(options).toMatchObject({ owner: PANE, saveAs: 'C:\\Downloads\\chosen.pdf' })
+    expect(allowed()).toBe(true)
+    ab.stop(guest.id)
+    expect(allowed()).toBe(false)
+    await expect(call('downloads', {})).rejects.toThrow(/stopped/i)
   })
 
   it('a request signed by the pane passes the pipe and is answered', async () => {

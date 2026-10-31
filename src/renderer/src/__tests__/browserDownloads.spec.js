@@ -19,6 +19,8 @@ it('shows progress and the saved path, scopes events and cleans up its listener'
   expect(wrapper.text()).toBe('')
   event(row)
   await nextTick()
+  expect(wrapper.find('progress').exists()).toBe(false)
+  await wrapper.find('.download-toggle').trigger('click')
   expect(wrapper.find('progress').attributes('value')).toBe('10')
   await wrapper.findAll('button').at(-1).trigger('click')
   expect(window.shellApi.browser.cancelDownload).toHaveBeenCalledWith(7, 'a')

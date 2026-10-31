@@ -812,7 +812,13 @@ export function createAgentBrowser({ verify, enabled = () => true, ask, guestByI
   }
 
   async function run(op, guest, s, args, pane) {
-    if (op === 'downloads') return { text: JSON.stringify(downloads(guest.id, typeof args.cancel === 'string' ? args.cancel : null)) }
+    if (op === 'downloads') {
+      const options = { cancel: typeof args.cancel === 'string' ? args.cancel : null, owner: pane }
+      if (Object.hasOwn(args, 'saveAs')) options.saveAs = args.saveAs
+      if (args.clearDestination === true) options.saveAs = null
+      const canSave = () => enabled() && !revoked.has(guest.id) && !revokedPages.has(s.page) && guestById(guest.id) === guest
+      return { text: JSON.stringify(downloads(guest.id, options, canSave)) }
+    }
     // A ref in a frame from another site: its frame's session, its place in the page.
     const sendOf = (entry) => {
       const f = frameOf(s, entry)

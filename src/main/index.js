@@ -3817,8 +3817,9 @@ const agentBrowser = createAgentBrowser({
   enabled: () => agentBrowserEnabled,
   ask: (method, params) => cliBridge.ask(method, params),
   guestById: (id) => browserGuests.guestById(id),
-  downloads: (id, cancel) => {
-    if (cancel) browserGuests.downloads.cancel(id, cancel)
+  downloads: (id, options, allowed) => {
+    if (Object.hasOwn(options, 'saveAs')) return browserGuests.downloads.prepare(id, options.saveAs, options.owner, allowed)
+    if (options.cancel) browserGuests.downloads.cancel(id, options.cancel)
     return browserGuests.downloads.list(id)
   },
   send,

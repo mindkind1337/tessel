@@ -1137,7 +1137,6 @@ defineExpose({ navigate, focusAddress })
     </div>
 
     <div class="bp-body">
-      <BrowserDownloads :guest-id="guestId" />
       <div class="bp-toolbar" data-test="browser-toolbar">
         <button
           type="button"
@@ -1236,6 +1235,7 @@ defineExpose({ navigate, focusAddress })
             <ExternalLink :size="14" />
           </button>
         </div>
+        <BrowserDownloads :guest-id="guestId" />
         <template v-if="liveShare">
           <span v-if="liveShare.sent" class="bp-live-eye" role="status" data-test="browser-live-sent" :title="t('browser.liveShare.sentHint', 'Guests with “See my browser pages” get this page’s address and title.')">
             <Eye :size="14" aria-hidden="true" />

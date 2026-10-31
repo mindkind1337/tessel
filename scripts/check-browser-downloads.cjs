@@ -41,11 +41,10 @@ async function main() {
   } })
   ses.on('will-download', (_event, item) => {
     downloads.accept(item, win.webContents.id)
-    // Tests only: use the proposed non-colliding destination without prompting.
-    item.setSavePath(item.getSaveDialogOptions().defaultPath)
   })
   await win.loadURL(base)
   for (const kind of ['direct', 'auth', 'blob', 'blob-popup']) {
+    assert.equal(downloads.prepare(win.webContents.id, path.join(dir, 'agent', 'chosen.pdf'), 'fixture').ok, true)
     const done = new Promise((resolve) => { completed = resolve })
     if (kind === 'blob-popup') {
       const url = await win.webContents.executeJavaScript(`URL.createObjectURL(new Blob([Uint8Array.from(atob('${pdf.toString('base64')}'), c => c.charCodeAt(0))], {type:'application/pdf'}))`)
@@ -57,6 +56,8 @@ async function main() {
     }
     const row = await done
     assert.equal(row.state, 'completed')
+    assert.equal(path.dirname(row.path), path.join(dir, 'agent'))
+    assert.ok(path.basename(row.path).startsWith('chosen'))
     assert.ok(fs.readFileSync(row.path).equals(pdf), kind + ' bytes changed')
     console.log(kind + ': original PDF bytes preserved')
   }

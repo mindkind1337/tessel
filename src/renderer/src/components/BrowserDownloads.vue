@@ -1,28 +1,33 @@
 <script setup>
 import { ref, watch, onMounted, onBeforeUnmount } from 'vue'
 import { t } from '../i18n'
+import { Download } from 'lucide-vue-next'
 const props = defineProps({ guestId: { type: Number, default: null } })
 const rows = ref([])
 const expanded = ref(false)
+const root = ref(null)
+const closeOutside = (event) => { if (!root.value?.contains(event.target)) expanded.value = false }
 let off
 const api = () => window.shellApi?.browser
 watch(() => props.guestId, async (id) => {
   rows.value = []
+  expanded.value = false
   if (id == null) return
   const result = await api()?.downloads?.(id)
   if (props.guestId === id) rows.value = result || []
 }, { immediate: true })
 onMounted(() => {
+  document.addEventListener('pointerdown', closeOutside)
   off = api()?.onDownloadChanged?.((row) => {
     if (row.webContentsId !== props.guestId) return
     const i = rows.value.findIndex((r) => r.id === row.id)
-    if (i < 0) { rows.value.unshift(row); expanded.value = true }
+    if (i < 0) rows.value.unshift(row)
     else rows.value[i] = row
     rows.value = rows.value.slice(0, 100)
   })
 })
-onBeforeUnmount(() => off?.())
-const active = (r) => !['completed', 'cancelled'].includes(r.state) && r.error !== 'transfer-failed'
+onBeforeUnmount(() => { off?.(); document.removeEventListener('pointerdown', closeOutside) })
+const active = (r) => ['choosing', 'progressing'].includes(r.state) || (r.state === 'interrupted' && r.error === 'transfer-interrupted')
 const labels = {
   choosing: ['browser.download.choosing', 'Choose where to save'],
   progressing: ['browser.download.progressing', 'Downloading'],
@@ -34,8 +39,8 @@ const label = (r) => t(...(labels[r.state] || labels.interrupted))
 </script>
 
 <template>
-  <section v-if="rows.length" class="browser-downloads" aria-live="polite">
-    <button type="button" :aria-expanded="expanded" @click="expanded = !expanded">{{ t('browser.download.title', 'Downloads') }} ({{ rows.length }})</button>
+  <section v-if="rows.length" ref="root" class="browser-downloads" @keydown.esc="expanded = false">
+    <button type="button" class="download-toggle" :title="t('browser.download.title', 'Downloads')" :aria-label="t('browser.download.title', 'Downloads')" :aria-expanded="expanded" @click="expanded = !expanded"><Download :size="16" /><span>{{ rows.length }}</span></button>
     <div v-if="expanded" class="download-list">
       <div v-for="row in rows" :key="row.id" class="download-row">
         <strong>{{ row.name }}</strong> — {{ label(row) }}
@@ -50,8 +55,10 @@ const label = (r) => t(...(labels[r.state] || labels.interrupted))
 </template>
 
 <style scoped>
-.browser-downloads { flex: 0 0 auto; padding: 6px 10px; background: var(--bg-secondary, #202329); border-bottom: 1px solid var(--border, #444); font-size: 12px; }
-.download-list { max-height: 180px; overflow: auto; }
+.browser-downloads { position: relative; flex: 0 0 auto; font-size: 12px; }
+.download-toggle { display: flex; align-items: center; gap: 3px; border: none; }
+.download-toggle span { font-size: 10px; }
+.download-list { position: absolute; z-index: 100; right: 0; top: calc(100% + 8px); width: min(440px, 80vw); max-height: 260px; overflow: auto; padding: 10px; border: 1px solid var(--border, #444); border-radius: 8px; background: var(--bg-secondary, #202329); box-shadow: 0 8px 24px #0006; }
 .download-row { padding: 6px 0; overflow-wrap: anywhere; }
 .download-row small, .download-row button, progress { margin-left: 8px; }
 .download-path { display: block; user-select: text; }
