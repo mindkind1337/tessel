@@ -7,7 +7,7 @@ it('sends a cloneable plain profile across Electron IPC instead of a Vue proxy',
   const passwordImportProfile = vi.fn(async (opts) => {
     expect(isProxy(opts)).toBe(false)
     expect(JSON.parse(JSON.stringify(opts))).toEqual({ browserId: 'chrome', profileDir: 'C:/fixture/Default' })
-    return { ok: true, imported: 1, skipped: 0 }
+    return { ok: true, imported: 1, skipped: 0, protectedCount: 1 }
   })
   window.shellApi = { browser: {
     passwordSources: async () => ({ ok: true, sources: [{ id: 'chrome', name: 'Chrome', profiles: [{ dir: 'C:/fixture/Default', name: 'Default' }] }] }),
@@ -20,6 +20,8 @@ it('sends a cloneable plain profile across Electron IPC instead of a Vue proxy',
     await wrapper.findAll('button').find((b) => b.text() === 'Import from browser').trigger('click'); await flushPromises()
     expect(passwordImportProfile).toHaveBeenCalledOnce()
     expect(wrapper.text()).toContain('1 imported')
+    expect(wrapper.find('details').element.open).toBe(true)
+    expect(wrapper.find('details').text()).toContain('Google Password Manager')
   } finally { wrapper.unmount(); delete window.shellApi }
 })
 
