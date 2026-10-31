@@ -71,16 +71,37 @@ it('fails closed on a damaged vault, HTTP sites and Live Share, never returning 
   } finally { f.cleanup() }
 })
 
-it('refuses every vault IPC and agent login during Live Share or from a foreign sender', async () => {
+it('refuses every vault IPC and agent login in a joined Live Share session or from a foreign sender', async () => {
   const f = fixture()
   try {
     const handlers = {}, sender = {}, foreign = {}
     let sharing = true
-    const manager = registerPasswordManager({ ipcMain: { handle: (name, fn) => { handlers[name] = fn } }, safeStorage: f.safeStorage, dialog: {}, dataDir: f.dir, getWindow: () => ({ isDestroyed: () => false, webContents: sender }), guestFor: () => null, allowedPage: () => true, sharingActive: () => sharing })
+    const manager = registerPasswordManager({ ipcMain: { handle: (name, fn) => { handlers[name] = fn } }, safeStorage: f.safeStorage, dialog: {}, dataDir: f.dir, getWindow: () => ({ isDestroyed: () => false, webContents: sender }), guestFor: () => null, allowedPage: () => true, guestSessionActive: () => sharing })
     for (const fn of Object.values(handlers)) expect(await fn({ sender })).toMatchObject({ ok: false, code: 'private-page-required' })
     expect(await manager.login({ getURL: () => 'https://example.test' })).toMatchObject({ ok: false })
     sharing = false
     for (const fn of Object.values(handlers)) expect(await fn({ sender: foreign })).toMatchObject({ ok: false })
     expect(await handlers['browser:passwordList']({ sender })).toMatchObject({ ok: true, entries: [] })
+  } finally { f.cleanup() }
+})
+
+it('allows the host private page but refuses shared-page filling for both user and agent', async () => {
+  const f = fixture()
+  try {
+    f.vault.importRows([{ origin: 'https://example.test', username: 'fixture', password: 'fixture-only' }])
+    const id = f.vault.list()[0].id
+    f.vault.change(id, 'allow', true)
+    const handlers = {}, sender = {}
+    const page = { getURL: () => 'https://example.test', executeJavaScriptInIsolatedWorld: vi.fn(async () => ({ ok: true })) }
+    let shared = false
+    const manager = registerPasswordManager({ ipcMain: { handle: (name, fn) => { handlers[name] = fn } }, safeStorage: f.safeStorage, dialog: {}, dataDir: f.dir, getWindow: () => ({ isDestroyed: () => false, webContents: sender }), guestFor: () => page, allowedPage: () => !shared, guestSessionActive: () => false })
+    expect((await handlers['browser:passwordList']({ sender })).ok).toBe(true)
+    expect((await handlers['browser:passwordFill']({ sender }, 1, id)).ok).toBe(true)
+    expect((await manager.login(page, id)).ok).toBe(true)
+    shared = true
+    page.executeJavaScriptInIsolatedWorld.mockClear()
+    expect((await handlers['browser:passwordFill']({ sender }, 1, id)).ok).toBe(false)
+    expect((await manager.login(page, id)).ok).toBe(false)
+    expect(page.executeJavaScriptInIsolatedWorld).not.toHaveBeenCalled()
   } finally { f.cleanup() }
 })

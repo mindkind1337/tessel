@@ -3732,8 +3732,8 @@ browserGuests.register(ipcMain)
 const passwordManager = registerPasswordManager({
   ipcMain, safeStorage, dialog, dataDir: app.getPath('userData'), getWindow: () => mainWindow,
   guestFor: (event, id) => browserGuests.guestFor(event, id),
-  sharingActive: () => !!liveShare?.credentialsSharingActive(),
-  allowedPage: (guest) => !liveShare?.credentialsSharingActive() && !guest.isDestroyed() &&
+  guestSessionActive: () => !!liveShare?.credentialsGuestSession(),
+  allowedPage: (guest) => !liveShare?.credentialsGuestSession() && !liveShare?.credentialsPageShared(guest.id) && !guest.isDestroyed() &&
     (guest.session === browserGuests.browserSession(BROWSER_PARTITION) || guest.session === browserGuests.browserSession(BROWSER_PARTITION_AGENT))
 })
 // Importing cookies from another browser into Tessel's browser session, so the

@@ -17,7 +17,7 @@ const exportSteps = computed(() => {
   return t('browser.passwords.stepsOther', 'Open the selected browser’s settings and password manager. Look for Export passwords and choose CSV. The menu location varies by browser version.')
 })
 const errors = {
-  'private-page-required': ['private', 'The password vault is unavailable during Live Share and in guest tabs. Stop sharing before using it.'],
+  'private-page-required': ['private', 'Use a private browser tab on the host. Credentials cannot be used in shared tabs or joined Live Share sessions.'],
   'encryption-unavailable': ['encryption', 'Secure system encryption is unavailable. No passwords were saved.'],
   'vault-unavailable': ['vault', 'The encrypted vault could not be opened.'],
   'locked': ['locked', 'The browser database is locked. Close that browser and retry, or import its CSV export.'],

@@ -3,11 +3,11 @@ import path from 'node:path'
 import { createPasswordVault, parsePasswordCsv, passwordSources, importBrowserPasswords, fillSavedPassword, loginOrigin } from './browserPasswords'
 import { isAllowedCookieFilePath } from './cookieImport/fileTokens'
 
-export function registerPasswordManager({ ipcMain, safeStorage, dialog, dataDir, getWindow, guestFor, allowedPage, sharingActive }) {
+export function registerPasswordManager({ ipcMain, safeStorage, dialog, dataDir, getWindow, guestFor, allowedPage, guestSessionActive }) {
   const vault = createPasswordVault({ file: path.join(dataDir, 'browser-passwords.sealed'), safeStorage })
   const local = (event) => {
     const win = getWindow()
-    return !!win && !win.isDestroyed() && event.sender === win.webContents && !sharingActive()
+    return !!win && !win.isDestroyed() && event.sender === win.webContents && !guestSessionActive()
   }
   const safe = (action) => async (event, ...args) => {
     if (!local(event)) return { ok: false, code: 'private-page-required' }
@@ -26,7 +26,7 @@ export function registerPasswordManager({ ipcMain, safeStorage, dialog, dataDir,
   ipcMain.handle('browser:passwordImportCsv', safe(async () => {
     const choice = await dialog.showOpenDialog(getWindow(), { title: 'Import passwords (CSV)', properties: ['openFile'], filters: [{ name: 'CSV', extensions: ['csv'] }] })
     if (choice.canceled || !choice.filePaths.length) return { ok: false, code: 'cancelled' }
-    if (sharingActive()) return { ok: false, code: 'private-page-required' }
+    if (guestSessionActive()) return { ok: false, code: 'private-page-required' }
     const file = choice.filePaths[0]
     if (!isAllowedCookieFilePath(file)) return { ok: false, code: 'refused' }
     const stat = fs.statSync(file)
@@ -35,7 +35,7 @@ export function registerPasswordManager({ ipcMain, safeStorage, dialog, dataDir,
   }))
   ipcMain.handle('browser:passwordFill', safe((event, page, id) => fillSavedPassword({ vault, guest: guestFor(event, page), id, allowed: allowedPage })))
   async function login(guest, id) {
-    if (sharingActive() || !guest || !allowedPage(guest)) return { ok: false, code: 'private-page-required' }
+    if (guestSessionActive() || !guest || !allowedPage(guest)) return { ok: false, code: 'private-page-required' }
     const origin = loginOrigin(guest.getURL())
     if (!origin) return { ok: false, code: 'https-required' }
     if (id) return fillSavedPassword({ vault, guest, id, agent: true, allowed: allowedPage })

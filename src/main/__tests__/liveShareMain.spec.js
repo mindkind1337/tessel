@@ -441,6 +441,25 @@ describe('registerLiveShare: one Tessel shares, another joins', () => {
     for (const m of mains.splice(0)) m.api.stopAll()
   })
 
+  it('keeps the host vault local while blocking credentials only on shared pages', async () => {
+    const host = fakeMain()
+    mains.push(host)
+    await host.handle['liveShare:start'](null, { projects: ['ws-1'] })
+    host.on['liveShare:pages'](null, [
+      { project: 'ws-1', paneId: 'pane-web', webContentsId: 10 },
+      { project: 'ws-private', paneId: 'pane-private', webContentsId: 11 },
+      { project: 'ws-1', paneId: 'side-private', webContentsId: 12, side: true, optIn: false },
+      { project: 'ws-1', paneId: 'side-shared', webContentsId: 13, side: true, optIn: true }
+    ])
+    expect(host.api.credentialsGuestSession()).toBe(false)
+    expect(host.api.credentialsPageShared(10)).toBe(true)
+    expect(host.api.credentialsPageShared(11)).toBe(false)
+    expect(host.api.credentialsPageShared(12)).toBe(false)
+    expect(host.api.credentialsPageShared(13)).toBe(true)
+    await host.handle['liveShare:stop']()
+    expect(host.api.credentialsPageShared(10)).toBe(false)
+  })
+
   it('shares the window layout and terminals, asks before letting a guest in, and ends for everyone on stop', async () => {
     const host = fakeMain({ snapshot: () => 'PS C:\\> ' })
     const guest = fakeMain()
