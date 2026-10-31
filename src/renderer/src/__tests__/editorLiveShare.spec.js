@@ -252,10 +252,11 @@ describe("the editor pane on a Live Share host's file", () => {
   let w
   let ctx
   let asked
-  function mountPane(path, { confirm = false } = {}) {
+  function mountPane(path, { confirm = false, paneTabs = null } = {}) {
     asked = []
     const node = reactive({ type: 'leaf', kind: 'editor', id: `ed-${++seq}`, title: 'Editor', files: [{ path }], activePath: path, reveal: null })
     ctx = {
+      paneTabs,
       activeId: ref(node.id),
       maximizedId: ref(null),
       highlightId: ref(null),
@@ -271,6 +272,7 @@ describe("the editor pane on a Live Share host's file", () => {
       props: { node },
       attachTo: document.body,
       global: {
+        stubs: { PdfView: true },
         provide: {
           panelCtx: ctx,
           askConfirm: async (q) => {
@@ -307,6 +309,24 @@ describe("the editor pane on a Live Share host's file", () => {
     await flushPromises()
     expect(loadMonaco).toHaveBeenCalled()
     expect(w.get('[data-test="editor-host"]').isVisible()).toBe(true)
+  })
+
+  it('keeps an HTML index pinned when following its document links', async () => {
+    const file = 'C:/p/INDEX.html'
+    disk.set(file, { text: '<h1>Index</h1>', sig: 's1' })
+    const node = mountPane(file)
+    node.files[0].preview = true
+    await flushPromises()
+    w.findComponent({ name: 'RichView' }).vm.$emit('open', 'C:/p/report.pdf')
+    expect(node.files[0].preview).toBe(false)
+    expect(ctx.openInEditor).toHaveBeenCalledWith({ file: 'C:/p/report.pdf', preview: false })
+  })
+
+  it('does not reserve an empty titlebar above a PDF with pane tabs', async () => {
+    mountPane('C:/p/report.pdf', { paneTabs: () => ({ leaves: [], shown: null }) })
+    await flushPromises()
+    expect(w.find('.ed-titlebar').exists()).toBe(false)
+    expect(w.findComponent({ name: 'RichView' }).props('kind')).toBe('pdf')
   })
 
   it('shows an image even after Monaco failed for a text tab', async () => {

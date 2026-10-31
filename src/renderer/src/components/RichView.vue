@@ -15,6 +15,7 @@ import SheetView from './SheetView.vue'
 import DocView from './DocView.vue'
 import MediaView from './MediaView.vue'
 import PdfView from './PdfView.vue'
+import HtmlView from './HtmlView.vue'
 import { resolveFrom } from '../../../shared/viewPaths'
 import { openTarget } from '../links/openTarget'
 import { t } from '../i18n'
@@ -198,6 +199,7 @@ function onBodyClick(e) {
 
 <template>
   <div ref="bodyEl" class="fview-body ed-rich" :data-kind="kind" data-test="rich-view" @click="onBodyClick">
+    <HtmlView v-if="kind === 'html' || kind === 'html-plain'" :file="file" :text="text" :plain="kind === 'html-plain'" @open="emit('open', $event)" />
     <MarkdownSizeGate
       v-if="kind === 'markdown' && markdownState !== 'render'"
       :state="markdownState"

@@ -12,6 +12,7 @@
 //   video     Chromium's player (mp4, webm, ogv, mov...)
 //   text      anything else that is text (shown with line numbers)
 const EXT = {
+  html: ['html', 'htm'],
   markdown: ['md', 'markdown', 'mdx'],
   mermaid: ['mmd', 'mermaid'],
   table: ['csv', 'tsv'],
@@ -79,7 +80,7 @@ export function fileKind(file) {
 
 // Kinds Tessel shows itself when you open a file from a terminal link or
 // Jump to file (code files still go to your editor).
-export const VIEWED_KINDS = ['markdown', 'mermaid', 'table', 'json', 'image', 'pdf']
+export const VIEWED_KINDS = ['markdown', 'mermaid', 'table', 'json', 'image', 'pdf', 'html']
 export const isViewed = (file) => VIEWED_KINDS.includes(fileKind(file))
 
 // CSV / TSV (RFC 4180: quoted fields, "" for a quote, newlines inside quotes).

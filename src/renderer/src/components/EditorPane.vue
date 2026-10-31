@@ -103,7 +103,7 @@ const activeDocPath = computed(() => docPathOf(activeFile.value))
 const activeDoc = computed(() => (activeDocPath.value ? docs[pathKey(activeDocPath.value)] || null : null))
 const diffInfo = computed(() => (activeFile.value && activeFile.value.diff) || null)
 const kind = computed(() => (activeDocPath.value ? fileKind(activeDocPath.value) : 'text'))
-const RICH_KINDS = ['markdown', 'mermaid', 'table']
+const RICH_KINDS = ['markdown', 'mermaid', 'table', 'html']
 // Read whole and shown in a view of their own (RichView), never as text.
 const VIEW_KINDS = ['image', 'pdf', 'sheet', 'doc', 'slides', 'audio', 'video']
 
@@ -125,6 +125,7 @@ const toggleModes = computed(() => {
   if (!activeFile.value) return []
   if (diffInfo.value) return kind.value === 'markdown' ? ['source', 'rich'] : []
   if (VIEW_KINDS.includes(kind.value)) return []
+  if (kind.value === 'html') return ['source', 'rich', 'plain', 'changes']
   if (RICH_KINDS.includes(kind.value)) return ['source', 'rich', 'changes']
   return ['edit', 'changes']
 })
@@ -132,12 +133,15 @@ const toggleValue = computed(() => {
   const m = mode.value
   if (diffInfo.value) return m === 'rich' ? 'rich' : 'source'
   if (m === 'rich') return 'rich'
+  if (m === 'plain') return 'plain'
   if (m === 'changes' || m === 'compare') return 'changes'
   return RICH_KINDS.includes(kind.value) ? 'source' : 'edit'
 })
 // Orca's EditorViewToggle metadata (CSV: Table; Tessel's rendered Markdown and
 // Mermaid take the "rich" slot as Preview).
 function toggleMeta(v) {
+  if (v === 'plain') return { label: t('editor.html.plain', 'Plain text'), icon: 'fileText' }
+  if (v === 'source' && kind.value === 'html') return { label: t('editor.html.code', 'Code'), icon: 'code' }
   if (v === 'rich' && kind.value === 'table') return { label: t('editor.viewer.table', 'Table'), icon: 'table' }
   if (v === 'source') return { label: t('editor.viewer.source', 'Source'), icon: 'code' }
   if (v === 'rich') return { label: t('editor.viewer.preview', 'Preview'), icon: 'eye' }
@@ -185,7 +189,7 @@ const message = computed(() => {
 })
 const showDiff = computed(() => !message.value && ['changes', 'compare', 'diff'].includes(mode.value))
 const showCode = computed(() => !message.value && mode.value === 'edit')
-const showRich = computed(() => !message.value && (mode.value === 'rich' || mode.value === 'image'))
+const showRich = computed(() => !message.value && (mode.value === 'rich' || mode.value === 'plain' || mode.value === 'image'))
 const isDiffSurface = computed(() => ['changes', 'diff'].includes(mode.value) && !!activeFile.value)
 
 // --- A Live Share host's file ------------------------------------------------------------
@@ -435,7 +439,7 @@ watch(
 
 // --- The rendered view (Preview / Table / Diagram) follows the text --------------------------
 function updateRichText() {
-  if (mode.value !== 'rich') return
+  if (mode.value !== 'rich' && mode.value !== 'plain') return
   if (diffInfo.value) {
     richText.value = diffModified ? diffModified.getValue() : (modelOf(activeDocPath.value) || { getValue: () => '' }).getValue()
     return
@@ -946,8 +950,10 @@ function copyPath() {
 // A link in a rendered Markdown file: the link router (a PDF in its window,
 // an image in the image viewer, a folder in Files), else the editor.
 function openLinked(file) {
-  if (ctx.openTarget) ctx.openTarget({ path: file })
-  else if (ctx.openInEditor) ctx.openInEditor({ file })
+  // Following a document link must not replace the index's preview tab.
+  pin(props.node.activePath)
+  if (ctx.openInEditor) ctx.openInEditor({ file, preview: false })
+  else if (ctx.openTarget) ctx.openTarget({ path: file }, { preview: false })
 }
 
 // The banner (unsaved edits and a newer file on disk).
@@ -982,7 +988,7 @@ onMounted(async () => {
     // Editing a preview tab keeps it (Orca, VS Code).
     const f = files.value.find((x) => x.preview && samePath(docPathOf(x), d.path))
     if (f) props.node.files = pinTab(files.value, f.path)
-    if (mode.value === 'rich' && samePath(d.path, activeDocPath.value)) {
+    if ((mode.value === 'rich' || mode.value === 'plain') && samePath(d.path, activeDocPath.value)) {
       clearTimeout(richTimer)
       richTimer = setTimeout(updateRichText, 200)
     }
@@ -1168,7 +1174,7 @@ onBeforeUnmount(() => {
 
     <div class="ed-body">
       <!-- VS Code's editor title: the tabs, then the editor's actions. -->
-      <div class="ed-titlebar">
+      <div v-if="!viewTabs || (activeFile && (diffInfo || (activeDoc && (!activeDoc.error || mode === 'image'))))" class="ed-titlebar">
         <!-- Shown as a tab above the panes: its files are tabs of that line. -->
         <div v-show="!viewTabs" class="ed-tabs" role="tablist" :aria-label="t('editor.tabs.aria', 'Open files')" @wheel.passive="onTabsWheel">
           <div
@@ -1325,7 +1331,7 @@ onBeforeUnmount(() => {
           :key="activeFile && activeFile.path"
           class="ed-host"
           :file="activeDocPath"
-          :kind="mode === 'image' ? (VIEW_KINDS.includes(kind) ? kind : 'image') : kind"
+          :kind="mode === 'plain' && kind === 'html' ? 'html-plain' : mode === 'image' ? (VIEW_KINDS.includes(kind) ? kind : 'image') : kind"
           :text="richText"
           @open="openLinked"
           @source="setToggle('source')"
