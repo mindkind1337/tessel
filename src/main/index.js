@@ -3711,6 +3711,8 @@ ipcMain.handle('clipboard:hasImage', () =>
 // Off until the window says what the setting is (its first report comes at start).
 let agentBrowserSeparate = false
 const browserGuests = createBrowserGuests({
+  downloadsDir: () => app.getPath('downloads'),
+  revealDownload: (file) => shell.showItemInFolder(file),
   agentSessionOnly: () => agentBrowserSeparate,
   getWindow: () => mainWindow,
   send,
@@ -3815,6 +3817,10 @@ const agentBrowser = createAgentBrowser({
   enabled: () => agentBrowserEnabled,
   ask: (method, params) => cliBridge.ask(method, params),
   guestById: (id) => browserGuests.guestById(id),
+  downloads: (id, cancel) => {
+    if (cancel) browserGuests.downloads.cancel(id, cancel)
+    return browserGuests.downloads.list(id)
+  },
   send,
   // Said when a page out of sight cannot be captured.
   windowState: () => (mainWindow && !mainWindow.isDestroyed() ? { minimized: mainWindow.isMinimized(), visible: mainWindow.isVisible() } : null),

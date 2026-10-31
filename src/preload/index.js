@@ -536,6 +536,10 @@ const api = {
   // devtools, and what a page asked for (a new window, a download, a
   // permission, a browser shortcut pressed in it).
   browser: {
+    downloads: (id) => ipcRenderer.invoke('browser:downloads', id),
+    cancelDownload: (id, downloadId) => ipcRenderer.invoke('browser:cancelDownload', id, downloadId),
+    revealDownload: (id, downloadId) => ipcRenderer.invoke('browser:revealDownload', id, downloadId),
+    onDownloadChanged: (cb) => subscribe('browser:downloadChanged', cb),
     pick: (id) => ipcRenderer.invoke('browser:pick', id),
     cancelPick: (id) => ipcRenderer.invoke('browser:cancelPick', id),
     screenshot: (id) => ipcRenderer.invoke('browser:screenshot', id),

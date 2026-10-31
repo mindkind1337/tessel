@@ -12,8 +12,8 @@
 //   (the page never sees Tessel's shellApi), sandbox, context isolation, no
 //   Node, web security on.
 // - It only goes to http(s) pages (a link, a redirect); a new window opens in
-//   the same pane instead (the window is told); nothing is downloaded (the
-//   window offers the system browser instead); no permission is granted but
+//   the same pane instead (the window is told); downloads use Save As in
+//   that session; no permission is granted but
 //   writing to the clipboard and full screen (camera, microphone, location,
 //   notifications, screen sharing: refused, the window says so). A page's
 //   full screen (a video's button) covers Tessel's window, not the screen:
@@ -36,6 +36,7 @@ import { allowedBrowserUrl, BLANK_URL } from '../shared/browserUrl'
 import { pickerScript, clampPickPayload } from './browserPicker'
 import { t } from './i18n'
 import { isViewPartition, guardViewSession } from './liveShareView'
+import { createBrowserDownloads } from './browserDownloads'
 
 export const BROWSER_PARTITION = 'persist:tessel-browser'
 // A second session for agent-driven pages, used only when the user turns on
@@ -214,13 +215,14 @@ export function contextMenuItems(params = {}, nav = {}) {
 // agentSessionOnly() -> bool: Settings > Browser > "Agents use a separate
 // browser session". On, guestById (the agents' only way to a page) gives only
 // pages of the agents' own session, never the user's with its logins.
-export function createBrowserGuests({ getWindow, send, log = null, screenshotDir, electron, openExternal = null, onGuest = null, agentSessionOnly = () => false }) {
+export function createBrowserGuests({ getWindow, send, log = null, screenshotDir, electron, openExternal = null, onGuest = null, agentSessionOnly = () => false, downloadsDir = () => screenshotDir, revealDownload = () => {} }) {
   const { webContents, clipboard, nativeImage, session: electronSession, Menu = null } = electron
   // guest id -> { cancel } while an element is being picked.
   const picking = new Map()
   // Our hardened sessions, by partition (so a page is only accepted in one we
   // made and locked down ourselves, never another webContents' session).
   const ourSessions = new Map()
+  const downloads = createBrowserDownloads({ directory: downloadsDir, send, reveal: revealDownload })
 
   const warn = (msg) => log && log.warn('browser', msg)
 
@@ -257,15 +259,16 @@ export function createBrowserGuests({ getWindow, send, log = null, screenshotDir
     // Screen sharing: never. null refuses it (an object without the video
     // asked for makes Electron throw a TypeError in the main process).
     if (typeof ses.setDisplayMediaRequestHandler === 'function') ses.setDisplayMediaRequestHandler((_req, callback) => callback(null))
-    // Nothing is saved on its own: the window offers the system browser.
+    // Keep Chromium's authenticated response and native Save As dialog.
     ses.on('will-download', (event, item, wc) => {
-      event.preventDefault()
-      const url = allowedBrowserUrl(item.getURL())
-      send('browser:downloadBlocked', {
-        webContentsId: wc && !wc.isDestroyed() ? wc.id : null,
-        url: url && url !== BLANK_URL ? url : null,
-        name: String(item.getFilename() || '').slice(0, 200)
-      })
+      if (isViewPartition(partition) || !wc || !pageById(wc.id) || !/^(https?:|blob:)/i.test(item.getURL())) {
+        event.preventDefault()
+        return
+      }
+      try { downloads.accept(item, wc.id) } catch {
+        event.preventDefault()
+        send('browser:downloadBlocked', { webContentsId: wc.id, url: null, name: '' })
+      }
     })
     return ses
   }
@@ -367,18 +370,37 @@ export function createBrowserGuests({ getWindow, send, log = null, screenshotDir
       noteGesture(mouse && mouse.type)
     })
 
-    guest.setWindowOpenHandler(({ url, disposition }) => {
+    guest.setWindowOpenHandler(({ url, disposition, postBody, referrer }) => {
+      if (url.startsWith('blob:')) {
+        try {
+          if (Date.now() - gestureAt <= POPUP_GESTURE_MS && new URL(url).origin === new URL(guest.getURL()).origin) {
+            gestureAt = 0
+            guest.downloadURL(url)
+          }
+        } catch { /* Invalid or expired blob: keep the popup blocked. */ }
+        return { action: 'deny' }
+      }
       // A link to a new window: opened in the same pane (the window decides).
       const target = allowedBrowserUrl(url)
       if (!target || target === BLANK_URL) return { action: 'deny' }
       // Only right after the user's own click or key, once per input: an ad
       // frame opening windows on its own would take the pane away.
       if (Date.now() - gestureAt > POPUP_GESTURE_MS) {
-        if (!popupWarned) warn(`blocked a new window without a click: ${target.slice(0, 200)}`)
+        if (!popupWarned) warn('blocked a new window without a click')
         popupWarned = true
         return { action: 'deny' }
       }
       gestureAt = 0
+      // Preserve a form POST used to generate a PDF (rerouting through the
+      // renderer would turn it into a GET and discard the request body).
+      if (postBody?.data) {
+        const contentType = postBody.contentType === 'multipart/form-data' && postBody.boundary
+          ? `${postBody.contentType}; boundary=${postBody.boundary}` : postBody.contentType
+        guest.loadURL(target, { postData: postBody.data, httpReferrer: referrer,
+          ...(contentType ? { extraHeaders: `Content-Type: ${contentType}\r\n` } : {})
+        }).catch(() => {})
+        return { action: 'deny' }
+      }
       const newPane = wantsNewPane(disposition, lastMouse)
       lastMouse = null
       send('browser:popup', { webContentsId: guest.id, url: target, ...(newPane ? { newPane: true } : {}) })
@@ -832,6 +854,9 @@ export function createBrowserGuests({ getWindow, send, log = null, screenshotDir
   }
 
   function register(ipcMain) {
+    ipcMain.handle('browser:downloads', (event, id) => guestFor(event, id) ? downloads.list(id) : [])
+    ipcMain.handle('browser:cancelDownload', (event, id, downloadId) => !!guestFor(event, id) && downloads.cancel(id, downloadId))
+    ipcMain.handle('browser:revealDownload', (event, id, downloadId) => !!guestFor(event, id) && downloads.show(id, downloadId))
     ipcMain.handle('browser:pick', async (event, id) => {
       const guest = guestFor(event, id)
       return guest ? pick(guest) : { ok: false, code: 'no-page' }
@@ -880,7 +905,7 @@ export function createBrowserGuests({ getWindow, send, log = null, screenshotDir
 
   purgeOldFiles()
 
-  return { attachToWindow, register, onWillAttach, onDidAttach, guestFor, guestById, pageById, capture, pick, shortcutOf, isScreenshot, browserSession, purgeOldFiles, saveFeedback, clearData, showContextMenu, runMenuItem }
+  return { downloads, attachToWindow, register, onWillAttach, onDidAttach, guestFor, guestById, pageById, capture, pick, shortcutOf, isScreenshot, browserSession, purgeOldFiles, saveFeedback, clearData, showContextMenu, runMenuItem }
 }
 
 export { shortcutOf }

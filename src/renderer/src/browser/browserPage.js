@@ -155,7 +155,7 @@ export function permissionNotice({ permission, origin } = {}) {
 
 export function downloadNotice({ name } = {}) {
   const file = name ? String(name) : t('browser.notice.thisFile', 'this file')
-  return t('browser.notice.download', 'Tessel does not download files. Open {{name}} in your default browser?', { name: file })
+  return t('browser.notice.downloadFailed', 'Unable to start downloading {{name}}.', { name: file })
 }
 
 // --- Keys ---------------------------------------------------------------------------------

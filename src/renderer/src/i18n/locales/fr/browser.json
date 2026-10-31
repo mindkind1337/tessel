@@ -1,5 +1,15 @@
 {
   "browser": {
+    "download": {
+      "title": "Téléchargements",
+      "choosing": "Choisissez où enregistrer",
+      "progressing": "Téléchargement en cours",
+      "completed": "Enregistré",
+      "cancelled": "Annulé",
+      "interrupted": "Téléchargement interrompu",
+      "cancel": "Annuler",
+      "reveal": "Afficher dans le dossier"
+    },
     "pane": {
       "title": "Navigateur",
       "titleHint": "{{url}}\nFaites glisser l'en-tête pour déplacer le volet"

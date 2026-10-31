@@ -97,7 +97,7 @@ describe('browserPage.js', () => {
     )
     expect(permissionNotice({ permission: 'geolocation', origin: 'unknown' })).toBe('This page asked for your location; Tessel denied it.')
     expect(permissionNotice({ permission: 'hid', origin: 'https://a.test' })).toBe('https://a.test asked for hid; Tessel denied it.')
-    expect(downloadNotice({ name: 'a.zip' })).toBe('Tessel does not download files. Open a.zip in your default browser?')
+    expect(downloadNotice({ name: 'a.zip' })).toBe('Unable to start downloading a.zip.')
   })
 
   it('keys: address, reload, history, devtools, zoom', () => {
@@ -503,10 +503,9 @@ describe('BrowserPane.vue', () => {
     expect(ctx.toast).toHaveBeenLastCalledWith('https://x.test asked for camera or microphone access; Tessel denied it.', expect.any(Object))
     handlers.download({ webContentsId: 42, url: 'https://x.test/a.zip', name: 'a.zip' })
     const [text, opts] = ctx.toast.mock.calls.at(-1)
-    expect(text).toBe('Tessel does not download files. Open a.zip in your default browser?')
-    expect(opts.action.label).toBe('Open in default browser')
-    opts.action.run()
-    expect(ctx.openExternal).toHaveBeenCalledWith('https://x.test/a.zip')
+    expect(text).toBe('Unable to start downloading a.zip.')
+    expect(opts.action).toBeUndefined()
+    expect(ctx.openExternal).not.toHaveBeenCalled()
     handlers.shortcut({ webContentsId: 42, action: 'devTools' })
     expect(api.openDevTools).toHaveBeenCalledWith(42)
     handlers.shortcut({ webContentsId: 42, action: 'zoomIn' })

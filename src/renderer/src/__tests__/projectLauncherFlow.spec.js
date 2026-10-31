@@ -54,7 +54,7 @@ function load({ projectOpen = 'ask', remoteStatus = {} } = {}) {
     layoutReady: ref(true),
     remoteAgentTools: reactive(remoteStatus),
     agentEnabled: () => true,
-    settings: reactive({ projectOpen, agentPrefs: {} }),
+    settings: reactive({ projectOpen, agentPrefs: {}, sidebarFilterRepoIds: [] }),
     workspaces,
     currentWsId,
     currentWs: computed(() => workspaces.value.find((w) => w.id === currentWsId.value) || null),
@@ -100,6 +100,15 @@ const LOCAL = { name: 'proj', cwd: 'C:\\proj' }
 const REMOTE = { name: 'app', remote: { hostId: 'ssh-box', path: '/srv/app' } }
 
 describe('a new project', () => {
+  it('checks new projects while preserving unchecked projects', async () => {
+    const { api, ctx, workspaces } = load()
+    await api.addProjects({ projects: [LOCAL, REMOTE] })
+    expect([...ctx.settings.sidebarFilterRepoIds]).toEqual(workspaces.value.map((w) => w.id))
+    const selected = workspaces.value[0].id
+    ctx.settings.sidebarFilterRepoIds = [selected]
+    await api.addProjects({ projects: [{ name: 'new', cwd: 'C:\\new' }] })
+    expect([...ctx.settings.sidebarFilterRepoIds]).toEqual([selected, workspaces.value[2].id])
+  })
   it('here: the launcher shows, no pane is started', async () => {
     const { api, ctx, workspaces } = load()
     await api.addProjects({ projects: [LOCAL] })

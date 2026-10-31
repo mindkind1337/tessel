@@ -35,6 +35,7 @@ function fakeGuest({ id, host, ses, type = 'webview' }) {
     getURL: () => 'https://page.test/now',
     setWindowOpenHandler: vi.fn((h) => (g.openHandler = h)),
     stop: vi.fn(),
+    downloadURL: vi.fn(),
     loadURL: vi.fn(() => Promise.resolve()),
     openDevTools: vi.fn(),
     capturePage: vi.fn(),
@@ -439,22 +440,48 @@ describe('the browser session', () => {
     expect(streams == null || (!streams.video && !streams.audio)).toBe(true)
   })
 
-  it('downloads nothing and tells the window', () => {
+  it('allows a native download from an owned page with a Save As dialog', () => {
+    const guest = t.attach()
     const e = ev()
-    const item = { getURL: () => 'https://files.test/a.zip', getFilename: () => 'a.zip' }
-    t.ses.emit('will-download', e, item, { id: 7, isDestroyed: () => false })
-    expect(e.preventDefault).toHaveBeenCalled()
-    expect(t.sent).toEqual([['browser:downloadBlocked', { webContentsId: 7, url: 'https://files.test/a.zip', name: 'a.zip' }]])
+    const item = Object.assign(new EventEmitter(), { getURL: () => 'https://files.test/a.zip', getFilename: () => 'a.zip', getTotalBytes: () => 10, setSaveDialogOptions: vi.fn() })
+    t.ses.emit('will-download', e, item, guest)
+    expect(e.preventDefault).not.toHaveBeenCalled()
+    expect(item.setSaveDialogOptions).toHaveBeenCalled()
+    expect(t.bg.downloads.list(7)[0].state).toBe('choosing')
+    expect(t.bg.downloads.list(8)).toEqual([])
   })
 
-  it('a download from a blob: or data: URL has no URL to offer', () => {
-    for (const url of ['blob:https://page.test/1234', 'data:text/plain,x', 'about:blank']) {
+  it('refuses unowned downloads without exposing their URL', () => {
+    for (const url of ['https://files.test/a', 'blob:https://page.test/1234', 'data:text/plain,x', 'about:blank']) {
       t.sent.length = 0
       const e = ev()
       t.ses.emit('will-download', e, { getURL: () => url, getFilename: () => 'x.txt' }, { id: 7, isDestroyed: () => false })
       expect(e.preventDefault).toHaveBeenCalled()
-      expect(t.sent[0][1].url).toBeNull()
+      expect(t.sent).toEqual([])
     }
+  })
+})
+
+describe('download popups', () => {
+  it('downloads a same-origin blob only after input, refusing foreign origins', () => {
+    const g = t.attach()
+    const url = 'blob:https://page.test/1234'
+    expect(g.openHandler({ url })).toEqual({ action: 'deny' })
+    expect(g.downloadURL).not.toHaveBeenCalled()
+    t.click(g)
+    g.openHandler({ url: 'blob:https://foreign.test/1234' })
+    expect(g.downloadURL).not.toHaveBeenCalled()
+    g.openHandler({ url })
+    expect(g.downloadURL).toHaveBeenCalledWith(url)
+    g.openHandler({ url })
+    expect(g.downloadURL).toHaveBeenCalledTimes(1)
+  })
+  it('preserves a PDF form POST in the original page session', () => {
+    const g = t.attach()
+    t.click(g)
+    const postBody = { data: [{ type: 'rawData', bytes: Buffer.from('fixture=yes') }], contentType: 'application/x-www-form-urlencoded' }
+    g.openHandler({ url: 'https://page.test/pdf', postBody })
+    expect(g.loadURL).toHaveBeenCalledWith('https://page.test/pdf', expect.objectContaining({ postData: postBody.data }))
   })
 })
 

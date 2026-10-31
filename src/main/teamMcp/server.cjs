@@ -1364,6 +1364,11 @@ const BROWSER_TOOLS = [
     inputSchema: { type: 'object', properties: { text: { type: 'string' }, selector: { type: 'string' }, url: { type: 'string' }, timeout_ms: { type: 'number' }, ...PAGE_ARG } }
   }
 ]
+BROWSER_TOOLS.push({
+  name: 'browser_downloads',
+  description: 'List downloads for this page: id, state, byte progress, saved path on completion, error or cancellation. Downloads retain the page session and prompt the user for a destination. Optionally cancel an active download by id. Do not copy private filenames or paths into logs.',
+  inputSchema: { type: 'object', properties: { ...PAGE_ARG, cancel: { type: 'string', description: 'Download id to cancel (optional)' } } }
+})
 const BROWSER_OPS = Object.fromEntries(BROWSER_TOOLS.map((t) => [t.name, t.name.slice('browser_'.length)]))
 TOOLS.push(...BROWSER_TOOLS)
 

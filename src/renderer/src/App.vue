@@ -4360,6 +4360,11 @@ async function addProjects({ projects, source } = {}) {
     if (spec.group && Array.isArray(spec.group.repos)) ws.group = { repos: spec.group.repos.map((r) => ({ path: r.path, name: r.name })) }
     workspaces.value.push(ws)
     firstId = firstId || ws.id
+    // An empty filter means all projects. Materialize that selection before
+    // adding the new project so previously visible projects stay visible.
+    settings.sidebarFilterRepoIds = settings.sidebarFilterRepoIds.length
+      ? [...new Set([...settings.sidebarFilterRepoIds, ws.id])]
+      : workspaces.value.map((project) => project.id)
     added++
     // No shell nobody asked for: the launcher, or what Settings > Agents
     // "When a project opens" says.
@@ -6351,6 +6356,9 @@ async function createWorkspace() {
   ws.cwd = currentWs.value ? currentWs.value.cwd : null
   ws.remote = currentWs.value && currentWs.value.remote ? { ...currentWs.value.remote } : null
   workspaces.value.push(ws)
+  settings.sidebarFilterRepoIds = settings.sidebarFilterRepoIds.length
+    ? [...new Set([...settings.sidebarFilterRepoIds, ws.id])]
+    : workspaces.value.map((project) => project.id)
   selectWorkspace(ws.id)
   // Put the new workspace's name straight into edit mode.
   nextTick(() => sidebarEl.value && sidebarEl.value.startRename(ws.id))

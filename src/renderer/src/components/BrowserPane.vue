@@ -24,6 +24,7 @@
 // a guest opened from one of yours (a new window from its click) is in the
 // browser's guest session, with none of your logins.
 import { ref, shallowRef, computed, watch, inject, nextTick, onMounted, onBeforeUnmount } from 'vue'
+import BrowserDownloads from './BrowserDownloads.vue'
 import {
   ArrowLeft,
   ArrowRight,
@@ -907,11 +908,7 @@ function subscribe(api) {
   })
   on('onDownloadBlocked', (ev) => {
     if (!ctx.toast) return
-    const url = allowedBrowserUrl(ev.url)
-    ctx.toast(downloadNotice(ev), {
-      timeout: 10000,
-      ...(url ? { action: { label: t('browser.notice.openDefault', 'Open in default browser'), run: () => openExternal(url) } } : {})
-    })
+    ctx.toast(downloadNotice(ev), { timeout: 10000 })
   })
 }
 
@@ -1140,6 +1137,7 @@ defineExpose({ navigate, focusAddress })
     </div>
 
     <div class="bp-body">
+      <BrowserDownloads :guest-id="guestId" />
       <div class="bp-toolbar" data-test="browser-toolbar">
         <button
           type="button"
