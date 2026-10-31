@@ -27,12 +27,14 @@ export function createBrowserDownloads({ directory, send, reveal = () => {} }) {
   function list(page) {
     return [...records.values()].filter((r) => r.webContentsId === page).map((r) => ({ ...r }))
   }
-  function accept(item, page) {
+  function accept(item, page, { unattended = false } = {}) {
     if (active.size >= 8) throw new Error('Too many active downloads')
     const destination = destinations.get(page)
     destinations.delete(page)
     if (destination && (destination.expiresAt <= Date.now() || !destination.allowed())) throw new Error('Download destination expired or revoked')
-    const folder = destination ? path.dirname(destination.saveAs) : directory()
+    const silent = !!destination || unattended
+    const folder = destination ? path.dirname(destination.saveAs) : unattended ? path.join(directory(), 'Tessel') : directory()
+    if (silent) fs.mkdirSync(folder, { recursive: true })
     const raw = destination ? path.basename(destination.saveAs) : String(item.getFilename() || 'download')
     // eslint-disable-next-line no-control-regex -- strip forbidden filename bytes
     const name = raw.replace(/[<>:"/\\|?*\u0000-\u001f]/g, '_').replace(/[. ]+$/, '').slice(0, 180) || 'download'
@@ -45,12 +47,12 @@ export function createBrowserDownloads({ directory, send, reveal = () => {} }) {
     const id = crypto.randomUUID()
     // Save unattended transfers to a private staging name. Publish exclusively
     // on completion, so even a file created during the transfer is not replaced.
-    const staging = destination ? path.join(folder, `.tessel-download-${id}.part`) : null
+    const staging = silent ? path.join(folder, `.tessel-download-${id}.part`) : null
     if (staging) {
       fs.closeSync(fs.openSync(staging, 'wx', 0o600))
       try { item.setSavePath(staging) } catch (error) { fs.unlinkSync(staging); throw error }
     } else item.setSaveDialogOptions({ defaultPath: target, properties: ['showOverwriteConfirmation', 'createDirectory'] })
-    const r = { id, webContentsId: page, name: path.basename(target), state: destination ? 'progressing' : 'choosing', receivedBytes: 0, totalBytes: item.getTotalBytes(), path: null, error: null }
+    const r = { id, webContentsId: page, name: path.basename(target), state: silent ? 'progressing' : 'choosing', receivedBytes: 0, totalBytes: item.getTotalBytes(), path: null, error: null }
     records.set(id, r)
     active.set(id, { item, target })
     for (const [key] of records) {

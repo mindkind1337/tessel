@@ -1043,7 +1043,10 @@ export function createAgentBrowser({ verify, enabled = () => true, ask, guestByI
     controlled(guest, s, r.agent)
     try {
       const out = await queued(s, guest, () => run(op, guest, s, args, pane))
-      return { ...out, text: capText(out.text) }
+      const downloadHint = s.downloadHintFor !== pane && ['snapshot', 'click', 'mouse', 'press', 'navigate'].includes(op)
+        ? '\nDownloads while you control this page save automatically to the local Downloads/Tessel folder, without a dialog. To choose a filename or folder, call browser_downloads with saveAs before clicking. Call browser_downloads afterwards and verify completed plus the saved path; never claim success from the click alone.' : ''
+      if (downloadHint) s.downloadHintFor = pane
+      return { ...out, text: capText(out.text + downloadHint) }
     } catch (err) {
       if (err instanceof CliError) throw err
       if (err instanceof BrowserInputError) {
@@ -1059,5 +1062,6 @@ export function createAgentBrowser({ verify, enabled = () => true, ask, guestByI
     }
   }
 
-  return { handle, stop, watchGuest, release, releaseAll, isRevoked: (id) => revoked.has(id), _pages: pages }
+  const isControlling = (id) => !!(enabled() && pages.get(id)?.idle && !revoked.has(id) && !revokedPages.has(pages.get(id)?.page) && guestById(id))
+  return { handle, stop, watchGuest, release, releaseAll, isControlling, isRevoked: (id) => revoked.has(id), _pages: pages }
 }

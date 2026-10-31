@@ -38,6 +38,27 @@ it('tracks native completion, cancellation and errors, scoped to the originating
   expect(JSON.stringify(send.mock.calls)).not.toContain('https:')
 })
 
+it('automatically saves agent-controlled downloads but leaves manual downloads with Save As', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tessel-auto-download-'))
+  try {
+    const manager = createBrowserDownloads({ directory: () => dir, send: vi.fn() })
+    const item = Object.assign(new EventEmitter(), {
+      getFilename: () => 'original.pdf', getTotalBytes: () => 3, getReceivedBytes: () => 3,
+      getSavePath: () => '', setSavePath: vi.fn(), setSaveDialogOptions: vi.fn()
+    })
+    manager.accept(item, 7, { unattended: true })
+    expect(item.setSaveDialogOptions).not.toHaveBeenCalled()
+    const staging = item.setSavePath.mock.calls[0][0]
+    fs.writeFileSync(staging, 'PDF')
+    item.emit('done', {}, 'completed')
+    expect(manager.list(7)[0].path).toBe(path.join(dir, 'Tessel', 'original.pdf'))
+    item.setSavePath.mockClear()
+    manager.accept(item, 8)
+    expect(item.setSavePath).not.toHaveBeenCalled()
+    expect(item.setSaveDialogOptions).toHaveBeenCalled()
+  } finally { fs.rmSync(dir, { recursive: true, force: true }) }
+})
+
 it('saves once without a dialog, scopes the destination and never overwrites a racing file', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tessel-agent-download-'))
   try {

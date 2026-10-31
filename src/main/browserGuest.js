@@ -215,7 +215,7 @@ export function contextMenuItems(params = {}, nav = {}) {
 // agentSessionOnly() -> bool: Settings > Browser > "Agents use a separate
 // browser session". On, guestById (the agents' only way to a page) gives only
 // pages of the agents' own session, never the user's with its logins.
-export function createBrowserGuests({ getWindow, send, log = null, screenshotDir, electron, openExternal = null, onGuest = null, agentSessionOnly = () => false, downloadsDir = () => screenshotDir, revealDownload = () => {} }) {
+export function createBrowserGuests({ getWindow, send, log = null, screenshotDir, electron, openExternal = null, onGuest = null, agentSessionOnly = () => false, downloadsDir = () => screenshotDir, revealDownload = () => {}, agentControlsPage = () => false }) {
   const { webContents, clipboard, nativeImage, session: electronSession, Menu = null } = electron
   // guest id -> { cancel } while an element is being picked.
   const picking = new Map()
@@ -265,7 +265,7 @@ export function createBrowserGuests({ getWindow, send, log = null, screenshotDir
         event.preventDefault()
         return
       }
-      try { downloads.accept(item, wc.id) } catch {
+      try { downloads.accept(item, wc.id, { unattended: agentControlsPage(wc.id) === true }) } catch {
         event.preventDefault()
         send('browser:downloadBlocked', { webContentsId: wc.id, url: null, name: '' })
       }

@@ -185,12 +185,17 @@ describe('agent browser: who may call', () => {
   it('prepares a page-scoped destination whose authority is revoked by Stop', async () => {
     const downloads = vi.fn(() => ({ ok: true }))
     const { call, ab, guest } = setup({ downloads })
+    expect(ab.isControlling(guest.id)).toBe(false)
     await call('downloads', { saveAs: 'C:\\Downloads\\chosen.pdf' })
+    expect(ab.isControlling(guest.id)).toBe(true)
     const [id, options, allowed] = downloads.mock.calls[0]
     expect(id).toBe(guest.id)
     expect(options).toMatchObject({ owner: PANE, saveAs: 'C:\\Downloads\\chosen.pdf' })
     expect(allowed()).toBe(true)
+    expect((await call('snapshot', {})).text).toContain('Downloads/Tessel')
+    expect((await call('snapshot', {})).text).not.toContain('Downloads/Tessel')
     ab.stop(guest.id)
+    expect(ab.isControlling(guest.id)).toBe(false)
     expect(allowed()).toBe(false)
     await expect(call('downloads', {})).rejects.toThrow(/stopped/i)
   })
@@ -627,7 +632,7 @@ describe('agent browser: commands', () => {
     page.focused = 40
     const { call } = setup({ guest: fakeGuest(11, { cdp: pageCdp({}, page) }) })
     await expect(call('press', { key: 'a' })).rejects.toMatchObject({ code: 'password_field' })
-    await expect(call('press', { key: 'Enter' })).resolves.toMatchObject({ text: 'Pressed Enter.' })
+    await expect(call('press', { key: 'Enter' })).resolves.toMatchObject({ text: expect.stringContaining('Pressed Enter.') })
     await expect(call('press', { key: 'Hyper+q' })).rejects.toMatchObject({ code: 'invalid_argument' })
     await expect(call('press', { key: 'Control+Shift+w' })).rejects.toMatchObject({ code: 'reserved_key' })
     page.focused = 30
@@ -1220,7 +1225,7 @@ describe('agent browser: pages out of sight, canvas and games', () => {
     const guest = fakeGuest(11, { cdp: viewportCdp() })
     const { call } = setup({ guest })
     const r = await call('mouse', { action: 'drag', x: 40, y: 40, to_x: 200, to_y: 150, steps: 4 })
-    expect(r.text).toBe('Dragged from (40, 40) to (200, 150) in 4 steps.')
+    expect(r.text).toContain('Dragged from (40, 40) to (200, 150) in 4 steps.')
     expect(mouseEvents(guest).map((e) => `${e.type}:${e.x},${e.y}:${e.buttons}`)).toEqual([
       'mouseMoved:40,40:0',
       'mousePressed:40,40:1',
@@ -1239,7 +1244,7 @@ describe('agent browser: pages out of sight, canvas and games', () => {
     const { call } = setup({ guest })
     await call('mouse', { action: 'down', x: 10, y: 10 })
     await call('mouse', { action: 'move', x: 60, y: 30 })
-    expect((await call('mouse', { action: 'up' })).text).toBe('Released the left button at (60, 30).')
+    expect((await call('mouse', { action: 'up' })).text).toContain('Released the left button at (60, 30).')
     expect(mouseEvents(guest).map((e) => `${e.type}:${e.x},${e.y}:${e.button}:${e.buttons}`)).toEqual([
       'mouseMoved:10,10:none:0',
       'mousePressed:10,10:left:1',
@@ -1251,7 +1256,7 @@ describe('agent browser: pages out of sight, canvas and games', () => {
   it('browser_press: hold_ms and repeat checked', async () => {
     const guest = fakeGuest(11, { cdp: viewportCdp() })
     const { call } = setup({ guest })
-    expect((await call('press', { key: 'ArrowUp', repeat: 2 })).text).toBe('Pressed ArrowUp 2 times.')
+    expect((await call('press', { key: 'ArrowUp', repeat: 2 })).text).toContain('Pressed ArrowUp 2 times.')
     expect((await call('press', { key: 'ArrowUp', hold_ms: 20 })).text).toBe('Pressed ArrowUp held 20 ms.')
     await expect(call('press', { key: 'ArrowUp', hold_ms: 20000 })).rejects.toMatchObject({ code: 'invalid_argument' })
     await expect(call('press', { key: 'ArrowUp', repeat: 0 })).rejects.toMatchObject({ code: 'invalid_argument' })

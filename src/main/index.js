@@ -3713,6 +3713,7 @@ let agentBrowserSeparate = false
 const browserGuests = createBrowserGuests({
   downloadsDir: () => app.getPath('downloads'),
   revealDownload: (file) => shell.showItemInFolder(file),
+  agentControlsPage: (id) => agentBrowser.isControlling(id),
   agentSessionOnly: () => agentBrowserSeparate,
   getWindow: () => mainWindow,
   send,
