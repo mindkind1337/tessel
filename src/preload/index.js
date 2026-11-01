@@ -26,6 +26,8 @@ function onShared(channel, cb) {
 const api = {
   // True in the dev build (not the installed app); the toolbar shows it.
   isDev: process.argv.includes('--tessel-dev'),
+  // The build's sub id: { count, hash, text } | null (src/main/buildId.js).
+  build: () => ipcRenderer.invoke('app:build'),
   listShells: () => ipcRenderer.invoke('shells:list'),
   listAgents: (custom) => ipcRenderer.invoke('agents:list', custom),
   refreshAgents: (custom) => ipcRenderer.invoke('agents:refresh', custom),

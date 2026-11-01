@@ -3648,6 +3648,18 @@ let stopBoardWatch = null // the board's watchers, set up once it is loaded
 // The dev build marks itself in the toolbar (yellow logo + "(dev)"), so it
 // can't be mistaken for the installed app when both are around.
 const isDev = !!window.shellApi.isDev
+// The build's sub id (buildId.js), read again when the window is looked at
+// again: a development Tessel follows the repository as it moves.
+const build = ref(null)
+async function readBuild() {
+  try {
+    build.value = (window.shellApi.build && (await window.shellApi.build())) || null
+  } catch {
+    /* no sub id shown */
+  }
+}
+readBuild()
+window.addEventListener('focus', readBuild)
 const updateStatus = ref({ state: 'disabled' })
 const updateOpen = ref(false)
 const updateInstalling = ref(false)
@@ -14148,6 +14160,8 @@ onBeforeUnmount(() => {
           <span class="brand-name">Tessel</span>
           <!-- The version running (the updater's status: app.getVersion()). -->
           <span v-if="updateStatus.current" class="brand-version" :title="t('app.toolbar.version', 'Tessel version {{version}}', { version: updateStatus.current })" data-test="brand-version">{{ updateStatus.current }}</span>
+          <!-- The build's sub id: b<commits of the repository> (the commit): it goes up with every push, the version stays the release's. -->
+          <span v-if="build" class="brand-build" :title="t('app.toolbar.build', 'Build {{build}} (commit {{hash}}): goes up with every push to GitHub; the version stays the release’s', { build: build.count, hash: build.hash })" data-test="brand-build">b{{ build.count }}</span>
           <span v-if="isDev" class="brand-dev" :title="t('app.toolbar.devBuild', 'Development build (npm run dev)')">{{ t('app.toolbar.dev', 'dev') }}</span>
         </div>
       </div>

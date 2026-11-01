@@ -19,6 +19,7 @@ import BrandIcon from './BrandIcon.vue'
 import { settings } from '../settings'
 import { displayedUsagePercent, usagePercentLabel } from '../usagePercent'
 import { loadUsageProviders } from '../usageProviders'
+import { USAGE_PROVIDERS } from '../../../shared/usageProviders'
 import { cleanHostUsage, latestUpdate } from '../hostUsage'
 import { t, intlLocale } from '../i18n'
 import { planInfo } from '../claudePlan'
@@ -416,9 +417,15 @@ const placedWithData = new Set()
 watch(open, (o) => {
   if (o) placedWithData.clear()
 })
+// A name for every provider: the one it sends, else the shared list's (a Live
+// Share host's readings carry only the id: Antigravity, Cursor, Grok...).
+const PROVIDER_NAMES = Object.fromEntries(USAGE_PROVIDERS.map((p) => [p.id, p.name]))
 function agentName(agent) {
-  return agent.name || NAMES[agent.id] || agent.id
+  return agent.name || NAMES[agent.id] || PROVIDER_NAMES[agent.id] || agent.id
 }
+// A plan the host sent in lowercase ("pro", "ultra"): its first letter up, as
+// the same plan shows on this computer's own rows.
+const planText = (plan) => (typeof plan === 'string' && plan && plan === plan.toLowerCase() ? plan.charAt(0).toUpperCase() + plan.slice(1) : plan)
 function windows(agent) {
   return (Array.isArray(agent.windows) ? agent.windows : []).filter(
     (window) =>
@@ -1208,7 +1215,7 @@ function hostStatusText(p) {
                 ><BrandIcon :kind="a.id === 'opencode-go' ? 'opencode' : a.id" :size="16" :label="agentName(a)"
               /></span>
               <span class="usage-roster-name"
-                >{{ agentName(a) }}<span v-if="a.plan" class="usage-plan"> &middot; {{ a.plan }}</span></span
+                >{{ agentName(a) }}<span v-if="a.plan" class="usage-plan"> &middot; {{ planText(a.plan) }}</span></span
               >
               <span v-if="mode === 'compact' && summaryWindow(a)" class="usage-summary" :class="{ stale: stale(a, summaryWindow(a)) }" :title="summaryTitle(a)">
                 <span v-if="stale(a, summaryWindow(a))" class="usage-old">{{ t('usage.menu.lastSeen', 'last seen') }}</span>

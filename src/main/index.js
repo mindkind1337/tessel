@@ -70,6 +70,7 @@ import { geminiSessionExists, qwenSessionExists, resumeTarget, findAgentSession 
 import { paneEnv } from './paneEnv'
 import { readForView, readImageForView, openPdfWindow } from './fileView'
 import { createPreviewServer } from './htmlPreviewServer'
+import { createBuildId, formatBuild } from './buildId'
 import { readForEdit, statForEdit, writeForEdit, headContent, createFileWatcher } from './editorFiles'
 import * as explorer from './explorer'
 import { extraToolDirs, withToolDirs } from './toolDirs'
@@ -1323,11 +1324,20 @@ ipcMain.on('log:write', (_evt, entry = {}) => {
 
 ipcMain.handle('logs:open', () => shell.openPath(log.dir))
 
+// The build's sub id (buildId.js): the version stays the release's, this goes up
+// with every commit pushed.
+// eslint-disable-next-line no-undef -- __TESSEL_BUILD__ is set by electron.vite.config.mjs
+const buildId = createBuildId({ root: app.getAppPath(), packaged: app.isPackaged, baked: typeof __TESSEL_BUILD__ !== 'undefined' ? __TESSEL_BUILD__ : null })
+ipcMain.handle('app:build', async () => {
+  const b = await buildId.get().catch(() => null)
+  return b ? { count: b.count, hash: b.hash, text: formatBuild(b) } : null
+})
 // Text to paste into a bug report: versions, system, and the recent log.
-ipcMain.handle('logs:diagnostics', () => {
+ipcMain.handle('logs:diagnostics', async () => {
+  const build = formatBuild(await buildId.get().catch(() => null))
   const lines = [
     'Tessel diagnostics',
-    `version: ${app.getVersion()} (${app.isPackaged ? 'installed' : 'dev'})`,
+    `version: ${app.getVersion()}${build ? ` ${build}` : ''} (${app.isPackaged ? 'installed' : 'dev'})`,
     `electron ${process.versions.electron}, chrome ${process.versions.chrome}, node ${process.versions.node}`,
     `os: ${process.platform} ${os.release()} ${os.arch()}, ${Math.round(os.totalmem() / 1073741824)} GB RAM`,
     `terminals known to this window: ${ptyInfo.size}`,
@@ -5969,6 +5979,7 @@ Promise.all([acquireInstanceLock(), app.whenReady()]).then(([gotInstanceLock]) =
     'app',
     `started v${app.getVersion()} (${app.isPackaged ? 'installed' : 'dev'}) electron ${process.versions.electron} node ${process.versions.node} ${process.platform} ${os.release()} ${os.arch()}`
   )
+  buildId.get().then((b) => b && log.info('app', `build ${formatBuild(b)}`)).catch(() => {})
   runningAt = Date.now()
   // The terminal host now, while the window loads, rather than at the
   // window's first re-attach (after its page, its agent list and its layout:

@@ -205,6 +205,26 @@ describe("the usage menu's section of the host's usage", () => {
     w.unmount()
   })
 
+  it('the host\u2019s agents are named as on its own screen (Antigravity, Cursor, Grok, OpenCode Go), their plans with a capital', async () => {
+    const hostUsage = { providers: [
+      { id: 'antigravity', plan: 'Ultra', windows: [{ label: '5h', usedPct: 100 }], status: 'ok' },
+      { id: 'cursor', windows: [], status: 'error' },
+      { id: 'grok', plan: 'supergrok', windows: [{ label: '5h', usedPct: 7 }], status: 'ok' },
+      { id: 'opencode-go', windows: [], status: 'signin' },
+      { id: 'codex', plan: 'pro', windows: [{ label: '5h', usedPct: 87 }], status: 'ok' }
+    ] }
+    const w = await openMenu({ hostUsage, hostName: 'Ana' })
+    const row = (id) => w.get(`[data-test="usage-host-row-${id}"]`).text()
+    expect(row('antigravity')).toContain('Antigravity')
+    expect(row('cursor')).toContain('Cursor')
+    expect(row('grok')).toContain('Grok')
+    expect(row('grok')).toContain('Supergrok')
+    expect(row('opencode-go')).toContain('OpenCode Go')
+    expect(row('codex')).toContain('Codex')
+    expect(row('codex')).toContain('Pro')
+    for (const id of ['antigravity', 'cursor', 'grok']) expect(row(id)).not.toMatch(new RegExp(`^${id}`))
+    w.unmount()
+  })
   it('Detailed / Compact is a local view choice, applied to the section too', async () => {
     const w = await openMenu({ hostUsage: snapshot(), hostName: 'Ana' })
     expect(w.find('[data-test="usage-host"] .usage-provider-detail').exists()).toBe(false)

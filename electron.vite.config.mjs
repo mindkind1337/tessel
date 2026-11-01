@@ -1,5 +1,6 @@
 import { defineConfig, externalizeDepsPlugin } from 'electron-vite'
 import vue from '@vitejs/plugin-vue'
+import { execFileSync } from 'node:child_process'
 import { askpassPlugin } from './scripts/build-askpass.mjs'
 import { DEV_HOST, DEV_PORT, freeDevPort } from './scripts/devPort.mjs'
 
@@ -101,7 +102,21 @@ const config = {
   }
 }
 
+// The sub id an installed build carries (src/main/buildId.js): the commits it
+// was made after, and the last one. A development Tessel asks git itself.
+function bakedBuild() {
+  try {
+    const git = (args) => execFileSync('git', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 10000 }).trim()
+    const count = Number(git(['rev-list', '--count', 'HEAD']))
+    const hash = git(['rev-parse', '--short=7', 'HEAD'])
+    return Number.isInteger(count) && /^[0-9a-f]{7,40}$/.test(hash) ? { count, hash } : null
+  } catch {
+    return null
+  }
+}
+
 export default defineConfig(async ({ command }) => {
   if (command === 'serve') config.renderer.server.port = await freeDevPort()
+  config.main.define = { __TESSEL_BUILD__: JSON.stringify(command === 'build' ? bakedBuild() : null) }
   return config
 })
