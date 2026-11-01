@@ -116,6 +116,50 @@ describe('Firefox logins', () => {
     expect(decryptField('', k.keyAes)).toBeNull()
   })
 
+  it('a hostile file cannot hang or exhaust the main process', () => {
+    // a 4-byte length that overflows into a negative one used to loop for ever
+    expect(() => parseDer(Buffer.from('30060484fffffffa', 'hex'))).toThrow()
+    expect(() => parseDer(Buffer.from([0x30, 0x84, 0x80, 0, 0, 1]))).toThrow()
+    // deep nesting and thousands of children are refused, not built
+    let deep = Buffer.from([0x05, 0x00])
+    for (let i = 0; i < 20; i++) deep = Buffer.concat([Buffer.from([0x30, deep.length]), deep])
+    expect(() => parseDer(deep)).toThrow()
+    expect(() => parseDer(der(0x30, ...Array.from({ length: 200 }, () => Buffer.from([0x05, 0x00]))))).toThrow()
+    // a field of tens of thousands of characters is not even decoded
+    const huge = 'A'.repeat(70000)
+    expect(fieldKeyId(huge)).toBe('')
+    expect(decryptField(huge, crypto.randomBytes(32))).toBeNull()
+    // an absurd key derivation is refused before it is run
+    const k = build()
+    const slow = (iterations, keyLength) =>
+      seq(seq(oidOf(OIDS.pbes2), seq(seq(oidOf(OIDS.pbkdf2), seq(octet(crypto.randomBytes(32)), der(0x02, Buffer.from(iterations)), int(keyLength))), seq(oidOf(OIDS.aes256), octet(crypto.randomBytes(14))))), octet(crypto.randomBytes(16)))
+    for (const bad of [slow([0x7f, 0xff, 0xff, 0xff], 32), slow([1], 0x7f)]) {
+      const started = Date.now()
+      expect(() => checkPassword({ ...k, item2: bad })).toThrowError(expect.objectContaining({ code: 'unreadable' }))
+      expect(Date.now() - started).toBeLessThan(500)
+    }
+  })
+
+  it('a file this code cannot read is not blamed on a password', () => {
+    const k = build()
+    expect(() => checkPassword({ ...k, item2: Buffer.from('3000', 'hex') })).toThrowError(expect.objectContaining({ code: 'unreadable' }))
+    expect(() => checkPassword({ ...k, item2: Buffer.from('garbage') })).toThrowError(expect.objectContaining({ code: 'unreadable' }))
+  })
+
+  it('a username that is present but unreadable, and a HTTP-auth login, are skipped', () => {
+    const k = build()
+    const json = {
+      logins: [
+        { hostname: 'https://a.example', encryptedUsername: field('ann', crypto.randomBytes(16), 'aes', k.keyAes), encryptedPassword: field('x', k.idAes, 'aes', k.keyAes) },
+        { hostname: 'https://b.example', httpRealm: 'Private', encryptedUsername: field('bob', k.idAes, 'aes', k.keyAes), encryptedPassword: field('y', k.idAes, 'aes', k.keyAes) },
+        { hostname: 'https://c.example', encryptedUsername: '', encryptedPassword: field('z', k.idAes, 'aes', k.keyAes) }
+      ]
+    }
+    const r = decryptLogins(json, k)
+    expect(r.incoming).toEqual([{ origin: 'https://c.example', username: '', password: 'z' }])
+    expect(r.skipped).toBe(2)
+  })
+
   it('the DER reader refuses what is cut short or lies about its length', () => {
     expect(() => parseDer(Buffer.from([0x30, 0x10, 0x01]))).toThrow()
     expect(() => parseDer(Buffer.from([0x30]))).toThrow()

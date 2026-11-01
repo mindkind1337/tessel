@@ -28,20 +28,29 @@ const OID = {
 // The fixed object id (CKA_ID) of the wrapped SDR key row in nssPrivate.
 const CKA_ID = Buffer.from('f8000000000000000000000000000001', 'hex')
 const PASSWORD_CHECK = 'password-check'
-const MAX_LOGINS = 5001
+// The vault holds 5000 rows: reading more would only fail the whole import.
+const MAX_LOGINS = 5000
+// What a hostile file may ask of this process: nesting, children, one field's size,
+// the key derivation's work (real profiles use 1 or 10000 iterations, 32 bytes).
+const MAX_DEPTH = 8
+const MAX_CHILDREN = 64
+const MAX_FIELD_CHARS = 65536
+const MAX_ITERATIONS = 1_000_000
 
 // Minimal DER decoder: constructed tags (SEQUENCE/SET) get parsed children,
 // primitives keep their raw content. Enough for the NSS structures above; it
 // throws on anything malformed rather than guessing.
-export function parseDer(buf, off = { i: 0 }) {
-  if (off.i + 2 > buf.length) throw fail('der')
+export function parseDer(buf, off = { i: 0 }, depth = 0) {
+  if (depth > MAX_DEPTH || off.i + 2 > buf.length) throw fail('der')
   const tag = buf[off.i++]
   let len = buf[off.i++]
   if (len & 0x80) {
     const n = len & 0x7f
-    if (n === 0 || n > 4 || off.i + n > buf.length) throw fail('der')
+    // At most 3 length bytes (16 MB): a longer one is not a key store, and a 4-byte
+    // length would overflow 32-bit arithmetic into a negative one.
+    if (n === 0 || n > 3 || off.i + n > buf.length) throw fail('der')
     len = 0
-    for (let k = 0; k < n; k++) len = (len << 8) | buf[off.i++]
+    for (let k = 0; k < n; k++) len = len * 256 + buf[off.i++]
   }
   if (off.i + len > buf.length) throw fail('der')
   const content = buf.subarray(off.i, off.i + len)
@@ -50,7 +59,10 @@ export function parseDer(buf, off = { i: 0 }) {
   if (tag & 0x20) {
     node.children = []
     const inner = { i: 0 }
-    while (inner.i < content.length) node.children.push(parseDer(content, inner))
+    while (inner.i < content.length) {
+      if (node.children.length >= MAX_CHILDREN) throw fail('der')
+      node.children.push(parseDer(content, inner, depth + 1))
+    }
   }
   return node
 }
@@ -108,6 +120,8 @@ function decryptWrapped(node, globalSalt, primaryPassword) {
     const entrySalt = kdfParams.children[0].content
     const iterations = int(kdfParams.children[1])
     const keyLength = kdfParams.children[2] && kdfParams.children[2].tag === 0x02 ? int(kdfParams.children[2]) : 32
+    // A hostile key4.db could ask for hours of work or gigabytes: a profile never does.
+    if (!(iterations >= 1 && iterations <= MAX_ITERATIONS) || keyLength !== 32) throw fail('unreadable')
     const iv14 = params.children[1].children[1].content
     // NSS stores a 14-byte IV and reuses its DER header (0x04 len) as the two
     // leading bytes of the real 16-byte AES IV.
@@ -130,11 +144,14 @@ function stripPadding(buf) {
 // The password-check marker: throws { code: 'primary-password' } when it does not
 // match (a Primary Password is set, or the store cannot be read with an empty one).
 export function checkPassword({ globalSalt, item2, primaryPassword = Buffer.alloc(0) }) {
+  // Decrypting with a wrong password does not fail, it gives other bytes: only
+  // "decrypted, and it is not the marker" means a Primary Password. A structure or an
+  // algorithm this code does not read is a file it cannot read, not a password.
   let check
   try {
     check = stripPadding(decryptWrapped(parseDer(item2), globalSalt, primaryPassword)).toString('latin1')
   } catch {
-    throw fail('primary-password')
+    throw fail('unreadable')
   }
   if (check !== PASSWORD_CHECK) throw fail('primary-password')
 }
@@ -155,6 +172,7 @@ export function deriveLoginKey({ globalSalt, item2, a11, primaryPassword = Buffe
 
 // The id of the key a logins.json field says it was encrypted with (hex), or ''.
 export function fieldKeyId(b64) {
+  if (String(b64 || '').length > MAX_FIELD_CHARS) return ''
   try {
     const node = parseDer(Buffer.from(String(b64 || ''), 'base64'))
     return node.children[0].content.toString('hex')
@@ -166,6 +184,7 @@ export function fieldKeyId(b64) {
 // One logins.json field (base64 PK11SDR blob) -> plaintext string, or null when
 // it cannot be read (counted as skipped, never logged).
 export function decryptField(b64, key) {
+  if (String(b64 || '').length > MAX_FIELD_CHARS) return null
   let blob
   try {
     blob = Buffer.from(String(b64 || ''), 'base64')
@@ -239,9 +258,14 @@ export function decryptLogins(loginsJson, { globalSalt, item2, a11, keys }) {
   const incoming = []
   let skipped = 0
   for (const login of logins.slice(0, MAX_LOGINS)) {
-    const password = decryptField(login && login.encryptedPassword, keyFor(login && login.encryptedPassword))
-    const username = decryptField(login && login.encryptedUsername, keyFor(login && login.encryptedUsername))
-    if (password == null || typeof (login && login.hostname) !== 'string') { skipped++; continue }
+    // A HTTP-authentication login (a realm, no form) is not a form login.
+    if (!login || typeof login.hostname !== 'string' || login.httpRealm) { skipped++; continue }
+    const password = decryptField(login.encryptedPassword, keyFor(login.encryptedPassword))
+    // A username that is there but cannot be read: not imported with an empty one,
+    // which could overwrite another account's row for the same site.
+    const hasUsername = typeof login.encryptedUsername === 'string' && login.encryptedUsername !== ''
+    const username = hasUsername ? decryptField(login.encryptedUsername, keyFor(login.encryptedUsername)) : ''
+    if (password == null || username == null) { skipped++; continue }
     incoming.push({ origin: login.hostname, username: username || '', password })
   }
   return { incoming, skipped }
