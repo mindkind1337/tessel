@@ -18,13 +18,17 @@ function slice(from, to) {
 function load(leaves, { active = null, screen = 'PS C:\\p> dir\nfile.txt' } = {}) {
   const byId = Object.fromEntries(leaves.map((l) => [l.id, l]))
   const toasts = []
+  const watchers = []
   const ctx = {
     t: (k, en, vars) => en.replace(/\{\{(\w+)\}\}/g, (_, n) => (vars && vars[n] != null ? vars[n] : '')),
+    watch: (getter, cb) => watchers.push({ getter, cb }),
+    wakeLeaf: vi.fn(),
     findLeaf: (id) => byId[id] || null,
     wsOfLeaf: () => ({ id: 'ws1' }),
     currentWsId: { value: 'ws1' },
     activeId: { value: active },
     restartingLeaves: new Set(),
+    sleptWhileOpen: new Set(),
     liveShare: { isGuestLeaf: () => false },
     paneLabel: (l) => l.paneName || l.id,
     sessionKind: ({ id }) => (id === 'claude' ? 'claude' : null),
@@ -35,8 +39,14 @@ function load(leaves, { active = null, screen = 'PS C:\\p> dir\nfile.txt' } = {}
     window: { shellApi: { killPty: vi.fn(), log: vi.fn() } }
   }
   vm.createContext(ctx)
-  vm.runInContext(slice('function sleepPanes(ids)', 'function copyText(') + slice('function putToSleep(leaf', '// Opening a sleeping pane'), ctx)
-  return { ctx, toasts }
+  vm.runInContext(
+    slice('function sleepPanes(ids)', 'function copyText(') +
+      slice('function putToSleep(leaf', '// Opening a sleeping pane') +
+      // The watches that wake the pane you open (and forget one you left).
+      slice('// A sleeping pane you open wakes up.', 'const sleepTimer'),
+    ctx
+  )
+  return { ctx, toasts, watchers }
 }
 
 describe("the sidebar's Sleep", () => {
@@ -74,6 +84,25 @@ describe("the sidebar's Sleep", () => {
     expect(toasts).toEqual([
       'Stays awake: Here (the pane you are in), Box (a terminal on an SSH host), New (its conversation cannot be resumed).'
     ])
+  })
+
+  it('the pane you are in, asked for by itself (its own menu): it sleeps and stays asleep on screen until you leave it and come back', () => {
+    const here = { id: 'pane-here', kind: 'agent', agentId: 'claude', sessionId: 's1', paneName: 'Lovelace' }
+    const { ctx, toasts, watchers } = load([here], { active: 'pane-here' })
+    ctx.sleepPanes(['pane-here'])
+    expect(here.sleeping).toEqual({ at: expect.any(Number) })
+    expect(ctx.window.shellApi.killPty).toHaveBeenCalledWith('pane-here')
+    expect(toasts).toEqual(['1 agent asleep. Open a pane to wake it.'])
+    const [opened, left] = watchers
+    // The watch sees the pane on screen asleep: it leaves it asleep.
+    opened.cb(opened.getter())
+    expect(ctx.wakeLeaf).not.toHaveBeenCalled()
+    // You go to another pane, then come back to it: it wakes.
+    ctx.activeId.value = 'pane-other'
+    left.cb('pane-other', 'pane-here')
+    ctx.activeId.value = 'pane-here'
+    opened.cb(opened.getter())
+    expect(ctx.wakeLeaf).toHaveBeenCalledWith('pane-here')
   })
 
   it('an editor, a browser or a pane already asleep: nothing done', () => {
