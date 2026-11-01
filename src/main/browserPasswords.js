@@ -6,6 +6,7 @@ import { secureStorageAvailable } from './credentialProtection'
 import { withDatabaseCopy, sqliteModule, chromiumKey, decryptChromiumValue } from './cookieImport/chromium'
 import { unprotectDpapi } from './cookieImport/dpapi'
 import { detectBrowsers } from './cookieImport/detect'
+import { readKey4, decryptLogins } from './firefoxLogins'
 
 const MAX_BYTES = 10 * 1024 * 1024
 const fail = (code) => Object.assign(new Error(code), { code })
@@ -98,20 +99,51 @@ export function createPasswordVault({ file, safeStorage }) {
   return { list, importRows, change, credential }
 }
 
+function safeIsFile(p) {
+  try { return fs.statSync(p).isFile() } catch { return false }
+}
+
+// A Firefox profile is offered only when it holds the key store and at least
+// one saved login (reading logins.json's count, never its encrypted fields).
+function firefoxLoginCount(dir) {
+  try {
+    if (!safeIsFile(path.join(dir, 'key4.db'))) return 0
+    const file = path.join(dir, 'logins.json')
+    const stat = fs.lstatSync(file)
+    if (!stat.isFile() || stat.isSymbolicLink() || stat.size > MAX_BYTES) return 0
+    const data = JSON.parse(fs.readFileSync(file, 'utf8'))
+    return Array.isArray(data && data.logins) ? data.logins.length : 0
+  } catch { return 0 }
+}
+
 export async function passwordSources() {
-  return (await detectBrowsers({ includePasswords: true })).filter((b) => b.family === 'chromium').map((b) => ({
-    id: b.id, name: b.name,
-    profiles: b.profiles.filter((p) => ['Login Data', 'Login Data For Account'].some((f) => fs.existsSync(path.join(p.dir, f)))).map((p) => ({ dir: p.dir, name: p.name }))
-  })).filter((b) => b.profiles.length)
+  const browsers = await detectBrowsers({ includePasswords: true })
+  const out = []
+  for (const b of browsers) {
+    let profiles = []
+    if (b.family === 'chromium') {
+      profiles = b.profiles.filter((p) => ['Login Data', 'Login Data For Account'].some((f) => safeIsFile(path.join(p.dir, f)))).map((p) => ({ dir: p.dir, name: p.name }))
+    } else if (b.family === 'firefox') {
+      profiles = b.profiles.filter((p) => firefoxLoginCount(p.dir) > 0).map((p) => ({ dir: p.dir, name: p.name }))
+    }
+    if (profiles.length) out.push({ id: b.id, name: b.name, family: b.family, profiles })
+  }
+  return out
 }
 
 export async function importBrowserPasswords(vault, { browserId, profileDir }, tmpRoot) {
-  const browser = (await detectBrowsers({ includePasswords: true })).find((b) => b.id === browserId && b.family === 'chromium')
+  const browser = (await detectBrowsers({ includePasswords: true })).find((b) => b.id === browserId)
   const profile = browser?.profiles.find((p) => p.dir === profileDir)
   if (!profile) throw fail('not-found')
+  if (browser.family === 'firefox') return importFirefoxPasswords(vault, profile.dir, tmpRoot)
+  return importChromiumPasswords(vault, browser, profile, tmpRoot)
+}
+
+async function importChromiumPasswords(vault, browser, profile, tmpRoot) {
   const key = await chromiumKey(browser.localStatePath, { unprotect: unprotectDpapi })
   const incoming = []
-  let protectedCount = 0
+  let protectedCount = 0 // DPAPI/undecryptable rows
+  let appBoundCount = 0 // Chrome/Edge 127+ App-Bound Encryption (v20)
   for (const name of ['Login Data', 'Login Data For Account']) {
     const file = path.join(profile.dir, name)
     if (!fs.existsSync(file)) continue
@@ -125,13 +157,40 @@ export async function importBrowserPasswords(vault, { browserId, profileDir }, t
           if (encrypted.length && !/^v\d\d/.test(encrypted.subarray(0, 3).toString()) && process.platform === 'win32') {
             try { result = { value: (await unprotectDpapi(encrypted)).toString('utf8') } } catch { result = { skip: 'protected' } }
           }
+          if (result.skip === 'appBound') { appBoundCount++; continue }
           if (result.skip) { protectedCount++; continue }
           incoming.push({ origin: row.origin_url, username: row.username_value || '', password: result.value })
         }
       } finally { db.close() }
     }, { tmpRoot })
   }
-  return { ...vault.importRows(incoming), protectedCount }
+  return { ...vault.importRows(incoming), protectedCount, appBoundCount }
+}
+
+async function importFirefoxPasswords(vault, profileDir, tmpRoot) {
+  const loginsPath = path.join(profileDir, 'logins.json')
+  const key4Path = path.join(profileDir, 'key4.db')
+  if (!safeIsFile(loginsPath) || !safeIsFile(key4Path)) throw fail('not-found')
+  let loginsJson
+  try {
+    const stat = fs.lstatSync(loginsPath)
+    if (!stat.isFile() || stat.isSymbolicLink() || stat.size > MAX_BYTES) throw fail('too-big')
+    loginsJson = JSON.parse(fs.readFileSync(loginsPath, 'utf8'))
+  } catch (error) {
+    if (error.code === 'too-big') throw error
+    throw fail('unreadable')
+  }
+  // key4.db is SQLite; copy it read-only (handles a running browser's lock).
+  const keyRows = await withDatabaseCopy(key4Path, async (copy) => readKey4(copy), { tmpRoot })
+  let decrypted
+  try {
+    decrypted = decryptLogins(loginsJson, keyRows)
+  } catch (error) {
+    if (error.code === 'primary-password') return { ok: false, code: 'primary-password' }
+    throw fail('unreadable')
+  }
+  const result = vault.importRows(decrypted.incoming)
+  return { ...result, skipped: (result.skipped || 0) + (decrypted.skipped || 0), protectedCount: 0, appBoundCount: 0 }
 }
 
 // Runs only in the main frame's isolated world. Rechecks the exact origin

@@ -15,11 +15,16 @@ import { execFile } from 'child_process'
 // (Linux). progId: the Windows https-association id that marks it the default.
 export const CHROMIUM_BROWSERS = [
   { id: 'chrome', name: 'Google Chrome', win: ['Google', 'Chrome', 'User Data'], mac: ['Google', 'Chrome'], linux: ['google-chrome'], progIds: ['ChromeHTML'] },
+  { id: 'chrome-beta', name: 'Chrome Beta', win: ['Google', 'Chrome Beta', 'User Data'], mac: ['Google', 'Chrome Beta'], linux: ['google-chrome-beta'], progIds: ['ChromeBHTML'] },
+  { id: 'chrome-dev', name: 'Chrome Dev', win: ['Google', 'Chrome Dev', 'User Data'], mac: ['Google', 'Chrome Dev'], linux: ['google-chrome-unstable'], progIds: ['ChromeDHTML'] },
+  { id: 'chrome-canary', name: 'Chrome Canary', win: ['Google', 'Chrome SxS', 'User Data'], mac: ['Google', 'Chrome Canary'], linux: [], progIds: ['ChromeSSHTM'] },
+  { id: 'chromium', name: 'Chromium', win: ['Chromium', 'User Data'], mac: ['Chromium'], linux: ['chromium'], progIds: ['ChromiumHTM'] },
   { id: 'edge', name: 'Microsoft Edge', win: ['Microsoft', 'Edge', 'User Data'], mac: ['Microsoft Edge'], linux: ['microsoft-edge'], progIds: ['MSEdgeHTM', 'MSEdgeDHTML', 'AppXq0fevzme2pys62n3e0fbqa7peapykr8v'] },
   { id: 'brave', name: 'Brave', win: ['BraveSoftware', 'Brave-Browser', 'User Data'], mac: ['BraveSoftware', 'Brave-Browser'], linux: ['BraveSoftware', 'Brave-Browser'], progIds: ['BraveHTML', 'BraveFile'] },
   { id: 'vivaldi', name: 'Vivaldi', win: ['Vivaldi', 'User Data'], mac: ['Vivaldi'], linux: ['vivaldi'], progIds: ['VivaldiHTM'] },
   { id: 'opera', name: 'Opera', win: ['Opera Software', 'Opera Stable'], mac: ['com.operasoftware.Opera'], linux: ['opera'], single: true, progIds: ['OperaStable'] },
   { id: 'opera-gx', name: 'Opera GX', win: ['Opera Software', 'Opera GX Stable'], mac: ['com.operasoftware.OperaGX'], linux: ['opera-gx'], single: true, progIds: ['OperaGXStable'] },
+  { id: 'yandex', name: 'Yandex Browser', win: ['Yandex', 'YandexBrowser', 'User Data'], mac: ['Yandex', 'YandexBrowser'], linux: ['yandex-browser'], progIds: ['YandexHTML', 'YandexURL'] },
   { id: 'arc', name: 'Arc', win: ['Arc', 'User Data'], mac: ['Arc', 'User Data'], linux: [], progIds: ['ArcHTML'] }
 ]
 
@@ -29,7 +34,8 @@ export const FIREFOX_BROWSERS = [
   { id: 'firefox', name: 'Firefox', win: ['Mozilla', 'Firefox'], mac: ['Firefox'], linux: ['.mozilla', 'firefox'], roaming: true, progIds: ['FirefoxURL', 'FirefoxHTML'] },
   { id: 'zen', name: 'Zen Browser', win: ['zen'], mac: ['zen'], linux: ['.zen'], roaming: true, progIds: ['ZenURL'] },
   { id: 'librewolf', name: 'LibreWolf', win: ['librewolf'], mac: ['LibreWolf'], linux: ['.librewolf'], roaming: true, progIds: ['LibreWolfURL'] },
-  { id: 'waterfox', name: 'Waterfox', win: ['Waterfox'], mac: ['Waterfox'], linux: ['.waterfox'], roaming: true, progIds: ['WaterfoxURL'] }
+  { id: 'waterfox', name: 'Waterfox', win: ['Waterfox'], mac: ['Waterfox'], linux: ['.waterfox'], roaming: true, progIds: ['WaterfoxURL'] },
+  { id: 'floorp', name: 'Floorp', win: ['Floorp'], mac: ['Floorp'], linux: ['.floorp'], roaming: true, progIds: ['FloorpURL'] }
 ]
 
 function homedir(env) {
@@ -66,18 +72,18 @@ export function firefoxProfilesDir(browser, { platform = process.platform, env =
 export function chromiumProfiles(userDataDir, browser, { includePasswords = false } = {}) {
   const usable = (dir) => hasCookies(dir) || (includePasswords && (safeIsFile(join(dir, 'Login Data')) || safeIsFile(join(dir, 'Login Data For Account'))))
   if (!userDataDir || !safeIsDir(userDataDir)) return []
-  if (browser.single) {
-    // Opera: the folder itself is the one profile (its Cookies is in Network/).
-    return usable(userDataDir) ? [{ dir: userDataDir, name: browser.name, lastUsed: true }] : []
-  }
   const info = readLocalState(join(userDataDir, 'Local State'))
   const names = info.names
   const out = []
+  // Classic Opera keeps its single profile in the User Data folder itself (its
+  // Cookies is in Network/). Newer single-profile builds (Opera GX) keep it in
+  // Default\, so those are picked up by the subfolder scan below.
+  if (browser.single && usable(userDataDir)) out.push({ dir: userDataDir, name: browser.name, lastUsed: true })
   let entries = []
   try {
     entries = fs.readdirSync(userDataDir, { withFileTypes: true })
   } catch {
-    return []
+    return out
   }
   for (const e of entries) {
     if (!e.isDirectory()) continue
@@ -122,7 +128,7 @@ export function readLocalState(file) {
 
 // profiles.ini -> [{ dir, name, lastUsed }]. Default=1 (or the [Install...]
 // section's Default=) marks the default profile.
-export function firefoxProfiles(profilesDir) {
+export function firefoxProfiles(profilesDir, { includePasswords = false } = {}) {
   const iniPath = join(profilesDir, 'profiles.ini')
   let text
   try {
@@ -130,6 +136,11 @@ export function firefoxProfiles(profilesDir) {
   } catch {
     return []
   }
+  // A profile is listed for cookies when it has cookies.sqlite; for passwords
+  // when it has both logins.json and key4.db (the key store).
+  const usable = (dir) =>
+    safeIsFile(join(dir, 'cookies.sqlite')) ||
+    (includePasswords && safeIsFile(join(dir, 'logins.json')) && safeIsFile(join(dir, 'key4.db')))
   const sections = parseIni(text)
   let installDefault = null
   for (const [name, kv] of sections) if (/^Install/i.test(name) && kv.Default) installDefault = kv.Default
@@ -137,7 +148,7 @@ export function firefoxProfiles(profilesDir) {
   for (const [name, kv] of sections) {
     if (!/^Profile\d+$/i.test(name) || !kv.Path) continue
     const dir = kv.IsRelative === '0' ? kv.Path : join(profilesDir, kv.Path.replace(/\//g, sep))
-    if (!safeIsFile(join(dir, 'cookies.sqlite'))) continue
+    if (!usable(dir)) continue
     out.push({ dir, name: kv.Name || name, lastUsed: kv.Default === '1' || (!!installDefault && kv.Path === installDefault) })
   }
   if (out.length && !out.some((p) => p.lastUsed)) out[0].lastUsed = true
@@ -191,7 +202,7 @@ export async function detectBrowsers({ platform = process.platform, env = proces
   }
   for (const b of FIREFOX_BROWSERS) {
     const dir = firefoxProfilesDir(b, { platform, env })
-    const profiles = dir ? firefoxProfiles(dir).map((p) => ({ ...p, cookiesPath: join(p.dir, 'cookies.sqlite') })) : []
+    const profiles = dir ? firefoxProfiles(dir, { includePasswords }).map((p) => ({ ...p, cookiesPath: join(p.dir, 'cookies.sqlite') })) : []
     if (profiles.length) found.push({ id: b.id, name: b.name, family: 'firefox', profiles, isDefault: matchesProgId(b, progId) })
   }
   return sortWithDefaultFirst(found)

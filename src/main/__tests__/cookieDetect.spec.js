@@ -130,3 +130,39 @@ describe('detectBrowsers end to end on fixtures', () => {
     }
   })
 })
+
+describe('password sources layouts', () => {
+  it('finds a single-profile browser whose data sits in Default (Opera GX) and the classic root layout (Opera)', async () => {
+    const root = fs.mkdtempSync(join(os.tmpdir(), 'det-pw-'))
+    try {
+      const gx = join(root, 'Opera Software', 'Opera GX Stable')
+      fs.mkdirSync(join(gx, 'Default'), { recursive: true })
+      fs.writeFileSync(join(gx, 'Local State'), '{}')
+      fs.writeFileSync(join(gx, 'Default', 'Login Data'), 'x')
+      const classic = join(root, 'Opera Software', 'Opera Stable')
+      fs.mkdirSync(join(classic, 'Network'), { recursive: true })
+      fs.writeFileSync(join(classic, 'Network', 'Cookies'), 'x')
+      const browsers = await detectBrowsers({ platform: 'win32', env: { LOCALAPPDATA: root, APPDATA: root }, defaultProgId: '', includePasswords: true })
+      const found = browsers.find((b) => b.id === 'opera-gx')
+      expect(found.profiles.map((p) => p.dir)).toEqual([join(gx, 'Default')])
+      expect(browsers.find((b) => b.id === 'opera').profiles.map((p) => p.dir)).toEqual([classic])
+      const cookiesOnly = await detectBrowsers({ platform: 'win32', env: { LOCALAPPDATA: root, APPDATA: root }, defaultProgId: '' })
+      expect(cookiesOnly.find((b) => b.id === 'opera-gx')).toBeUndefined()
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true })
+    }
+  })
+  it('lists a Firefox profile with logins.json and key4.db only when passwords are asked for', () => {
+    const dir = fs.mkdtempSync(join(os.tmpdir(), 'ff-pw-'))
+    try {
+      fs.writeFileSync(join(dir, 'profiles.ini'), ['[Profile0]', 'Name=dev-edition-default', 'IsRelative=1', 'Path=p0.dev', ''].join(String.fromCharCode(10)))
+      fs.mkdirSync(join(dir, 'p0.dev'))
+      fs.writeFileSync(join(dir, 'p0.dev', 'logins.json'), '{"logins":[]}')
+      fs.writeFileSync(join(dir, 'p0.dev', 'key4.db'), 'x')
+      expect(firefoxProfiles(dir)).toEqual([])
+      expect(firefoxProfiles(dir, { includePasswords: true }).map((p) => p.name)).toEqual(['dev-edition-default'])
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true })
+    }
+  })
+})

@@ -32,7 +32,7 @@ it('imports Chromium passwords from a snapshot, counts protected values and reje
     const sources = await passwordSources()
     expect(JSON.stringify(sources)).not.toContain('fixture-only')
     const result = await importBrowserPasswords(vault, { browserId: 'chrome', profileDir: root }, path.join(root, 'copies'))
-    expect(result).toMatchObject({ imported: 1, protectedCount: 1 })
+    expect(result).toMatchObject({ imported: 1, appBoundCount: 1, protectedCount: 0 })
     expect(vault.importRows.mock.calls[0][0][0]).toMatchObject({ password: 'fixture-only' })
     await expect(importBrowserPasswords(vault, { browserId: 'chrome', profileDir: 'arbitrary' }, root)).rejects.toMatchObject({ code: 'not-found' })
   } finally { fs.rmSync(root, { recursive: true, force: true }) }

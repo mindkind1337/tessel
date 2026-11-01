@@ -56,6 +56,16 @@ working on Tessel itself (see [Build from source](#build-from-source)).
   page between them), with a design mode to pick an element and send feedback
   about it to an agent. **Import cookies** from Chrome, Edge, Brave, Firefox…
   (your default browser first) to stay signed in to your sites.
+- **Saved passwords**: import logins from your browsers into an encrypted,
+  on-this-computer vault (never sent through Live Share), then fill them on a
+  private page. All profiles of every Chromium browser are found — Chrome (and
+  Beta/Dev/Canary), Edge, Brave, Vivaldi, Opera, Opera GX, Chromium, Yandex,
+  Arc — including Opera GX's `Default` layout, and Firefox and its relatives
+  (Developer Edition, Zen, LibreWolf, Waterfox, Floorp) by reading their
+  `logins.json`/`key4.db`. Two cases cannot be read directly and are reported
+  with the fix: Chrome/Edge 127+ entries under **App-Bound Encryption** and
+  Firefox profiles with a **Primary Password** — for both, and for Safari, the
+  dialog explains how to export a CSV and import that instead.
 - **Files, editor and Source Control**: a compact file explorer like VS Code's
   (compact folders, indent guides, only visible rows drawn), an editor pane,
   and a Source Control panel (changes by folder, stage per file, commit,

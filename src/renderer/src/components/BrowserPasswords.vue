@@ -2,6 +2,7 @@
 import { computed, ref, watch } from 'vue'
 import { KeyRound, X } from 'lucide-vue-next'
 import { t } from '../i18n'
+import ThemedSelect from './ui/ThemedSelect.vue'
 const props = defineProps({ guestId: { type: Number, default: null } })
 const open = ref(false), busy = ref(false), entries = ref([]), sources = ref([]), selected = ref(''), message = ref('')
 const api = () => window.shellApi?.browser
@@ -9,30 +10,34 @@ const exportHelp = ref(false)
 const selectedSource = computed(() => sources.value[Number(selected.value)])
 const exportSteps = computed(() => {
   const id = selectedSource.value?.browserId
-  if (id === 'chrome') return t('browser.passwords.stepsChrome', 'In Chrome: menu ⋮ → Passwords and autofill → Google Password Manager → Settings. Under Export passwords, choose Download file.')
-  if (id === 'edge') return t('browser.passwords.stepsEdge', 'In Edge: menu ⋯ (Alt+F) → Passwords → menu ⋯ → Export passwords → Export.')
+  if (selectedSource.value?.family === 'firefox') return t('browser.passwords.stepsFirefox', 'In Firefox (and Zen, LibreWolf, Waterfox, Floorp): menu ≡ → Passwords → the ⋯ menu at the top right → Export passwords. Confirm with your device, then save the CSV.')
+  if (id === 'chrome' || id === 'chrome-beta' || id === 'chrome-dev' || id === 'chrome-canary' || id === 'chromium') return t('browser.passwords.stepsChrome', 'In Chrome: menu ⋮ → Passwords and autofill → Google Password Manager → Settings. Under Export passwords, choose Download file.')
+  if (id === 'edge') return t('browser.passwords.stepsEdge', 'In Edge: menu ⋯ → Settings → Profiles → Passwords → the ⋯ (More actions) → Export passwords → Export.')
   if (id === 'vivaldi') return t('browser.passwords.stepsVivaldi', 'In Vivaldi: Vivaldi menu → File → Export → Export Passwords.')
   if (id === 'opera' || id === 'opera-gx') return t('browser.passwords.stepsOpera', 'In Opera / Opera GX: Settings → Privacy & Security → Password Manager → Settings. Under Export passwords, choose Download file.')
   if (id === 'brave') return t('browser.passwords.stepsBrave', 'In Brave, enter brave://password-manager/settings in the address bar. Find Export passwords and download the CSV file.')
-  return t('browser.passwords.stepsOther', 'Open the selected browser’s settings and password manager. Look for Export passwords and choose CSV. The menu location varies by browser version.')
+  return t('browser.passwords.stepsOther', 'In Safari (macOS): menu bar → File → Export → Passwords, or Settings → Passwords → ⋯ → Export All Passwords. For any other browser, open its password manager and choose Export passwords (CSV).')
 })
-const errors = {
-  'private-page-required': ['private', 'Use a private browser tab on the host. Credentials cannot be used in shared tabs or joined Live Share sessions.'],
-  'encryption-unavailable': ['encryption', 'Secure system encryption is unavailable. No passwords were saved.'],
-  'vault-unavailable': ['vault', 'The encrypted vault could not be opened.'],
-  'locked': ['locked', 'The browser database is locked. Close that browser and retry, or import its CSV export.'],
-  'access-denied': ['denied', 'Browser protection or permissions prevent access. Use a CSV export.'],
-  'no-sqlite': ['sqlite', 'This version cannot read browser databases. Update Tessel or import a CSV export.'],
-  'unreadable': ['unreadable', 'The browser database could not be read. Import a CSV export instead.'],
-  'missing': ['missing', 'The browser database no longer exists. Reopen this dialog and choose a profile.'],
-  'not-found': ['missing', 'The browser database no longer exists. Reopen this dialog and choose a profile.'],
-  'format': ['format', 'Expected a CSV export with url, username and password columns.'],
-  'no-login-form': ['form', 'No single visible password field was found. Open the login form first.'],
-  'unsafe-form': ['unsafe', 'This form sends credentials to another site or cannot be verified.'],
-  'ambiguous-form': ['ambiguous', 'Several possible username fields were found. Fill this form manually.'],
-  'https-required': ['https', 'Open the HTTPS login page first.']
+function error(code) {
+  const map = {
+    'private-page-required': t('browser.passwords.private', 'Use a private browser tab on the host. Credentials cannot be used in shared tabs or joined Live Share sessions.'),
+    'encryption-unavailable': t('browser.passwords.encryption', 'Secure system encryption is unavailable. No passwords were saved.'),
+    'vault-unavailable': t('browser.passwords.vault', 'The encrypted vault could not be opened.'),
+    'locked': t('browser.passwords.locked', 'The browser database is locked. Close that browser and retry, or import its CSV export.'),
+    'access-denied': t('browser.passwords.denied', 'Browser protection or permissions prevent access. Use a CSV export.'),
+    'no-sqlite': t('browser.passwords.sqlite', 'This version cannot read browser databases. Update Tessel or import a CSV export.'),
+    'unreadable': t('browser.passwords.unreadable', 'The browser database could not be read. Import a CSV export instead.'),
+    'missing': t('browser.passwords.missing', 'The browser database no longer exists. Reopen this dialog and choose a profile.'),
+    'not-found': t('browser.passwords.missing', 'The browser database no longer exists. Reopen this dialog and choose a profile.'),
+    'primary-password': t('browser.passwords.primary', 'This Firefox profile has a Primary Password set, so its saved passwords cannot be read here. Unlock it in Firefox, export its passwords as CSV, then import the CSV.'),
+    'format': t('browser.passwords.format', 'Expected a CSV export with url, username and password columns.'),
+    'no-login-form': t('browser.passwords.form', 'No single visible password field was found. Open the login form first.'),
+    'unsafe-form': t('browser.passwords.unsafe', 'This form sends credentials to another site or cannot be verified.'),
+    'ambiguous-form': t('browser.passwords.ambiguous', 'Several possible username fields were found. Fill this form manually.'),
+    'https-required': t('browser.passwords.https', 'Open the HTTPS login page first.')
+  }
+  return map[code] || t('browser.passwords.failed', 'The operation could not be completed.')
 }
-function error(code) { const [key, text] = errors[code] || ['failed', 'The operation could not be completed.']; return t(`browser.passwords.${key}`, text) }
 async function reload() {
   const result = await api()?.passwordList()
   entries.value = result?.entries || []
@@ -43,7 +48,7 @@ async function show() {
   try {
     await reload()
     const r = await api()?.passwordSources()
-    sources.value = (r?.sources || []).flatMap((b) => b.profiles.map((p) => ({ browserId: b.id, profileDir: p.dir, label: `${b.name} — ${p.name}` })))
+    sources.value = (r?.sources || []).flatMap((b) => b.profiles.map((p) => ({ browserId: b.id, family: b.family, profileDir: p.dir, label: `${b.name} — ${p.name}` })))
     selected.value = sources.value.length ? '0' : ''
   } catch { message.value = error() } finally { busy.value = false }
 }
@@ -51,13 +56,18 @@ async function run(action, success) {
   busy.value = true; message.value = ''
   try {
     const r = await action()
-    if (r?.protectedCount > 0 || ['access-denied', 'locked', 'unreadable', 'no-sqlite'].includes(r?.code)) exportHelp.value = true
+    if (r?.protectedCount > 0 || r?.appBoundCount > 0 || ['access-denied', 'locked', 'unreadable', 'no-sqlite', 'primary-password'].includes(r?.code)) exportHelp.value = true
     if (r?.code === 'cancelled') return
     message.value = r?.ok ? success(r) : error(r?.code)
     await reload()
   } catch { message.value = error() } finally { busy.value = false }
 }
-const imported = (r) => t('browser.passwords.imported', '{{count}} imported; {{skipped}} skipped; {{protected}} protected (use CSV export).', { count: r.imported, skipped: r.skipped, protected: r.protectedCount || 0 })
+const imported = (r) => {
+  const parts = [t('browser.passwords.imported', '{{count}} imported; {{skipped}} skipped.', { count: r.imported, skipped: r.skipped })]
+  if (r.appBoundCount > 0) parts.push(t('browser.passwords.appBound', '{{count}} could not be read because Chrome/Edge 127+ protect them with App-Bound Encryption; export this browser’s passwords as CSV and import the CSV.', { count: r.appBoundCount }))
+  if (r.protectedCount > 0) parts.push(t('browser.passwords.protectedNote', '{{count}} are protected and could not be read; use the CSV export.', { count: r.protectedCount }))
+  return parts.join(' ')
+}
 const changed = () => t('browser.passwords.updated', 'Updated.')
 function importSelectedProfile() {
   const source = sources.value[Number(selected.value)]
@@ -76,7 +86,8 @@ watch(() => props.guestId, () => { open.value = false; entries.value = [] })
         <header><h2>{{ t('browser.passwords.title', 'Saved passwords') }}</h2><button type="button" :aria-label="t('browser.passwords.close', 'Close')" @click="open = false"><X :size="18" /></button></header>
         <p>{{ t('browser.passwords.local', 'Encrypted on this computer, outside your projects. Never sent through Live Share. Agent access is off for every imported account until you enable it.') }}</p>
         <div class="password-actions">
-          <select v-model="selected" :disabled="busy || !sources.length" :aria-label="t('browser.passwords.profile', 'Browser profile')"><option v-for="(source, i) in sources" :key="i" :value="String(i)">{{ source.label }}</option></select>
+          <ThemedSelect v-model="selected" class="password-source" :disabled="busy || !sources.length" :aria-label="t('browser.passwords.profile', 'Browser profile')"><option v-for="(source, i) in sources" :key="i" :value="String(i)">{{ source.label }}</option></ThemedSelect>
+          <span v-if="!busy && !sources.length" class="password-hint">{{ t('browser.passwords.noSources', 'No browser with saved passwords was found on this computer. Import a CSV export instead.') }}</span>
           <button type="button" :disabled="busy || selected === ''" @click="importSelectedProfile">{{ t('browser.passwords.importBrowser', 'Import from browser') }}</button>
           <button type="button" :disabled="busy" @click="run(() => api().passwordImportCsv(), imported)">{{ t('browser.passwords.importCsv', 'Import CSV…') }}</button>
         </div>
@@ -117,6 +128,6 @@ p { font-size: 13px; line-height: 1.5; } .password-hint { opacity: .75; }
 .password-export { border-top: 1px solid var(--border, #444); padding: 12px 0; font-size: 13px; line-height: 1.5; }
 .password-export summary { cursor: pointer; font-weight: 600; }
 .password-export li { margin: 8px 0; }
-button, select { color: inherit; background: var(--bg-secondary, #242830); border: 1px solid var(--border, #444); border-radius: 5px; padding: 6px 9px; }
+button { color: inherit; background: var(--bg-secondary, #242830); border: 1px solid var(--border, #444); border-radius: 5px; padding: 6px 9px; }
 button { cursor: pointer; } button:disabled { opacity: .5; cursor: default; } label { font-size: 12px; }
 </style>
