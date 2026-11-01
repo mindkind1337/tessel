@@ -81,6 +81,7 @@ function load({ shared = false, tree = null } = {}) {
     },
     replaceNode: (tree, id, make) => (tree.id === id ? make(tree) : tree),
     restartingLeaves: new Set(),
+    sleptWhileOpen: new Set(),
     setTimeout: (fn) => fn(),
     Promise,
     Object,

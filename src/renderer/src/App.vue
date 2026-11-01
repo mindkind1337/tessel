@@ -7440,7 +7440,10 @@ function markPaneUnread(id) {
 // "Sleep" from the sidebar: agents whose conversation can be resumed, and
 // terminals on this computer, stop their terminal now (opening the pane
 // resumes the agent, or starts a new shell in the same folder under what the
-// old one showed); the pane you are in stays awake.
+// old one showed). The pane you are in stays awake, unless it is the one pane
+// asked for (its own menu): then it sleeps and stays asleep on screen until
+// you leave it and come back, or press Wake (sleptWhileOpen).
+const sleptWhileOpen = new Set()
 function sleepPanes(ids) {
   const skipped = []
   let slept = 0
@@ -7451,7 +7454,8 @@ function sleepPanes(ids) {
     if (!leaf || (leaf.kind !== 'agent' && !shell) || leaf.sleeping || leaf.notConnected || leaf.agentMissing || restartingLeaves.has(id)) continue
     if (liveShare.isGuestLeaf(leaf)) continue
     const ws = wsOfLeaf(id)
-    if (ws && ws.id === currentWsId.value && id === activeId.value) {
+    const here = !!ws && ws.id === currentWsId.value && id === activeId.value
+    if (here && ids.length !== 1) {
       skipped.push(t('app.sleep.activePane', '{{pane}} (the pane you are in)', { pane: paneLabel(leaf) }))
       continue
     }
@@ -7473,6 +7477,8 @@ function sleepPanes(ids) {
         leaf.restoredText = ''
       }
     }
+    // On screen: the watch that wakes the pane you open leaves this one asleep.
+    if (here) sleptWhileOpen.add(id)
     putToSleep(leaf, 'from the sidebar')
     slept++
     if (shell) shells++
@@ -10408,6 +10414,7 @@ function putToSleep(leaf, why = `idle ${settings.agentSleepMinutes} min`) { // i
 // Opening a sleeping pane (or its Wake button): the same pane, the
 // conversation resumed.
 async function wakeLeaf(leafId) {
+  sleptWhileOpen.delete(leafId)
   const leaf = findLeaf(leafId)
   if (!leaf || !leaf.sleeping || restartingLeaves.has(leafId)) return
   const ok = leaf.kind === 'agent' ? await restartInPlace(leafId, { resume: true }) : await wakeShell(leafId)
@@ -10458,15 +10465,19 @@ async function wakeShell(leafId) {
   }
 }
 // A sleeping pane you open wakes up.
+// Not one you just put to sleep while in it (sleepPanes), until you leave it.
 watch(
   () => {
     const leaf = activeId.value ? findLeaf(activeId.value) : null
     return leaf && leaf.sleeping ? leaf.id : null
   },
   (id) => {
-    if (id) wakeLeaf(id)
+    if (id && !sleptWhileOpen.has(id)) wakeLeaf(id)
   }
 )
+watch(activeId, (id, old) => {
+  if (old && old !== id) sleptWhileOpen.delete(old)
+})
 const sleepTimer = setInterval(sleepTick, SLEEP_TICK_MS)
 onBeforeUnmount(() => clearInterval(sleepTimer))
 
