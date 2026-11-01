@@ -156,8 +156,9 @@ working on Tessel itself (see [Build from source](#build-from-source)).
   same without an account. It keeps your email address, name, password as a hash
   and Google or GitHub ID on Tessel's server, never your mail, calendar or files.
 - **Connections** (Settings → Connections): connect your accounts to your agents:
-  Gmail, Google Calendar and Drive (the first time, with your own free Google
-  Cloud OAuth client), Outlook and OneDrive for personal Microsoft accounts,
+  Gmail, Google Calendar and Drive (nothing to set up with a Tessel account; without
+  one, or if you prefer, with your own free Google Cloud OAuth client; Google warns
+  that Tessel's app is not verified yet), Outlook and OneDrive for personal Microsoft accounts,
   Dropbox, Todoist, Airtable, ClickUp and monday.com. Gmail and Outlook can read
   mail and write drafts, and offer agents no tool to send mail. There is one
   Connect button per service, for all your agents at once. It adds the server to every agent that

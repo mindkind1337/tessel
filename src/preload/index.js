@@ -479,6 +479,7 @@ const api = {
     status: (options) => ipcRenderer.invoke('tesselAccount:status', options),
     signIn: () => ipcRenderer.invoke('tesselAccount:signIn'),
     passwordLink: () => ipcRenderer.invoke('tesselAccount:passwordLink'),
+    googleClient: () => ipcRenderer.invoke('tesselAccount:googleClient'),
     cancel: () => ipcRenderer.invoke('tesselAccount:cancel'),
     signOut: () => ipcRenderer.invoke('tesselAccount:signOut'),
     delete: () => ipcRenderer.invoke('tesselAccount:delete'),

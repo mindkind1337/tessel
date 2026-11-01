@@ -17,13 +17,16 @@ const props = defineProps({
   agents: { type: Array, default: () => [] },
   cwd: { type: String, default: null }
 })
-const emit = defineEmits(['run', 'open-mcp'])
+const emit = defineEmits(['run', 'open-mcp', 'open-account'])
 const m = useMcpState(props, emit)
 
 const entries = MCP_CATALOG.filter((e) => e.category === 'Productivity')
 const POLL_MS = 2500
 const EMAIL_RE = /^[A-Za-z0-9._+-]+@[A-Za-z0-9.-]+$/
 const isLocal = (entry) => entry.transport === 'stdio'
+// With a Tessel account, this service needs nothing set up: Tessel's Google app is used.
+const ACCOUNT_SERVICE = 'google-workspace'
+const account = reactive({ signedIn: false })
 
 const rows = reactive(
   Object.fromEntries(
@@ -36,6 +39,7 @@ const rows = reactive(
         error: '',
         answers: Object.fromEntries((e.inputs || []).map((i) => [i.key, ''])),
         email: '',
+        ownClient: false,
         signedIn: false, // true, false, or null when it could not be told
         account: null,
         session: null, // { id, page, code }
@@ -62,7 +66,8 @@ const has = (entry) => m.addedTo(entry.id).filter((a) => isOurs(entry, serverOf(
 // Agents holding something else under this name: it is never copied or replaced.
 const conflicts = (entry) => m.addedTo(entry.id).filter((a) => !isOurs(entry, serverOf(entry, a)))
 const missing = (entry) => m.writable.filter((a) => !serverOf(entry, a))
-const askInputs = (entry) => (has(entry).length ? [] : entry.inputs || [])
+const usesAccount = (entry) => entry.id === ACCOUNT_SERVICE && account.signedIn && !rows[entry.id].ownClient
+const askInputs = (entry) => (has(entry).length || usesAccount(entry) ? [] : entry.inputs || [])
 
 function status(entry) {
   const row = rows[entry.id]
@@ -208,14 +213,43 @@ async function connect(entry) {
     return
   }
   row.busy = true
+  const fromAccount = usesAccount(entry) && !has(entry).length
   try {
+    if (fromAccount && !(await fillFromAccount(entry))) return
     const present = await addEverywhere(entry)
     if (present && isLocal(entry)) await signInLocal(entry)
   } catch (err) {
     row.error = (err && err.message) || reasonText()
   } finally {
+    if (fromAccount) for (const key of Object.keys(row.answers)) row.answers[key] = ''
     row.busy = false
   }
+}
+
+async function fillFromAccount(entry) {
+  const row = rows[entry.id]
+  const client = await window.shellApi.tesselAccount.googleClient()
+  if (client && client.clientId) {
+    row.answers.GOOGLE_OAUTH_CLIENT_ID = client.clientId
+    row.answers.GOOGLE_OAUTH_CLIENT_SECRET = client.clientSecret
+    return true
+  }
+  if (client && client.error === 'signedOut') account.signedIn = false
+  row.error =
+    client && client.error === 'offline'
+      ? t('settings.connections.accountOffline', 'Tessel could not reach its server. Check your connection and try again.')
+      : client && client.error === 'signedOut'
+        ? t('settings.connections.accountSignedOut', 'Your Tessel session ended. Sign in again, or use your own Google client.')
+        : t('settings.connections.accountFailed', "Tessel's Google app is not available right now. Try again, or use your own Google client.")
+  return false
+}
+
+async function loadAccount() {
+  const res = await window.shellApi.tesselAccount?.status?.().catch(() => null)
+  if (leftPage || !res || !res.signedIn) return
+  account.signedIn = true
+  const row = rows[ACCOUNT_SERVICE]
+  if (row && !row.email && res.user && res.user.email) row.email = res.user.email
 }
 
 async function checkLocal(entry) {
@@ -279,7 +313,7 @@ const connectLabel = (entry) =>
 const showConnect = (entry) => isLocal(entry) || !has(entry).length || missing(entry).length > 0
 
 onMounted(async () => {
-  await Promise.all([m.refresh(), m.checkTools()])
+  await Promise.all([m.refresh(), m.checkTools(), loadAccount()])
   if (leftPage) return
   await resumeSessions()
   await Promise.all(entries.filter((e) => isLocal(e) && has(e).length && !rows[e.id].session).map(checkLocal))
@@ -319,6 +353,20 @@ onBeforeUnmount(() => {
             <span class="set-callout-text">{{ needsToolLabel(entry) }}</span>
             <button type="button" class="exit-btn small" @click="emit('open-mcp')">{{ t('settings.connections.openMcp', 'Open MCP servers') }}</button>
           </div>
+
+          <template v-if="entry.id === ACCOUNT_SERVICE && !has(entry).length">
+            <p v-if="usesAccount(entry)" class="set-hint conn-from-account">
+              {{ t('settings.connections.fromAccount', "Nothing to set up: your Tessel account uses Tessel's Google app. Google warns that the app is not verified yet: choose Advanced, then continue.") }}
+              <button type="button" class="sl-link conn-own-client" @click="rows[entry.id].ownClient = true">{{ t('settings.connections.ownClient', 'Use my own Google client') }}</button>
+            </p>
+            <p v-else-if="!account.signedIn" class="set-hint conn-offer-account">
+              {{ t('settings.connections.offerAccount', 'With a Tessel account there is nothing to set up. Otherwise, use your own Google client below.') }}
+              <button type="button" class="sl-link conn-to-account" @click="emit('open-account')">{{ t('settings.connections.toAccount', 'Go to Tessel account') }}</button>
+            </p>
+            <p v-else class="set-hint">
+              <button type="button" class="sl-link conn-back-to-account" @click="rows[entry.id].ownClient = false">{{ t('settings.connections.useAccount', "Use Tessel's Google app instead") }}</button>
+            </p>
+          </template>
 
           <div v-for="input in askInputs(entry)" :key="input.key" class="mcpc-field conn-field">
             <label :for="'conn-' + entry.id + '-' + input.key">{{ input.label }}</label>

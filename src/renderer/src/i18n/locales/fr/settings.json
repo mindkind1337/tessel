@@ -1094,6 +1094,14 @@
       "waitingHint": "Une page s'est ouverte dans votre navigateur. Cette page se met à jour toute seule."
     },
     "connections": {
+      "accountFailed": "L'application Google de Tessel n'est pas disponible pour le moment. Réessayez, ou utilisez votre propre client Google.",
+      "accountOffline": "Tessel n'a pas pu joindre son serveur. Vérifiez votre connexion et réessayez.",
+      "accountSignedOut": "Votre session Tessel a pris fin. Reconnectez-vous, ou utilisez votre propre client Google.",
+      "fromAccount": "Rien à configurer : votre compte Tessel utilise l'application Google de Tessel. Google avertit que l'application n'est pas encore vérifiée : choisissez Paramètres avancés, puis continuez.",
+      "offerAccount": "Avec un compte Tessel, il n'y a rien à configurer. Sinon, utilisez votre propre client Google ci-dessous.",
+      "ownClient": "Utiliser mon propre client Google",
+      "toAccount": "Aller au compte Tessel",
+      "useAccount": "Utiliser plutôt l'application Google de Tessel",
       "account": "Connecté avec {{account}}.",
       "added": "Ajouté",
       "cancel": "Annuler",

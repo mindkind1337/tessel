@@ -41,6 +41,78 @@ const open = async (w, id) => {
   await flushPromises()
 }
 
+describe("Settings > Connections with a Tessel account", () => {
+  let w
+  const google = () => row(w, 'google-workspace')
+  const account = (over = {}) => ({
+    status: vi.fn(async () => ({ signedIn: true, user: { email: 'me@gmail.com' } })),
+    googleClient: vi.fn(async () => ({ clientId: 'tessel-id', clientSecret: 'tessel-secret' })),
+    ...over
+  })
+  afterEach(() => {
+    if (w) w.unmount()
+    w = null
+    delete window.shellApi
+  })
+
+  it('needs nothing set up: the address is filled in, one press adds the server with Tessel\'s Google app and signs in', async () => {
+    const list = { claude: [], codex: [], others: {} }
+    const shellApi = api({
+      tesselAccount: account(),
+      mcpList: vi.fn(async () => list),
+      mcpAdd: vi.fn(async (spec) => {
+        list[spec.agent].push(server('google-workspace'))
+        return { ok: true }
+      })
+    })
+    w = await mountPanel(shellApi)
+    await open(w, 'google-workspace')
+    expect(google().find('#conn-google-workspace-GOOGLE_OAUTH_CLIENT_ID').exists()).toBe(false)
+    expect(google().text()).toContain('Nothing to set up')
+    expect(google().text()).toContain('not verified')
+    expect(google().get('#conn-google-workspace-email').element.value).toBe('me@gmail.com')
+    expect(shellApi.tesselAccount.googleClient).not.toHaveBeenCalled()
+    await google().get('.conn-connect').trigger('click')
+    await flushPromises()
+    expect(shellApi.tesselAccount.googleClient).toHaveBeenCalledTimes(1)
+    expect(shellApi.mcpAdd.mock.calls[0][0].env).toBe('GOOGLE_OAUTH_CLIENT_ID=tessel-id\nGOOGLE_OAUTH_CLIENT_SECRET=tessel-secret')
+    expect(shellApi.mcpSignInStart).toHaveBeenCalled()
+  })
+
+  it.each([
+    ['offline', 'could not reach its server'],
+    ['failed', 'not available right now'],
+    ['signedOut', 'session ended']
+  ])('adds nothing when the app cannot be had: %s', async (error, text) => {
+    const shellApi = api({ tesselAccount: account({ googleClient: vi.fn(async () => ({ error })) }) })
+    w = await mountPanel(shellApi)
+    await open(w, 'google-workspace')
+    await google().get('.conn-connect').trigger('click')
+    await flushPromises()
+    expect(google().text()).toContain(text)
+    expect(shellApi.mcpAdd).not.toHaveBeenCalled()
+  })
+
+  it('still allows your own Google client, and going back', async () => {
+    const shellApi = api({ tesselAccount: account() })
+    w = await mountPanel(shellApi)
+    await open(w, 'google-workspace')
+    await google().get('.conn-own-client').trigger('click')
+    expect(google().find('#conn-google-workspace-GOOGLE_OAUTH_CLIENT_ID').exists()).toBe(true)
+    await google().get('.conn-back-to-account').trigger('click')
+    expect(google().find('#conn-google-workspace-GOOGLE_OAUTH_CLIENT_ID').exists()).toBe(false)
+  })
+
+  it('signed out: asks for your own client, and points to the account', async () => {
+    const shellApi = api({ tesselAccount: account({ status: vi.fn(async () => ({ signedIn: false, user: null })) }) })
+    w = await mountPanel(shellApi)
+    await open(w, 'google-workspace')
+    expect(google().find('#conn-google-workspace-GOOGLE_OAUTH_CLIENT_ID').exists()).toBe(true)
+    await google().get('.conn-to-account').trigger('click')
+    expect(w.emitted('open-account')).toHaveLength(1)
+  })
+})
+
 describe('Settings > Connections', () => {
   let w
   beforeEach(() => {

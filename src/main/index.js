@@ -3174,6 +3174,10 @@ ipcMain.handle(
   safe(() => tesselAccount.signIn())
 )
 ipcMain.handle(
+  'tesselAccount:googleClient',
+  safe(() => tesselAccount.googleClient())
+)
+ipcMain.handle(
   'tesselAccount:passwordLink',
   safe(() => tesselAccount.passwordLink())
 )

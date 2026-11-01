@@ -313,6 +313,38 @@ describe('signing out and deleting', () => {
   })
 })
 
+describe("Tessel's Google app", () => {
+  it('comes from the server with the session, and is the same shape for the page', async () => {
+    const env = setup({ answers: { '/api/google-client': () => jsonResponse(200, { client_id: 'id', client_secret: 'secret' }) } })
+    await signedIn(env)
+    expect(await env.account.googleClient()).toEqual({ clientId: 'id', clientSecret: 'secret' })
+    expect(env.calls.at(-1).headers.authorization).toBe(`Bearer ${TOKEN}`)
+  })
+
+  it('without a session it asks nothing', async () => {
+    const env = setup()
+    expect(await env.account.googleClient()).toEqual({ error: 'signedOut' })
+    expect(env.calls).toEqual([])
+  })
+
+  it.each([
+    ['a session that ended', () => jsonResponse(401, {}), 'signedOut'],
+    ['not set up on the server', () => jsonResponse(503, {}), 'failed'],
+    ['an odd answer', () => jsonResponse(200, null), 'failed'],
+    [
+      'being offline',
+      () => {
+        throw new Error('offline')
+      },
+      'offline'
+    ]
+  ])('%s says so', async (_what, answer, error) => {
+    const env = setup({ answers: { '/api/google-client': answer } })
+    await signedIn(env)
+    expect(await env.account.googleClient()).toEqual({ error })
+  })
+})
+
 describe('a link to choose a password', () => {
   const sent = () => jsonResponse(202, { ok: true })
 

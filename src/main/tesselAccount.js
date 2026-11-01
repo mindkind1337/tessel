@@ -184,6 +184,25 @@ export function createTesselAccount({ dir, safeStorage, openExternal, onSignedIn
     if (!error) onSignedIn()
   }
 
+  // Tessel's Google app, for this account. -> { clientId, clientSecret } or { error }
+  async function googleClient() {
+    const current = readSession()
+    if (!current) return { error: 'signedOut' }
+    let res
+    try {
+      res = await request('/api/google-client', { headers: bearer(current.token) })
+    } catch {
+      return { error: 'offline' }
+    }
+    if (res.status === 401) {
+      forgetSession()
+      return { error: 'signedOut' }
+    }
+    const answer = res.ok ? await res.json().catch(() => null) : null
+    if (typeof answer?.client_id !== 'string' || typeof answer?.client_secret !== 'string') return { error: 'failed' }
+    return { clientId: answer.client_id, clientSecret: answer.client_secret }
+  }
+
   function cancelSignIn() {
     endPending()
     return view()
@@ -260,5 +279,5 @@ export function createTesselAccount({ dir, safeStorage, openExternal, onSignedIn
     return { ...view(), deleted: true }
   }
 
-  return { status, signIn, handleLink, passwordLink, cancelSignIn, signOut, deleteAccount, close: () => endPending() }
+  return { status, signIn, handleLink, googleClient, passwordLink, cancelSignIn, signOut, deleteAccount, close: () => endPending() }
 }

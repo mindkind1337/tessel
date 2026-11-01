@@ -56,7 +56,7 @@ describe('Settings > Tessel account', () => {
     expect(w.get('.tessel-account-open').text()).toBe('Sign in to Tessel')
     expect(w.find('input').exists()).toBe(false)
     expect(w.get('[data-included]').text()).toContain('Included with your account')
-    expect(w.findAll('[data-included] .tag').map((tag) => tag.text())).toEqual(['Soon', 'Soon'])
+    expect(w.findAll('[data-included] .tag').map((tag) => tag.text())).toEqual(['Soon'])
     expect(w.text()).toContain('It is optional')
     expect(w.text()).toContain('Never your mail, calendar or files')
     expect(w.find('.tessel-account-delete').exists()).toBe(false)
