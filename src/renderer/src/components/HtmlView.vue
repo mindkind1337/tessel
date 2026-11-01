@@ -1,5 +1,6 @@
 <script setup>
 import { computed, ref, watch, onMounted, onBeforeUnmount } from 'vue'
+import { RotateCw, ExternalLink, ShieldCheck, ShieldAlert } from 'lucide-vue-next'
 import OrcaMenu from './OrcaMenu.vue'
 import { htmlPreview, htmlPlainText } from '../htmlPreview'
 import { resolveFrom } from '../../../shared/viewPaths'
@@ -8,31 +9,58 @@ import { t } from '../i18n'
 const props = defineProps({ file: { type: String, required: true }, text: { type: String, default: '' }, plain: Boolean, root: { type: String, default: '' } })
 const emit = defineEmits(['open'])
 // The page as a real website (htmlPreviewServer.js: its folder served on this
-// computer, an SSH project's files read on its host): its CSS, scripts, images
-// and fonts load by their paths. The static, sanitized preview below is only
-// for a file the server cannot serve (a Live Share host's, no server).
-// Its scripts run only when turned on for this folder (remembered by folder):
-// a page's scripts can read the folder served and use the internet, so it is
-// for a project you trust (htmlPreviewServer.js).
-const SCRIPTS_KEY = 'tessel.htmlScripts'
+// computer, an SSH project's files read on its host): its CSS, images and fonts
+// load by their paths. The static, sanitized preview below is only for a file
+// the server cannot serve (a Live Share host's, no server).
+//
+// Trust, as VS Code's Workspace Trust: the first time a folder's page is
+// previewed, one question (do you trust the files of this folder?), answered
+// once and remembered by folder. Trusted: the page's scripts run, as on a
+// website (they can read the folder served and use the internet); not: the page
+// shows without scripts (a restricted mode), and the shield in the toolbar
+// asks again. Never decided for you.
+const TRUST_KEY = 'tessel.htmlTrust'
+const OLD_KEY = 'tessel.htmlScripts' // before: a list of folders with scripts on
 const folderKey = () => String(props.root || props.file.replace(/[\\/][^\\/]*$/, '')).toLowerCase()
-function readTrusted() {
+function readTrust() {
   try {
-    const list = JSON.parse(localStorage.getItem(SCRIPTS_KEY) || '[]')
-    return Array.isArray(list) ? list : []
+    const map = JSON.parse(localStorage.getItem(TRUST_KEY) || '{}')
+    const out = map && typeof map === 'object' && !Array.isArray(map) ? map : {}
+    const old = JSON.parse(localStorage.getItem(OLD_KEY) || '[]')
+    if (Array.isArray(old)) for (const k of old) if (typeof k === 'string' && !(k in out)) out[k] = true
+    return out
   } catch {
-    return []
+    return {}
   }
 }
-const scripts = ref(readTrusted().includes(folderKey()))
-function toggleScripts() {
-  scripts.value = !scripts.value
+// true: trusted, false: declined, null: not asked yet.
+const trustOf = (key) => {
+  const v = readTrust()[key]
+  return v === true ? true : v === false ? false : null
+}
+const trust = ref(trustOf(folderKey()))
+// The question is shown while it is not answered (and again when the shield is clicked).
+const asking = ref(false)
+const scripts = computed(() => trust.value === true)
+function decide(yes) {
+  trust.value = yes
+  asking.value = false
   try {
-    const rest = readTrusted().filter((k) => k !== folderKey())
-    localStorage.setItem(SCRIPTS_KEY, JSON.stringify((scripts.value ? [...rest, folderKey()] : rest).slice(-200)))
+    const map = readTrust()
+    map[folderKey()] = yes
+    const keys = Object.keys(map)
+    // Bounded: the oldest decisions go first.
+    for (const k of keys.slice(0, Math.max(0, keys.length - 300))) delete map[k]
+    localStorage.setItem(TRUST_KEY, JSON.stringify(map))
   } catch { /* the choice holds for this tab */ }
   openLive()
 }
+// The shield: trusted -> back to restricted at once (the safe way); restricted -> the question again.
+function onShield() {
+  if (trust.value === true) decide(false)
+  else asking.value = true
+}
+const showQuestion = computed(() => trust.value === null || asking.value)
 // A link the page tried to follow was held back: the person decides.
 const blocked = ref('')
 let stopBlocked = null
@@ -70,7 +98,8 @@ watch(() => props.text, () => {
   liveTimer = setTimeout(openLive, 350)
 })
 watch(() => [props.file, props.plain], () => {
-  scripts.value = readTrusted().includes(folderKey())
+  trust.value = trustOf(folderKey())
+  asking.value = false
   blocked.value = ''
   openLive()
 })
@@ -84,6 +113,10 @@ onBeforeUnmount(() => {
   if (typeof stopBlocked === 'function') stopBlocked()
 })
 const liveSrc = computed(() => (live.value ? `${live.value}?tessel=${version.value}` : ''))
+// The page's own path on its site, as an address bar shows it (/code.html).
+const pagePath = computed(() => {
+  try { return decodeURIComponent(new URL(live.value).pathname) } catch { return '' }
+})
 function openInBrowser() {
   if (live.value) openTarget(live.value, { builtin: true })
 }
@@ -144,12 +177,32 @@ function loaded(event) {
   <pre v-if="plain" class="html-plain" data-test="html-plain">{{ plainText }}</pre>
   <div v-else class="html-view">
     <div v-if="liveFailed" class="html-note">{{ t('editor.html.static', 'HTML preview · scripts and external resources are disabled') }}</div>
-    <div v-else class="html-note html-bar" data-test="html-live-bar">
-      <span class="html-bar-text">{{ scripts ? t('editor.html.liveScripts', 'Served from the project folder · scripts on') : t('editor.html.live', 'Served from the project folder · scripts off') }}</span>
-      <button class="html-bar-btn" :class="{ on: scripts }" data-test="html-scripts" :title="t('editor.html.scriptsHint', 'The page’s scripts can read this folder and use the internet, as a website does. Only for a project you trust.')" @click="toggleScripts">{{ scripts ? t('editor.html.scriptsOff', 'Turn scripts off') : t('editor.html.scriptsOn', 'Run scripts') }}</button>
-      <button class="html-bar-btn" data-test="html-reload" @click="openLive">{{ t('editor.html.reload', 'Reload') }}</button>
-      <button class="html-bar-btn" data-test="html-open-browser" @click="openInBrowser">{{ t('editor.html.openPage', 'Open in a browser tab') }}</button>
-    </div>
+    <template v-else>
+      <!-- Restricted mode, as VS Code's: one question about the folder, answered once. -->
+      <div v-if="showQuestion" class="html-trust" role="alert" data-test="html-trust">
+        <ShieldAlert :size="16" aria-hidden="true" />
+        <span class="html-trust-text">{{ t('editor.html.trustQuestion', 'Do you trust the files of this folder? The scripts of a page can read the folder and use the internet, as a website does. Without trust the page shows without its scripts.') }}</span>
+        <button class="html-bar-btn primary" data-test="html-trust-yes" @click="decide(true)">{{ t('editor.html.trustYes', 'Trust the folder and run scripts') }}</button>
+        <button class="html-bar-btn" data-test="html-trust-no" @click="decide(false)">{{ t('editor.html.trustNo', 'Keep it without scripts') }}</button>
+      </div>
+      <!-- The page's address and its few actions, as icons. -->
+      <div class="html-toolbar" data-test="html-live-bar">
+        <span class="html-path" :title="pagePath" data-test="html-path">{{ pagePath }}</span>
+        <button class="html-icon" data-test="html-reload" :title="t('editor.html.reload', 'Reload')" :aria-label="t('editor.html.reload', 'Reload')" @click="openLive"><RotateCw :size="14" /></button>
+        <button class="html-icon" data-test="html-open-browser" :title="t('editor.html.openPage', 'Open in a browser tab')" :aria-label="t('editor.html.openPage', 'Open in a browser tab')" @click="openInBrowser"><ExternalLink :size="14" /></button>
+        <button
+          class="html-icon"
+          :class="{ on: scripts }"
+          data-test="html-scripts"
+          :title="scripts ? t('editor.html.trustedHint', 'Trusted folder: its scripts run. Click to go back to restricted mode.') : t('editor.html.restrictedHint', 'Restricted mode: the page shows without scripts. Click to trust the folder.')"
+          :aria-label="scripts ? t('editor.html.trustedHint', 'Trusted folder: its scripts run. Click to go back to restricted mode.') : t('editor.html.restrictedHint', 'Restricted mode: the page shows without scripts. Click to trust the folder.')"
+          @click="onShield"
+        >
+          <ShieldCheck v-if="scripts" :size="14" />
+          <ShieldAlert v-else :size="14" />
+        </button>
+      </div>
+    </template>
     <div v-if="blocked" class="html-note html-bar html-blocked" data-test="html-blocked">
       <span class="html-bar-text" v-text="t('editor.html.blocked', 'A link to {{host}} was held back.', { host: blockedHost })"></span>
       <button class="html-bar-btn" data-test="html-blocked-open" @click="openBlocked">{{ t('editor.html.blockedOpen', 'Open it') }}</button>
@@ -169,7 +222,17 @@ iframe { flex: 1; min-height: 0; width: 100%; border: 0; background: white; colo
 .html-bar { display: flex; align-items: center; gap: 8px; opacity: 1; }
 .html-bar-text { flex: 1; min-width: 0; opacity: .65; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .html-bar-btn { flex: none; padding: 2px 10px; border: 1px solid var(--border); border-radius: 4px; background: none; color: var(--text); font-size: 11px; cursor: pointer; }
-.html-bar-btn:hover, .html-bar-btn.on { background: var(--surface); }
+.html-bar-btn:hover { background: var(--surface); }
+.html-bar-btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-fg, #fff); }
 .html-blocked { border-top: 1px solid var(--border); }
+/* VS Code's restricted-mode banner: the one question, over the page. */
+.html-trust { flex: 0 0 auto; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 10px; font-size: 12px; background: color-mix(in srgb, var(--warn, #d9a441) 14%, transparent); border-bottom: 1px solid var(--border); }
+.html-trust-text { flex: 1 1 320px; min-width: 0; }
+/* The address and its icons (a browser's small toolbar). */
+.html-toolbar { flex: 0 0 auto; display: flex; align-items: center; gap: 2px; padding: 3px 8px; border-bottom: 1px solid var(--border); }
+.html-path { flex: 1; min-width: 0; padding: 0 6px; font-size: 12px; color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.html-icon { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; border: 0; border-radius: 4px; background: none; color: var(--text-dim); cursor: pointer; }
+.html-icon:hover { background: var(--surface); color: var(--text); }
+.html-icon.on { color: var(--accent); }
 .html-plain { margin: 0; padding: 20px; white-space: pre-wrap; overflow-wrap: anywhere; user-select: text; line-height: 1.6; }
 </style>

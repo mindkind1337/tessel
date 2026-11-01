@@ -30,7 +30,7 @@ it('the preview is a real website first (its own server), the static preview onl
   // Scripts only once turned on for the folder; never popups, dialogs or downloads from the page.
   expect(view).toContain(":sandbox=\"scripts ? 'allow-scripts allow-same-origin allow-forms' : 'allow-same-origin'\"")
   expect(view).not.toMatch(/allow-(popups|modals|downloads|top-navigation)/)
-  expect(view).toContain('const scripts = ref(readTrusted().includes(folderKey()))')
+  expect(view).toContain('const scripts = computed(() => trust.value === true)')
   expect(view).toContain('<iframe v-else-if="liveSrc" :src="liveSrc" ')
   // The static one is still there for a file no server can serve.
   expect(view).toContain('<iframe v-if="liveFailed" :srcdoc="src" sandbox="allow-same-origin"')

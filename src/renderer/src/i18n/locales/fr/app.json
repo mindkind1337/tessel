@@ -135,7 +135,8 @@
       "settings": "Paramètres",
       "broadcastBanner": "La diffusion est activée. Les frappes vont à chaque panneau où « écrire » est coché.",
       "floatingTitle": "Terminal flottant (Ctrl+`)",
-      "floating": "Terminal flottant"
+      "floating": "Terminal flottant",
+      "build": "Build {{build}} (commit {{hash}}) : monte à chaque push sur GitHub ; la version reste celle de la release"
     },
     "codexHooks": {
       "updated": "Les hooks d'état de Codex ont été mis à jour. Vérifiez-les dans /hooks pour activer l'état en direct."
