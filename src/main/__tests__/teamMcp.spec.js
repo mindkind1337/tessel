@@ -198,6 +198,7 @@ describe('Tessel team tools (background messages)', () => {
       'terminal_last_command',
       'terminal_selection',
       'terminal_list',
+      'tessel_logs',
       'open_terminal',
       'account_list',
       'account_switch_panes'

@@ -43,7 +43,7 @@ const path = require('path')
 const crypto = require('crypto')
 const { randomUUID } = crypto
 
-const VERSION = '1.11.10'
+const VERSION = '1.11.11'
 const MAX_TEXT = 6000
 
 // --- An agent on an SSH host --------------------------------------------------
@@ -1520,6 +1520,23 @@ const TERMINAL_TOOLS = [
   }
 ]
 TERMINAL_TOOLS.push({
+  name: 'tessel_logs',
+  description:
+    'Read Tessel\'s own log files on the USER\'S COMPUTER (the app\'s log, or the terminal host\'s), filtered, read only: what restarted, which SSH connections closed and when, warnings and errors, with times in UTC. Use it to find why Tessel misbehaved, instead of asking the user to copy log files or run PowerShell on their PC. The user allows it once for you (until Tessel restarts): the logs hold paths, host names and addresses; keys and tokens are removed. Start narrow: "since" (an ISO time in UTC like 2026-11-01T07:00, or 30m, 2h, 3d), "until", "contains" (words separated by |, any of them) and "level" (warn = warnings and errors).',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      file: { type: 'string', enum: ['app', 'terminals'], description: '"app" (default): Tessel\'s own log; "terminals": the terminal host\'s log (SSH connections).' },
+      since: { type: 'string', description: 'Only from this time on: an ISO date or time in UTC (2026-11-01T07:00), or a delay before now (30m, 2h, 3d).' },
+      until: { type: 'string', description: 'Only up to this time (same forms as since).' },
+      contains: { type: 'string', description: 'Only lines with any of these words, separated by | (case-insensitive, plain text, at most 8). Example: "lost|closed|ended".' },
+      level: { type: 'string', enum: ['info', 'warn', 'error'], description: 'Only this level and worse (warn: warnings and errors).' },
+      max: { type: 'number', description: 'At most this many lines, the newest (default 200, at most 400).' },
+      explanation: { type: 'string', description: 'Optional: one sentence for the user on what you are looking for.' }
+    }
+  }
+})
+TERMINAL_TOOLS.push({
   name: 'open_terminal',
   description:
     'Open panes for the user next to yours in Tessel, in your project (on its SSH host when it is there): kind "agent" opens new sessions of an agent (by default the same agent as you), kind "shell" opens plain terminals. When the user asks you to open terminals or sessions without saying which kind, open the same agent as you, or ask the user if it is unclear. The user approves each call. These are the user\'s panes: to run commands yourself, use your shell tool or run_in_terminal.',
@@ -1535,7 +1552,7 @@ TERMINAL_TOOLS.push({
     required: ['kind']
   }
 })
-const TERMINAL_OPS = { open_terminal: 'open', run_in_terminal: 'run', get_terminal_output: 'output', send_to_terminal: 'send', kill_terminal: 'kill', terminal_last_command: 'lastCommand', terminal_selection: 'selection', terminal_list: 'list' }
+const TERMINAL_OPS = { tessel_logs: 'logs', open_terminal: 'open', run_in_terminal: 'run', get_terminal_output: 'output', send_to_terminal: 'send', kill_terminal: 'kill', terminal_last_command: 'lastCommand', terminal_selection: 'selection', terminal_list: 'list' }
 TOOLS.push(...TERMINAL_TOOLS)
 
 // --- Account tools -------------------------------------------------------------------
@@ -1732,7 +1749,7 @@ const INSTRUCTIONS =
 // On an SSH host: the same tools, and where they run.
 const REMOTE_INSTRUCTIONS =
   INSTRUCTIONS +
-  " You run on an SSH host: Tessel's browser is on the user's computer (a page on the host is reached through an address that computer can open), and run_in_terminal opens your terminal on that host. To look at something on the user's own computer (Tessel's logs, a local file, a local tool), call run_in_terminal with host \"local\": a Windows PowerShell opens there, the user is asked first and then for every command; do not ask the user to copy files to the server by hand."
+  " You run on an SSH host: Tessel's browser is on the user's computer (a page on the host is reached through an address that computer can open), and run_in_terminal opens your terminal on that host. To read Tessel's own logs on the user's computer, use tessel_logs (read only, the user allows it once). To look at anything else there (a local file, a local tool), call run_in_terminal with host \"local\": a Windows PowerShell opens there, the user is asked first and then for every command; do not ask the user to copy files to the server by hand."
 
 // signal: aborted when the client cancels this request (a waiting team_ask).
 function handle(msg, signal = null) {

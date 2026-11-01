@@ -593,9 +593,11 @@ export function createAgentTerminalTargets(deps) {
 
     // A card about no terminal yet: another SSH host ("host:<id>"), panes to
     // open ("open:<agent pane>"); shown from the agent's own pane.
-    if (req.op === 'approve' && typeof req.terminal === 'string' && /^(host|open):/.test(req.terminal))
+    if (req.op === 'approve' && typeof req.terminal === 'string' && /^(host|open|logs):/.test(req.terminal))
       return plainAnswer(await deps.approve({ ...req.card, agentLeaf, agentLabel, leaf: agentLeaf, name: agentLabel, ws }))
 
+    // tessel_logs: only who is asking, for the card.
+    if (req.op === 'logsInfo') return { agentLabel }
     // open_terminal: what would open (the main process asks the user first).
     if (req.op === 'openInfo') return { agentLabel, ...openPlan(agentLeaf, ws, req) }
     if (req.op === 'open') {

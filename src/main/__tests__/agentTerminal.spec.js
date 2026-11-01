@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { createRequire } from 'module'
 import { join } from 'path'
 import fs from 'fs'
@@ -61,6 +61,8 @@ function fakeWindow({ target = OWN, approve = { allow: true }, run = { state: 'c
         // This computer, asked for from a project on an SSH host: not the project's host.
         if (params.host === 'local' && target.pcFromRemote) return { hostId: null, local: true, label: 'this computer', projectHost: false }
         return { hostId: null, label: 'this computer', projectHost: true }
+      case 'logsInfo':
+        return { agentLabel: 'Ada' }
       case 'active':
         return { ...target }
       case 'lastCommand':
@@ -94,7 +96,8 @@ function make(win, extra = {}) {
     send: (ch, p) => sent.push([ch, p]),
     busyOf: extra.busyOf || (async () => ({})),
     outputDir: extra.outputDir || null,
-    logFile: extra.logFile || null
+    logFile: extra.logFile || null,
+    logDir: extra.logDir || null
   })
   return { at, sent, settings: s }
 }
@@ -602,6 +605,65 @@ describe("security review: the user's own computer, asked for by an agent that w
   })
 })
 
+describe('tessel_logs: Tessel\u2019s own logs, asked once', () => {
+  let dir
+  beforeEach(() => {
+    dir = fs.mkdtempSync(join(os.tmpdir(), 'tessel-logtool-'))
+    fs.writeFileSync(join(dir, 'tessel.log'), '2026-11-01T07:30:00.000Z WARN  [remote] remote session for ssh-a ended: closed\n2026-11-01T07:31:00.000Z INFO  [app] started v1.17.2\n')
+  })
+  afterEach(() => fs.rmSync(dir, { recursive: true, force: true }))
+  const call = (at, args = {}) => at.handle(signed('logs', { explanation: 'why the cuts', ...args }))
+
+  it('the user allows it once for the agent: the first look asks, the next ones do not', async () => {
+    const win = fakeWindow({ approve: (p) => ({ allow: true, remember: p.card.kind === 'logs' ? 'pane' : 'once' }) })
+    const { at } = make(win, { logDir: dir })
+    const a = await call(at, { contains: 'ended' })
+    expect(a.text).toContain('ended: closed')
+    expect(a.text).toMatch(/1 matching line/)
+    await call(at, { level: 'warn' })
+    const cards = win.calls.filter((c) => c.op === 'approve')
+    expect(cards.map((c) => c.card.kind)).toEqual(['logs'])
+    expect(cards[0].terminal).toBe(`logs:${AGENT}`)
+  })
+
+  it('"this time" only: it asks again', async () => {
+    const win = fakeWindow({ approve: { allow: true, remember: 'once' } })
+    const { at } = make(win, { logDir: dir })
+    await call(at)
+    await call(at)
+    expect(win.calls.filter((c) => c.op === 'approve')).toHaveLength(2)
+  })
+
+  it('refused: nothing goes back to the agent', async () => {
+    const win = fakeWindow({ approve: { allow: false } })
+    const { at } = make(win, { logDir: dir })
+    await expect(call(at)).rejects.toMatchObject({ code: 'denied' })
+  })
+
+  it('a bad request is refused without asking the user', async () => {
+    const win = fakeWindow({ approve: { allow: true } })
+    const { at } = make(win, { logDir: dir })
+    await expect(call(at, { since: 'soon' })).rejects.toMatchObject({ code: 'invalid_argument' })
+    await expect(call(at, { file: '../x' })).rejects.toMatchObject({ code: 'invalid_argument' })
+    expect(win.calls.filter((c) => c.op === 'approve')).toHaveLength(0)
+  })
+
+  it('off with "Let agents use terminals"; no log folder: said', async () => {
+    const win = fakeWindow()
+    await expect(call(make(win, { logDir: dir, settings: { enabled: false } }).at)).rejects.toMatchObject({ code: 'disabled' })
+    await expect(call(make(win, {}).at)).rejects.toMatchObject({ code: 'no_logs' })
+  })
+
+  it('the tool is listed, read only, with its arguments', () => {
+    const tool = mcp.TERMINAL_TOOLS.find((t) => t.name === 'tessel_logs')
+    expect(tool).toBeTruthy()
+    expect(Object.keys(tool.inputSchema.properties)).toEqual(['file', 'since', 'until', 'contains', 'level', 'max', 'explanation'])
+    expect(tool.description).toContain('read only')
+    expect(tool.description).toContain('The user allows it once')
+    expect(mcp.TERMINAL_OPS.tessel_logs).toBe('logs')
+  })
+})
+
 describe('security review: Stop and the session', () => {
   it('Stop takes back the agent’s "allow all" and session rules', async () => {
     const win = fakeWindow({ approve: { allow: true, action: { kind: 'session' } } })
@@ -761,7 +823,7 @@ describe('the tools tell agents when a terminal helps', () => {
     expect(open.description).toContain('without saying which kind, open the same agent as you, or ask the user if it is unclear')
     expect(open.inputSchema.properties.kind.enum).toEqual(['agent', 'shell'])
     expect(mcp.TERMINAL_OPS.open_terminal).toBe('open')
-    expect(mcp.VERSION).toBe('1.11.10')
+    expect(mcp.VERSION).toBe('1.11.11')
   })
 })
 

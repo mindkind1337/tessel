@@ -3892,6 +3892,8 @@ const agentTerminal = createAgentTerminal({
   send,
   logFile: join(app.getPath('userData'), 'agent-terminal.log'),
   outputDir: join(os.tmpdir(), 'tessel-terminal-output'),
+  // tessel_logs: the agents read these files (agentLogs.js), nothing else.
+  logDir: log.dir,
   log
 })
 // Settings > Agents > Terminals (the window says it at start and on each change).

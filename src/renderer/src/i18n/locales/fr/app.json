@@ -934,7 +934,10 @@
       "lines": "{{count}} lignes : lisez-les toutes avant d’autoriser.",
       "pcTitle": "{{agent}} veut lancer des commandes sur votre ordinateur (ce PC)",
       "pcText": "Il travaille sur un serveur, pas sur votre ordinateur : Tessel ouvre ici, sur ce PC, un PowerShell avec votre compte. Chaque commande vous est quand même demandée, et les règles de votre projet ne s'y appliquent pas.",
-      "allowPc": "Autoriser sur cet ordinateur"
+      "allowPc": "Autoriser sur cet ordinateur",
+      "logsTitle": "{{agent}} veut lire les journaux de Tessel sur cet ordinateur",
+      "logsText": "Il va lire les fichiers journaux de Tessel (ce que l'application et son hôte de terminaux ont noté : chemins, noms d'hôtes, adresses ; clés et jetons retirés), filtrés par heure et par mots. Lecture seule : il ne peut pas les modifier et ne lit rien d'autre. L'autoriser lui permet de les relire jusqu'au redémarrage de Tessel.",
+      "allowLogs": "Autoriser la lecture des journaux"
     },
     "hostAccount": {
       "refused": "{{agent}} n’a pas été démarré sur son compte sur cet hôte : {{error}} Menu du panneau > Redémarrer sur… le démarre sur un autre.",

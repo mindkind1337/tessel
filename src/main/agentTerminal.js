@@ -41,9 +41,10 @@ import { join } from 'path'
 import crypto from 'crypto'
 import { CliError } from './cliServer'
 import { analyzeCommandLine, buildRules, rewritePwshChain, rulesOfAction, cleanRules } from '../shared/terminalRules'
+import { readLogs } from './agentLogs'
 import { MAX_OUTPUT_LENGTH, MAX_POLL_OUTPUT, truncateLargeOutput, truncateOutputKeepingTail, detectsSensitiveInputPrompt } from '../shared/terminalOutput'
 
-export const TERMINAL_OPS = ['list', 'run', 'output', 'send', 'kill', 'lastCommand', 'selection', 'open']
+export const TERMINAL_OPS = ['list', 'run', 'output', 'send', 'kill', 'lastCommand', 'selection', 'open', 'logs']
 // open_terminal: panes opened in one call.
 export const MAX_OPEN_PANES = 4
 export const MAX_COMMAND_BYTES = 8 * 1024
@@ -199,10 +200,11 @@ function steering(id, hung) {
 //   logFile                    the commands log (JSON lines), or null
 //   outputDir                  where outputs over 20 KB are written, or null
 //   log, now
-export function createAgentTerminal({ verify, settings = () => ({ enabled: true }), ask, busyOf = async () => ({}), send = () => {}, logFile = null, outputDir = null, log = null, now = () => Date.now(), fsImpl = fs }) {
+export function createAgentTerminal({ verify, settings = () => ({ enabled: true }), ask, busyOf = async () => ({}), send = () => {}, logFile = null, outputDir = null, logDir = null, log = null, now = () => Date.now(), fsImpl = fs }) {
   const approvedPanes = new Set() // "agent|pane": the user allowed this agent in this user terminal
   const readPanes = new Set() // "agent|pane": the user allowed this agent to read this terminal
   const hostPanes = new Set() // "agent|host:<id>": the user allowed this agent on this SSH host
+  const logPanes = new Set() // agent pane: the user allowed this agent to read Tessel's logs
   const stopped = new Set() // "agent|pane": the user stopped it there
   const stoppedNoticeAt = new Map()
   const sessions = new Map() // agent pane -> { allowAll, rules }
@@ -571,6 +573,27 @@ export function createAgentTerminal({ verify, settings = () => ({ enabled: true 
     return { text: `Opened ${panes.length} ${kindText} for the user beside your pane${where}: ${list}. They are the user's panes: do not run commands in them; for your own commands use your shell tool or run_in_terminal.` }
   }
 
+  // tessel_logs: Tessel's own log files, filtered (agentLogs.js), read only.
+  // The user allows it once for the agent (until Tessel restarts or Stop):
+  // the logs hold paths, host names and addresses (keys and tokens are
+  // stripped), so it is asked, but not for every look.
+  async function readTesselLogs(agentPane, args) {
+    if (!logDir) throw fail('no_logs', 'Tessel has no log folder here.')
+    // Read (and the arguments checked) first, so a bad request never asks the
+    // user; nothing of it goes back to the agent before the user's yes.
+    const r = readLogs({ dir: logDir, args, now: now() })
+    if (!r.ok) throw fail('invalid_argument', r.error)
+    const lk = agentPane
+    if (!logPanes.has(lk)) {
+      const info = await ask('terminalTarget', { agent: agentPane, op: 'logsInfo' })
+      const agentLabel = String((info && info.agentLabel) || 'agent')
+      const answer = await card(agentPane, { id: `logs:${agentPane}`, name: agentLabel, own: false }, { kind: 'logs', command: '', own: false, explanation: String(args.explanation || '').slice(0, MAX_TEXT), goal: '', info: null, disclaimers: [], actions: [] })
+      if (answer.remember === 'pane') logPanes.add(lk)
+    }
+    writeLog({ at: now(), paneId: agentPane, paneName: 'Tessel logs', agent: 'agent', agentPane, kind: 'logs', text: `${String(args.file || 'app')} ${String(args.since || '')} ${String(args.contains || '')}`.trim().slice(0, 200) }, false)
+    return { text: r.text }
+  }
+
   async function sendInput(agentPane, args) {
     const t = targetFrom(await ask('terminalTarget', { agent: agentPane, op: 'resolve', terminal: args.id }))
     writable(t)
@@ -726,6 +749,7 @@ export function createAgentTerminal({ verify, settings = () => ({ enabled: true 
       if (op === 'kill') return await kill(pane, args)
       if (op === 'lastCommand') return await lastCommand(pane)
       if (op === 'open') return await openPanes(pane, args)
+      if (op === 'logs') return await readTesselLogs(pane, args)
       return await selection(pane)
     } catch (err) {
       if (err instanceof CliError) throw err

@@ -30,9 +30,9 @@ let previousFocus = null
 const { armed, press, mayAllow } = useApprovalArming(props.armMs)
 
 // A card for a whole terminal or host (allowed once, or until Tessel restarts).
-const whole = computed(() => ['pane', 'read', 'host'].includes(props.card.kind))
-const editable = computed(() => props.card.kind !== 'send' && !props.card.send && !['read', 'host', 'open'].includes(props.card.kind))
-const shown = computed(() => !['read', 'host', 'open'].includes(props.card.kind))
+const whole = computed(() => ['pane', 'read', 'host', 'logs'].includes(props.card.kind))
+const editable = computed(() => props.card.kind !== 'send' && !props.card.send && !['read', 'host', 'open', 'logs'].includes(props.card.kind))
+const shown = computed(() => !['read', 'host', 'open', 'logs'].includes(props.card.kind))
 // open_terminal: what the agent wants to open, beside its pane.
 const openText = computed(() => {
   const o = props.card.open || {}
@@ -46,6 +46,7 @@ const openText = computed(() => {
 const title = computed(() => {
   const c = props.card
   if (c.kind === 'open') return t('app.agentTerminal.openTitle', '{{agent}} wants to open panes for you', { agent: c.agentLabel })
+  if (c.kind === 'logs') return t('app.agentTerminal.logsTitle', '{{agent}} wants to read Tessel\u2019s logs on this computer', { agent: c.agentLabel })
   if (c.kind === 'read') return t('app.agentTerminal.readTitle', '{{agent}} wants to read the terminal "{{name}}" ({{where}})', { agent: c.agentLabel, name: c.name, where: c.where })
   if (c.kind === 'host' && c.pc) return t('app.agentTerminal.pcTitle', '{{agent}} wants to run commands on your computer (this PC)', { agent: c.agentLabel })
   if (c.kind === 'host') return t('app.agentTerminal.hostTitle', '{{agent}} wants to run commands on the SSH host {{host}}', { agent: c.agentLabel, host: c.host || c.where })
@@ -75,7 +76,9 @@ function actionLabel(a) {
   return t('app.agentTerminal.allowPrefix', 'Allow {{what}} {{scope}}', { what, scope: scopeLabel(a.scope) })
 }
 const paneText = computed(() =>
-  props.card.kind === 'read'
+  props.card.kind === 'logs'
+    ? t('app.agentTerminal.logsText', 'It will read Tessel\u2019s own log files (what the app and its terminal host noted: paths, host names, addresses; keys and tokens are removed), filtered by time and words. Read only: it cannot change them and reads nothing else. Allowing it lets it read them again until Tessel restarts.')
+    : props.card.kind === 'read'
     ? t('app.agentTerminal.readText', 'It will read what this terminal shows and its scrollback, which may hold passwords, keys or other secrets you typed or printed. Allowing it for this terminal lets it read it again until Tessel restarts.')
     : props.card.kind === 'host' && props.card.pc
       ? t('app.agentTerminal.pcText', 'It works on a server, not on your computer: Tessel opens a PowerShell here, on this PC, with your account. Each command still asks you, and the rules of your project do not apply there.')
@@ -86,7 +89,9 @@ const paneText = computed(() =>
         : t('app.agentTerminal.paneText', 'It will type this command there and press Enter, with your rights on {{where}}. Allowing it in this terminal lets it type more commands there until Tessel restarts.', { where: props.card.where })
 )
 const allowWholeLabel = computed(() =>
-  props.card.kind === 'read'
+  props.card.kind === 'logs'
+    ? t('app.agentTerminal.allowLogs', 'Allow reading the logs')
+    : props.card.kind === 'read'
     ? t('app.agentTerminal.allowRead', 'Allow reading this terminal')
     : props.card.kind === 'host' && props.card.pc
       ? t('app.agentTerminal.allowPc', 'Allow on this computer')
