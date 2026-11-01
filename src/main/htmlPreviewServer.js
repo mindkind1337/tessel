@@ -181,7 +181,7 @@ export function createPreviewServer({ remote = null, log = null } = {}) {
         v4.close()
       }
     }
-    if (!port) throw new Error('no port')
+    if (!port) throw new Error('no port') // i18n-ignore internal: register() answers no-server
     for (const s of servers) s.unref()
   }
   const ensureServer = () => (starting ||= startServer().finally(() => (starting = null)))
