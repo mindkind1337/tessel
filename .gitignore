@@ -5,8 +5,9 @@ node_modules/
 out/
 dist/
 # The site's demo, built from the renderer (npm run build:site)
-site/public/demo/
+site/demo/public/
 site/.wrangler/
+site/demo/.wrangler/
 web-demo/.vite/
 
 # Logs & test artifacts

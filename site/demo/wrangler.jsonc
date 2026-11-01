@@ -1,0 +1,9 @@
+{
+  // The site's demo, on its own address: it ships the whole renderer and its dependencies, so
+  // nothing it runs may share an origin with the log-in pages of tesselcode.com.
+  "name": "tessel-demo",
+  "compatibility_date": "2026-10-23",
+  "assets": { "directory": "./public" },
+  "workers_dev": false,
+  "routes": [{ "pattern": "demo.tesselcode.com", "custom_domain": true }]
+}

@@ -203,6 +203,58 @@ describe('signing in', () => {
   })
 })
 
+describe('what happens while a code is being swapped', () => {
+  // A server that answers only when told to.
+  function held() {
+    let release
+    const gate = new Promise((resolve) => (release = resolve))
+    const env = setup({
+      answers: {
+        '/auth/token': async () => {
+          await gate
+          return jsonResponse(200, { token: TOKEN, expires_at: Date.now() + 1000000, user: USER })
+        }
+      }
+    })
+    return { env, release }
+  }
+  const logoutCalled = (env) => env.calls.some((c) => c.url === `${API}/auth/logout` && c.headers.authorization === `Bearer ${TOKEN}`)
+
+  it.each([
+    ['Cancel', (account) => account.cancelSignIn()],
+    ['signing out', (account) => account.signOut()]
+  ])('%s wins: no session comes back, and the one the server just opened ends', async (_what, act) => {
+    const { env, release } = held()
+    const { state } = await startedSignIn(env)
+    const swapping = env.account.handleLink(back({ code: 'c', state }))
+    await act(env.account)
+    release()
+    await swapping
+    expect(await env.account.status()).toMatchObject({ signedIn: false, signingIn: false })
+    expect(existsSync(join(env.dir, 'session.json'))).toBe(false)
+    expect(env.onSignedIn).not.toHaveBeenCalled()
+    expect(logoutCalled(env)).toBe(true)
+  })
+
+  it('a new sign-in started meanwhile is not ended by the old one', async () => {
+    const { env, release } = held()
+    const { state } = await startedSignIn(env)
+    const swapping = env.account.handleLink(back({ code: 'c', state }))
+    await env.account.signIn()
+    release()
+    await swapping
+    expect(await env.account.status()).toMatchObject({ signedIn: false, signingIn: true })
+    expect(env.onSignedIn).not.toHaveBeenCalled()
+  })
+
+  it('an odd error in a link shows nothing odd', async () => {
+    const env = setup()
+    const { state } = await startedSignIn(env)
+    await env.account.handleLink(back({ error: 'constructor', state }))
+    expect((await env.account.status()).error).toBe('failed')
+  })
+})
+
 describe('finding the link in a command line', () => {
   it('finds this app\'s link, and no other', () => {
     const link = 'tessel://callback?code=c&state=s'

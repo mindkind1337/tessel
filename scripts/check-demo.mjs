@@ -120,6 +120,7 @@ export function checkFolder(root, { username = '', rootPaths = [], demoIndex = j
     // As Latin-1: every byte stays one character, in fonts and images too.
     for (const hit of scanText(readFileSync(file, 'latin1'), { username, rootPaths })) problems.push(`${rel}: ${hit.what}: ...${hit.sample}...`)
   }
+  if (demoIndex === null) return { files: counted.length, bytes, problems }
   if (!existsSync(demoIndex)) problems.push(`${relative(root, demoIndex)} is missing: the demo was not built.`)
   else {
     const csp = CSP.exec(readFileSync(demoIndex, 'utf8'))
@@ -132,18 +133,28 @@ export function checkFolder(root, { username = '', rootPaths = [], demoIndex = j
 // Run as a script: the site's folder, or the folder given.
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
   const repo = resolve(dirname(fileURLToPath(import.meta.url)), '..')
-  const root = resolve(process.argv[2] || join(repo, 'site', 'public'))
   let username
   try {
     username = userInfo().username
   } catch {
     username = process.env.USERNAME || process.env.USER || ''
   }
-  const result = checkFolder(root, { username, rootPaths: [repo] })
-  if (result.problems.length) {
-    console.error(`check-demo: ${result.problems.length} problem(s) in ${root}:`)
-    for (const problem of result.problems.slice(0, 40)) console.error(`  ${problem}`)
-    process.exit(1)
+  // The demo on its own address, and the site, which frames it.
+  const site = join(repo, 'site', 'public')
+  const demo = join(repo, 'site', 'demo', 'public')
+  let failed = false
+  for (const [root, options] of [
+    [demo, { demoIndex: join(demo, 'index.html') }],
+    [site, { demoIndex: null }]
+  ]) {
+    const result = checkFolder(root, { username, rootPaths: [repo], ...options })
+    if (result.problems.length) {
+      failed = true
+      console.error(`check-demo: ${result.problems.length} problem(s) in ${root}:`)
+      for (const problem of result.problems.slice(0, 40)) console.error(`  ${problem}`)
+    } else {
+      console.log(`check-demo: ok, ${relative(repo, root)}: ${result.files} files, ${(result.bytes / 1048576).toFixed(1)} MiB.`)
+    }
   }
-  console.log(`check-demo: ok, ${result.files} files, ${(result.bytes / 1048576).toFixed(1)} MiB.`)
+  if (failed) process.exit(1)
 }

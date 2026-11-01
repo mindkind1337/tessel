@@ -6169,9 +6169,12 @@ Promise.all([acquireInstanceLock(), app.whenReady()]).then(([gotInstanceLock]) =
     const link = findAppLink(argv, APP_LINK_SCHEME)
     if (link) tesselAccount.handleLink(link).catch(() => {})
   })
-  // Windows opens this copy for its links: the way back from logging in on the web page.
-  if (app.isPackaged) app.setAsDefaultProtocolClient(APP_LINK_SCHEME)
-  else app.setAsDefaultProtocolClient(APP_LINK_SCHEME, process.execPath, [app.getAppPath()])
+  // Windows opens this copy for its links: the way back from logging in on the web page. The --
+  // comes before the link: an app that hands a link over unencoded could otherwise add switches
+  // of its own to this command line, and Chromium's can run a program. A test copy with its own
+  // data folder leaves the link to the real one.
+  if (app.isPackaged) app.setAsDefaultProtocolClient(APP_LINK_SCHEME, process.execPath, ['--'])
+  else if (!process.env.TESSEL_USER_DATA) app.setAsDefaultProtocolClient(APP_LINK_SCHEME, process.execPath, [app.getAppPath(), '--'])
   log.info(
     'app',
     `started v${app.getVersion()} (${app.isPackaged ? 'installed' : 'dev'}) electron ${process.versions.electron} node ${process.versions.node} ${process.platform} ${os.release()} ${os.arch()}`

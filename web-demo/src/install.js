@@ -38,7 +38,8 @@ window.shellApi = createFakeApi(simulator.api, {
 // (the site's page says so with a message; a hidden tab by itself).
 window.addEventListener('load', () => setTimeout(() => simulator.start(), 800))
 document.addEventListener('visibilitychange', () => simulator.setPaused(document.visibilityState === 'hidden'))
+const SITE_ORIGINS = ['https://tesselcode.com', 'https://www.tesselcode.com', location.origin]
 window.addEventListener('message', (e) => {
-  if (e.origin !== location.origin || !e.data || e.data.type !== 'tessel-demo') return
+  if (!SITE_ORIGINS.includes(e.origin) || !e.data || e.data.type !== 'tessel-demo') return
   simulator.setPaused(e.data.visible === false)
 })

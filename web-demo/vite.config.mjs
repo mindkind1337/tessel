@@ -55,7 +55,7 @@ export default defineConfig(async ({ command }) => {
   const { default: vue } = await import('@vitejs/plugin-vue')
   return {
     root: here,
-    // Relative, so the built folder works wherever it is served from (/demo/).
+    // Relative, so the built folder works wherever it is served from.
     base: './',
     plugins: [vue(), tesselAgents()],
     // Never Vite's default node_modules/.vite: node_modules can be shared with a running
@@ -68,7 +68,7 @@ export default defineConfig(async ({ command }) => {
     // Monaco's language workers are ES modules, as in the desktop build.
     worker: { format: 'es' },
     build: {
-      outDir: resolve(repo, 'site/public/demo'),
+      outDir: resolve(repo, 'site/demo/public'),
       emptyOutDir: true,
       // No source maps: the demo ships nothing the page does not need.
       sourcemap: false,

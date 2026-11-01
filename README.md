@@ -374,9 +374,9 @@ The installer is not code-signed, so Windows SmartScreen may warn the first
 time; choose **More info → Run anyway**. `npm run dist:dir` builds an unpacked
 copy in `dist/win-unpacked/` without the installer.
 
-The website is in `site/` and its demo in `web-demo/`: `npm run build:site` builds
-the demo into `site/public/demo/` and checks it (no local path, user name, token or
-oversized file). A push to `main` that touches them or the interface puts the site
+The website is in `site/` and its demo in `web-demo/`, on an address of its own
+(`demo.tesselcode.com`): `npm run build:site` builds the demo into `site/demo/public/`
+and checks it (no local path, user name, token or oversized file). A push to `main` that touches them or the interface puts the site
 online (`.github/workflows/site.yml`).
 
 Saved workspaces, settings and tasks live in `%APPDATA%\tessel` for the

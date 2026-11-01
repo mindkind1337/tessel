@@ -4,7 +4,7 @@ import pluginVue from 'eslint-plugin-vue'
 import prettier from 'eslint-config-prettier'
 
 export default [
-  { ignores: ['out/**', 'dist/**', 'node_modules/**', 'site/public/demo/**', 'web-demo/.vite/**'] },
+  { ignores: ['out/**', 'dist/**', 'node_modules/**', 'site/demo/public/**', 'web-demo/.vite/**'] },
 
   js.configs.recommended,
   ...pluginVue.configs['flat/recommended'],
