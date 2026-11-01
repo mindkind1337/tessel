@@ -1793,6 +1793,22 @@ ${q.root}`, () => sparseInfoNow(q))
     return buf.length <= MAX_EDIT_BYTES ? { ok: true, buf } : { ok: false, code: 'too-large' }
   }
 
+  // The HTML preview's server (htmlPreviewServer.js) on a project of an SSH
+  // host: the open project that holds the file, as its virtual root and the
+  // file's path below it; and a file read below such a root (the Files
+  // session's rights and size cap, the same as the editor's download).
+  function previewRoot(file) {
+    const loc = locateFile(file)
+    const root = loc ? rootVirtualOf(loc.root) : null
+    return loc && root ? { root, rel: loc.rel } : null
+  }
+  async function readPreview(root, rel) {
+    if (typeof root !== 'string' || !isRemotePath(root) || typeof rel !== 'string') return { ok: false }
+    const res = await readDownload(childPath(root, rel))
+    if (res.ok) return { ok: true, buf: res.buf }
+    return { ok: false, tooLarge: res.code === 'too-large' }
+  }
+
   // -> { ok, text, bom, size, mtimeMs, sig, hash } | { ok: false, error, code }
   async function readForEdit(file) {
     const loc = locateFile(file)
@@ -2668,6 +2684,8 @@ ${root}`, () => gitWorktreesNow(root))
     rename,
     trash,
     readDownload,
+    previewRoot,
+    readPreview,
     readForEdit,
     statForEdit,
     statLinks,

@@ -79,7 +79,7 @@ describe('in the editor', () => {
     expect(fileKind('ssh://h/srv/b.XLSM')).toBe('sheet')
     expect(fileKind('old.xls')).toBe('text')
     expect(pane).toContain("if (VIEW_KINDS.includes(k)) return 'image'")
-    expect(pane).toContain(":kind=\"mode === 'image' ? (VIEW_KINDS.includes(kind) ? kind : 'image') : kind\"")
+    expect(pane).toContain("(VIEW_KINDS.includes(kind) ? kind : 'image') : kind\"")
     expect(rich).toContain('<SheetView v-else-if="kind === \'sheet\'" :file="file" />')
   })
 })

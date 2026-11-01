@@ -24,7 +24,9 @@ const props = defineProps({
   file: { type: String, required: true },
   // 'markdown' | 'mermaid' | 'table' | 'image' | 'pdf' | 'sheet' | 'doc' | 'slides' | 'audio' | 'video'
   kind: { type: String, required: true },
-  text: { type: String, default: '' }
+  text: { type: String, default: '' },
+  // The project folder the file belongs to (the HTML preview serves it).
+  root: { type: String, default: '' }
 })
 // 'source': a Markdown file too large to preview asks for the editor.
 const emit = defineEmits(['open', 'source'])
@@ -199,7 +201,7 @@ function onBodyClick(e) {
 
 <template>
   <div ref="bodyEl" class="fview-body ed-rich" :data-kind="kind" data-test="rich-view" @click="onBodyClick">
-    <HtmlView v-if="kind === 'html' || kind === 'html-plain'" :file="file" :text="text" :plain="kind === 'html-plain'" @open="emit('open', $event)" />
+    <HtmlView v-if="kind === 'html' || kind === 'html-plain'" :file="file" :text="text" :root="root" :plain="kind === 'html-plain'" @open="emit('open', $event)" />
     <MarkdownSizeGate
       v-if="kind === 'markdown' && markdownState !== 'render'"
       :state="markdownState"

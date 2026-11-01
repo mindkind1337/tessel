@@ -210,6 +210,10 @@ const api = {
     closeWindow: () => ipcRenderer.send('editor:closeWindow')
   },
   // opts: { maxBytes } (a local image over it is refused before it is read).
+  // An HTML file as a real website: its address on a loopback server (htmlPreviewServer.js).
+  previewUrl: (q) => ipcRenderer.invoke('preview:url', q && typeof q === 'object' ? { file: q.file, root: q.root, text: q.text, scripts: q.scripts === true } : {}),
+  // A link the preview's page tried to follow, held back: fn({ url }).
+  onPreviewBlocked: (cb) => subscribe('preview:blocked', cb),
   viewImage: (file, opts) => ipcRenderer.invoke('files:viewImage', file, opts && typeof opts === 'object' ? { maxBytes: opts.maxBytes } : undefined),
   openPdf: (file) => ipcRenderer.invoke('files:openPdf', file),
   // A project's files for Jump to file: root -> { ok, files, truncated }.

@@ -69,6 +69,7 @@ import { createThemedDialog } from './themedDialog'
 import { geminiSessionExists, qwenSessionExists, resumeTarget, findAgentSession } from './agentResume'
 import { paneEnv } from './paneEnv'
 import { readForView, readImageForView, openPdfWindow } from './fileView'
+import { createPreviewServer } from './htmlPreviewServer'
 import { readForEdit, statForEdit, writeForEdit, headContent, createFileWatcher } from './editorFiles'
 import * as explorer from './explorer'
 import { extraToolDirs, withToolDirs } from './toolDirs'
@@ -4145,6 +4146,24 @@ ipcMain.handle('files:viewImage', async (_evt, file, opts) => {
     return { ok: false, error: err.message }
   }
 })
+// An HTML file opened as a real website (htmlPreviewServer.js): its address on
+// a loopback server that serves the project's folder (an SSH project's files
+// are read on its host). Not for a Live Share host's files.
+const previewServer = createPreviewServer({
+  log,
+  remote: { previewRoot: (file) => remoteFs.previewRoot(file), read: (root, rel) => remoteFs.readPreview(root, rel) }
+})
+app.on('will-quit', () => previewServer.close())
+ipcMain.handle('preview:url', async (event, q) => {
+  // The window's own page (not a frame in it).
+  if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents || event.senderFrame !== mainWindow.webContents.mainFrame) return { ok: false, code: 'refused' }
+  if (!q || typeof q !== 'object' || lshareArg(q.file)) return { ok: false, code: 'unsupported' }
+  try {
+    return await previewServer.register({ file: q.file, root: typeof q.root === 'string' ? q.root : '', text: typeof q.text === 'string' ? q.text : null, scripts: q.scripts === true })
+  } catch (err) {
+    return { ok: false, code: 'error', error: err.message }
+  }
+})
 ipcMain.handle('files:openPdf', (_evt, file) =>
   localOnlyFor('files:openPdf', file) ? guestFs().localOnly() : isRemotePath(file) ? remoteFs.remoteOnly() : openPdfWindow(BrowserWindow, file, { icon: fs.existsSync(appIconPath()) ? appIconPath() : null })
 )
@@ -5484,6 +5503,35 @@ function createWindow() {
       if (isSafeExternal(url)) shell.openExternal(url)
     }
   })
+  // A link followed inside the HTML preview's frame: other pages of the site
+  // load there; any other address never does, and nothing opens by itself (a
+  // page could otherwise open tabs or the mail program in a loop): the
+  // preview's bar says a link was held back and offers to open it. A frame
+  // inside the page's own frames is stopped without a word.
+  mainWindow.webContents.on('will-frame-navigate', (event) => {
+    if (event.isMainFrame) return
+    const url = event.url
+    if (previewServer.isPreviewUrl(url) || /^(about:|data:|blob:)/i.test(url)) return
+    event.preventDefault()
+    const direct = event.frame && event.frame.parent === mainWindow.webContents.mainFrame
+    if (direct && /^https?:/i.test(url) && isSafeExternal(url)) mainWindow.webContents.send('preview:blocked', { url })
+  })
+  // Permissions (camera, microphone, location, notifications...) for the
+  // window's own page only (as before: granted); never for a frame inside it
+  // (the HTML preview's page, or a frame of that page: srcdoc, data, blob).
+  const isOwnPage = (url) => {
+    try {
+      const a = new URL(url)
+      const own = new URL(mainWindow.webContents.getURL())
+      return a.protocol === own.protocol && a.host === own.host
+    } catch {
+      return false
+    }
+  }
+  // (No address given: as before, granted; only a foreign one is refused.)
+  const foreignPage = (url) => !!url && !isOwnPage(url)
+  mainWindow.webContents.session.setPermissionRequestHandler((_wc, _permission, callback, details) => callback(!foreignPage(details && details.requestingUrl)))
+  mainWindow.webContents.session.setPermissionCheckHandler((_wc, _permission, requestingOrigin) => !foreignPage(requestingOrigin))
   browserGuests.attachToWindow(mainWindow)
   mainWindow.maximize()
 

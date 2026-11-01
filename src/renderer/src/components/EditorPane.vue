@@ -1333,6 +1333,7 @@ onBeforeUnmount(() => {
           :file="activeDocPath"
           :kind="mode === 'plain' && kind === 'html' ? 'html-plain' : mode === 'image' ? (VIEW_KINDS.includes(kind) ? kind : 'image') : kind"
           :text="richText"
+          :root="crumbRoot"
           @open="openLinked"
           @source="setToggle('source')"
         />
