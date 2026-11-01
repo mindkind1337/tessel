@@ -401,7 +401,8 @@ const agents = computed(() => {
     if (reading.accountId === selectedAccount(reading.id))
       rows.set(reading.id, { ...rows.get(reading.id), ...reading })
   }
-  const shown = [...rows.values()].filter((row) => trackedProviders.value.some((p) => p.id === row.id))
+  // A provider its maker no longer supports (Gemini CLI for personal accounts) is not listed: nothing to show or to do.
+  const shown = [...rows.values()].filter((row) => trackedProviders.value.some((p) => p.id === row.id) && providerErrorCodes.value[row.id] !== 'unsupported')
   // The providers with usage to show first, the ones without (not signed in,
   // not installed, refresh needed) at the bottom; each group keeps its order.
   // A provider that showed usage keeps its place while it is read again
@@ -983,7 +984,7 @@ const emptyTitle = () => t('usage.menu.buttonTitleEmpty', "Usage of your agents'
 // --- A Live Share host's usage -------------------------------------------------------
 // Only the fields hostUsage.js keeps (never an account), shown with the view
 // chosen here (Detailed / Compact); nothing in it reads, signs in or resets.
-const hostProviders = computed(() => cleanHostUsage(props.hostUsage))
+const hostProviders = computed(() => cleanHostUsage(props.hostUsage).filter((p) => p.status !== 'unsupported'))
 const hostTitle = computed(() => t('usage.menu.hostUsage', '{{host}}’s usage', { host: props.hostName || t('usage.menu.theHost', 'The host') }))
 const hostUpdated = computed(() => updatedText({ updatedAt: latestUpdate(hostProviders.value) }))
 // A provider the host could not read: a fixed label for why (its own words
