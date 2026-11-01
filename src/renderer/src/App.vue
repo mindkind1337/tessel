@@ -35,6 +35,7 @@ import { limitClock, limitWhen as limitWhenOf, limitUntilEn, pickReplacement, le
 import { HOST_ACCOUNT_AGENTS, checkHostAccountsNow, defaultHostAccount, hostAccountChoice, hostAccountsOf, hostEntry, hostPaneFolder, refreshHostAccounts, setDefaultHostAccount, validHostAccount } from './hostAccounts'
 import SettingsDialog from './components/SettingsDialog.vue'
 import UpdateDialog from './components/UpdateDialog.vue'
+import DevUpdateDialog from './components/DevUpdateDialog.vue'
 import UpdateCard from './components/UpdateCard.vue'
 import SshPasswordDialog from './components/remote/SshPasswordDialog.vue'
 import { settings, loadSettings, DEFAULT_SETTINGS } from './settings'
@@ -3660,6 +3661,31 @@ async function readBuild() {
 }
 readBuild()
 window.addEventListener('focus', readBuild)
+// A development copy: GitHub has newer builds (src/main/devUpdate.js). A yellow
+// button next to "dev" opens the list; it is the same on every dev copy.
+const devUpdate = ref({ state: 'disabled' })
+const devUpdateOpen = ref(false)
+const devUpdateShown = computed(() => isDev && (devUpdate.value.state === 'available' || devUpdate.value.state === 'updated'))
+function copyDevUpdateCommand(text) {
+  if (navigator.clipboard) navigator.clipboard.writeText(text).catch(() => {})
+}
+async function applyDevUpdate(resolve) {
+  let r = { ok: false, reason: 'merge' }
+  try {
+    r = await window.shellApi.devUpdate.apply()
+  } catch {
+    /* said in the dialog */
+  }
+  resolve(r)
+  readBuild()
+}
+function initDevUpdate() {
+  const api = window.shellApi.devUpdate
+  if (!isDev || !api) return
+  api.onStatus((s) => (devUpdate.value = s || { state: 'disabled' }))
+  api.status().then((s) => (devUpdate.value = s || { state: 'disabled' })).catch(() => {})
+}
+initDevUpdate()
 const updateStatus = ref({ state: 'disabled' })
 const updateOpen = ref(false)
 const updateInstalling = ref(false)
@@ -14263,6 +14289,16 @@ onBeforeUnmount(() => {
           <!-- The build's sub id: b<commits of the repository> (the commit): it goes up with every push, the version stays the release's. -->
           <span v-if="build" class="brand-build" :title="t('app.toolbar.build', 'Build {{build}} (commit {{hash}}): goes up with every push to GitHub; the version stays the release’s', { build: build.count, hash: build.hash })" data-test="brand-build">b{{ build.count }}</span>
           <span v-if="isDev" class="brand-dev" :title="t('app.toolbar.devBuild', 'Development build (npm run dev)')">{{ t('app.toolbar.dev', 'dev') }}</span>
+          <button
+            v-if="devUpdateShown"
+            type="button"
+            class="brand-dev-update"
+            :title="devUpdate.state === 'updated' ? t('app.toolbar.devUpdated', 'Updated: see what to do next') : t('app.toolbar.devUpdate', 'New builds on GitHub: {{count}}. Update this development copy', { count: devUpdate.behind || 0 })"
+            data-test="dev-update-button"
+            @click="devUpdateOpen = true"
+          >
+            ↑ {{ devUpdate.state === 'updated' ? t('app.toolbar.devUpdatedShort', 'restart?') : devUpdate.newBuild ? `b${devUpdate.newBuild}` : devUpdate.behind }}
+          </button>
         </div>
       </div>
 
@@ -14859,6 +14895,15 @@ onBeforeUnmount(() => {
         }
       "
       @close="closeSkills"
+    />
+
+    <DevUpdateDialog
+      v-if="devUpdateOpen && devUpdateShown"
+      :status="devUpdate"
+      :build="build"
+      @apply="applyDevUpdate"
+      @copy="copyDevUpdateCommand"
+      @close="devUpdateOpen = false"
     />
 
     <UpdateDialog

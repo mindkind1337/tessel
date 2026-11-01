@@ -123,6 +123,7 @@ import { createPasteImages, isImageFile, PASTE_LIMITS, pngSize } from './liveSha
 import { listProcesses, treeOf, waitForExit, killPids, listProcessNames, runningWork, stopProcessSnapshots, pidRunning } from './processTree'
 import { pipeName, trimBuffer } from './ptyProtocol'
 import { createUpdater } from './updater'
+import { createDevUpdate } from './devUpdate'
 import { createAgentUpdates } from './agentUpdates'
 import { createUpdateRunner, fakeSpawn, classifyFailure } from './agentUpdateRunner'
 import { createUpdateHistory } from './agentUpdateHistory'
@@ -5389,6 +5390,13 @@ const updater = createUpdater({
   }
 })
 
+// A development copy follows the repository: it says when GitHub has newer builds
+// (devUpdate.js). Not run by an installed Tessel, which has the updater above.
+const devUpdate = createDevUpdate({ root: app.getAppPath(), packaged: app.isPackaged, send, log })
+const fromMainWindow = (event) => mainWindow && !mainWindow.isDestroyed() && event.sender === mainWindow.webContents
+ipcMain.handle('devUpdate:status', (event) => (fromMainWindow(event) ? devUpdate.status : { state: 'disabled' }))
+ipcMain.handle('devUpdate:check', (event) => (fromMainWindow(event) ? devUpdate.check() : { state: 'disabled' }))
+ipcMain.handle('devUpdate:apply', (event) => (fromMainWindow(event) ? devUpdate.apply() : { ok: false, reason: 'refused' }))
 ipcMain.handle('update:status', () => updater.status)
 ipcMain.handle('update:check', () => updater.check())
 ipcMain.handle('update:install', () => updater.install())
@@ -5997,6 +6005,7 @@ Promise.all([acquireInstanceLock(), app.whenReady()]).then(([gotInstanceLock]) =
   ensureDevShortcut()
   createWindow()
   updater.start()
+  devUpdate.start()
   // The tessel command's pipe; a registered command follows this Tessel.
   if (process.platform === 'win32') {
     scheduleCliStart(0)

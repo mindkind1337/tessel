@@ -5311,6 +5311,22 @@ body.pane-dragging * {
   font-variant-numeric: tabular-nums;
 }
 
+.brand-dev-update {
+  margin-left: 6px;
+  padding: 1px 6px;
+  border: 0;
+  border-radius: 4px;
+  background: #facc15;
+  color: #1c1500;
+  cursor: pointer;
+  font-size: 10.5px;
+  font-weight: 700;
+  line-height: 1.3;
+}
+.brand-dev-update:hover {
+  filter: brightness(1.1);
+}
+
 .tb-left .brand-dev {
   margin-left: 0;
   padding: 1px 5px;

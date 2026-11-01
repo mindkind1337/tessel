@@ -866,6 +866,13 @@ const api = {
     onHostRequest: (cb) => subscribe('liveShare:hostRequest', cb),
     onNotice: (cb) => subscribe('liveShare:notice', cb)
   },
+  // A development copy: new builds on GitHub (src/main/devUpdate.js).
+  devUpdate: {
+    status: () => ipcRenderer.invoke('devUpdate:status'),
+    check: () => ipcRenderer.invoke('devUpdate:check'),
+    apply: () => ipcRenderer.invoke('devUpdate:apply'),
+    onStatus: (cb) => subscribe('devUpdate:status', cb)
+  },
   update: {
     status: () => ipcRenderer.invoke('update:status'),
     check: () => ipcRenderer.invoke('update:check'),

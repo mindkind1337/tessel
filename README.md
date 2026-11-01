@@ -145,6 +145,13 @@ working on Tessel itself (see [Build from source](#build-from-source)).
   are asked first, then for every command, even for an agent in Yolo. The
   `tessel_logs` tool reads Tessel's own logs, filtered and read only, with a
   single approval. Agents already running get these after a restart.
+- **Updating a development copy**: a Tessel started with `npm run dev` checks GitHub
+  every 30 minutes (`git fetch` of the branch it follows) and, when there are newer
+  builds, shows a yellow `↑ b1700` next to **dev**. It lists them and, for a copy with
+  no change of its own, brings them in with a fast-forward; with changes of your own
+  it touches nothing and gives you the command. It says whether to restart
+  (main process changed) or run `npm install` (packages changed). An installed Tessel
+  keeps its own updater: it downloads each release and asks you to restart.
 - **Messages between projects**: an agent can write to an agent of any other
   project, on this computer or on any SSH host (`project_agents`, `project_send`,
   `project_inbox`); Tessel relays the message, with no terminal or SSH session to

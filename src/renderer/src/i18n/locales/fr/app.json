@@ -136,7 +136,10 @@
       "broadcastBanner": "La diffusion est activée. Les frappes vont à chaque panneau où « écrire » est coché.",
       "floatingTitle": "Terminal flottant (Ctrl+`)",
       "floating": "Terminal flottant",
-      "build": "Build {{build}} (commit {{hash}}) : monte à chaque push sur GitHub ; la version reste celle de la release"
+      "build": "Build {{build}} (commit {{hash}}) : monte à chaque push sur GitHub ; la version reste celle de la release",
+      "devUpdate": "Nouveaux builds sur GitHub : {{count}}. Mettre à jour cette copie de développement",
+      "devUpdated": "Mis à jour : voir quoi faire ensuite",
+      "devUpdatedShort": "redémarrer ?"
     },
     "codexHooks": {
       "updated": "Les hooks d'état de Codex ont été mis à jour. Vérifiez-les dans /hooks pour activer l'état en direct."
@@ -960,6 +963,26 @@
       "failed": "Impossible d'ouvrir {{target}}",
       "commitCopied": "{{hash}} copié",
       "commitOutside": "Le commit {{hash}} n'est dans aucun projet ouvert dans Tessel."
+    },
+    "devUpdate": {
+      "updatedTitle": "Tessel est à jour",
+      "title": "Nouveaux builds sur GitHub : {{count}}",
+      "from": "Vous avez {{now}}. GitHub a {{next}}.",
+      "fromShort": "GitHub a des builds que cette copie n'a pas.",
+      "dirty": "Cette copie a des changements non validés : Tessel n'y touche pas. Validez-les ou mettez-les de côté, puis lancez git pull.",
+      "ahead": "Cette copie a des commits que GitHub n'a pas : Tessel ne les fusionne pas pour vous. Lancez git pull vous-même.",
+      "failed": "La mise à jour n'a pas pu être faite : lancez git pull dans le dépôt.",
+      "current": "Cette copie est déjà à jour.",
+      "deps": "Les paquets ont changé : lancez npm install, puis redémarrez.",
+      "restart": "Redémarrez npm run dev pour charger les changements du processus principal.",
+      "reload": "La fenêtre se recharge toute seule ; rien à redémarrer.",
+      "more": "… et {{count}} de plus",
+      "depsWarn": "Ces builds changent les paquets (package.json) : vous devrez lancer npm install.",
+      "close": "Fermer",
+      "copy": "Copier git pull",
+      "updating": "Mise à jour…",
+      "apply": "Mettre à jour",
+      "label": "Mettre à jour cette copie de développement"
     }
   },
   "links": {
