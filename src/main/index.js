@@ -141,6 +141,7 @@ import {
   hklFromTip,
   runAgentCommand
 } from './agentTools'
+import { startSignIn, signInStatus, activeSignIns, cancelSignIn, cancelAllSignIns, signInState } from './mcpSignIn'
 import { listAgyPlugins, setAgyPlugin, removeAgyPlugin } from './agyPlugins'
 import { createMusePlugins } from './musePlugins'
 import {
@@ -3120,6 +3121,28 @@ ipcMain.handle(
   'mcp:copy',
   safe((spec) => copyMcp(spec))
 )
+// Settings > Connections: signing a local server in to the user's account.
+ipcMain.handle(
+  'mcp:signInStart',
+  safe(({ email, ...ref } = {}) => startSignIn(ref, { email }, { baseEnv: freshEnv() }))
+)
+ipcMain.handle(
+  'mcp:signInStatus',
+  safe((id) => signInStatus(id))
+)
+ipcMain.handle(
+  'mcp:signInActive',
+  safe(() => activeSignIns())
+)
+ipcMain.handle(
+  'mcp:signInCancel',
+  safe((id) => cancelSignIn(id))
+)
+ipcMain.handle(
+  'mcp:signInState',
+  safe((ref) => signInState(ref, { baseEnv: freshEnv() }))
+)
+app.on('will-quit', () => cancelAllSignIns())
 
 // Agent skills (the Skills window, skillsManager.js): listed per agent and
 // scope, added from a folder or GitHub after a preview, removed to the

@@ -7,6 +7,7 @@
 // `requires` names a command that must be installed (see Tools).
 // `auth: 'oauth'` means the server asks you to sign in on first use.
 // `env` is set for every agent, without asking.
+// `signInEmail`: Settings > Connections asks for the account's address.
 // `docs` is its documentation (checked to exist); an npx or uvx server
 // without one links to its package (catalogDocs).
 // Descriptions, labels and help are getters, so they read in the current
@@ -397,13 +398,14 @@ export const MCP_CATALOG = [
     category: 'Productivity',
     accent: '#ea4335',
     get desc() {
-      return t('mcp.catalog.google-workspace.desc', 'Search and read your mail and write drafts (it cannot send mail), manage your calendar, read your Drive. Community server that works with every agent.')
+      return t('mcp.catalog.google-workspace.desc', 'Search and read your mail and write drafts (it offers agents no tool to send mail), manage your calendar, read your Drive. Community server that works with every agent.')
     },
     transport: 'stdio',
     command: 'uvx workspace-mcp --permissions gmail:drafts calendar:full drive:readonly',
     requires: 'uvx',
     docs: 'https://workspacemcp.com/quick-start',
     auth: 'oauth',
+    signInEmail: true,
     inputs: [
       {
         key: 'GOOGLE_OAUTH_CLIENT_ID',
@@ -432,7 +434,7 @@ export const MCP_CATALOG = [
     category: 'Productivity',
     accent: '#0f6cbd',
     get desc() {
-      return t('mcp.catalog.outlook.desc', 'Personal Microsoft accounts: read your mail and write drafts (it cannot send mail), manage your calendar and contacts, read your OneDrive. Community server that works with every agent. Work accounts are not covered.')
+      return t('mcp.catalog.outlook.desc', 'Personal Microsoft accounts: read your mail and write drafts (it offers agents no tool to send mail), manage your calendar and contacts, read your OneDrive. Community server that works with every agent. Work accounts are not covered.')
     },
     transport: 'stdio',
     command: 'npx -y @softeria/ms-365-mcp-server --discovery --allowed-scopes "Mail.ReadWrite Calendars.ReadWrite Contacts.ReadWrite Files.Read"',

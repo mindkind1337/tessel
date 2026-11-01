@@ -150,7 +150,13 @@ working on Tessel itself (see [Build from source](#build-from-source)).
   agents to your accounts: Gmail, Google Calendar and Drive (with your own free
   Google Cloud OAuth client), Outlook and OneDrive for personal Microsoft
   accounts, Dropbox, Todoist, Airtable, ClickUp and monday.com. Gmail and Outlook
-  can read mail and write drafts, but not send mail.
+  can read mail and write drafts, and offer agents no tool to send mail.
+- **Connections** (Settings → Connections): one Connect button per account
+  service, for all your agents at once. It adds the server to every agent that
+  lacks it and starts the sign-in in your own browser; Google and Microsoft sign
+  in once for all agents, hosted services have one Sign in per agent. The page
+  shows whether a Google or Microsoft sign-in still works. A server from a
+  project's own settings is never started or copied from here.
 - **Browser tools for agents**: an agent can open pages, click, fill, read and
   take screenshots in Tessel's browser; you see a badge on the page and can
   stop it. After you import cookies, agents use a separate session without

@@ -470,6 +470,11 @@ const api = {
   // A custom server's form, tested before it is added (nothing written).
   mcpTestSpec: (spec) => ipcRenderer.invoke('mcp:testSpec', spec),
   mcpCopy: (spec) => ipcRenderer.invoke('mcp:copy', spec),
+  mcpSignInStart: (spec) => ipcRenderer.invoke('mcp:signInStart', spec),
+  mcpSignInStatus: (id) => ipcRenderer.invoke('mcp:signInStatus', id),
+  mcpSignInActive: () => ipcRenderer.invoke('mcp:signInActive'),
+  mcpSignInCancel: (id) => ipcRenderer.invoke('mcp:signInCancel', id),
+  mcpSignInState: (ref) => ipcRenderer.invoke('mcp:signInState', ref),
   // Settings > Context and the token tags (src/main/contextCost): token counts
   // of what each agent loads; Measure starts an MCP server, on click only.
   mcpMeasure: (q) => ipcRenderer.invoke('mcp:measure', q),

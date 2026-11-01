@@ -271,13 +271,13 @@
         "desc": "Projets, déploiements et journaux sur Vercel."
       },
       "google-workspace": {
-        "desc": "Chercher et lire vos courriels et écrire des brouillons (il ne peut pas envoyer de courriel), gérer votre agenda, lire votre Drive. Serveur communautaire qui fonctionne avec tous les agents.",
+        "desc": "Chercher et lire vos courriels et écrire des brouillons (il n'offre aux agents aucun outil pour envoyer un courriel), gérer votre agenda, lire votre Drive. Serveur communautaire qui fonctionne avec tous les agents.",
         "clientId": "ID du client OAuth Google",
         "clientIdHelp": "Sur console.cloud.google.com : activez les API Gmail, Calendar et Drive, ajoutez-vous comme utilisateur test, puis créez un client OAuth de type Application de bureau.",
         "clientSecret": "Code secret du client OAuth Google"
       },
       "outlook": {
-        "desc": "Comptes Microsoft personnels : lire vos courriels et écrire des brouillons (il ne peut pas envoyer de courriel), gérer votre calendrier et vos contacts, lire votre OneDrive. Serveur communautaire qui fonctionne avec tous les agents. Les comptes professionnels ne sont pas pris en charge."
+        "desc": "Comptes Microsoft personnels : lire vos courriels et écrire des brouillons (il n'offre aux agents aucun outil pour envoyer un courriel), gérer votre calendrier et vos contacts, lire votre OneDrive. Serveur communautaire qui fonctionne avec tous les agents. Les comptes professionnels ne sont pas pris en charge."
       },
       "dropbox": {
         "desc": "Trouver, lire et organiser vos fichiers Dropbox. Dropbox accepte seulement les applications qu'il a approuvées, comme Claude Code, Codex et Cursor : les autres agents, comme OpenCode, peuvent être refusés à la connexion."

@@ -52,6 +52,16 @@ export const PAGES = {
     },
     icon: 'M6 2v3M10 2v3M4.5 5h7v2.5a3.5 3.5 0 01-7 0zM8 11v3'
   },
+  // Your accounts for the agents: one Connect per service (SettingsConnections.vue).
+  connections: {
+    get title() {
+      return t('settings.pages.connections.title', 'Connections')
+    },
+    get desc() {
+      return t('settings.pages.connections.desc', 'Connect Gmail, Outlook, Dropbox and other accounts once, for all your agents.')
+    },
+    icon: 'M6.5 9.5l3-3M7 4.5l1-1a2.5 2.5 0 013.5 3.5l-1 1M9 11.5l-1 1A2.5 2.5 0 014.5 9l1-1'
+  },
   // What each agent loads into its context, in tokens (SettingsContext.vue).
   context: {
     get title() {
@@ -203,7 +213,7 @@ export const GROUPS = [
     get title() {
       return t('settings.groups.ai', 'AI')
     },
-    pages: ['agents', 'accounts', 'skills', 'mcp', 'context', 'orchestration']
+    pages: ['agents', 'accounts', 'skills', 'mcp', 'connections', 'context', 'orchestration']
   },
   {
     id: 'workspace',
@@ -255,6 +265,7 @@ export const PAGE_TITLES_EN = {
   accounts: 'AI provider accounts', // i18n-ignore
   skills: 'Skills', // i18n-ignore
   mcp: 'MCP servers', // i18n-ignore
+  connections: 'Connections', // i18n-ignore
   context: 'Context', // i18n-ignore
   orchestration: 'Orchestration', // i18n-ignore
   voice: 'Voice typing', // i18n-ignore

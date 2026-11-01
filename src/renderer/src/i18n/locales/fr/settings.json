@@ -39,6 +39,10 @@
         "title": "Skills",
         "desc": "Voir, ajouter, mettre à jour et retirer les compétences de vos agents."
       },
+      "connections": {
+        "title": "Connexions",
+        "desc": "Connectez Gmail, Outlook, Dropbox et d'autres comptes une seule fois, pour tous vos agents."
+      },
       "mcp": {
         "title": "Serveurs MCP",
         "desc": "Donnez des outils de plus à vos agents : installez, activez ou désactivez et connectez des serveurs MCP."
@@ -1042,6 +1046,47 @@
       "installed": "Compétences installées",
       "installedHint": "Chaque compétence, les agents qui la voient et son emplacement ; ajoutez-en une depuis GitHub ou un dossier.",
       "open": "Ouvrir Skills"
+    },
+    "connections": {
+      "account": "Connecté avec {{account}}.",
+      "added": "Ajouté",
+      "cancel": "Annuler",
+      "checking": "Vérification…",
+      "connect": "Connecter",
+      "connected": "Connecté",
+      "connecting": "Connexion…",
+      "copyCode": "Copier le code",
+      "done": "{{name}} est connecté. Redémarrez les panneaux d'agents ouverts pour le charger.",
+      "email": "Votre adresse Google",
+      "end": {
+        "expired": "La connexion a pris trop de temps. Réessayez.",
+        "failed": "Le serveur s'est arrêté pendant la connexion. Réessayez."
+      },
+      "enter": "Saisissez {{field}}.",
+      "enterCode": "Ouvrez la page, entrez ce code et connectez-vous. Cette page se met à jour toute seule.",
+      "hostedHint": "Chaque agent se connecte de son côté, une seule fois. Tessel ne peut pas voir d'ici si un agent l'a fait.",
+      "list": "Services",
+      "needsRestart": "Redémarrez Tessel pour terminer l'installation de cette page, puis réessayez.",
+      "needsSignIn": "Connexion requise",
+      "noAgent": "Aucun agent ne peut le recevoir : installez-en un dans Agents.",
+      "notListed": "Les agents ne le listent pas après l'ajout. Voyez Serveurs MCP.",
+      "open": "Ouvrir Connexions",
+      "openMcp": "Ouvrir Serveurs MCP",
+      "openPage": "Ouvrir la page",
+      "pageOpened": "Une page de connexion s'est ouverte dans votre navigateur. Acceptez-la là-bas ; cette page se met à jour toute seule.",
+      "reason": {
+        "email": "Saisissez votre adresse complète, comme vous@gmail.com.",
+        "noAnswer": "Le serveur n'a pas répondu. Vérifiez qu'il démarre dans Serveurs MCP, puis réessayez.",
+        "noPage": "Le serveur n'a donné aucune page de connexion. Réessayez.",
+        "notAdded": "Les agents n'ont pas encore ce serveur.",
+        "other": "Impossible de lancer la connexion. Réessayez.",
+        "otherServer": "Un autre serveur utilise déjà ce nom. Retirez-le dans Serveurs MCP, puis réessayez.",
+        "projectScope": "Ce serveur vient des réglages du projet lui-même, et Tessel ne le démarre pas d'ici."
+      },
+      "reconnect": "Connecter de nouveau",
+      "services": "Gmail, Outlook, Dropbox et d'autres comptes",
+      "servicesHint": "Connectez-les une seule fois, pour tous vos agents.",
+      "unknown": "Vérification impossible"
     },
     "mcp": {
       "installed": "Serveurs installés",

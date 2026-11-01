@@ -310,7 +310,10 @@ async function runDirect(exe, args, cwd) {
 export const runAgentCommand = (exe, args, cwd = null) => runAgentCli(exe, args, cwd)
 
 export function cliError(res, fallback) {
-  const text = cleanPsOutput(res.stderr || res.stdout || res.error || '').trim()
+  // Node's "Command failed: <the whole command>" holds its arguments, and an
+  // MCP server's secrets are among them (-e KEY=value, or encoded in PowerShell's).
+  const error = /^Command failed:/.test(String(res.error || '')) ? '' : res.error
+  const text = cleanPsOutput(res.stderr || res.stdout || error || '').trim()
   const line = text.split(/\r?\n/).filter(Boolean).slice(-3).join(' ')
   return line || fallback
 }
@@ -640,7 +643,7 @@ export function normalizeServerConfig(cfg = {}) {
   }
 }
 
-async function fullConfig({ agent, name, scope, cwd }) {
+export async function fullConfig({ agent, name, scope, cwd }) {
   if (agent === 'claude') {
     let entry = null
     if (scope === 'project') {

@@ -16,6 +16,7 @@ import SettingsAgents from './settings/SettingsAgents.vue'
 import SettingsAccounts from './settings/SettingsAccounts.vue'
 import SettingsSkills from './settings/SettingsSkills.vue'
 import SettingsMcp from './settings/SettingsMcp.vue'
+import SettingsConnections from './settings/SettingsConnections.vue'
 import SettingsContext from './settings/SettingsContext.vue'
 import SettingsOrchestration from './settings/SettingsOrchestration.vue'
 import SettingsVoice from './settings/SettingsVoice.vue'
@@ -434,6 +435,7 @@ onUnmounted(() => {
         <SettingsAccounts />
         <SettingsSkills :agents="agents" :project-cwd="projectCwd" />
         <SettingsMcp :agents="agents" :project-cwd="projectCwd" />
+        <SettingsConnections :agents="agents" :project-cwd="projectCwd" />
         <SettingsContext :agents="agents" :project-cwd="projectCwd" />
         <SettingsOrchestration :agents="agents" />
         <SettingsGeneral />
