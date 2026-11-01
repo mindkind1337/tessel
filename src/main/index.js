@@ -2320,8 +2320,16 @@ registerRemoteFs({ ipcMain, service: remoteFs })
 const remoteAgentTrust = createRemoteAgentFolderTrust({
   run: (hostId, fn, args, opts) => remoteFs.accountCall(hostId, fn, args, opts),
   connected: (hostId) => remoteFs.connectedQuietly(hostId),
+  // A pane of that host still signing in (the one being started): waited for briefly.
+  connecting: (hostId) => {
+    const s = remoteHosts.snapshot()[hostId]
+    return !!(s && s.status === 'connecting')
+  },
   homeOf: (hostId) => remoteFs.hostHome(hostId),
   loginDir: (hostId, agent) => remoteAccounts.loginDir(hostId, agent),
+  // Its login shell's CLAUDE_CONFIG_DIR not read yet on this connection: read
+  // now, in the background (never a sign-in), for the next start.
+  learnLoginDir: (hostId) => remoteAccounts.detect(hostId),
   isSavedHost: (hostId) => !!remoteHosts.get(hostId),
   log
 })

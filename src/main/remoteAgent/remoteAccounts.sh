@@ -674,27 +674,40 @@ __t_acctdiag() {
 # project folder, before Tessel starts it there (remoteAgentFolderTrust.js
 # decides when): projects["<folder>"].hasTrustDialogAccepted = true in the
 # config file that agent reads, every other key kept.
-#   __t_trust <config> <folder>
+#   __t_trust <config> <folder> <deadline>
 # <config>: - (the agent's own folder, ~/.claude), acct:<id> (a folder Tessel
 # made, its marker checked) or an absolute folder (the login shell's
-# CLAUDE_CONFIG_DIR). <folder>: absolute, ~ or ~/... Prints one word:
-# granted, unchanged, refused, unparseable, locked, no-tool or failed.
+# CLAUDE_CONFIG_DIR). <folder>: absolute, ~ or ~/... (a saved project's own
+# folder: main never sends one below it). <deadline>: epoch seconds past which
+# nothing is written (late): the agent may have started already.
+# Prints one word: granted, unchanged, refused, unparseable, locked, late,
+# no-tool or failed.
 # Refused (nothing changed): a folder that is not an absolute path, holds a
-# control character, is not a folder, or is /, the home folder or a folder
-# above it (Claude Code trusts every folder below a trusted one). A file that
-# cannot be read or parsed, or is not a JSON object, is never rewritten. The
-# write: a temporary file next to it with its mode (600 when new), renamed
-# over it, under Claude Code's own lock (<file>.lock, never broken). The work
-# is node's (the one Tessel's helper uses, else node on PATH), else python3's;
-# neither: no-tool. The folder and file reach it in its environment, never in
-# its code.
+# control character, is not a folder, is /, the home folder or a folder above
+# it (Claude Code trusts every folder below a trusted one), or whose real path
+# is another place than the one named (a link: only a home folder that is
+# itself a link is followed, its real path then trusted too); a config folder
+# (or the folder of the file a link names) that others may write to (group or
+# world writable without the sticky bit). A file that cannot be read or
+# parsed, or is not a JSON object, is never rewritten.
+# The write: under Claude Code's own lock (<file>.lock, a folder, as its
+# saveConfigWithLock takes it; never broken), a temporary file next to the
+# real file with its mode (600 when new), renamed over it. The work is
+# node's (the one Tessel's helper uses, else node on PATH), else python3's,
+# neither: no-tool; given 5 seconds at most (__ta_tmo), after which the lock
+# and temporary file it left are removed here. The folder and file reach it
+# in its environment, never in its code.
 __ta_trust_js='
 const fs = require("fs"), p = require("path").posix
 const say = (w) => { process.stdout.write(w + "\n"); process.exit(0) }
+const mark = (w) => process.stdout.write(w + "\n")
 const isObj = (v) => !!v && typeof v === "object" && !Array.isArray(v)
 const CTRL = /[\u0000-\u001f\u007f-\u009f]/
 try {
   const file = process.env.TT_FILE || "", raw = process.env.TT_FOLDER || "", home = process.env.TT_HOME || ""
+  const deadline = Number(process.env.TT_DEADLINE || "0")
+  const late = () => deadline > 0 && Date.now() / 1000 >= deadline
+  if (late()) say("late")
   if (CTRL.test(file + raw + home) || !file.startsWith("/") || !home.startsWith("/")) say("refused")
   let f = raw === "~" ? home : raw.startsWith("~/") ? home + raw.slice(1) : raw
   if (!f.startsWith("/")) say("refused")
@@ -704,11 +717,21 @@ try {
   let st = null
   try { st = fs.statSync(f) } catch (e) { say("refused") }
   if (!st.isDirectory()) say("refused")
-  const keys = [...new Set([f, real(f)])]
-  const homes = [...new Set([clean(home), real(home)])]
-  if (keys.some((k) => k === "/" || homes.some((h) => h === k || h.startsWith(k + "/")))) say("refused")
+  const h = clean(home), hr = real(home), r = real(f)
+  const sameViaHome = (f === h || f.startsWith(h + "/")) && r === hr + f.slice(h.length)
+  if (r !== f && !sameViaHome) say("refused")
+  const keys = [...new Set([f, r])]
+  const homes = [...new Set([h, hr])]
+  if (keys.some((k) => k === "/" || homes.some((x) => x === k || x.startsWith(k + "/")))) say("refused")
   let target = file
   try { if (fs.lstatSync(file).isSymbolicLink()) target = fs.realpathSync(file) } catch (e) { if (e.code !== "ENOENT") say("failed") }
+  if (process.platform !== "win32") {
+    for (const d of new Set([p.dirname(file), p.dirname(target)])) {
+      let m = 0
+      try { m = fs.statSync(d).mode } catch (e) { say("refused") }
+      if ((m & 0o022) && !(m & 0o1000)) say("refused")
+    }
+  }
   const read = () => {
     let text
     try { text = fs.readFileSync(target, "utf8") } catch (e) { return e.code === "ENOENT" ? { cfg: {}, mode: 0o600 } : null }
@@ -721,34 +744,36 @@ try {
   const first = read()
   if (!first) say("unparseable")
   if (trusted(first.cfg)) say("unchanged")
-  const lock = target + ".lock"
+  const lock = file + ".lock"
   const nap = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms)
   let held = false
   for (let i = 0; i < 5 && !held; i++) {
-    try { fs.mkdirSync(lock); held = true } catch (e) { if (e.code !== "EEXIST") say("failed"); nap(Math.min(250, 50 * 2 ** i)) }
+    try { fs.mkdirSync(lock); held = true; mark("@lock") } catch (e) { if (e.code !== "EEXIST") say("failed"); nap(Math.min(250, 50 * 2 ** i)) }
   }
   if (!held) say("locked")
   let word = "failed"
-  const tmp = p.join(p.dirname(target), "." + p.basename(target) + ".tessel-trust-" + process.pid)
+  const tmp = p.join(p.dirname(target), "." + p.basename(target) + ".tessel-trust")
   try {
     const cur = read()
     if (!cur) word = "unparseable"
     else if (trusted(cur.cfg)) word = "unchanged"
+    else if (late()) word = "late"
     else {
       const projects = { ...(cur.cfg.projects || {}) }
       for (const k of keys) projects[k] = isObj(projects[k]) ? { ...projects[k], hasTrustDialogAccepted: true } : { hasTrustDialogAccepted: true }
       const text = JSON.stringify({ ...cur.cfg, projects }, null, 2) + "\n"
       try {
+        try { fs.unlinkSync(tmp) } catch (e) {}
         fs.writeFileSync(tmp, text, { encoding: "utf8", mode: cur.mode, flag: "wx" })
         fs.chmodSync(tmp, cur.mode)
-        fs.renameSync(tmp, target)
-        word = "granted"
+        if (late()) { fs.unlinkSync(tmp); word = "late" }
+        else { fs.renameSync(tmp, target); word = "granted" }
       } catch (e) {
         try { fs.unlinkSync(tmp) } catch (e2) {}
       }
     }
   } finally {
-    try { fs.rmdirSync(lock) } catch (e) {}
+    try { fs.rmdirSync(lock); mark("@free") } catch (e) {}
   }
   say(word)
 } catch (e) {
@@ -761,12 +786,23 @@ def say(w):
     sys.stdout.write(w + "\n")
     sys.stdout.flush()
     os._exit(0)
+def mark(w):
+    sys.stdout.write(w + "\n")
+    sys.stdout.flush()
 def is_obj(v):
     return isinstance(v, dict)
 CTRL = re.compile("[\x00-\x1f\x7f-\x9f]")
 try:
     env = os.environ
     file = env.get("TT_FILE", ""); raw = env.get("TT_FOLDER", ""); home = env.get("TT_HOME", "")
+    try:
+        deadline = int(env.get("TT_DEADLINE", "0"))
+    except Exception:
+        deadline = 0
+    def late():
+        return deadline > 0 and time.time() >= deadline
+    if late():
+        say("late")
     if CTRL.search(file + raw + home) or not file.startswith("/") or not home.startswith("/"):
         say("refused")
     f = home if raw == "~" else (home + raw[1:] if raw.startswith("~/") else raw)
@@ -785,13 +821,25 @@ try:
     f = clean(f)
     if not os.path.isdir(f):
         say("refused")
-    keys = list(dict.fromkeys([f, real(f)]))
-    homes = list(dict.fromkeys([clean(home), real(home)]))
-    if any(k == "/" or any(h == k or h.startswith(k + "/") for h in homes) for k in keys):
+    h = clean(home); hr = real(home); r = real(f)
+    same_via_home = (f == h or f.startswith(h + "/")) and r == hr + f[len(h):]
+    if r != f and not same_via_home:
+        say("refused")
+    keys = list(dict.fromkeys([f, r]))
+    homes = list(dict.fromkeys([h, hr]))
+    if any(k == "/" or any(x == k or x.startswith(k + "/") for x in homes) for k in keys):
         say("refused")
     target = file
     if os.path.islink(file):
         target = os.path.realpath(file)
+    if os.name != "nt":
+        for d in dict.fromkeys([posixpath.dirname(file), posixpath.dirname(target)]):
+            try:
+                m = os.stat(d).st_mode
+            except Exception:
+                say("refused")
+            if (m & 0o022) and not (m & 0o1000):
+                say("refused")
     def bad_constant(x):
         raise ValueError(x)
     def read():
@@ -817,12 +865,13 @@ try:
         say("unparseable")
     if trusted(first[0]):
         say("unchanged")
-    lock = target + ".lock"
+    lock = file + ".lock"
     held = False
     for i in range(5):
         try:
             os.mkdir(lock)
             held = True
+            mark("@lock")
             break
         except FileExistsError:
             time.sleep(min(0.25, 0.05 * 2 ** i))
@@ -831,13 +880,15 @@ try:
     if not held:
         say("locked")
     word = "failed"
-    tmp = posixpath.join(posixpath.dirname(target), "." + posixpath.basename(target) + ".tessel-trust-" + str(os.getpid()))
+    tmp = posixpath.join(posixpath.dirname(target), "." + posixpath.basename(target) + ".tessel-trust")
     try:
         cur = read()
         if cur is None:
             word = "unparseable"
         elif trusted(cur[0]):
             word = "unchanged"
+        elif late():
+            word = "late"
         else:
             cfg, mode = cur
             projects = dict(cfg.get("projects") or {})
@@ -847,12 +898,20 @@ try:
             cfg["projects"] = projects
             text = json.dumps(cfg, indent=2, ensure_ascii=False) + "\n"
             try:
+                try:
+                    os.unlink(tmp)
+                except Exception:
+                    pass
                 fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, mode)
                 with os.fdopen(fd, "w", encoding="utf-8", newline="") as fh:
                     fh.write(text)
                 os.chmod(tmp, mode)
-                os.replace(tmp, target)
-                word = "granted"
+                if late():
+                    os.unlink(tmp)
+                    word = "late"
+                else:
+                    os.replace(tmp, target)
+                    word = "granted"
             except Exception:
                 try:
                     os.unlink(tmp)
@@ -861,6 +920,7 @@ try:
     finally:
         try:
             os.rmdir(lock)
+            mark("@free")
         except Exception:
             pass
     say(word)
@@ -870,9 +930,17 @@ except Exception:
     say("failed")
 '
 __t_trust() {
-  case $1$2 in *'
+  case $1$2$3 in *'
 '*) echo refused; return 0 ;; esac
   case $2 in /*|'~'|'~/'*) ;; *) echo refused; return 0 ;; esac
+  case $3 in ''|*[!0-9]*) echo refused; return 0 ;; esac
+  __tw=$(date +%s 2>/dev/null) || __tw=
+  case $__tw in ''|*[!0-9]*) __tw=0 ;; esac
+  __ts=5
+  if [ "$__tw" -gt 0 ]; then
+    [ "$__tw" -ge "$3" ] && { echo late; return 0; }
+    [ $(($3 - __tw)) -lt 5 ] && __ts=$(($3 - __tw))
+  fi
   case $1 in
     -) __tb=$HOME; __td=$HOME/.claude ;;
     acct:*)
@@ -887,20 +955,28 @@ __t_trust() {
       ;;
     *) echo refused; return 0 ;;
   esac
-  if [ -e "$__td/.config.json" ]; then __tf=$__td/.config.json; else __tf=$__tb/.claude.json; fi
+  if [ -e "$__td/.config.json" ]; then __tc=$__td/.config.json; else __tc=$__tb/.claude.json; fi
   # A Tessel folder's own files are never links (__t_acctmk refuses them too).
-  case $1 in acct:*) [ -L "$__tf" ] && { echo refused; return 0; } ;; esac
+  case $1 in acct:*) [ -L "$__tc" ] && { echo refused; return 0; } ;; esac
   __tn=$(cat "$HOME/.tessel-server/bin/NODE" 2>/dev/null) || __tn=
   case $__tn in /*) [ -f "$__tn" ] && [ -x "$__tn" ] || __tn= ;; *) __tn= ;; esac
   [ -n "$__tn" ] || __tn=$(command -v node 2>/dev/null) || __tn=
   case $__tn in /*) ;; *) __tn= ;; esac
   if [ -n "$__tn" ]; then
-    TT_FILE=$__tf TT_FOLDER=$2 TT_HOME=$HOME "$__tn" -e "$__ta_trust_js" </dev/null 2>/dev/null | head -n 1
+    __to=$(__ta_tmo "$__ts" env TT_FILE="$__tc" TT_FOLDER="$2" TT_HOME="$HOME" TT_DEADLINE="$3" "$__tn" -e "$__ta_trust_js")
   elif command -v python3 >/dev/null 2>&1; then
-    TT_FILE=$__tf TT_FOLDER=$2 TT_HOME=$HOME python3 -I -c "$__ta_trust_py" </dev/null 2>/dev/null | head -n 1
+    __to=$(__ta_tmo "$__ts" env TT_FILE="$__tc" TT_FOLDER="$2" TT_HOME="$HOME" TT_DEADLINE="$3" python3 -I -c "$__ta_trust_py")
   else
-    echo no-tool
+    echo no-tool; return 0
   fi
+  # Ended before its last word (its time ran out): the lock it took and the
+  # temporary file it may have left go (a link's target folder: its own).
+  case $__to in *@lock*) case $__to in *@free*) ;; *)
+    [ -L "$__tc" ] || rm -f -- "${__tc%/*}/.${__tc##*/}.tessel-trust"
+    rmdir -- "$__tc.lock" 2>/dev/null ;;
+  esac ;; esac
+  __tl=$(printf '%s\n' "$__to" | grep -v '^@' | tail -n 1)
+  case $__tl in granted|unchanged|refused|unparseable|locked|late) echo "$__tl" ;; *) echo failed ;; esac
   return 0
 }
 # Sign the agent out of its own default login there (Tessel asks you first):
