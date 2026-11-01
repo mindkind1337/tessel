@@ -636,8 +636,12 @@ export function createAgentTerminalTargets(deps) {
     }
     if (req.op === 'relayResolve') {
       const raw = String(req.to == null ? '' : req.to).trim().toLowerCase()
+      const sharedOnly = projectShared(ws)
       const all = []
-      for (const w of deps.workspaces()) deps.forEachLeaf(w.tree, (l) => relayTarget(l, agentLeaf, w) && all.push({ l, w }))
+      for (const w of deps.workspaces()) {
+        if (sharedOnly && !projectShared(w)) continue
+        deps.forEachLeaf(w.tree, (l) => relayTarget(l, agentLeaf, w) && all.push({ l, w }))
+      }
       const byId = all.filter((x) => x.l.id.toLowerCase() === raw)
       const hits = byId.length ? byId : all.filter((x) => deps.paneLabel(x.l).toLowerCase() === raw)
       if (!hits.length) throw refuse('agent_not_found', `No agent "${String(req.to).slice(0, 60)}" in Tessel: see project_agents.`) // i18n-ignore

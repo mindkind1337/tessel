@@ -279,6 +279,15 @@ describe('the notice for a message from another project', () => {
   it('is still recognised as typed when it wraps in the input box', () => {
     const typed = relayPointerText([{ name: 'Hopper', project: 'Tessel' }]).replace(/ /g, '\n   ')
     expect(pointerStillTyped({ screenText: () => typed }, null)).toBe(true)
+    const longNames = relayPointerText(
+      [
+        { name: 'A'.repeat(32), project: 'B'.repeat(32) },
+        { name: 'C'.repeat(32), project: 'D'.repeat(32) },
+        { name: 'E'.repeat(32), project: 'F'.repeat(32) }
+      ],
+      3
+    ).replace(/ /g, '\n  ')
+    expect(pointerStillTyped({ screenText: () => longNames }, null)).toBe(true)
     expect(pointerStillTyped({ screenText: () => RELAY_POINTER }, null)).toBe(true)
     expect(pointerStillTyped({ screenText: () => '[Tessel] New message from nobody' }, null)).toBe(false)
   })

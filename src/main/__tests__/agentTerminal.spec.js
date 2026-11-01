@@ -712,6 +712,7 @@ describe('messages between projects: Tessel relays', () => {
     const off = setup({ allow: true }, { relay: false })
     await expect(sendTo(off.at)).rejects.toMatchObject({ code: 'relay_off' })
     await expect(off.at.handle(signed('relayList', {}))).rejects.toMatchObject({ code: 'relay_off' })
+    await expect(off.at.handle(signed('relayInbox', {}))).rejects.toMatchObject({ code: 'relay_off' })
   })
   it('the hourly limit of a pair stops two agents answering each other forever', async () => {
     const { at, relay } = setup({ allow: true, remember: 'pane' }, { relayMax: 2 })
@@ -809,6 +810,8 @@ describe('messages between projects: Tessel relays', () => {
     a.add('p1', { from: 'p2', fromName: 'A', fromAgent: 'x', fromProject: 'y', fromWhere: 'z', text: 'kept' })
     expect(createAgentRelay({ file, now: () => t }).unread('p1').count).toBe(1)
     t += 8 * 24 * 3600 * 1000
+    expect(a.unread('p1').count).toBe(0)
+    expect(a.take('p1')).toEqual([])
     expect(createAgentRelay({ file, now: () => t }).allUnread()).toEqual({})
     fs.rmSync(dir, { recursive: true, force: true })
   })

@@ -651,7 +651,7 @@ export function createAgentTerminal({ verify, settings = () => ({ enabled: true 
     return { text: `Sent to ${r.to.name} (project "${r.to.project}", ${r.to.where}), message ${m.id}. Tessel tells it when it is free, unless wake-ups are off in the user's settings (then it reads them when it calls project_inbox). It answers with project_send, and you read answers with project_inbox.` }
   }
   function relayInbox(agentPane) {
-    if (!relay) throw fail('no_relay', 'Tessel has no relay here.')
+    relayOn()
     const list = relay.take(agentPane)
     const left = relay.unread(agentPane)
     send('terminal:relayUnread', { paneId: agentPane, ...left })

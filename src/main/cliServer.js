@@ -137,7 +137,8 @@ export function isUncPath(value) {
   return typeof value === 'string' && /^[\\/]{2}/.test(value)
 }
 export function validAbsolutePath(value, { allowUnc = false } = {}) {
-  if (typeof value !== 'string' || !value || value.length > MAX_PATH || value.includes('\0')) return null
+  // eslint-disable-next-line no-control-regex -- rejects NUL, CR/LF and other control characters in paths
+  if (typeof value !== 'string' || !value || value.length > MAX_PATH || /[\u0000-\u001f\u007f]/.test(value)) return null
   if (/^[\\/]{2}[.?][\\/]/.test(value)) return null
   const isDrive = /^[A-Za-z]:[\\/]/.test(value)
   const isShare = /^[\\/]{2}[^\\/.?][^\\/]*[\\/][^\\/]+/.test(value)
@@ -369,6 +370,7 @@ export function createCliServer({
   pid = process.pid,
   info = () => ({}),
   pipeName = newPipeName,
+  idleTimeoutMs = 15_000,
   // The pipe went away after it was up (its helper ended): Tessel starts it again.
   onDown = null
 }) {
@@ -402,27 +404,38 @@ export function createCliServer({
   function onConnection(sock) {
     let buf = ''
     let done = false
+    let handled = false
+    let idleTimer = null
     const finish = (text) => {
       if (done) return
       done = true
+      clearTimeout(idleTimer)
       try {
         sock.end(text)
       } catch {
         /* the command went away */
       }
     }
+    if (idleTimeoutMs > 0) {
+      idleTimer = setTimeout(() => {
+        if (!handled) finish(encodeReply({ ok: false, error: { code: 'invalid_request', message: t('main.cli.badRequest', 'The request could not be read.') } }))
+      }, idleTimeoutMs)
+      if (idleTimer && idleTimer.unref) idleTimer.unref()
+    }
     // The command went away: its handler is told, its place is freed.
     let release = null
     const aborter = new AbortController()
+    sock.on('error', () => {})
     // Its place is freed when its handler is done (below), not when the
     // command goes: a handler told to stop may still be finishing, and the
     // same pane must not start more meanwhile.
     sock.on('close', () => {
       done = true
+      clearTimeout(idleTimer)
       aborter.abort()
     })
     sock.on('data', (chunk) => {
-      if (done) return
+      if (done || handled) return
       buf += Buffer.isBuffer(chunk) ? chunk.toString('utf8') : String(chunk)
       if (buf.length > MAX_REQUEST_BYTES + 64) {
         finish(encodeReply({ ok: false, error: { code: 'too_large', message: t('main.cli.tooLarge', 'The request is too large.') } }))
@@ -430,7 +443,10 @@ export function createCliServer({
       }
       const nl = buf.indexOf('\n')
       if (nl < 0) return
+      handled = true
+      clearTimeout(idleTimer)
       const line = buf.slice(0, nl)
+      buf = ''
       const busy = () => finish(encodeReply({ ok: false, error: { code: 'busy', message: t('main.cli.busy', 'Tessel is busy with other commands. Try again.') } }))
       // A terminal or account tool's request, which may wait for the user
       // (its pane read before anything is checked: only to count it;

@@ -441,6 +441,30 @@ describe('agent terminals: placed in the grid', () => {
     expect(toolsTooOld(null)).toBe(false)
   })
 
+  it('relayResolve hides unshared projects when the caller project is shared in Live Share', async () => {
+    const mkLeaf = (id, paneName, extra = {}) => ({ type: 'leaf', id, kind: 'agent', paneName, agentId: 'claude', teamTools: true, toolsVersion: '1.11.12', ...extra })
+    const caller = mkLeaf('pane-ada', 'Ada')
+    const secretBuddy = mkLeaf('pane-secret', 'Buddy', { teamTools: false })
+    const secretTwin = mkLeaf('pane-secret-twin', 'Twin')
+    const publicTwin = mkLeaf('pane-public-twin', 'Twin')
+    const wShared = { id: 'w-shared', name: 'SharedProj', cwd: 'C:\\s', tree: caller }
+    const wSecret = { id: 'w-secret', name: 'SecretProj', cwd: 'C:\\priv', tree: { type: 'split', children: [secretBuddy, secretTwin] } }
+    const wOtherShared = { id: 'w-pub2', name: 'PublicProj2', cwd: 'C:\\s2', tree: publicTwin }
+    const { deps } = setup()
+    const targets = createAgentTerminalTargets({
+      ...deps,
+      workspaces: () => [wShared, wSecret, wOtherShared],
+      projectShared: (id) => id === 'w-shared' || id === 'w-pub2'
+    })
+    const listed = await targets.handle({ agent: 'pane-ada', op: 'relayList' })
+    expect(listed.agents.map((a) => a.id)).toEqual(['pane-public-twin'])
+    // Cannot probe private agents by name or id (no no_tools leak, no ambiguous leak of SecretProj).
+    await expect(targets.handle({ agent: 'pane-ada', op: 'relayResolve', to: 'Buddy' })).rejects.toMatchObject({ code: 'agent_not_found' })
+    await expect(targets.handle({ agent: 'pane-ada', op: 'relayResolve', to: 'pane-secret' })).rejects.toMatchObject({ code: 'agent_not_found' })
+    const resolved = await targets.handle({ agent: 'pane-ada', op: 'relayResolve', to: 'Twin' })
+    expect(resolved.to).toMatchObject({ id: 'pane-public-twin', project: 'PublicProj2' })
+  })
+
   it('which way: below when taller than wide or too narrow for two columns, beside otherwise', () => {
     expect(splitDirFor({ width: 770, height: 1290 })).toBe('col') // the tall pane of a 3-column screen
     expect(splitDirFor({ width: 900, height: 700 })).toBe('col') // two columns of 450

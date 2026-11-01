@@ -117,6 +117,7 @@ export function createAgentRelay({ file = null, now = () => Date.now(), fsImpl =
     return m
   }
   const unread = (id) => {
+    drop()
     const list = waiting[id] || []
     // Who wrote, the latest first and once each, so the agent's notice can say so.
     const senders = []
@@ -128,8 +129,13 @@ export function createAgentRelay({ file = null, now = () => Date.now(), fsImpl =
   // What waits for this pane, handed over once, the oldest first and about
   // READ_MAX_CHARS at a time (what does not fit stays for the next read).
   function take(id, maxChars = READ_MAX_CHARS) {
+    const hadExpired = Boolean(waiting[id] && waiting[id].some((m) => !m || m.at < now() - KEEP_MS))
+    drop()
     const list = waiting[id] || []
-    if (!list.length) return []
+    if (!list.length) {
+      if (hadExpired) save()
+      return []
+    }
     let n = 0
     let size = 0
     while (n < list.length && (n === 0 || size + list[n].text.length <= maxChars)) size += list[n++].text.length

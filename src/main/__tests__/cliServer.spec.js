@@ -95,6 +95,11 @@ describe('validateParams', () => {
     expect(() => validateParams('open', { path: 'C:\\x', line: '4' })).toThrow(/positive/)
     expect(validAbsolutePath('\\\\server\\share\\dir')).toBeNull()
     expect(validAbsolutePath('\\\\server\\share\\dir', { allowUnc: true })).toBe('\\\\server\\share\\dir')
+    for (const ctrl of ['C:\\work\\a\nb', 'C:\\work\\a\rb', 'C:\\work\\a\u007fb']) {
+      expect(validAbsolutePath(ctrl)).toBeNull()
+      expect(() => validateParams('open', { path: ctrl })).toThrow(/full local path/)
+      expect(() => validateParams('team-mgmt', { pane: 'pane-1-aaaaaa', op: 'bootstrap', args: { projectDir: ctrl } })).toThrow()
+    }
   })
 
   it('network paths only with --allow-unc (Windows would sign in to that server)', () => {
@@ -381,6 +386,59 @@ describe('security review: terminal requests cannot starve the pipe', () => {
     const next = open(termLine(token, 'pane-a'))
     await vi.waitFor(() => expect(signals.length).toBe(MAX_TERMINAL_PER_PANE + 1))
     expect(next.end).not.toHaveBeenCalled()
+    server.stop()
+  })
+
+  it('ignores socket errors, closes silent connections on idle timeout, and never runs or leaks slots on trailing data chunks', async () => {
+    const hold = []
+    const net = fakeNet()
+    const server = createCliServer({
+      userData: dir,
+      netApi: net,
+      idleTimeoutMs: 40,
+      handlers: {
+        terminal: () => new Promise((resolve) => hold.push(resolve))
+      }
+    })
+    await server.start()
+    const token = fs.readFileSync(path.join(dir, TOKEN_FILE), 'utf8')
+
+    // Unhandled socket error on client reset must not crash the process.
+    const errSock = fakeSocket()
+    net.servers[0].onConnection(errSock)
+    expect(() => errSock.emit('error', Object.assign(new Error('EPIPE'), { code: 'EPIPE' }))).not.toThrow()
+    errSock.emit('close')
+
+    // Silent socket without '\n' closes after idleTimeoutMs.
+    const idleSock = fakeSocket()
+    net.servers[0].onConnection(idleSock)
+    idleSock.emit('data', Buffer.from('TESSEL-CLI 1 partial'))
+    await vi.waitFor(() => expect(idleSock.end).toHaveBeenCalled())
+    expect(JSON.parse(idleSock.answer).error.code).toBe('invalid_request')
+
+    // Trailing data on an in-flight connection must not re-run the handler or overwrite release().
+    const socks = []
+    for (let i = 0; i < MAX_TERMINAL_PER_PANE; i++) {
+      const s = fakeSocket()
+      net.servers[0].onConnection(s)
+      s.emit('data', Buffer.from(termLine(token, 'pane-dup')))
+      socks.push(s)
+    }
+    await vi.waitFor(() => expect(hold.length).toBe(MAX_TERMINAL_PER_PANE))
+    socks[0].emit('data', Buffer.from(termLine(token, 'pane-dup')))
+    await new Promise((r) => setTimeout(r, 15))
+    expect(hold.length).toBe(MAX_TERMINAL_PER_PANE)
+    while (hold.length) hold.shift()({ ok: true })
+    await vi.waitFor(() => expect(socks.every((s) => s.end.mock.calls.length === 1)).toBe(true))
+
+    // All MAX_TERMINAL_PER_PANE slots for pane-dup are free again (none leaked).
+    for (let i = 0; i < MAX_TERMINAL_PER_PANE; i++) {
+      const s = fakeSocket()
+      net.servers[0].onConnection(s)
+      s.emit('data', Buffer.from(termLine(token, 'pane-dup')))
+    }
+    await vi.waitFor(() => expect(hold.length).toBe(MAX_TERMINAL_PER_PANE))
+    while (hold.length) hold.shift()({ ok: true })
     server.stop()
   })
 })

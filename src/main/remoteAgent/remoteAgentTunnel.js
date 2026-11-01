@@ -593,18 +593,23 @@ export function createRemoteAgentTunnel({
       stream.write(JSON.stringify({ ok: true }) + '\n')
       const chunks = [rest]
       let size = rest.length
-      let tooBig = size > L.hookStdinMax
+      let tooBig = false
       const stdinTimer = timers.setTimeout(() => conn.end(), L.hookTimeoutMs)
+      const failTooBig = () => {
+        tooBig = true
+        timers.clearTimeout(stdinTimer)
+        if (!ended) finishWith(result(1, '', 'tessel: hook input too large\n'))
+      }
+      if (size > L.hookStdinMax) return failTooBig()
       stream.on('data', (d) => {
         if (tooBig) return
         size += d.length
-        if (size > L.hookStdinMax) tooBig = true
+        if (size > L.hookStdinMax) failTooBig()
         else chunks.push(d)
       })
       stream.once('end', () => {
         timers.clearTimeout(stdinTimer)
-        if (ended) return
-        if (tooBig) return finishWith(result(1, '', 'tessel: hook input too large\n'))
+        if (ended || tooBig) return
         exec(Buffer.concat(chunks))
       })
       stream.resume()

@@ -61,11 +61,11 @@ export function relayPointerText(senders, count = 1) {
     .map((s) => {
       const name = pointerWords(s && s.name)
       const project = pointerWords(s && s.project)
-      return name && project ? `${name} (project ${project})` : name
+      return name && project ? `${name} (project ${project})` : name // i18n-ignore
     })
     .filter(Boolean)
   if (!who.length) return RELAY_POINTER
-  const from = who.length > 2 ? `${who.slice(0, 2).join(', ')} and others` : who.join(' and ')
+  const from = who.length > 2 ? `${who.slice(0, 2).join(', ')} and others` : who.join(' and ') // i18n-ignore
   return count > 1 ? `[Tessel] New messages from ${from}: read them with project_inbox.` : `[Tessel] New message from ${from}: read it with project_inbox.` // i18n-ignore
 }
 export function pointerText() {
@@ -74,7 +74,7 @@ export function pointerText() {
 
 // The pointer, whitespace removed (a TUI wraps its input box itself, with
 // its own indentation, so the words can be cut anywhere on screen).
-const POINTER_SQUASHED = /\[Tessel\](?:Youhave(?:\d+)?new(?:team)?messages?(?:fromotherprojects)?|Newmessages?from.{1,160}?):read(?:it|them)with(?:team|project)_inbox\./
+const POINTER_SQUASHED = /\[Tessel\](?:Youhave(?:\d+)?new(?:team)?messages?(?:fromotherprojects)?|Newmessages?from[^[]{1,220}?):read(?:it|them)with(?:team|project)_inbox\./
 
 // A pointer is still typed in the agent's input box (not sent). The screen
 // cannot always tell the input box from the transcript: an input line shown
