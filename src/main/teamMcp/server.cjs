@@ -43,7 +43,7 @@ const path = require('path')
 const crypto = require('crypto')
 const { randomUUID } = crypto
 
-const VERSION = '1.11.12'
+const VERSION = '1.11.13'
 const MAX_TEXT = 6000
 
 // --- An agent on an SSH host --------------------------------------------------
@@ -1456,7 +1456,7 @@ const RUN_DESCRIPTION = [
   'Interactive Input Handling:',
   '- Send exactly one answer per prompt with send_to_terminal, then read the next prompt with get_terminal_output before the next answer.',
   '',
-  'Tessel: set "host" to run on an SSH host the user set up in Tessel (its connection must be signed in), or "local" to run on the user\'s own computer (Windows PowerShell: their files, Tessel\'s logs in %APPDATA%\\tessel-dev\\logs, local tools; from a project on an SSH host the user is asked first, then for every command, even if you run in Yolo); set "id" to run in one of the user\'s own shells instead (see terminal_list; the user approves it once for that terminal; never another agent\'s pane).'
+  'Tessel: set "host" to run on an SSH host the user set up in Tessel (its connection must be signed in), or "local" to run on the user\'s own computer (Windows PowerShell: their files, Tessel\'s logs in %APPDATA%\\tessel-dev\\logs, local tools; from a project on an SSH host the user is asked first, then for every command, even if you run in Yolo; in a project shared with Live Share, the person writing to you may be a guest on their own computer: when a guest wrote last, "local" means theirs and they allow each command on their own screen; ownerComputer: true is for when you really need the sharer\'s computer; host "guest" or "guest:<name>" asks for a guest\'s computer whoever wrote last); set "id" to run in one of the user\'s own shells instead (see terminal_list; the user approves it once for that terminal; never another agent\'s pane).'
 ].join('\n')
 const TERMINAL_TOOLS = [
   {
@@ -1466,11 +1466,12 @@ const TERMINAL_TOOLS = [
       type: 'object',
       properties: {
         command: { type: 'string', description: 'The command to run in the terminal.' },
-        explanation: { type: 'string', description: 'A one-sentence description of what the command does. This will be shown to the user before the command is run.' },
+        explanation: { type: 'string', description: 'One sentence for the user on why you need to run this, in the language they write to you in. Shown on the approval card before it runs, and kept in the terminal\'s list.' },
         goal: { type: 'string', description: 'A short description of the goal or purpose of the command (e.g., "Install dependencies", "Start development server").' },
         mode: { type: 'string', enum: ['sync', 'async'], description: 'Execution mode for this command. Use sync (default) for nearly all commands.' },
         timeout: { type: 'number', description: 'Optional. Usually omit. In milliseconds, at most 120000 (the default). If it elapses, the command continues in the background and you get a terminal ID to check output later.' },
-        host: { type: 'string', description: 'Optional: an SSH host from Tessel (its name), to run there; or "local" for the user\'s own computer. Default: where your project is.' },
+        host: { type: 'string', description: 'Optional: an SSH host from Tessel (its name), to run there; "local" for the user\'s own computer (the person who wrote to you last: a Live Share guest\'s, if it was them); "guest" or "guest:<name>" for a Live Share guest\'s computer. Default: where your project is.' },
+        ownerComputer: { type: 'boolean', description: 'Only with host "local", when a Live Share guest wrote to you last: true when you really need the computer of the person sharing the project, not the guest\'s. The sharer is asked.' },
         id: { type: 'string', description: 'Optional: the id of one of the user\'s shells (terminal_list) to run the command there instead of your own terminal.' }
       },
       required: ['command', 'explanation', 'goal', 'mode']
@@ -1573,9 +1574,9 @@ TERMINAL_TOOLS.push({
       agent: { type: 'string', description: 'Optional, for kind "agent": which agent (its id, like "claude", "codex", "opencode"). Default: the same agent as you.' },
       name: { type: 'string', description: 'Optional: a name for the panes (at most 60 characters).' },
       count: { type: 'number', description: 'How many to open, 1 to 4 (default 1).' },
-      explanation: { type: 'string', description: 'Optional: one sentence for the user on why.' }
+      explanation: { type: 'string', description: 'One sentence for the user on why you open them, in the language they write to you in. Shown on the approval card.' }
     },
-    required: ['kind']
+    required: ['kind', 'explanation']
   }
 })
 const TERMINAL_OPS = { project_agents: 'relayList', project_send: 'relaySend', project_inbox: 'relayInbox', tessel_logs: 'logs', open_terminal: 'open', run_in_terminal: 'run', get_terminal_output: 'output', send_to_terminal: 'send', kill_terminal: 'kill', terminal_last_command: 'lastCommand', terminal_selection: 'selection', terminal_list: 'list' }

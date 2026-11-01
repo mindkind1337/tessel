@@ -137,6 +137,7 @@
 // Tessel itself is reached only through the callbacks below, so this file
 // runs (and is tested) without Electron.
 import crypto from 'crypto'
+import { cleanCommandResult } from './guestCommand.js'
 import { WebSocketServer } from 'ws'
 import { newNonce, newKeyPair, sharedSecret, sessionKeys, createChannel, commitmentMatches, bindingSigned, signBinding, newSigningKey, identitySigned, identityFingerprint, NONCE_BYTES, COMMIT_BYTES, KX_BYTES } from './shareCrypto.js'
 import { SHARE_FEATURES, cleanFeatures, CHAT_LIMITS, CHAT_CODES } from './shareChat.js'
@@ -346,6 +347,8 @@ export function stripTerminalReplies(data) {
 //                             rule, a pane not known or being checked takes
 //                             nothing from a guest whose rule limits agents
 //   paneTyped(id, data)    -> optional: a guest typed that in a pane
+//   commands()             -> optional: present when this host's agents may ask a
+//                             guest to run a command (guestCommand.js, askCommand)
 //   onRuleBreach(info)     -> optional: a pane a guest typed in switched to
 //                             what its rule refuses ({ guest, pane, agent,
 //                             model }); Esc was pressed in it
@@ -457,8 +460,20 @@ export function createShareHost({ secret = null, hostName, callbacks, log = () =
   // go through the same feature, as do the editor tabs ('tabs') and the pages
   // as links ('links').
   const offered = (f) => (serves && typeof callbacks.offers === 'function' && callbacks.offers(f) === true ? serves : null)
-  const FEATURE_NEEDS = { chat: callbacks.chatWatch, agents: callbacks.agents, presence: callbacks.onPresence, files: serves, scm: serves, tasks: serves, panes2: offered('panes2'), usage: offered('usage'), history: offered('history'), tabs: offered('tabs'), links: offered('links'), paste: offered('paste') }
+  const FEATURE_NEEDS = { commands: callbacks.commands, chat: callbacks.chatWatch, agents: callbacks.agents, presence: callbacks.onPresence, files: serves, scm: serves, tasks: serves, panes2: offered('panes2'), usage: offered('usage'), history: offered('history'), tabs: offered('tabs'), links: offered('links'), paste: offered('paste') }
   const hostFeatures = SHARE_FEATURES.filter((f) => typeof FEATURE_NEEDS[f] === 'function')
+  // Who sent a pane a line and has left since (pane id -> { id, name, at }): an agent working on
+  // their words must not take the host for the one asking.
+  const goneWriters = new Map()
+  // Commands asked of a guest's computer (guestCommand.js): id -> { g, resolve, timer }.
+  const commandAsks = new Map()
+  function endCommandAsk(id, result) {
+    const a = commandAsks.get(id)
+    if (!a) return
+    commandAsks.delete(id)
+    clearTimeout(a.timer)
+    a.resolve(result)
+  }
   // Conversations watched: pane id -> Set of guest ids; the last one read
   // (sent at once to a guest that starts watching), and when one last went out.
   const chatWatchers = new Map()
@@ -528,6 +543,14 @@ export function createShareHost({ secret = null, hostName, callbacks, log = () =
   function drop(g, reason) {
     if (!guests.has(g.id)) return
     guests.delete(g.id)
+    for (const [id, a] of [...commandAsks]) if (a.g === g) endCommandAsk(id, { ok: false, code: 'gone' })
+    // (Someone never let in has no record of its own, and never sent a line.)
+    for (const [pane, at] of g.state === 'joined' ? typingOf(g).sent : []) {
+      if ((goneWriters.get(pane)?.at || 0) >= at) continue
+      goneWriters.delete(pane)
+      goneWriters.set(pane, { id: g.id, name: g.name || '', at })
+      if (goneWriters.size > 64) goneWriters.delete(goneWriters.keys().next().value)
+    }
     clearTimeout(g.flushTimer)
     clearTimeout(g.waitTimer)
     // Nothing more of its conversations goes out.
@@ -1135,8 +1158,10 @@ export function createShareHost({ secret = null, hostName, callbacks, log = () =
   }
   // Each pane a guest has on screen, typed in lately, or reads as a chat,
   // checked against its projects now: [{ id (pane), guests: [{ id, watching,
-  // typing, reading }] }].
-  function presence() {
+  // typing, reading }] }]. With { sent: true }, for the host's window, also
+  // sentAt: when it last sent a pane a line (an Enter), so an agent's request
+  // can be traced to who wrote to it, even once it looks elsewhere.
+  function presence({ sent = false } = {}) {
     const t = now()
     const panes = new Map()
     const at = (id, gid) => {
@@ -1150,7 +1175,9 @@ export function createShareHost({ secret = null, hostName, callbacks, log = () =
       if (g.focus && canSee(g, g.focus)) at(g.focus, g.id).watching = true
       for (const [id, when] of g.typed) if (t - when < TYPING_MS && canSee(g, id)) at(id, g.id).typing = true
       for (const id of g.chats.keys()) if (chatLive(g, id)) at(id, g.id).reading = true
+      if (sent) for (const [id, when] of typingOf(g).sent) if (canSee(g, id)) at(id, g.id).sentAt = when
     }
+    if (sent) for (const [id, w] of goneWriters) Object.assign(at(id, w.id), { sentAt: w.at, gone: true, name: w.name })
     return [...panes].map(([id, m]) => ({ id, guests: [...m.values()] }))
   }
   // Typing seen: said when it starts, again every TYPING_AGAIN_MS while it
@@ -1580,10 +1607,28 @@ export function createShareHost({ secret = null, hostName, callbacks, log = () =
   function typingOf(g) {
     const key = countsOf(g)
     let t = personTyping.get(key)
-    if (!t) personTyping.set(key, (t = { lines: new Map(), at: new Map() }))
+    if (!t) personTyping.set(key, (t = { lines: new Map(), at: new Map(), sent: new Map(), sentLines: new Map(), recalled: new Set() }))
     return t
   }
   const paneNow = (id) => (typeof callbacks.paneAgent === 'function' ? callbacks.paneAgent(id) : undefined)
+  // Whether this sent an agent a line: an Enter on a line with something on it, or on one brought
+  // back with Up or Down, whose text cannot be seen from here. An Enter on an empty prompt or a \n
+  // sends nothing, so they do not make a guest the one an agent is answering.
+  function sentALine(typing, id, data) {
+    // eslint-disable-next-line no-control-regex -- escape sequences are what it reads
+    if (/\x1b(?:\[|O)[AB]/.test(data)) typing.recalled.add(id)
+    // Ctrl+U and Ctrl+C empty the line, whatever was brought back.
+    if (/[\x15\x03]/.test(data)) typing.recalled.delete(id)
+    // A line break inside a paste goes in the line: it sends nothing.
+    // eslint-disable-next-line no-control-regex -- escape sequences are what it reads
+    const typed = data.replace(/\x1b\[200~([\s\S]*?)(?:\x1b\[201~|$)/g, (_all, body) => body.replace(/[\r\n]+/g, ' ')).replace(/\n/g, '')
+    const { state, submitted } = followTypedLine(typing.sentLines.get(id), typed)
+    if (typing.sentLines.size > 64 && !typing.sentLines.has(id)) typing.sentLines.clear()
+    typing.sentLines.set(id, state)
+    if (!submitted.length) return false
+    const recalled = typing.recalled.delete(id)
+    return recalled || submitted.some((line) => line.over || line.text.trim())
+  }
   // Whether a guest may type this in a pane (its agents rule): never in a
   // pane running an agent or a model it may not use (it still sees it), nor
   // in a pane not known yet or whose program is being checked (after an
@@ -1681,6 +1726,18 @@ export function createShareHost({ secret = null, hostName, callbacks, log = () =
         if (typing.at.size > 64) typing.at.delete(typing.at.keys().next().value)
         callbacks.paneTyped?.(msg.id, data)
         typed(g, msg.id)
+        if (sentALine(typing, msg.id, data)) {
+          typing.sent.delete(msg.id)
+          typing.sent.set(msg.id, now())
+          if (typing.sent.size > 64) typing.sent.delete(typing.sent.keys().next().value)
+          presenceChanged()
+        }
+        return
+      }
+      // Its answer to a command asked of it, and of nobody else.
+      case 'commandRes': {
+        const a = typeof msg.id === 'string' ? commandAsks.get(msg.id) : null
+        if (a && a.g === g) endCommandAsk(msg.id, cleanCommandResult(msg))
         return
       }
       case 'open': {
@@ -2059,6 +2116,23 @@ export function createShareHost({ secret = null, hostName, callbacks, log = () =
         return
       }
       flushChat(id)
+    },
+    // A command for a guest's computer: it answers when its person has, or what
+    // stops it. One at a time per guest. -> { ok: true, state, exitCode, output }
+    // or { ok: false, code: gone | old | busy | timeout | denied | blocked | off | bad | failed }.
+    askCommand(guestId, ask, { waitMs = 6 * 60 * 1000 } = {}) {
+      const g = guests.get(guestId)
+      // No right to type in the project: it never wrote to an agent, so nothing is asked of it.
+      if (!g || g.state !== 'joined' || !g.rights.type) return Promise.resolve({ ok: false, code: 'gone' })
+      if (!g.features.has('commands')) return Promise.resolve({ ok: false, code: 'old' })
+      for (const a of commandAsks.values()) if (a.g === g) return Promise.resolve({ ok: false, code: 'busy' })
+      return new Promise((resolve) => {
+        const id = crypto.randomUUID()
+        const timer = setTimeout(() => endCommandAsk(id, { ok: false, code: 'timeout' }), waitMs)
+        timer.unref?.()
+        commandAsks.set(id, { g, resolve, timer })
+        send(g, { t: 'commandAsk', id, agent: ask.agent, project: ask.project, command: ask.command, why: ask.why, goal: ask.goal, timeoutMs: ask.timeoutMs })
+      })
     },
     // News of a topic (shareChannel.js TOPICS), to every guest subscribed to
     // it that may still see it; a topic that keeps it gives it to the next

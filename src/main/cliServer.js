@@ -271,7 +271,7 @@ function browserParams(params) {
 // open_terminal's kind, agent, name and count; tessel_logs' file, since,
 // until, contains, level and max; project_send's to, text and reply_to)
 // and the pane's signature. Who may do what is decided by agentTerminal.js.
-const TERMINAL_ARG_KEYS = new Set(['id', 'command', 'explanation', 'goal', 'mode', 'isBackground', 'timeout', 'host', 'waitForOutput', 'keys', 'all', 'lines', 'kind', 'agent', 'name', 'count', 'file', 'since', 'until', 'contains', 'level', 'max', 'to', 'text', 'reply_to'])
+const TERMINAL_ARG_KEYS = new Set(['id', 'command', 'explanation', 'goal', 'mode', 'isBackground', 'timeout', 'host', 'ownerComputer', 'waitForOutput', 'keys', 'all', 'lines', 'kind', 'agent', 'name', 'count', 'file', 'since', 'until', 'contains', 'level', 'max', 'to', 'text', 'reply_to'])
 // A command of 8 KB (control characters 6 bytes each in JSON) and its texts.
 export const MAX_TERMINAL_ARGS_BYTES = 64 * 1024
 function terminalParams(params) {

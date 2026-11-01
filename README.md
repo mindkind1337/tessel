@@ -199,6 +199,28 @@ working on Tessel itself (see [Build from source](#build-from-source)).
   as on your computer. Tessel finds which conversation the pane is in from the host's own
   files, and resumes it if it is still there. It starts fresh until you have sent it a first
   message.
+- **An agent says why, and Tessel knows who wrote to it**: `run_in_terminal` and
+  `open_terminal` need a reason, shown under **Why** on the card with the project
+  it comes from, and kept in the terminal's **Agent commands** list and the log.
+  In a project shared with Live Share, Tessel notes who pressed Enter last in each
+  agent's pane, because the person writing to an agent may be on another computer.
+  When that was a guest, `host: "local"` means **their** computer, not yours; the
+  agent reaches yours only with `ownerComputer: true`, on a card that names the
+  guest and is asked every time. `host: "guest"` asks for a guest's computer
+  whoever wrote last.
+- **Commands on a Live Share guest's computer**: the guest sees a card with the whole
+  command, who asks, the project and the reason, starting on **Deny**; nothing runs
+  without that click, each time, with no rule, Yolo or "always" that could skip it.
+  So that what the card shows is what runs, a command holds only plain ASCII and common
+  accented letters: no curly quotes, no-break spaces, invisible marks, other alphabets or
+  letters that pass for another. The card numbers each line, names anything that is not
+  plain ASCII, and **Allow** waits until the end of a long command has been on screen. It
+  runs in a fresh Windows PowerShell, for 60 s by default and 5 minutes at most, and
+  what it prints goes back to the agent. A panel on the guest's screen shows the
+  command, its output and **Stop**. **Do not ask again in this session** ends the
+  questions, and **Settings > Agents** turns them off. Only guests with the right to
+  type can be asked, the person sharing is told each time, and both sides need this
+  version.
 - **Updating a development copy**: a Tessel started with `npm run dev` checks GitHub
   every 30 minutes (`git fetch` of the branch it follows) and, when there are newer
   builds, shows a yellow `↑ b1700` next to **dev**. It lists them and, for a copy with

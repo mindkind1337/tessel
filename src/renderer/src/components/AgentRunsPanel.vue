@@ -6,7 +6,7 @@ import { computed, reactive } from 'vue'
 import { t, intlLocale } from '../i18n'
 
 const props = defineProps({
-  // [{ at, agent, kind: 'run' | 'keys' | 'read', text, yolo }], oldest first.
+  // [{ at, agent, kind: 'run' | 'keys' | 'read', text, why, yolo }], oldest first.
   runs: { type: Array, default: () => [] }
 })
 const emit = defineEmits(['copy'])
@@ -49,6 +49,7 @@ function time(at) {
           <span v-if="c.yolo" class="arp-yolo" :title="t('pane.agentTerminal.yoloHint', 'This agent runs in Yolo: its commands in its own terminal are not asked first.')">{{ t('pane.agentTerminal.yolo', 'Yolo, not asked') }}</span>
           <time class="arp-time">{{ time(c.at) }}</time>
         </div>
+        <p v-if="c.why" class="arp-why" data-test="arp-why"><strong>{{ t('pane.agentTerminal.why', 'Why') }}:</strong> {{ c.why }}</p>
         <div v-if="c.text" class="arp-body">
           <pre class="arp-cmd" :class="{ folded: c.long && !open[c.key] }" data-test="arp-cmd">{{ c.text }}</pre>
           <div class="arp-actions">

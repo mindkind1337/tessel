@@ -883,6 +883,13 @@ const api = {
     onGuest: (cb) => subscribe('liveShare:guest', cb),
     onAsk: (cb) => subscribe('liveShare:ask', cb),
     onHostRequest: (cb) => subscribe('liveShare:hostRequest', cb),
+    // A command of the host's agent: asked of a guest (host), the person's answer and Stop (guest).
+    askGuestCommand: ({ guestId, ask, waitMs } = {}) => ipcRenderer.invoke('liveShare:askGuestCommand', { guestId, ask, waitMs }),
+    commandAnswer: ({ id, allow, block, off, timedOut } = {}) => ipcRenderer.invoke('liveShare:commandAnswer', { id, allow, block, off, timedOut }),
+    commandStop: (id) => ipcRenderer.invoke('liveShare:commandStop', id),
+    commandRunning: () => ipcRenderer.invoke('liveShare:commandRunning'),
+    onCommandAsk: (cb) => subscribe('liveShare:commandAsk', cb),
+    onCommandRun: (cb) => subscribe('liveShare:commandRun', cb),
     onNotice: (cb) => subscribe('liveShare:notice', cb)
   },
   // Export / import of the settings (src/main/settingsBackup.js).

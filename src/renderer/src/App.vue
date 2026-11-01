@@ -78,7 +78,7 @@ import LiveShareAsk from './components/LiveShareAsk.vue'
 import HelpDialog from './components/HelpDialog.vue'
 import { createLiveShareWindow, rightsText } from './liveShareWindow'
 import LiveSharePill from './components/LiveSharePill.vue'
-import { guestsIn, personName, viaName, inviteName, joinedGuests, waitingGuests } from './liveShareAccess'
+import { guestsIn, typingGuestsIn, guestWhoWroteLast, personName, viaName, inviteName, joinedGuests, waitingGuests } from './liveShareAccess'
 import { toastText as cookieImportToast } from './browser/cookieImportText'
 import { askQuitRunning } from './quitConfirm'
 import ImageViewer from './components/ImageViewer.vue'
@@ -101,6 +101,8 @@ import { createAgentAccountTargets, AgentAccountError } from './agentAccounts'
 import { onTerminalControl, onTerminalLog, forgetTerminal } from './agentTerminal/agentTerminalState'
 import { rulesOfAction } from '../../shared/terminalRules'
 import AgentCommandApproval from './components/AgentCommandApproval.vue'
+import HostCommandsPanel from './components/HostCommandsPanel.vue'
+import { createHostCommands } from './liveShareCommands'
 import AgentAccountApproval from './components/AgentAccountApproval.vue'
 import AgentApprovalExpired from './components/AgentApprovalExpired.vue'
 import GitHubDialog from './components/GitHubDialog.vue'
@@ -1002,6 +1004,7 @@ function insertFoundPath({ rel }) {
 function runQuickCommand(id, q) {
   const pane = getPane(id)
   if (!pane || !pane.paste) return
+  if (q.enter) shellEnterAt[id] = Date.now()
   pane.paste(q.text)
   if (q.enter) setTimeout(() => pane.submit && pane.submit(), 60)
   focusPane(id)
@@ -4892,6 +4895,7 @@ function reviewPrompt(fromLeaf, ws) {
 function sendToPane(fromId, toId, mode, text = '') {
   const target = getPane(toId)
   if (!target) return
+  shellEnterAt[toId] = Date.now()
   const ws = wsOfLeaf(fromId)
   const to = findLeaf(toId)
   if (mode === 'review' && to && to.kind === 'agent') {
@@ -7978,6 +7982,8 @@ let pendingTimer = null
 // meta: { source: 'you' | 'tessel', scope: 'team' | 'workspace' | 'notes' |
 // 'team-change', teamId } for the activity log.
 function deliverToAgent(leafId, text, meta = {}) {
+  // Sent by you: what the agent asks next comes from you (Live Share: guestWhoWroteLast).
+  if (meta.source === 'you' || (meta.source === 'user' && meta.scope !== 'wake')) shellEnterAt[leafId] = Date.now()
   // A chat agent: nothing is typed; the main process gives it a turn.
   if (findLeaf(leafId)?.kind === 'chat') return deliverToChat(leafId, text, meta)
   const item = { text, meta, held: false }
@@ -8518,6 +8524,7 @@ async function startTask(spec, opts = {}) {
     wsId: ws.id,
     branch: started.worktree ? started.worktree.branch : null
   })
+  shellEnterAt[leaf.id] = Date.now()
   deliverToAgent(leaf.id, taskPrompt(started, ws), {
     source: 'tessel',
     scope: 'task',
@@ -9739,6 +9746,7 @@ async function checkRemoteAgentTools(round) {
 // being a shell when the agent quits. Checked once for every shell pane at
 // startup (an agent may still run from before).
 const shellEnterAt = {} // paneId -> last Enter pressed there
+const windowStartedAt = Date.now() // shellEnterAt knows nothing from before this
 const shellCheckedAt = {} // paneId -> last check of what runs under its shell
 const SHELL_EAGER_MS = 12000
 let detectBusy = false
@@ -10253,6 +10261,7 @@ const switchingLeaves = new Set()
 // A message (not a command) waits for the end of the agent's turn as a card
 // (onQueued(controls): heldDelivery's; onTyped(): its paste starts).
 function sendFromChatView(leafId, text, { onDelivered, onFailed, onQueued, onTyped, images, command } = {}) {
+  shellEnterAt[leafId] = Date.now()
   const leaf = findLeaf(leafId)
   const files = Array.isArray(images) ? images : []
   if (!leaf || leaf.kind !== 'agent' || !leaf.chatView || leaf.sleeping || !files.every(isPastedImageCopy) || (files.length && !chatViewTakesImages(leaf.agentId)) || (command && command !== 'paste' && command !== 'type')) {
@@ -11450,6 +11459,7 @@ function resolveDecision(taskId, answer, { guest = null } = {}) {
   const text = String(answer || '').trim()
   if (!task || !task.gate || task.gate.status !== 'pending' || !text) return
   const by = typeof guest === 'string' && guest ? guest.slice(0, 40) : null
+  if (!by && task.gate.by) shellEnterAt[task.gate.by] = Date.now()
   updateTask(task.id, { gate: { ...task.gate, status: 'resolved', answer: text.slice(0, 500), resolvedAt: Date.now(), ...(by ? { answeredBy: by } : {}) } })
   recordActivity({ type: 'task', action: 'decided', paneId: task.gate.by, title: task.title, wsId: task.wsId, detail: text })
   const asker = task.gate.by ? findLeaf(task.gate.by) : null
@@ -12055,6 +12065,11 @@ const agentTerminalTargets = createAgentTerminalTargets({
   hostLabel: (id) => remoteHostLabel(id),
   agentName: (leaf) => programLabel(leaf),
   projectShared: (id) => !!(liveHostOn.value && liveShare.isShared(id)),
+  // Who is in a shared project now, and whether one of them wrote to this agent last.
+  projectGuests: (id) => (liveHostOn.value && liveShare.isShared(id) ? typingGuestsIn(liveShare.state.host, id).map((g) => ({ id: g.id, name: personName(g) })) : []),
+  askGuestCommand: (guestId, ask, waitMs) => window.shellApi.liveShare.askGuestCommand({ guestId, ask, waitMs }),
+  guestCommandAsked: ({ agent, guest, command }) => showToast(t('app.agentTerminal.guestCommandAsked', '{{agent}} asks {{guest}} to run this on their computer: {{command}}', { agent, guest, command }), { timeout: 15000 }),
+  guestWhoWrote: (paneId, projectId) => (liveHostOn.value && liveShare.isShared(projectId) ? guestWhoWroteLast(liveShare.state.host, paneId, projectId, shellEnterAt[paneId] || 0, windowStartedAt) : null),
   // From the pane's own launch state (Tessel's), never from the agent's request.
   agentYolo: (leaf) => paneRunsYolo(leaf),
   userTyping: (id) => userIsTyping(id),
@@ -12306,6 +12321,13 @@ watch(
 // Every listener below is removed when this window's app goes away (the dev
 // server's hot reload of App.vue makes a new one: a listener left behind
 // keeps the old code answering).
+// Live Share, as a guest: a command of the host's agent, asked of you on a card.
+const hostCommands = createHostCommands({
+  api: () => window.shellApi.liveShare,
+  approve: (card) => askAgentApproval(card),
+  expire: (id) => expireAgentApprovalById(id),
+  allowed: () => settings.liveShareHostCommands !== false
+})
 const offTerminalAgent = []
 {
   const api = window.shellApi && window.shellApi.terminalAgent
@@ -12318,6 +12340,11 @@ const offTerminalAgent = []
       })
     )
   if (api && typeof api.onLog === 'function') offTerminalAgent.push(api.onLog(onTerminalLog))
+  const shareApi = window.shellApi.liveShare
+  if (shareApi && typeof shareApi.onCommandAsk === 'function') {
+    offTerminalAgent.push(shareApi.onCommandAsk(hostCommands.onAsk), shareApi.onCommandRun(hostCommands.onRun))
+    hostCommands.restore()
+  }
   if (api && typeof api.onRelayUnread === 'function') offTerminalAgent.push(api.onRelayUnread(onRelayUnread))
   // What waited through a restart of the window.
   if (api && typeof api.relayUnread === 'function')
@@ -13579,6 +13606,7 @@ async function shareProjectNotes(wsId) {
         'Before editing a file another agent may be editing, check the notes. Do not commit that file.', // i18n-ignore
       { source: 'tessel', scope: 'notes' }
     )
+    shellEnterAt[leaf.id] = Date.now()
   }
   const limited = agents.filter((l) => limits[l.id])
   const told = agents.length - limited.length
@@ -15128,6 +15156,7 @@ onBeforeUnmount(() => {
       :card="approvalCard.card"
       @answer="answerAgentApproval"
     />
+    <HostCommandsPanel v-if="hostCommands.runs.length" :runs="hostCommands.runs" @stop="hostCommands.stop" @dismiss="hostCommands.dismiss" />
     <AgentCommandApproval
       v-if="approvalCard && !approvalCard.expired && approvalCard.card.kind !== 'accounts'"
       :key="approvalCard.card.command + approvalCard.card.kind"

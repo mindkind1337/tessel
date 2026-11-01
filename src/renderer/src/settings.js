@@ -108,6 +108,8 @@ export const DEFAULT_SETTINGS = Object.freeze({
   // running holds it) or 'each' (a terminal for each). Either closes an
   // extra terminal once its command ends, unless you used it.
   agentTerminalBackground: 'one',
+  // As a Live Share guest: the host's agent may ask to run a command here (a card each time).
+  liveShareHostCommands: true,
   // Your rules ("Always allow"): key -> true | false | { approve, matchCommandLine }
   // (shared/terminalRules.js); a project's rules ("in this project"): its key -> rules.
   agentTerminalRules: {},

@@ -503,8 +503,9 @@ describe('Live Share: what a guest opens, and what the host sees of it', () => {
   afterEach(() => {
     for (const h of hosts.splice(0)) h.stop()
   })
-  async function setup({ rights = NONE, features, now, projects = ['ws-a'] } = {}) {
+  async function setup({ rights = NONE, features, now, projects = ['ws-a'], commands = false } = {}) {
     const t = fakeTessel()
+    if (commands) t.callbacks.commands = () => true
     const host = createShareHost({ hostName: 'Ada', callbacks: t.callbacks, trust: createTrustStore(), ...(now ? { now } : {}) })
     hosts.push(host)
     const port = await host.start()
@@ -625,6 +626,143 @@ describe('Live Share: what a guest opens, and what the host sees of it', () => {
     await wait(40)
     expect(host.presence()).toEqual([])
     expect(t.writes.filter(([id]) => id === 'b1')).toEqual([])
+  })
+
+  describe('a command for a guest\'s computer', () => {
+    const asked = { agent: 'Ada', project: 'Site', command: 'Get-Date', why: 'To read the log', goal: 'Crash', timeoutMs: 1000 }
+
+    it('reaches the guest, and its answer the host', async () => {
+      const { host, r, gid } = await setup({ commands: true, rights: { type: true } })
+      const seen = []
+      r.callbacks.onCommandAsk = (msg) => seen.push(msg)
+      const answered = host.askCommand(gid, asked)
+      await until(() => seen.length === 1)
+      expect(seen[0]).toMatchObject({ t: 'commandAsk', agent: 'Ada', project: 'Site', command: 'Get-Date', why: 'To read the log', goal: 'Crash', timeoutMs: 1000 })
+      r.client.answerCommand({ id: seen[0].id, ok: true, state: 'completed', exitCode: 3, output: 'done', extra: 'dropped' })
+      expect(await answered).toEqual({ ok: true, state: 'completed', exitCode: 3, output: 'done' })
+    })
+
+    it('an answer to something never asked changes nothing; a refusal comes through', async () => {
+      const { host, r, gid } = await setup({ commands: true, rights: { type: true } })
+      const seen = []
+      r.callbacks.onCommandAsk = (msg) => seen.push(msg)
+      const answered = host.askCommand(gid, asked)
+      await until(() => seen.length === 1)
+      r.client.answerCommand({ id: 'made-up', ok: true, state: 'completed', output: 'forged' })
+      r.client.answerCommand({ id: seen[0].id, ok: false, code: 'denied' })
+      expect(await answered).toEqual({ ok: false, code: 'denied' })
+    })
+
+    it('one at a time per guest', async () => {
+      const { host, r, gid } = await setup({ commands: true, rights: { type: true } })
+      const seen = []
+      r.callbacks.onCommandAsk = (msg) => seen.push(msg)
+      const first = host.askCommand(gid, asked)
+      await until(() => seen.length === 1)
+      expect(await host.askCommand(gid, asked)).toEqual({ ok: false, code: 'busy' })
+      r.client.answerCommand({ id: seen[0].id, ok: false, code: 'denied' })
+      await first
+    })
+
+    it('a guest with no right to type is asked nothing', async () => {
+      const { host, r, gid } = await setup({ commands: true })
+      r.callbacks.onCommandAsk = () => {
+        throw new Error('it should not get it')
+      }
+      expect(await host.askCommand(gid, asked)).toEqual({ ok: false, code: 'gone' })
+    })
+
+    it('no such guest, or no answer in time', async () => {
+      const { host, gid } = await setup({ commands: true, rights: { type: true } })
+      expect(await host.askCommand('nobody', asked)).toEqual({ ok: false, code: 'gone' })
+      expect(await host.askCommand(gid, asked, { waitMs: 20 })).toEqual({ ok: false, code: 'timeout' })
+    })
+
+    it('the guest leaves while it is asked: the host does not wait on', async () => {
+      const { host, r, gid } = await setup({ commands: true, rights: { type: true } })
+      const seen = []
+      r.callbacks.onCommandAsk = (msg) => seen.push(msg)
+      const answered = host.askCommand(gid, asked)
+      await until(() => seen.length === 1)
+      r.client.leave()
+      expect(await answered).toEqual({ ok: false, code: 'gone' })
+    })
+
+    it('a host that does not offer it says so to no guest', async () => {
+      const { host, gid } = await setup({ rights: { type: true } })
+      expect(await host.askCommand(gid, asked)).toEqual({ ok: false, code: 'old' })
+    })
+
+    it('a guest whose Tessel does not know this is never sent it', async () => {
+      const { host, r, gid } = await setup({ features: ['presence'], commands: true, rights: { type: true } })
+      r.callbacks.onCommandAsk = () => {
+        throw new Error('it should not get it')
+      }
+      expect(await host.askCommand(gid, asked)).toEqual({ ok: false, code: 'old' })
+    })
+  })
+
+  it('what sends a line: not a \\n, not an Enter on nothing; a real line, or one brought back with Up', async () => {
+    const clock = { now: 9_000_000 }
+    const { host, r, t } = await setup({ rights: { type: true }, now: () => clock.now })
+    const sentAt = () => host.presence({ sent: true })[0]?.guests[0].sentAt
+    let writes = 0
+    const write = async (data) => {
+      r.client.write('a1', data)
+      writes++
+      await until(() => t.writes.length === writes)
+    }
+    await write('x\n\x7f')
+    await write('\r')
+    await write('\r')
+    expect(sentAt()).toBeUndefined()
+    await write('y')
+    await write('\x7f')
+    await write('\r')
+    expect(sentAt()).toBeUndefined()
+    await write('\x1b[A')
+    await write('\r')
+    expect(sentAt()).toBe(clock.now)
+    clock.now += 1000
+    await write('\r')
+    expect(sentAt()).toBe(clock.now - 1000)
+    await write('hello\r')
+    expect(sentAt()).toBe(clock.now)
+    clock.now += 1000
+    await write('\x1b[A')
+    await write('\x15')
+    await write('\r')
+    expect(sentAt()).toBe(clock.now - 1000)
+    await write('\x1b[200~pasted\rline\x1b[201~')
+    expect(sentAt()).toBe(clock.now - 1000)
+    await write('\r')
+    expect(sentAt()).toBe(clock.now)
+  })
+
+  it('who wrote and left stays known', async () => {
+    const clock = { now: 9_000_000 }
+    const { host, r, gid, t } = await setup({ rights: { type: true }, now: () => clock.now })
+    r.client.write('a1', 'hello\r')
+    await until(() => t.writes.length === 1)
+    r.client.leave()
+    await until(() => host.guests().length === 0)
+    expect(host.presence({ sent: true })).toEqual([{ id: 'a1', guests: [expect.objectContaining({ id: gid, gone: true, name: 'Alex', sentAt: clock.now })] }])
+    expect(host.presence()).toEqual([])
+  })
+
+  it('who sent a pane a line last: an Enter, not typing, and it stays once the typing is over', async () => {
+    const clock = { now: 9_000_000 }
+    const { host, r, gid, t } = await setup({ rights: { type: true }, now: () => clock.now })
+    r.client.write('a1', 'x')
+    await until(() => t.writes.length === 1)
+    expect(host.presence({ sent: true })[0].guests[0].sentAt).toBeUndefined()
+    clock.now += 5000
+    const at = clock.now
+    r.client.write('a1', '\r')
+    await until(() => t.writes.length === 2)
+    clock.now += 60000
+    expect(host.presence()).toEqual([])
+    expect(host.presence({ sent: true })).toEqual([{ id: 'a1', guests: [{ id: gid, watching: false, typing: false, reading: false, sentAt: at }] }])
   })
 
   it('presence comes from a guest a couple of times a second at most, the latest', async () => {

@@ -279,6 +279,10 @@ export function createShareGuest({ url, secret, name, signingKey, identityKey = 
       case 'chat':
         if (typeof msg.id === 'string') callbacks.onChat?.(msg.id, msg)
         return
+      // A command its agent asks to run here: the person answers (guestCommand.js).
+      case 'commandAsk':
+        if (hostSpeaks.has('commands')) callbacks.onCommandAsk?.(msg)
+        return
       case 'res':
         onAnswer(msg)
         return
@@ -414,6 +418,9 @@ export function createShareGuest({ url, secret, name, signingKey, identityKey = 
       if (!on) lastSeq.delete(subKey(topic, project, key))
       send({ t: 'sub', topic, ...(project ? { project } : {}), ...(key ? { key } : {}), on: !!on })
       return true
+    },
+    answerCommand(result) {
+      if (!closed && welcomed) send({ t: 'commandRes', ...result })
     },
     leave() {
       send({ t: 'leave' })

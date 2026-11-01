@@ -12,7 +12,7 @@ import ThemedSelect from './ui/ThemedSelect.vue'
 
 const askConfirm = inject('askConfirm', null)
 
-const logText = computed(() => t('settings.agents.terminalLog', 'Tessel keeps a log of every command agents run in terminals and of the terminals they read (when, which agent, which terminal, the command in full) in agent-terminal.log in its data folder, up to 1 MB (the older part in agent-terminal.log.old). Commands can hold secrets you gave an agent.'))
+const logText = computed(() => t('settings.agents.terminalLog', 'Tessel keeps a log of every command agents run in terminals and of the terminals they read (when, which agent, which terminal, the command in full, the reason the agent gave) in agent-terminal.log in its data folder, up to 1 MB (the older part in agent-terminal.log.old). Commands can hold secrets you gave an agent.'))
 const regexLabel = computed(() => t('settings.agents.terminalRuleRegex', 'regular expression'))
 const userRules = computed(() => Object.entries(settings.agentTerminalRules || {}))
 const projectRules = computed(() =>
@@ -83,6 +83,13 @@ async function setAutoApprove(e) {
           </details>
         </div>
         <input id="settings-agent-terminal" v-model="settings.agentTerminal" type="checkbox" class="set-switch" data-setting="agentTerminal" />
+      </div>
+      <div class="set-row">
+        <div class="set-label">
+          <label for="settings-live-share-commands">{{ t('settings.agents.hostCommands', 'In Live Share, let the host\'s agent ask to run commands on this computer') }}</label>
+          <span class="set-hint">{{ t('settings.agents.hostCommandsShort', 'A card shows you each command in full; nothing runs without your click. Off: it is told no, and you see nothing.') }}</span>
+        </div>
+        <input id="settings-live-share-commands" v-model="settings.liveShareHostCommands" type="checkbox" class="set-switch" data-setting="liveShareHostCommands" />
       </div>
       <div class="set-row">
         <div class="set-label">

@@ -114,6 +114,33 @@ export function projectAccess(host, projectId) {
 // The guests in now who see a project (for the sidebar's avatars).
 export const guestsIn = (host, projectId) => joinedGuests(host).filter((g) => list(g.projects).includes(projectId))
 
+// Guests who can write to an agent: a guest without the right to type cannot be behind it.
+export const typingGuestsIn = (host, projectId) => guestsIn(host, projectId).filter((g) => g.rights && g.rights.type)
+
+// Did a guest write to this pane last? Their last Enter there (main's presence) against yours
+// (ownerAt): { id, name } when it was theirs, { id: null, name, gone: true } if they have left
+// since, null when it was yours or nobody can write. { unsure: true }: it cannot be told, so
+// nothing is sent to anyone: nothing known on either side, or their Enter is older than this
+// window, whose record of yours started with it (knownSince: a reload forgets).
+export function guestWhoWroteLast(host, paneId, projectId, ownerAt = 0, knownSince = 0) {
+  const inNow = typingGuestsIn(host, projectId)
+  const entry = list(host && host.presence).find((p) => p && p.id === paneId)
+  let last = null
+  for (const g of list(entry && entry.guests)) {
+    if (!g || !Number.isFinite(g.sentAt) || (last && g.sentAt <= last.at)) continue
+    const guest = inNow.find((x) => x.id === g.id)
+    if (guest) last = { id: guest.id, name: personName(guest), at: g.sentAt }
+    else if (g.gone === true) last = { id: null, name: typeof g.name === 'string' ? g.name : '', at: g.sentAt, gone: true }
+  }
+  const unsure = () => ({ id: inNow.length === 1 ? inNow[0].id : null, name: inNow.length === 1 ? personName(inNow[0]) : last ? last.name : '', unsure: true })
+  if (last && last.at > ownerAt) {
+    if (!ownerAt && last.at < knownSince) return unsure()
+    return last.gone ? { id: null, name: last.name, gone: true } : { id: last.id, name: last.name }
+  }
+  if (last || ownerAt > 0 || !inNow.length) return null
+  return unsure()
+}
+
 // When an invitation stops letting new guests in, in words.
 export function inviteExpiry(inv, now = Date.now()) {
   if (!inv || inv.expiresAt == null) return { text: t('liveShare.invite.noExpiry', 'No expiry'), expired: false, never: true }

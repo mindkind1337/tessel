@@ -118,6 +118,8 @@ import { cleanRights, isRightId } from '../shared/liveShareRights'
 import { cleanAgentRule, effectiveAgentRule, paneTypeAllowed, agentAllowed, modelAllowed, allowedModels, ruleRestricts, isModelId } from '../shared/liveShareAgents'
 import { listProcesses, agentsInTrees, KNOWN_AGENT_IDS } from './agentDetect'
 import { createShareGuest } from './liveShare/shareGuest.js'
+import { randomUUID } from 'crypto'
+import { GUEST_COMMAND_LIMITS, cleanCommandAsk, commandsPossible, isCommandId, plain as plainWords, runGuestCommand } from './liveShare/guestCommand.js'
 import { encodeInvite, decodeInvite, newSecret, newSigningKey, exportSigningKey, importSigningKey } from './liveShare/shareCrypto.js'
 import { ensureCloudflared, startTunnel, waitReachable, waitRegistered, tunnelLogTail, endLeftoverTunnel, tunnelState, stopTunnelPid, stopTunnelLater, processState } from './liveShare/shareTunnel.js'
 import { createSessionFile, createKeptFile } from './liveShare/sharePersist.js'
@@ -632,7 +634,7 @@ export function registerLiveShare({
       trusted: trustedList(),
       // Which of your panes guests have on screen, type in, or read as a
       // chat: [{ id (pane), guests: [{ id, watching, typing, reading }] }].
-      presence: live ? s.server.presence() : [],
+      presence: live ? s.server.presence({ sent: true }) : [],
       progress: s ? (s.progress ?? null) : null,
       error: (s && s.error) || null,
       // A share starting again by itself (after a restart, or its tunnel
@@ -676,7 +678,7 @@ export function registerLiveShare({
         presenceTimer = null
         presenceAt = Date.now()
         const s = sharing
-        if (s && s.state === 'sharing' && s.server) send('liveShare:presence', s.server.presence())
+        if (s && s.state === 'sharing' && s.server) send('liveShare:presence', s.server.presence({ sent: true }))
       },
       Math.max(0, wait)
     )
@@ -1807,6 +1809,7 @@ export function registerLiveShare({
         agentDefault: () => shareSettings.agents || null,
         paneAgent: (id) => paneView(id),
         paneTyped: (id, data) => paneTyped(id, data),
+        commands: () => true,
         // A pane a guest typed in switched to what its rule refuses (Esc was
         // pressed in it): the host's window says so.
         onRuleBreach: (b) => sharing === s && send('liveShare:hostRequest', { action: 'ruleBreach', guest: { id: b.guest.id, name: b.guest.name }, pane: b.pane, agent: b.agent, model: b.model }),
@@ -2600,7 +2603,9 @@ export function registerLiveShare({
         url: g.url,
         relaySeq: g.relaySeq || 0,
         shareSecret: g.shareSecret ? g.shareSecret.toString('base64') : null,
-        reachedAt: g.reachedAt || Date.now()
+        reachedAt: g.reachedAt || Date.now(),
+        // "Do not ask again in this session" holds when the session comes back.
+        ...(g.commands && g.commands.blocked ? { commandsBlocked: true } : {})
       })
     )
   }
@@ -2763,8 +2768,63 @@ export function registerLiveShare({
     pushGuest()
   }
 
+  // --- A command the host's agent asks to run here (guestCommand.js) -----------
+  // The window asks the person on a card; only their answer starts it. One at a
+  // time, a few cards a minute, and none once they said not to ask again.
+  function onCommandAsk(g, client, raw) {
+    const c = g.commands || (g.commands = { blocked: false, current: null, times: [] })
+    const ask = cleanCommandAsk(raw)
+    const no = (code, id) => isCommandId(id) && client.answerCommand({ id, ok: false, code })
+    if (!ask) return no('bad', raw && raw.id)
+    if (!commandsPossible()) return no('off', ask.id)
+    if (c.blocked) return no('blocked', ask.id)
+    if (c.current) return no('busy', ask.id)
+    const t = Date.now()
+    c.times = c.times.filter((x) => t - x < 60 * 1000)
+    if (c.times.length >= GUEST_COMMAND_LIMITS.perMinute) return no('busy', ask.id)
+    c.times.push(t)
+    // The card's id is this Tessel's: an answer can only ever start what that card showed,
+    // whatever id the host uses, or reuses, for its asks.
+    c.current = { ask, cardId: randomUUID(), client, running: null }
+    send('liveShare:commandAsk', { id: c.current.cardId, host: plainWords(g.host, 80), agent: ask.agent, project: ask.project, command: ask.command, why: ask.why, goal: ask.goal })
+  }
+  const commandForLog = (ask) => maskSecrets(ask.command).replace(/\s+/g, ' ')
+  function commandAnswered({ id, allow, block, off, timedOut } = {}) {
+    const g = joined
+    const c = g && g.commands
+    const cur = c && c.current
+    if (!cur || cur.cardId !== id || cur.running) return false
+    const tell = (result) => g.client === cur.client && cur.client.answerCommand({ id: cur.ask.id, ...result })
+    if (allow !== true) {
+      info(`a command of ${g.host || '?'}'s agent ${cur.ask.agent} was not allowed here (${block === true ? 'no more asking' : timedOut === true ? 'no answer' : 'refused'}): ${commandForLog(cur.ask)}`)
+      if (block === true) {
+        c.blocked = true
+        saveGuest(g)
+      }
+      c.current = null
+      tell({ ok: false, code: off === true ? 'off' : block === true ? 'blocked' : timedOut === true ? 'timeout' : 'denied' })
+      return true
+    }
+    info(`a command of ${g.host || '?'}'s agent ${cur.ask.agent}, allowed here, runs: ${commandForLog(cur.ask)}`)
+    cur.running = runGuestCommand({ command: cur.ask.command, timeoutMs: cur.ask.timeoutMs })
+    cur.running.promise.then((r) => {
+      if (c.current === cur) c.current = null
+      send('liveShare:commandRun', { id, state: r.state, exitCode: r.exitCode, output: r.output })
+      tell({ ok: true, state: r.state, exitCode: r.exitCode, output: r.output })
+    })
+    return true
+  }
+  function endCommands(g, how = {}) {
+    const c = g.commands
+    if (!c || !c.current) return
+    if (c.current.running) return c.current.running.stop(how)
+    send('liveShare:commandRun', { id: c.current.cardId, state: 'gone' })
+    c.current = null
+  }
+
   function endGuest(g, reason) {
     if (joined !== g) return
+    endCommands(g)
     clearTimeout(g.retry && g.retry.timer)
     clearInterval(guestTimer)
     guestTimer = null
@@ -2805,6 +2865,8 @@ export function registerLiveShare({
   }
 
   function connectGuest(g) {
+    // The host stopped waiting for what it asked over the last connection.
+    endCommands(g)
     // Each connection asks for the conversations the window watches anew.
     g.chatAsked = new Set()
     const client = createShareGuest({
@@ -2904,6 +2966,7 @@ export function registerLiveShare({
         },
         onNotice: (code, about = {}) => joined === g && g.client === client && send('liveShare:notice', { code: str(code, 40), agent: cleanName(str(about.agent, 80)), model: cleanName(str(about.model, 80)) }),
         onPush: (topic, project, key, data) => joined === g && g.client === client && onGuestPush(g, topic, project, key, data),
+        onCommandAsk: (msg) => joined === g && g.client === client && onCommandAsk(g, client, msg),
         onProjects: (projects) => joined === g && g.client === client && onProjects(g, projects),
         onSnapshot: (remoteId, data, cols, rows) => {
           if (joined !== g || g.client !== client) return
@@ -2943,6 +3006,8 @@ export function registerLiveShare({
         onClosed: (reason) => {
           if (joined !== g || g.client !== client) return
           if (!g.leaving && g.admitted && RECONNECT_REASONS.has(reason)) {
+            // The host stopped waiting for what it asked: no click may start it now.
+            endCommands(g)
             if (g.state !== 'reconnecting') info(`connection to ${g.host || '?'} lost (${reason}): reconnecting`)
             g.state = 'reconnecting'
             g.reason = reason
@@ -2964,7 +3029,7 @@ export function registerLiveShare({
 
   // url, relaySeq: a session taken back after a restart (its last address,
   // the last relay message it took).
-  function joinSession({ invite, name, signingKey = null, hostKey = null, url = null, relaySeq = 0, shareSecret = null, reachedAt = null } = {}) {
+  function joinSession({ invite, name, signingKey = null, hostKey = null, url = null, relaySeq = 0, shareSecret = null, reachedAt = null, commandsBlocked = false } = {}) {
     const code = decodeInvite(invite)
     if (!code) return { ok: false, error: t('main.liveShare.badInvite', 'This is not a Tessel Live Share invite code.') }
     if (joined) leaveSession('replaced')
@@ -2973,6 +3038,7 @@ export function registerLiveShare({
     const start = typeof url === 'string' && withBase(url, code.url) === url ? url : code.url
     const g = {
       session: ++sessions,
+      commands: { blocked: commandsBlocked, current: null, times: [] },
       host: null,
       state: 'connecting',
       panes: new Map(),
@@ -3069,7 +3135,7 @@ export function registerLiveShare({
     }
     info('joining again the session left by a restart')
     const shareSecret = typeof saved.shareSecret === 'string' ? Buffer.from(saved.shareSecret, 'base64') : null
-    return joinSession({ invite: saved.invite, name: saved.name, signingKey, hostKey, url: typeof saved.url === 'string' ? saved.url : null, relaySeq: saved.relaySeq, shareSecret, reachedAt: saved.reachedAt }).ok
+    return joinSession({ invite: saved.invite, name: saved.name, signingKey, hostKey, commandsBlocked: saved.commandsBlocked === true, url: typeof saved.url === 'string' ? saved.url : null, relaySeq: saved.relaySeq, shareSecret, reachedAt: saved.reachedAt }).ok
   }
 
   // Quitting or an update: a session the host let this guest in is kept for
@@ -3077,6 +3143,7 @@ export function registerLiveShare({
   // key); one not let in yet ends.
   function pauseGuest() {
     const g = joined
+    if (g) endCommands(g, { now: true })
     if (g && g.admitted) {
       saveGuest(g)
       clearTimeout(g.retry && g.retry.timer)
@@ -3283,6 +3350,29 @@ export function registerLiveShare({
   }
   // A project added to the share or taken out: { id, shared }.
   ipcMain.handle('liveShare:share', (_evt, { id, shared } = {}) => setShared(id, !!shared))
+  // Host: a command for a guest's computer, which that guest allows on their own screen.
+  ipcMain.handle('liveShare:askGuestCommand', (_evt, { guestId, ask, waitMs } = {}) => {
+    const server = sharing && sharing.state === 'sharing' ? sharing.server : null
+    if (!server || !ask || typeof ask !== 'object') return { ok: false, code: 'gone' }
+    return server.askCommand(str(guestId, 80), { agent: str(ask.agent, 100), project: str(ask.project, 100), command: typeof ask.command === 'string' ? ask.command : '', why: str(ask.why, 1000), goal: str(ask.goal, 1000), timeoutMs: Number(ask.timeoutMs) || undefined }, Number(waitMs) > 0 ? { waitMs: Number(waitMs) } : {})
+  })
+  // Guest: the person's answer, and Stop.
+  ipcMain.handle('liveShare:commandAnswer', (_evt, answer) => commandAnswered(answer || {}))
+  ipcMain.handle('liveShare:commandStop', (_evt, id) => {
+    const cur = joined && joined.commands && joined.commands.current
+    if (cur && cur.running && cur.cardId === id) cur.running.stop()
+  })
+  // A window that just started: what runs now, so it keeps a way to stop it. A card it had up is
+  // gone with it: the host hears no answer came, rather than waiting and blocking the next one.
+  ipcMain.handle('liveShare:commandRunning', () => {
+    const c = joined && joined.commands
+    const cur = c && c.current
+    if (!cur) return null
+    if (cur.running) return { id: cur.cardId, host: plainWords(joined.host, 80), agent: cur.ask.agent, command: cur.ask.command }
+    c.current = null
+    if (joined.client === cur.client) cur.client.answerCommand({ id: cur.ask.id, ok: false, code: 'timeout' })
+    return null
+  })
   // The share's settings: { hideIgnored } (kept across shares). A change
   // counts for every request from now on.
   ipcMain.handle('liveShare:setSettings', (_evt, patch = {}) => {

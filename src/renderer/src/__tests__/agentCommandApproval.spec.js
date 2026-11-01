@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach, vi } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { nextTick } from 'vue'
 import { mount, flushPromises } from '@vue/test-utils'
 import AgentCommandApproval from '../components/AgentCommandApproval.vue'
@@ -23,6 +23,171 @@ describe('the approval card', () => {
     expect(document.activeElement).toBe(wrapper.find('[data-test="agent-command-skip"]').element)
     expect(wrapper.text()).toContain('Runs the tests')
     expect(wrapper.text()).toContain('Check')
+  })
+
+  it('says why and from which project', async () => {
+    open({ project: 'Alex Dev', explanation: 'To read the crash log' })
+    expect(wrapper.find('[data-test="agent-command-project"]').text()).toContain('Alex Dev')
+    expect(wrapper.find('[data-test="agent-command-why"]').text()).toContain('To read the crash log')
+  })
+
+  it('a Live Share guest in the project: said on the card, asked each time for a host', async () => {
+    open({ kind: 'host', pc: true, command: '', guests: ['Alex'], fromGuest: 'Alex' })
+    const said = wrapper.find('[data-test="agent-command-guest"]').text()
+    expect(said).toContain('Alex')
+    expect(said).toContain('your computer, not theirs')
+    expect(wrapper.find('[data-test="agent-command-once"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="agent-command-allow"]').exists()).toBe(false)
+  })
+
+  it('a guest in the project who did not write last: named as who may be behind it', async () => {
+    open({ guests: ['Alex', 'Ada'] })
+    expect(wrapper.find('[data-test="agent-command-guest"]').text()).toContain('Alex, Ada')
+  })
+
+  it('no guest, nothing said, and a host can still be allowed for good', async () => {
+    open({ kind: 'host', pc: true, command: '' })
+    expect(wrapper.find('[data-test="agent-command-guest"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="agent-command-allow"]').exists()).toBe(true)
+  })
+
+  describe('a command of the host, on a guest\'s computer', () => {
+    const asked = { kind: 'hostRun', hostName: 'Sam', agentLabel: 'Ada', project: 'Site', command: 'Get-Date', explanation: 'To read the log' }
+
+    it('says who asks and what it can do, and shows the command, which cannot be edited', async () => {
+      open(asked)
+      expect(wrapper.find('#aca-title').text()).toContain('Ada')
+      expect(wrapper.find('#aca-title').text()).toContain('Sam')
+      expect(wrapper.find('[data-test="agent-host-run"]').text()).toContain('not from you')
+      expect(wrapper.find('[data-test="agent-command-text"]').element.tagName).toBe('PRE')
+      expect(wrapper.find('[data-test="agent-command-text"]').text()).toBe('Get-Date')
+    })
+
+    it('starts on Deny, and offers no way to allow for good', async () => {
+      open(asked)
+      await flushPromises()
+      const deny = wrapper.find('[data-test="agent-command-skip"]')
+      expect(document.activeElement).toBe(deny.element)
+      expect(deny.text()).toBe('Deny')
+      expect(wrapper.find('[data-test="agent-command-more"]').exists()).toBe(false)
+      expect(wrapper.find('[data-test="agent-command-once"]').exists()).toBe(false)
+    })
+
+    describe('a command that does not fit', () => {
+      const stubs = []
+      const stub = (name, get) => {
+        const old = Object.getOwnPropertyDescriptor(Element.prototype, name) || Object.getOwnPropertyDescriptor(HTMLElement.prototype, name)
+        Object.defineProperty(HTMLElement.prototype, name, { configurable: true, get })
+        stubs.push([name, old])
+      }
+      afterEach(() => {
+        for (const [name] of stubs.splice(0)) delete HTMLElement.prototype[name]
+      })
+      // A box 100 px high in a card of 800, with the buttons at `buttonsTop`.
+      const overflowing = async (buttonsTop = 500) => {
+        stub('scrollHeight', function () {
+          return this.tagName === 'PRE' ? 1000 : 0
+        })
+        stub('clientHeight', function () {
+          return this.tagName === 'PRE' ? 100 : 0
+        })
+        rect = (el) => (el.tagName === 'PRE' ? { top: 100, bottom: 200 } : el.classList.contains('confirm-actions') ? { top: buttonsTop, bottom: buttonsTop + 40 } : { top: 0, bottom: 800 })
+        open({ ...asked, command: Array(40).fill('line').join('\n') }, 0)
+        await flushPromises()
+      }
+      let rect = null
+      const realRect = HTMLElement.prototype.getBoundingClientRect
+      beforeEach(() => {
+        HTMLElement.prototype.getBoundingClientRect = function () {
+          return rect ? rect(this) : realRect.call(this)
+        }
+      })
+      afterEach(() => {
+        HTMLElement.prototype.getBoundingClientRect = realRect
+        rect = null
+      })
+      const scrollTo = async (top) => {
+        const box = wrapper.find('[data-test="agent-command-text"]')
+        box.element.scrollTop = top
+        await box.trigger('scroll')
+        await nextTick()
+      }
+      const stepThrough = async () => {
+        for (let top = 100; top <= 900; top += 100) await scrollTo(top)
+      }
+
+      it('Allow waits until its end has been in sight, and says so', async () => {
+        await overflowing()
+        const allow = wrapper.find('[data-test="agent-command-allow"]')
+        expect(allow.attributes('disabled')).toBeDefined()
+        expect(wrapper.find('[data-test="agent-host-scroll"]').exists()).toBe(true)
+        await allow.trigger('click')
+        expect(wrapper.emitted('answer')).toBeUndefined()
+        await stepThrough()
+        expect(wrapper.find('[data-test="agent-host-scroll"]').exists()).toBe(false)
+        await scrollTo(0)
+        expect(wrapper.find('[data-test="agent-host-scroll"]').exists()).toBe(false)
+      })
+
+      it('one jump to the end does not count: what was skipped was never on screen', async () => {
+        await overflowing()
+        await scrollTo(900)
+        expect(wrapper.find('[data-test="agent-host-scroll"]').exists()).toBe(true)
+        expect(wrapper.find('[data-test="agent-command-allow"]').attributes('disabled')).toBeDefined()
+        await scrollTo(0)
+        await stepThrough()
+        expect(wrapper.find('[data-test="agent-host-scroll"]').exists()).toBe(false)
+      })
+
+      it('an end hidden under the buttons does not count', async () => {
+        await overflowing(150)
+        await stepThrough()
+        expect(wrapper.find('[data-test="agent-host-scroll"]').exists()).toBe(true)
+      })
+
+      it('the box can be reached with the keyboard', async () => {
+        await overflowing()
+        expect(wrapper.find('[data-test="agent-command-text"]').attributes('tabindex')).toBe('0')
+      })
+    })
+
+    it('each real line is its own: a break cannot pass for a wrap', () => {
+      open({ ...asked, command: 'a\n\nb' })
+      expect(wrapper.findAll('.aca-l')).toHaveLength(3)
+    })
+
+    it('names what is not plain ASCII', () => {
+      open({ ...asked, command: 'echo \u00E9t\u00E9 \u0111' })
+      const said = wrapper.find('[data-test="agent-host-characters"]').text()
+      expect(said).toContain('U+00E9')
+      expect(said).toContain('U+0111')
+      wrapper.unmount()
+      open({ ...asked, command: `echo ${'\u00E0\u00E1\u00E2\u00E3\u00E4\u00E5\u00E6\u00E7\u00E8\u00E9\u00EA\u00EB\u00EC\u00ED'}` })
+      expect(wrapper.find('[data-test="agent-host-characters"]').text()).toContain('2')
+      wrapper.unmount()
+      open(asked)
+      expect(wrapper.find('[data-test="agent-host-characters"]').exists()).toBe(false)
+    })
+
+    it('says what it can do before the host\'s own words', () => {
+      open(asked)
+      const html = wrapper.html()
+      expect(html.indexOf('agent-host-run')).toBeLessThan(html.indexOf('agent-command-why'))
+    })
+
+    it('opens at its top: focusing Deny does not scroll past a long command', async () => {
+      const focus = vi.spyOn(HTMLElement.prototype, 'focus')
+      open(asked)
+      await flushPromises()
+      expect(focus).toHaveBeenCalledWith({ preventScroll: true })
+      focus.mockRestore()
+    })
+
+    it('can say not to ask again', async () => {
+      open(asked)
+      await wrapper.find('[data-test="agent-command-block"]').trigger('click')
+      expect(wrapper.emitted('answer')[0]).toEqual([{ allow: false, block: true }])
+    })
   })
 
   it('Skip and Escape answer no', async () => {
