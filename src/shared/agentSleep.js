@@ -29,3 +29,17 @@ export function sleepBlocker({ leaf, resumable, state, confirmed, trackedState, 
   return ''
 }
 export const sleepEligible = (q) => sleepBlocker(q) === ''
+
+// Start terminals asleep (Settings > General): a saved pane that comes back
+// asleep when Tessel starts and its terminal no longer runs. An agent (its
+// conversation resumed when you open it) or a terminal (a new shell then);
+// never a page, an editor or a chat (they start nothing by themselves), nor
+// a pane on an SSH host (it already waits for Connect).
+export function sleepsAtStart(snap) {
+  if (!snap || snap.type !== 'leaf') return false
+  if (['editor', 'chat', 'browser'].includes(snap.kind)) return false
+  if (typeof snap.id !== 'string' || !/^pane-[\w-]+$/.test(snap.id)) return false
+  if (snap.remoteHostId) return false
+  if (snap.kind === 'agent' && !snap.agentCommand) return false
+  return true
+}

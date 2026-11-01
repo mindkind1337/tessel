@@ -126,6 +126,10 @@ export const DEFAULT_SETTINGS = Object.freeze({
   // its next message starts it again, its conversation resumed.
   chatIdleMinutes: 30,
   restoreWorkspaces: true,
+  // At launch, the agents and terminals reopened stay asleep (nothing runs)
+  // until you open their pane; one still running in the terminal host is
+  // kept as it is (agentSleep.js sleepsAtStart).
+  startAsleep: false,
   resumeAgents: true,
   // What a new project starts (projectLauncher.js): 'ask' (its launcher),
   // 'terminal', 'terminal:<shellId>' or 'agent:<agentId>'.

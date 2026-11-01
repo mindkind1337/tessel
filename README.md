@@ -35,6 +35,13 @@ working on Tessel itself (see [Build from source](#build-from-source)).
   one). Switching never stops a running shell or agent, and everything
   (layout, panes, conversations, tasks, terminal output) is restored on the
   next launch.
+- **Sleep**: a pane put to sleep stops its terminal to free memory and keeps
+  its place; opening it wakes it (an agent resumes its conversation, a
+  terminal starts again in the same folder under what it showed). Put a pane,
+  or every agent and terminal of a workspace, to sleep from its menu in the
+  sidebar; idle agents can sleep by themselves (Settings → Agents). **Start
+  terminals asleep** (Settings → General) brings every agent and terminal back
+  asleep at launch, so only the panes you open run.
 - **Groups of projects**: put projects of the same kind in a group of your own
   (**Group** in a project's menu): a folding row with the projects under it, to
   make room in the sidebar. Groups are saved with your settings.

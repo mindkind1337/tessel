@@ -441,6 +441,9 @@
       "staysAwake": "Reste actif : {{list}}.",
       "asleepOne": "1 agent en veille. Ouvrez un panneau pour le réveiller.",
       "asleep": "{{count}} agents en veille. Ouvrez un panneau pour le réveiller.",
+      "remoteShell": "{{pane}} (un terminal sur un serveur SSH)",
+      "paneAsleepOne": "1 panneau en veille. Ouvrez-le pour le réveiller.",
+      "panesAsleep": "{{count}} panneaux en veille. Ouvrez-en un pour le réveiller.",
       "wakeFailed": "{{name}} n'a pas pu être réveillé : réessayez Réveiller."
     },
     "activity": {

@@ -51,6 +51,13 @@ async function resetAll() {
         </label>
         <label class="set-row">
           <div class="set-label">
+            {{ t('settings.general.startAsleep', 'Start terminals asleep') }}
+            <span class="set-hint">{{ t('settings.general.startAsleepHint', 'At launch, agents and terminals stay asleep: nothing runs until you open its pane. One still running is kept.') }}</span>
+          </div>
+          <input v-model="settings.startAsleep" type="checkbox" class="set-switch" />
+        </label>
+        <label class="set-row">
+          <div class="set-label">
             {{ t('settings.general.confirmClose', 'Confirm before closing running terminals') }}
             <span class="set-hint">{{ t('settings.general.confirmCloseHint', 'Ask before stopping a running agent or command when closing a terminal.') }}</span>
           </div>
