@@ -77,7 +77,11 @@ working on Tessel itself (see [Build from source](#build-from-source)).
   (compact folders, indent guides, only visible rows drawn), an editor pane,
   and a Source Control panel (changes by folder, stage per file, commit,
   commits graph with times, create a pull request, send failing checks or
-  review comments to an agent).
+  review comments to an agent). The GitHub dialog (issues and pull requests)
+  also works for a project folder that is not a Git clone, such as an
+  installed app: it asks once which repository to show (`owner/name` or its
+  URL), checks it with gh, remembers it for that folder, and a **Change
+  repository** link in its header picks another.
 - **Files the editor shows in their own view** (read-only, on this computer
   and on SSH hosts, up to 30 MB):
   - **PDF** in an editor tab (pages drawn as they come into view, zoom);

@@ -294,6 +294,7 @@ const api = {
   },
   github: {
     status: (q) => ipcRenderer.invoke('github:status', q),
+    chooseRepo: (q) => ipcRenderer.invoke('github:chooseRepo', q),
     list: (q) => ipcRenderer.invoke('github:list', q),
     detail: (q) => ipcRenderer.invoke('github:detail', q),
     createIssue: (q) => ipcRenderer.invoke('github:createIssue', q),

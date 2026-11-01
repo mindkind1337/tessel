@@ -262,6 +262,14 @@
 .issue-empty .issue-btn {
   margin-top: 10px;
 }
+.issue-empty .issue-choose-repo {
+  max-width: 480px;
+  margin: 12px auto 0;
+  text-align: left;
+}
+.issue-empty .issue-choose-repo .issue-btn {
+  margin-top: 0;
+}
 .issue-error,
 .issue-notice {
   border: 1px solid var(--border);

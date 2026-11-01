@@ -55,9 +55,35 @@ let listRequest = 0
 let detailRequest = 0
 let statusRequest = 0
 let previousFocus
-const connected = computed(() => connection.value?.available && connection.value?.authenticated)
+const signedIn = computed(() => !!(connection.value?.available && connection.value?.authenticated))
+const connected = computed(() => signedIn.value && !!connection.value?.repo)
 const isPr = computed(() => kind.value === 'prs')
 const api = () => window.shellApi.github
+// A folder that is no Git clone with a GitHub remote: the user names the
+// repository to show for it (kept by main, per folder).
+const canChoose = computed(() => signedIn.value && !connection.value?.repo && typeof api()?.chooseRepo === 'function')
+const repoChoice = ref('')
+async function chooseRepo(repo) {
+  if (busy.value) return
+  busy.value = true
+  error.value = ''
+  let done = false
+  try {
+    failed(await api().chooseRepo({ cwd: props.cwd, repo }))
+    done = true
+  } catch (err) {
+    if (alive) error.value = errorText(err)
+  } finally {
+    if (alive) busy.value = false
+  }
+  if (!done || !alive) return
+  repoChoice.value = ''
+  back()
+  listRequest++
+  items.value = []
+  connection.value = null
+  await loadStatus()
+}
 const failed = (result) => {
   if (!result?.ok) throw new Error(result?.error || t('github.requestFailed', 'GitHub request failed.'))
   return result
@@ -457,7 +483,15 @@ onBeforeUnmount(() => {
       <header class="issue-dialog-head">
         <div>
           <h2 id="github-dialog-title">GitHub</h2>
-          <p>{{ connection?.repo?.nameWithOwner || cwd || t('github.chooseWorkspace', 'Choose a project workspace') }}</p>
+          <p>
+            {{ connection?.repo?.nameWithOwner || cwd || t('github.chooseWorkspace', 'Choose a project workspace')
+            }}<template v-if="connection?.repo?.chosen && api()?.chooseRepo">
+              ·
+              <button class="issue-link" data-test="github-change-repo" :disabled="busy" @click="chooseRepo('')">
+                {{ t('github.changeRepo', 'Change repository') }}
+              </button></template
+            >
+          </p>
         </div>
         <button class="issue-btn" :aria-label="t('github.close', 'Close GitHub')" :disabled="busy" @click="close">
           ✕
@@ -478,6 +512,32 @@ onBeforeUnmount(() => {
         </p>
         <div v-if="!connected" class="issue-empty">
           <p v-if="loading">{{ t('github.checking', 'Checking GitHub…') }}</p>
+          <template v-else-if="canChoose">
+            <p>
+              {{
+                t(
+                  'github.noRepoHere',
+                  'This folder is not a Git clone with a GitHub remote. Choose the GitHub repository to show for this project.'
+                )
+              }}
+            </p>
+            <form class="issue-filters issue-choose-repo" @submit.prevent="chooseRepo(repoChoice.trim())">
+              <label class="issue-search"
+                >{{ t('github.repoChoice.label', 'Repository')
+                }}<input
+                  v-model="repoChoice"
+                  data-test="github-repo-choice"
+                  maxlength="2048"
+                  :placeholder="t('github.repoChoice.placeholder', 'owner/name or https://github.com/owner/name')"
+                  :disabled="busy" /></label
+              ><button class="issue-btn primary" type="submit" data-test="github-repo-use" :disabled="busy || !repoChoice.trim()">
+                {{ t('github.repoChoice.use', 'Use this repository') }}
+              </button>
+            </form>
+            <button class="issue-btn" data-test="github-connect-refresh" :disabled="busy" @click="loadStatus">
+              {{ t('github.refreshConnection', 'Refresh connection') }}
+            </button>
+          </template>
           <template v-else
             ><p>
               {{

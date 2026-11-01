@@ -425,8 +425,13 @@
         "issueBody": "description de l'issue",
         "prTitle": "titre de la pull request",
         "prBody": "description de la pull request",
-        "comment": "commentaire"
+        "comment": "commentaire",
+        "repository": "dépôt"
       },
+      "chooseLocal": "Un dépôt ne peut être choisi que pour un dossier local.",
+      "invalidChoice": "Indiquez un dépôt GitHub sous la forme propriétaire/nom ou par son URL.",
+      "needHead": "Ce dossier n'est pas un clone Git : indiquez la branche source.",
+      "chosenStartPoint": "Non disponible : ce dossier n'est pas un clone Git du dépôt.",
       "invalidNumber": "Numéro d'élément GitHub non valide.",
       "invalidKind": "Type d'élément GitHub non valide.",
       "invalidBranch": "Nom de branche non valide.",
