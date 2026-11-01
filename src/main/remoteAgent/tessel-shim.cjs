@@ -17,7 +17,7 @@ const net = require('net')
 const path = require('path')
 const crypto = require('crypto')
 
-const VERSION = '1.4.3'
+const VERSION = '1.4.4'
 const PROTOCOL = 1
 const SERVER_NAME = 'tessel-team'
 const SHIM_NAME = 'tessel-shim.cjs'

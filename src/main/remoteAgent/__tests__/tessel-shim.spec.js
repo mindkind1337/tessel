@@ -459,6 +459,7 @@ describe('round trip', () => {
   }, 20000)
 
   it('version', async () => {
+    expect(shim.VERSION).toBe('1.4.4')
     expect((await run(['version'])).out).toBe(`${shim.VERSION}\n`)
   })
 })

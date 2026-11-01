@@ -4,7 +4,8 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { startSignIn, signInStatus, activeSignIns, cancelSignIn, cancelAllSignIns, signInState, googleAccount } from '../mcpSignIn'
-import { cliError } from '../agentTools'
+import { addMcp, cliError, fullConfig } from '../agentTools'
+import { MCP_CATALOG, catalogSpec } from '../../renderer/src/mcpCatalog'
 
 const GOOGLE = { command: 'uvx', args: ['workspace-mcp', '--permissions', 'gmail:drafts'], env: { GOOGLE_OAUTH_CLIENT_ID: 'id' } }
 const OUTLOOK = { command: 'cmd', args: ['/c', 'npx', '-y', '@softeria/ms-365-mcp-server', '--discovery'], env: {} }
@@ -215,6 +216,32 @@ describe('startSignIn', () => {
     }
     expect(await startSignIn(googleRef, { email: 'me@gmail.com' }, { spawnFn, configOf: async () => GOOGLE, home: home(), ...fast })).toEqual({ ok: false, reason: 'noAnswer' })
     expect(spawnFn.child.kill).toHaveBeenCalled()
+  })
+
+  it('accepts the real catalog entries written by addMcp and read back by fullConfig (including quoted --allowed-scopes)', async () => {
+    const dir = home()
+    const prevKimi = process.env.KIMI_CODE_HOME
+    process.env.KIMI_CODE_HOME = dir
+    try {
+      const googleEntry = MCP_CATALOG.find((e) => e.id === 'google-workspace')
+      const outlookEntry = MCP_CATALOG.find((e) => e.id === 'outlook')
+      expect((await addMcp(catalogSpec(googleEntry, { GOOGLE_OAUTH_CLIENT_ID: 'cid', GOOGLE_OAUTH_CLIENT_SECRET: 'sec' }, 'kimi'))).ok).toBe(true)
+      expect((await addMcp(catalogSpec(outlookEntry, {}, 'kimi'))).ok).toBe(true)
+
+      const gSpawn = fakeSpawn({ start_google_auth: text(`x ${GOOGLE_PAGE}`) })
+      const gRes = await startSignIn({ agent: 'kimi', name: 'google-workspace', scope: 'user' }, { email: 'me@gmail.com' }, { spawnFn: gSpawn, configOf: fullConfig, baseEnv: { PATH: 'C:\\safe' }, home: dir, ...fast })
+      expect(gRes.ok).toBe(true)
+      expect(gSpawn.spawned[0].options.env).toEqual({ PATH: 'C:\\safe', GOOGLE_OAUTH_CLIENT_ID: 'cid', GOOGLE_OAUTH_CLIENT_SECRET: 'sec' })
+      cancelSignIn(gRes.id)
+
+      const mSpawn = fakeSpawn({ 'verify-login': text('{"success":true}') })
+      expect(await signInState({ agent: 'kimi', name: 'outlook', scope: 'user' }, { spawnFn: mSpawn, configOf: fullConfig, baseEnv: { PATH: 'C:\\safe' } })).toEqual({ signedIn: true, account: null })
+      expect(mSpawn.spawned[0].args).toContain('Mail.ReadWrite Calendars.ReadWrite Contacts.ReadWrite Files.Read')
+      expect(mSpawn.spawned[0].options.env).toEqual({ PATH: 'C:\\safe', MS365_MCP_TENANT_ID: 'consumers' })
+    } finally {
+      if (prevKimi === undefined) delete process.env.KIMI_CODE_HOME
+      else process.env.KIMI_CODE_HOME = prevKimi
+    }
   })
 
   it("Microsoft: gives the page and the code, and asks the server when it's done", async () => {
