@@ -123,7 +123,7 @@ import { createPasteImages, isImageFile, PASTE_LIMITS, pngSize } from './liveSha
 import { listProcesses, treeOf, waitForExit, killPids, listProcessNames, runningWork, stopProcessSnapshots, pidRunning } from './processTree'
 import { pipeName, trimBuffer } from './ptyProtocol'
 import { createUpdater } from './updater'
-import { createDevUpdate } from './devUpdate'
+import { createDevUpdate, devRestartCommand } from './devUpdate'
 import { createAgentUpdates } from './agentUpdates'
 import { createUpdateRunner, fakeSpawn, classifyFailure } from './agentUpdateRunner'
 import { createUpdateHistory } from './agentUpdateHistory'
@@ -5397,6 +5397,27 @@ const fromMainWindow = (event) => mainWindow && !mainWindow.isDestroyed() && eve
 ipcMain.handle('devUpdate:status', (event) => (fromMainWindow(event) ? devUpdate.status : { state: 'disabled' }))
 ipcMain.handle('devUpdate:check', (event) => (fromMainWindow(event) ? devUpdate.check() : { state: 'disabled' }))
 ipcMain.handle('devUpdate:restartNeeded', (event) => (fromMainWindow(event) ? devUpdate.restartNeeded() : { needed: false, count: 0, files: [] }))
+// "Restart now": the next Tessel starts after this one is gone. Like a crash or a
+// Ctrl+C it skips the closing steps (the window saved its layout first), so the
+// terminal host and every terminal, SSH session and agent in it keep running and
+// the new window reattaches to them.
+ipcMain.handle('devUpdate:restart', (event) => {
+  if (!fromMainWindow(event) || app.isPackaged) return { ok: false, reason: 'refused' }
+  const root = app.getAppPath()
+  if (!fs.existsSync(join(root, 'launch.mjs'))) return { ok: false, reason: 'no-launcher' }
+  try {
+    const cmd = devRestartCommand({ root, pid: process.pid })
+    const child = spawn(cmd.file, cmd.args, cmd.options)
+    child.on('error', (err) => log.warn('dev-update', `restart: the new Tessel did not start: ${err.message}`)) // i18n-ignore
+    child.unref()
+  } catch (err) {
+    log.warn('dev-update', `restart failed: ${err.message}`) // i18n-ignore
+    return { ok: false, reason: 'spawn' }
+  }
+  log.info('dev-update', 'restarting on the user\'s request: the next Tessel starts when this one is gone') // i18n-ignore
+  setTimeout(() => app.exit(0), 700)
+  return { ok: true }
+})
 ipcMain.handle('devUpdate:apply', (event) => (fromMainWindow(event) ? devUpdate.apply() : { ok: false, reason: 'refused' }))
 ipcMain.handle('update:status', () => updater.status)
 ipcMain.handle('update:check', () => updater.check())

@@ -36,12 +36,29 @@ export const MAIN_PATHS = ['src/main', 'src/preload', 'launch.mjs', 'electron.vi
 const RESTART_CACHE_MS = 5000
 const RESTART_LIST = 6
 
+// How "Restart now" starts the next Tessel: launch.mjs in the background (no
+// console, its messages go to dev-server.log), told to wait for this process to be
+// gone. Node is the one that started this dev run (npm sets npm_node_execpath),
+// never Electron's own program; the environment of the running dev server (its
+// address) is not passed on, the new one makes its own.
+export function devRestartCommand({ root, pid, env = process.env, execPath = process.execPath } = {}) {
+  const node = env.npm_node_execpath || (/electron(\.exe)?$/i.test(String(execPath)) ? 'node' : execPath)
+  const clean = { ...env }
+  for (const k of Object.keys(clean)) if (/^(ELECTRON_RENDERER_URL|ELECTRON_RUN_AS_NODE)$/i.test(k)) delete clean[k]
+  return {
+    file: node,
+    args: [`${String(root).replace(/[\\/]+$/, '')}/launch.mjs`, 'dev', '--hidden', '--wait-for', String(pid)],
+    options: { cwd: root, env: clean, detached: true, stdio: 'ignore', windowsHide: true }
+  }
+}
+
 export function createDevUpdate({ root, packaged = false, send = () => {}, git = gitRunner(root), now = Date.now, log = { info() {}, warn() {} } } = {}) {
   let status = { state: packaged ? 'disabled' : 'idle' }
   let busy = false
   // The commit the running app started from (read once, at start).
   const startHead = packaged ? Promise.resolve('') : git(['rev-parse', 'HEAD']).then((r) => (/^[0-9a-f]{40}$/.test(r.out) ? r.out : ''))
   let restartCache = null
+  let lastRestartSig = ''
   const set = (next) => {
     status = { ...next, checkedAt: next.checkedAt || status.checkedAt || null }
     send('devUpdate:status', status)
@@ -155,6 +172,10 @@ export function createDevUpdate({ root, packaged = false, send = () => {}, git =
       const names = r.ok && r.out ? r.out.split('\n').filter(Boolean) : []
       value = { needed: names.length > 0, count: names.length, files: names.slice(0, RESTART_LIST).map(oneLine) }
     }
+    // Said once per change, so a banner nobody can explain can be explained from the log.
+    const sig = `${head}|${value.files.join(',')}`
+    if (value.needed && sig !== lastRestartSig) log.info('dev-update', `restart needed: started from ${head.slice(0, 7)}, changed since: ${value.files.join(', ')}${value.count > value.files.length ? ' ...' : ''}`) // i18n-ignore
+    lastRestartSig = value.needed ? sig : ''
     restartCache = { at: now(), value }
     return value
   }

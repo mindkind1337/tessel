@@ -11,6 +11,27 @@ const mode = process.argv[2] || 'dev'
 const env = { ...process.env }
 delete env.ELECTRON_RUN_AS_NODE
 
+// --wait-for <pid>: the Tessel that asked for this restart ("Restart now" in its
+// window) is still closing; wait until it is gone (at most a minute), then a
+// moment more for its dev server to free its port and its cache.
+const waitIdx = process.argv.indexOf('--wait-for')
+if (waitIdx > 0) {
+  const pid = Number(process.argv[waitIdx + 1])
+  const alive = (p) => {
+    try {
+      process.kill(p, 0)
+      return true
+    } catch (err) {
+      return err && err.code === 'EPERM'
+    }
+  }
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+  if (Number.isInteger(pid) && pid > 0) {
+    for (let i = 0; i < 240 && alive(pid); i++) await sleep(250)
+    await sleep(2500)
+  }
+}
+
 // --hidden: run in the background with no window at all (the dev server's
 // messages go to a log file), and give the console back at once. It stops by
 // itself when Tessel is closed.

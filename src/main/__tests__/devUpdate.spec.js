@@ -8,7 +8,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { execFileSync } from 'node:child_process'
-import { createDevUpdate } from '../devUpdate'
+import { createDevUpdate, devRestartCommand } from '../devUpdate'
 
 const git = (cwd, ...args) => execFileSync('git', ['-C', cwd, '-c', 'user.name=t', '-c', 'user.email=t@t', '-c', 'commit.gpgsign=false', ...args], { encoding: 'utf8' }).trim()
 
@@ -152,5 +152,22 @@ describe('restart to apply: the background code changed since the app started', 
   it('an installed Tessel never shows it', async () => {
     const { du } = make({ packaged: true })
     expect((await du.restartNeeded()).needed).toBe(false)
+  })
+})
+
+describe('restart now: how the next Tessel starts', () => {
+  it('launch.mjs in the background, told to wait for this process; npm\u2019s node, never Electron\u2019s program', () => {
+    const c = devRestartCommand({ root: 'C:\\Tessel', pid: 4242, env: { npm_node_execpath: 'C:\\node\\node.exe', ELECTRON_RENDERER_URL: 'http://127.0.0.1:5737', ELECTRON_RUN_AS_NODE: '1', KEEP: 'x' }, execPath: 'C:\\Tessel\\node_modules\\electron\\dist\\electron.exe' })
+    expect(c.file).toBe('C:\\node\\node.exe')
+    expect(c.args).toEqual(['C:\\Tessel/launch.mjs', 'dev', '--hidden', '--wait-for', '4242'])
+    expect(c.options).toMatchObject({ cwd: 'C:\\Tessel', detached: true, stdio: 'ignore', windowsHide: true })
+    expect(c.options.env.KEEP).toBe('x')
+    expect(c.options.env.ELECTRON_RENDERER_URL).toBeUndefined()
+    expect(c.options.env.ELECTRON_RUN_AS_NODE).toBeUndefined()
+  })
+  it('no npm node known and Electron as the program: plain node from the path', () => {
+    const c = devRestartCommand({ root: '/repo/', pid: 1, env: {}, execPath: '/x/electron' })
+    expect(c.file).toBe('node')
+    expect(c.args[0]).toBe('/repo/launch.mjs')
   })
 })

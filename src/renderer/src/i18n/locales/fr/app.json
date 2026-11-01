@@ -988,7 +988,10 @@
       "restartTitle": "Redémarrer pour appliquer les changements",
       "restartLine": "Le code de la partie en arrière-plan a changé depuis le démarrage de Tessel ({{count}} fichier) : ce qui tourne est l'ancien.",
       "moreFiles": "… et d'autres",
-      "restartHow": "Fermez Tessel et relancez npm run dev. Vos terminaux et vos agents continuent de tourner : la fenêtre s'y rattache. Rien ne redémarre tout seul : faites-le quand ça vous arrange."
+      "restartHow": "Redémarrer maintenant lance la nouvelle Tessel en arrière-plan (ses messages vont dans le journal du serveur de développement) et ferme celle-ci. Vos terminaux et vos agents continuent de tourner : la fenêtre s'y rattache. Ou fermez Tessel et lancez npm run dev vous-même, quand ça vous arrange.",
+      "restartFailed": "Tessel n'a pas pu lancer la nouvelle : fermez-la et lancez npm run dev vous-même.",
+      "restarting": "Redémarrage…",
+      "restartNow": "Redémarrer maintenant"
     }
   },
   "links": {

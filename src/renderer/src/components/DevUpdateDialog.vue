@@ -14,7 +14,7 @@ const props = defineProps({
   // 'restart': the background code changed since Tessel started (status is { count, files }).
   mode: { type: String, default: 'update' }
 })
-const emit = defineEmits(['apply', 'close', 'copy'])
+const emit = defineEmits(['apply', 'close', 'copy', 'restart'])
 
 const busy = ref(false)
 const failed = ref('')
@@ -63,6 +63,25 @@ const afterText = computed(() => {
   return parts.join(' ')
 })
 
+const restarting = ref(false)
+// The new Tessel starts in the background and this window closes; if it does
+// not, the reason is said here.
+async function restart() {
+  if (restarting.value) return
+  restarting.value = true
+  failed.value = ''
+  const r = await new Promise((resolve) => emit('restart', resolve))
+  if (!r || !r.ok) {
+    restarting.value = false
+    failed.value = (r && r.reason) || 'spawn'
+  }
+}
+// After an update, restarting is offered unless the packages changed (npm install first).
+const canRestartAfter = computed(() => !!result.value && !result.value.depsChanged && result.value.mainChanged !== false)
+const restartFailed = computed(() =>
+  failed.value === 'cancelled' ? '' : failed.value ? t('app.devUpdate.restartFailed', 'Tessel could not start the new one: close it and run npm run dev yourself.') : ''
+)
+
 async function apply() {
   if (busy.value) return
   busy.value = true
@@ -106,7 +125,8 @@ onMounted(() => cardEl.value && cardEl.value.focus())
           </li>
           <li v-if="s.count > s.files.length" class="dim">{{ t('app.devUpdate.moreFiles', '… and more') }}</li>
         </ul>
-        <p class="update-line dim">{{ t('app.devUpdate.restartHow', 'Close Tessel and run npm run dev again. Your terminals and agents keep running: the window reattaches to them. Nothing restarts by itself, so do it when it suits you.') }}</p>
+        <p class="update-line dim">{{ t('app.devUpdate.restartHow', 'Restart now starts the new Tessel in the background (its messages go to the dev-server log) and closes this one. Your terminals and agents keep running: the window reattaches to them. Or close Tessel and run npm run dev yourself, when it suits you.') }}</p>
+        <p v-if="restartFailed" class="update-line dim" data-test="dev-restart-error">{{ restartFailed }}</p>
       </template>
       <template v-else-if="!result">
         <p class="update-line">{{ line }}</p>
@@ -120,10 +140,16 @@ onMounted(() => cardEl.value && cardEl.value.focus())
         <p v-if="reasonText && !blockedText" class="update-line dim" data-test="dev-update-error">{{ reasonText }}</p>
         <p v-if="s.depsChanged" class="update-line dim">{{ t('app.devUpdate.depsWarn', 'These builds change the packages (package.json): you will have to run npm install.') }}</p>
       </template>
-      <p v-else class="update-line" data-test="dev-update-after">{{ afterText }}</p>
+      <template v-else>
+        <p class="update-line" data-test="dev-update-after">{{ afterText }}</p>
+        <p v-if="restartFailed" class="update-line dim" data-test="dev-restart-error">{{ restartFailed }}</p>
+      </template>
 
       <div class="update-actions">
         <button class="exit-btn" @click="emit('close')">{{ result || isRestart ? t('app.devUpdate.close', 'Close') : t('app.update.later', 'Later') }}</button>
+        <button v-if="isRestart || canRestartAfter" class="exit-btn primary" :disabled="restarting" data-test="dev-restart-now" @click="restart">
+          {{ restarting ? t('app.devUpdate.restarting', 'Restarting…') : t('app.devUpdate.restartNow', 'Restart now') }}
+        </button>
         <button v-if="!isRestart && !result && blockedText" class="exit-btn" data-test="dev-update-copy" @click="emit('copy', 'git pull --ff-only')">
           <Copy :size="12" aria-hidden="true" /> {{ t('app.devUpdate.copy', 'Copy git pull') }}
         </button>

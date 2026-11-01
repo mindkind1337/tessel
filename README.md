@@ -162,7 +162,10 @@ working on Tessel itself (see [Build from source](#build-from-source)).
   interface. When the background code changed since Tessel started, a yellow
   **↻ restart** button next to **dev** lists the files and says to restart when
   it suits you; your terminals and agents keep running. `TESSEL_WATCH=1 npm run dev`
-  brings the automatic restart back.
+  brings the automatic restart back. **Restart now**, in that window (and after an
+  update), starts the new Tessel in the background and closes this one without
+  stopping the terminal host: terminals, SSH sessions and agents keep running and the
+  new window reattaches to them; editor files are asked about first.
 - **Messages between projects**: an agent can write to an agent of any other
   project, on this computer or on any SSH host (`project_agents`, `project_send`,
   `project_inbox`); Tessel relays the message, with no terminal or SSH session to

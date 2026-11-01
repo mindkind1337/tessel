@@ -3680,6 +3680,30 @@ async function readDevRestart() {
   }
 }
 const devUpdateShown = computed(() => isDev && (devUpdate.value.state === 'available' || devUpdate.value.state === 'updated'))
+// "Restart now": editor files are asked about first, everything is written, then
+// the main process starts the next Tessel and leaves (terminals keep running).
+async function restartDevNow(resolve) {
+  const dirty = Object.values(editorDocs)
+    .filter((d) => d.dirty)
+    .map((d) => d.path)
+  if (dirty.length && !(await askEditorClose(dirty))) return resolve({ ok: false, reason: 'cancelled' })
+  saveLayoutNow()
+  await saveActivityNow({ closing: true })
+  if (taskSave.cancel()) {
+    try {
+      await saveBoard()
+    } catch {
+      /* best-effort */
+    }
+  }
+  let r = { ok: false, reason: 'spawn' }
+  try {
+    r = await window.shellApi.devUpdate.restart()
+  } catch {
+    /* said in the dialog */
+  }
+  resolve(r)
+}
 function copyDevUpdateCommand(text) {
   if (navigator.clipboard) navigator.clipboard.writeText(text).catch(() => {})
 }
@@ -14929,6 +14953,7 @@ onBeforeUnmount(() => {
       v-if="devRestartOpen && devRestart.needed"
       mode="restart"
       :status="devRestart"
+      @restart="restartDevNow"
       @close="devRestartOpen = false"
     />
     <DevUpdateDialog
@@ -14936,6 +14961,7 @@ onBeforeUnmount(() => {
       :status="devUpdate"
       :build="build"
       @apply="applyDevUpdate"
+      @restart="restartDevNow"
       @copy="copyDevUpdateCommand"
       @close="devUpdateOpen = false"
     />
