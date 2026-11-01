@@ -93,6 +93,9 @@ working on Tessel itself (see [Build from source](#build-from-source)).
   CSS, images and fonts load by their paths. As with VS Code's Workspace Trust,
   one question per folder decides whether its scripts run; without trust the
   page shows without them. A link to another site is held back until you click.
+  Trust is specific to the served folder, including case-sensitive SSH paths;
+  changing the served root checks trust again. Static HTML and Markdown previews
+  do not automatically read images from Windows network shares.
 - **Side panel**: Dashboard of agents, agent session history, task history
   (time, tokens and estimated cost per task), files, Source Control and web
   pages; each tab says when it is loading.

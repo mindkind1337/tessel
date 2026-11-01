@@ -32,6 +32,23 @@ const open = async (props = {}) => {
 const sandbox = () => w.get('[data-test="html-live-frame"]').attributes('sandbox')
 
 describe('the folder is asked about once', () => {
+  it('does not inherit trust across case-distinct remote folders', async () => {
+    await open({ file: 'ssh://host/srv/Site/index.html', root: 'ssh://host/srv/Site' })
+    await w.get('[data-test="html-trust-yes"]').trigger('click')
+    await flushPromises()
+    await w.setProps({ file: 'ssh://host/srv/site/index.html', root: 'ssh://host/srv/site' })
+    await flushPromises()
+    expect(urls.at(-1).scripts).toBe(false)
+    expect(w.find('[data-test="html-trust"]').exists()).toBe(true)
+  })
+  it('rechecks trust when the served root changes without changing the file', async () => {
+    await open()
+    await w.get('[data-test="html-trust-yes"]').trigger('click')
+    await flushPromises()
+    await w.setProps({ root: 'C:\\sites' })
+    await flushPromises()
+    expect(urls.at(-1)).toMatchObject({ root: 'C:\\sites', scripts: false })
+  })
   it('first time: the page shows without scripts and the question is there; nothing is decided for the person', async () => {
     await open()
     expect(w.find('[data-test="html-trust"]').exists()).toBe(true)

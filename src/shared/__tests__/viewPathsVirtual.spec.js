@@ -3,7 +3,17 @@
 // there; never an absolute path, a drive, a share (a host could make the
 // guest's computer open SMB to any server) or a file: address.
 import { describe, it, expect } from 'vitest'
-import { resolveFrom } from '../viewPaths'
+import { resolveFrom, resolvePreviewImage } from '../viewPaths'
+
+it('blocks passive network images but keeps local and virtual relative assets', () => {
+  for (const href of ['\\\\host.invalid\\share\\x.png', '%5C%5Chost.invalid%5Cshare%5Cx.png', '\\\\?\\UNC\\host.invalid\\share\\x.png']) {
+    expect(resolvePreviewImage('C:\\docs\\index.html', href)).toBe(null)
+  }
+  expect(resolvePreviewImage('\\\\host.invalid\\share\\index.html', 'x.png')).toBe(null)
+  expect(resolvePreviewImage('C:\\docs\\index.html', 'x.png')).toBe('C:\\docs\\x.png')
+  expect(resolvePreviewImage('ssh://host/srv/index.html', 'x.png')).toBe(resolveFrom('ssh://host/srv/index.html', 'x.png'))
+  expect(resolvePreviewImage('lshare://p1\\index.html', 'x.png')).toBe(resolveFrom('lshare://p1\\index.html', 'x.png'))
+})
 
 const DOC = 'lshare://p1\\docs\\README.md'
 
