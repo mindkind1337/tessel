@@ -22,6 +22,19 @@ md.renderer.rules.fence = (tokens, idx, options, env, self) => {
 // Images: a local path is kept aside (data-local-src) and read by the viewer;
 // remote ones cannot load in Tessel (only their text shows).
 function onElement(node) {
+  // Raw HTML in Markdown is passive content. Do not let alternate resource
+  // attributes bypass the controlled IMG loader (notably file:// UNC paths).
+  for (const attr of ['srcset', 'style']) node.removeAttribute(attr)
+  for (const attr of ['poster', 'background', ...(node.nodeName === 'IMG' ? [] : ['src'])]) {
+    const value = node.getAttribute(attr)
+    if (value && !/^(?:data:|blob:)/i.test(value.trim())) node.removeAttribute(attr)
+  }
+  if (node.nodeName !== 'A') {
+    for (const attr of ['href', 'xlink:href']) {
+      const value = node.getAttribute(attr)
+      if (value && !value.startsWith('#')) node.removeAttribute(attr)
+    }
+  }
   if (node.nodeName === 'IMG') {
     const src = node.getAttribute('src') || ''
     if (!/^data:image\//i.test(src)) {

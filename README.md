@@ -95,7 +95,9 @@ working on Tessel itself (see [Build from source](#build-from-source)).
   page shows without them. A link to another site is held back until you click.
   Trust is specific to the served folder, including case-sensitive SSH paths;
   changing the served root checks trust again. Static HTML and Markdown previews
-  do not automatically read images from Windows network shares.
+  do not automatically contact Windows network shares; a document opened on a
+  share can load images from that same share. Raw HTML inside Markdown cannot
+  load external media or use inline styles to fetch resources.
 - **Side panel**: Dashboard of agents, agent session history, task history
   (time, tokens and estimated cost per task), files, Source Control and web
   pages; each tab says when it is loading.

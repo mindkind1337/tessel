@@ -25,7 +25,8 @@ const folderKey = () => {
   const folder = String(props.root || props.file.replace(/[\\/][^\\/]*$/, ''))
   // Old remote keys were lowercased and cannot prove which Linux directory
   // was approved. Use a new namespace and ask again instead of migrating them.
-  return /^[A-Za-z]:[\\/]|^\\\\/.test(folder) ? folder.toLowerCase() : `case-sensitive:${folder}`
+  const wsl = /^\\\\(?:wsl\$|wsl\.localhost)\\/i.test(folder)
+  return !wsl && /^[A-Za-z]:[\\/]|^\\\\/.test(folder) ? folder.toLowerCase() : `case-sensitive:${folder}`
 }
 function readTrust() {
   try {

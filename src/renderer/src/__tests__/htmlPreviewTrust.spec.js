@@ -32,6 +32,15 @@ const open = async (props = {}) => {
 const sandbox = () => w.get('[data-test="html-live-frame"]').attributes('sandbox')
 
 describe('the folder is asked about once', () => {
+  it.each(['wsl$', 'wsl.localhost'])('keeps Linux case distinctions on %s shares', async (host) => {
+    const root = `\\\\${host}\\Ubuntu\\srv\\Site`
+    await open({ file: `${root}\\index.html`, root })
+    await w.get('[data-test="html-trust-yes"]').trigger('click')
+    await flushPromises()
+    await w.setProps({ file: `${root.toLowerCase()}\\index.html`, root: root.toLowerCase() })
+    await flushPromises()
+    expect(urls.at(-1).scripts).toBe(false)
+  })
   it('does not inherit trust across case-distinct remote folders', async () => {
     await open({ file: 'ssh://host/srv/Site/index.html', root: 'ssh://host/srv/Site' })
     await w.get('[data-test="html-trust-yes"]').trigger('click')
