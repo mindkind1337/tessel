@@ -896,40 +896,152 @@ body.popup-open .toolbar {
 }
 .pane-agent-term-log {
   position: absolute;
-  top: 24px;
+  top: 26px;
   right: 0;
   z-index: 20;
-  width: min(420px, 80vw);
-  max-height: 260px;
+  width: min(580px, 92vw);
+  max-height: min(64vh, 520px);
   overflow: auto;
-  padding: 6px;
+  padding: 0;
   border: 1px solid var(--border-strong);
-  border-radius: 8px;
+  border-radius: 10px;
   background: var(--surface);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
   color: var(--text);
   font-weight: 400;
+  font-size: 12px;
   cursor: default;
 }
-.pane-agent-term-row {
-  display: grid;
-  gap: 2px;
-  padding: 4px 4px;
+/* What agents ran here (AgentRunsPanel.vue): one card per run. */
+.arp-head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px 8px;
+  background: var(--surface);
   border-bottom: 1px solid var(--border);
+  font-size: 12.5px;
 }
-.pane-agent-term-row:last-child {
-  border-bottom: none;
-}
-.pane-agent-term-meta,
-.pane-agent-term-empty {
+.arp-count {
+  min-width: 20px;
+  padding: 0 6px;
+  border-radius: 10px;
+  background: var(--surface-2, color-mix(in srgb, var(--text) 10%, transparent));
   color: var(--text-dim);
+  text-align: center;
+  font-size: 11px;
+}
+.arp-empty {
+  margin: 0;
+  padding: 16px 12px;
+  color: var(--text-dim);
+}
+.arp-list {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 10px;
+  list-style: none;
+}
+.arp-card {
+  display: grid;
+  gap: 6px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--text) 3%, transparent);
+}
+.arp-card.arp-read {
+  border-left-color: var(--text-dim);
+}
+.arp-card.arp-keys {
+  border-left-color: var(--warn, #d9a441);
+}
+.arp-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.arp-kind {
+  flex: none;
+  padding: 1px 7px;
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  color: var(--accent);
+  font-size: 10.5px;
+  font-weight: 600;
+}
+.arp-read .arp-kind {
+  background: color-mix(in srgb, var(--text-dim) 18%, transparent);
+  color: var(--text-dim);
+}
+.arp-agent {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+}
+.arp-yolo {
+  flex: none;
+  padding: 1px 7px;
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--warn, #d9a441) 20%, transparent);
+  color: var(--warn, #d9a441);
   font-size: 10.5px;
 }
-.pane-agent-term-cmd {
-  font-family: var(--mono, monospace);
+.arp-time {
+  flex: none;
+  margin-left: auto;
+  color: var(--text-dim);
   font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.arp-body {
+  display: grid;
+  gap: 4px;
+}
+.arp-cmd {
+  position: relative;
+  margin: 0;
+  padding: 7px 9px;
+  border-radius: 6px;
+  background: var(--term, rgba(0, 0, 0, 0.25));
+  font-family: var(--mono, monospace);
+  font-size: 11.5px;
+  line-height: 1.5;
   white-space: pre-wrap;
-  word-break: break-all;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+.arp-cmd.folded {
+  max-height: 6.4em;
+  overflow: hidden;
+  -webkit-mask-image: linear-gradient(to bottom, #000 70%, transparent);
+  mask-image: linear-gradient(to bottom, #000 70%, transparent);
+}
+.arp-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+.arp-btn {
+  padding: 1px 9px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: none;
+  color: var(--text-dim);
+  font-size: 11px;
+  cursor: pointer;
+}
+.arp-btn:hover {
+  background: var(--surface-hover, color-mix(in srgb, var(--text) 8%, transparent));
+  color: var(--text);
 }
 
 .pane-nav-btn {

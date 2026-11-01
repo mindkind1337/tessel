@@ -819,7 +819,16 @@
       "used": "Commandes d’agents ({{count}})",
       "using": "{{agent}} utilise ce terminal",
       "read": "a lu ce terminal",
-      "yolo": "Yolo, sans demander"
+      "yolo": "Yolo, sans demander",
+      "logTitle": "Lancé par des agents dans ce terminal",
+      "kindCommand": "Commande",
+      "kindKeys": "Touches",
+      "kindRead": "Lecture",
+      "yoloHint": "Cet agent tourne en Yolo : ses commandes dans son propre terminal ne sont pas demandées d'abord.",
+      "showMore": "Tout afficher",
+      "showLess": "Réduire",
+      "copy": "Copier",
+      "copied": "Commande copiée"
     },
     "account": {
       "chip": "Compte : {{account}}",

@@ -78,6 +78,7 @@ import { modelChoiceLabel, sessionPillLabel } from '../sessionOptionLabels'
 import { switchClaudeModel, typeCommand } from '../claudeModelSwitch'
 import SessionOptionPicker from './SessionOptionPicker.vue'
 import AgentChildren from './AgentChildren.vue'
+import AgentRunsPanel from './AgentRunsPanel.vue'
 import NativeChatTranscriptView from './chat/orca/NativeChatTranscriptView.vue'
 import {
   KEY_SHIFT_TAB,
@@ -1131,6 +1132,12 @@ function stopTerminalAgent() {
       if (ok && ctx.toast) ctx.toast(t('pane.agentTerminal.stopped', 'The agent can no longer type in this terminal.'), { timeout: 5000 })
     })
     .catch(() => {})
+}
+// The copy button of a run in the agent commands list.
+function copyAgentRun(text) {
+  if (!text || !window.shellApi.writeClipboard) return
+  window.shellApi.writeClipboard(String(text))
+  if (ctx.toast) ctx.toast(t('pane.agentTerminal.copied', 'Command copied'), { timeout: 2000 })
 }
 function agentRunTime(at) {
   try {
@@ -4449,12 +4456,8 @@ const paneMenuBindings = computed(() => ({
         <button v-if="agentUser" type="button" class="pane-agent-term-stop" data-test="pane-agent-terminal-stop" :title="t('pane.agentTerminal.stopHint', 'Stop this agent from typing in this terminal')" @click.stop="stopTerminalAgent">
           {{ t('pane.agentTerminal.stop', 'Stop') }}
         </button>
-        <div v-if="agentLogOpen" class="pane-agent-term-log" role="list" data-test="pane-agent-terminal-list" @click.stop>
-          <div v-if="!agentRuns.length" class="pane-agent-term-empty">{{ t('pane.agentTerminal.noLog', 'Nothing run yet') }}</div>
-          <div v-for="(r, i) in agentRuns.slice().reverse()" :key="i" class="pane-agent-term-row" role="listitem">
-            <span class="pane-agent-term-meta">{{ agentRunTime(r.at) }} · {{ r.agent }}{{ r.kind === 'keys' ? ` · ${t('pane.agentTerminal.keys', 'keys')}` : r.kind === 'read' ? ` · ${t('pane.agentTerminal.read', 'read this terminal')}` : '' }}{{ r.yolo ? ` · ${t('pane.agentTerminal.yolo', 'Yolo, not asked')}` : '' }}</span>
-            <code v-if="r.text" class="pane-agent-term-cmd">{{ r.text }}</code>
-          </div>
+        <div v-if="agentLogOpen" class="pane-agent-term-log" @click.stop>
+          <AgentRunsPanel :runs="agentRuns" @copy="copyAgentRun" />
         </div>
       </div>
       <div class="pane-nav-actions" @mousedown.stop>
