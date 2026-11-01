@@ -55,6 +55,13 @@ describe('quoting', () => {
     expect(() => prelude('x; rm')).toThrow()
     expect(prelude('0'.repeat(32))).toContain('@@R %s ok')
   })
+  it("the host's own work comes first: the helper shell (every git read and file read it runs) takes the lowest priority, and where there is no renice or ionice nothing changes", () => {
+    const script = prelude('0'.repeat(32))
+    expect(script).toContain('renice -n 15 -p $$ >/dev/null 2>&1 || :')
+    expect(script).toContain('ionice -c 3 -p $$ >/dev/null 2>&1 || :')
+    // Before any command it serves (the functions are defined after it).
+    expect(script.indexOf('renice -n 15')).toBeLessThan(script.indexOf('__t_git() {'))
+  })
 })
 
 // A fake child process: what the session writes, and what it answers.

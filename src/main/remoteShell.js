@@ -278,6 +278,8 @@ __t_ent() {
   [ "$__P" = "$__R" ] && return 90
   return 0
 }
+renice -n 15 -p $$ >/dev/null 2>&1 || :
+ionice -c 3 -p $$ >/dev/null 2>&1 || :
 __t_git() { __g=$1; shift; LC_ALL=C LANGUAGE= GIT_TERMINAL_PROMPT=0 GIT_OPTIONAL_LOCKS=0 GIT_MERGE_AUTOEDIT=no GIT_EDITOR=: GIT_PAGER=cat PAGER=cat git -C "$__g" -c core.fsmonitor=false -c log.showSignature=false -c core.quotepath=off "$@"; }
 __t_up() { : >"$__T_D/u"; }
 if mkfifo "$__T_D/p" 2>/dev/null; then __T_FIFO=1; else __T_FIFO=; fi
