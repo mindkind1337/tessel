@@ -95,7 +95,8 @@ working on Tessel itself (see [Build from source](#build-from-source)).
   page shows without them. A link to another site is held back until you click.
 - **Side panel**: Dashboard of agents, agent session history, task history
   (time, tokens and estimated cost per task), files, Source Control and web
-  pages; each tab says when it is loading.
+  pages; each tab says when it is loading. In the Dashboard, right-click an
+  agent's card to go to its pane, put it to sleep (or wake it), or close it.
 
 ### Remote hosts over SSH (like VS Code Remote-SSH)
 

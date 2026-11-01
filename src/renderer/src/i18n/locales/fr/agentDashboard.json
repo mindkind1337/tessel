@@ -34,7 +34,8 @@
       "where": "{{project}} · {{branch}}",
       "sub": "{{agent}} · {{project}}",
       "pill": "{{state}} {{time}}",
-      "teamLead": "{{team}} (chef)"
+      "teamLead": "{{team}} (chef)",
+      "close": "Fermer"
     },
     "sleep": {
       "button": "Mettre en veille les inactifs ({{count}})",
