@@ -149,6 +149,24 @@ describe('restart to apply: the background code changed since the app started', 
     git(mine, 'add', 'src/preload/p.js')
     expect(await du.restartNeeded()).toMatchObject({ needed: true, count: 1, files: ['src/preload/p.js'] })
   })
+  it('an edit already there at start is in the running code: no banner after a restart, until it changes again', async () => {
+    fs.mkdirSync(path.join(mine, 'src/main'), { recursive: true })
+    commit(mine, 'src/main/m.js', 'one', 'main file')
+    fs.writeFileSync(path.join(mine, 'src/main/m.js'), 'two')
+    fs.writeFileSync(path.join(mine, 'src/main/n.js'), 'new')
+    git(mine, 'add', 'src/main/n.js')
+    const du = fresh()
+    expect(await du.restartNeeded()).toEqual({ needed: false, count: 0, files: [] })
+    fs.writeFileSync(path.join(mine, 'src/main/m.js'), 'three')
+    expect(await du.restartNeeded()).toEqual({ needed: true, count: 1, files: ['src/main/m.js'] })
+    // Put back as it was at start: the running code again.
+    fs.writeFileSync(path.join(mine, 'src/main/m.js'), 'two')
+    expect((await du.restartNeeded()).needed).toBe(false)
+    // Committed as it was: the same files, still nothing to restart for.
+    git(mine, 'add', '-A')
+    git(mine, 'commit', '-q', '-m', 'commit the edits')
+    expect((await du.restartNeeded()).needed).toBe(false)
+  })
   it('an installed Tessel never shows it', async () => {
     const { du } = make({ packaged: true })
     expect((await du.restartNeeded()).needed).toBe(false)

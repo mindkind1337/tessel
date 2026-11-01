@@ -9,6 +9,7 @@
 // fast-forwards: no merge, no stash, no reset, no install of packages (a
 // change to package.json is said, the user runs npm install themselves).
 import { execFile } from 'child_process'
+import { createHash } from 'crypto'
 
 export const FIRST_CHECK_MS = 90 * 1000
 export const CHECK_EVERY_MS = 30 * 60 * 1000
@@ -21,7 +22,7 @@ const SAFE_NAME = /^[A-Za-z0-9._/-]{1,100}$/
 export function gitRunner(root, run = execFile) {
   return (args, timeout = 8000) =>
     new Promise((resolve) => {
-      run('git', ['-C', root, ...args], { timeout, windowsHide: true, env: { ...process.env, GIT_TERMINAL_PROMPT: '0', GIT_ASKPASS: '', GCM_INTERACTIVE: 'never' } }, (err, out) =>
+      run('git', ['-C', root, ...args], { timeout, windowsHide: true, maxBuffer: 32 * 1024 * 1024, env: { ...process.env, GIT_TERMINAL_PROMPT: '0', GIT_ASKPASS: '', GCM_INTERACTIVE: 'never' } }, (err, out) =>
         resolve({ ok: !err, out: err ? '' : String(out).trim() })
       )
     })
@@ -57,6 +58,8 @@ export function createDevUpdate({ root, packaged = false, send = () => {}, git =
   let busy = false
   // The commit the running app started from (read once, at start).
   const startHead = packaged ? Promise.resolve('') : git(['rev-parse', 'HEAD']).then((r) => (/^[0-9a-f]{40}$/.test(r.out) ? r.out : ''))
+  // Its edits not committed at start: they are in the running code too.
+  const startEdits = startHead.then((head) => (head ? mainEdits(head) : null)).then((e) => e || new Map())
   let restartCache = null
   let lastRestartSig = ''
   const set = (next) => {
@@ -162,14 +165,30 @@ export function createDevUpdate({ root, packaged = false, send = () => {}, git =
   // Has the background code changed on disk (committed, merged or edited) since this
   // app started? The app does not restart by itself in dev (launch.mjs), so the
   // window shows a banner. -> { needed, count, files }
+  // -> Map(file -> hash of its diff) of the background code on disk against the
+  // start commit, or null when git cannot tell.
+  async function mainEdits(head) {
+    const r = await git(['diff', '--no-color', '--no-ext-diff', '--no-renames', head, '--', ...MAIN_PATHS])
+    if (!r.ok) return null
+    const edits = new Map()
+    for (const chunk of r.out.split(/^(?=diff --git )/m)) {
+      const m = /^diff --git a\/(.+?) b\//.exec(chunk)
+      // trimEnd: git's output is trimmed, so the last file's chunk may lose its newline.
+      if (m) edits.set(m[1], createHash('sha1').update(chunk.trimEnd()).digest('hex'))
+    }
+    return edits
+  }
+
   async function restartNeeded() {
     if (packaged) return { needed: false, count: 0, files: [] }
     if (restartCache && now() - restartCache.at < RESTART_CACHE_MS) return restartCache.value
     const head = await startHead
     let value = { needed: false, count: 0, files: [] }
-    if (head) {
-      const r = await git(['diff', '--name-only', head, '--', ...MAIN_PATHS])
-      const names = r.ok && r.out ? r.out.split('\n').filter(Boolean) : []
+    const [before, edits] = head ? [await startEdits, await mainEdits(head)] : []
+    if (edits) {
+      // An edit already there at start (an agent's work not committed) is not news:
+      // only a file that differs from how it was then.
+      const names = [...new Set([...before.keys(), ...edits.keys()])].filter((n) => before.get(n) !== edits.get(n)).sort()
       value = { needed: names.length > 0, count: names.length, files: names.slice(0, RESTART_LIST).map(oneLine) }
     }
     // Said once per change, so a banner nobody can explain can be explained from the log.
