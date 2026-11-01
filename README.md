@@ -146,7 +146,11 @@ working on Tessel itself (see [Build from source](#build-from-source)).
   themselves.
 - **MCP servers and tools**: see every MCP server for Claude Code and Codex,
   test the connection, copy a server to another agent, and install from a
-  catalog of popular servers and developer tools.
+  catalog of popular servers and developer tools. Its Productivity group connects
+  agents to your accounts: Gmail, Google Calendar and Drive (with your own free
+  Google Cloud OAuth client), Outlook and OneDrive for personal Microsoft
+  accounts, Dropbox, Todoist, Airtable, ClickUp and monday.com. Gmail and Outlook
+  can read mail and write drafts, but not send mail.
 - **Browser tools for agents**: an agent can open pages, click, fill, read and
   take screenshots in Tessel's browser; you see a badge on the page and can
   stop it. After you import cookies, agents use a separate session without

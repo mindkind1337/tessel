@@ -33,4 +33,22 @@ describe('MCP catalog', () => {
     expect(codex.headers).toBeUndefined()
     expect(codex.bearerEnvVar).toBe('GITHUB_PERSONAL_ACCESS_TOKEN')
   })
+
+  it('gives every agent the same Google client and the same no-send rights', () => {
+    const answers = { GOOGLE_OAUTH_CLIENT_ID: 'id1', GOOGLE_OAUTH_CLIENT_SECRET: 's1' }
+    for (const agent of ['claude', 'codex', 'gemini', 'opencode']) {
+      const spec = catalogSpec(byId('google-workspace'), answers, agent)
+      expect(spec.commandLine).toBe('uvx workspace-mcp --permissions gmail:drafts calendar:full drive:readonly')
+      expect(spec.env).toBe('GOOGLE_OAUTH_CLIENT_ID=id1\nGOOGLE_OAUTH_CLIENT_SECRET=s1')
+    }
+  })
+
+  it("sets an entry's fixed environment without asking, ahead of the answers", () => {
+    const spec = catalogSpec(byId('outlook'), {}, 'codex')
+    expect(spec.env).toBe('MS365_MCP_TENANT_ID=consumers')
+    expect(spec.commandLine).toContain('--allowed-scopes "Mail.ReadWrite Calendars.ReadWrite Contacts.ReadWrite Files.Read"')
+    expect(spec.commandLine).not.toContain('Mail.Send')
+    const both = catalogSpec({ ...byId('outlook'), inputs: [{ key: 'K', as: 'env' }] }, { K: 'v' }, 'codex')
+    expect(both.env).toBe('MS365_MCP_TENANT_ID=consumers\nK=v')
+  })
 })

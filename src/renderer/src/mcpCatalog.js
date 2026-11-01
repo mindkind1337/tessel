@@ -6,13 +6,14 @@
 //               'header' (HTTP header for Claude Code)
 // `requires` names a command that must be installed (see Tools).
 // `auth: 'oauth'` means the server asks you to sign in on first use.
+// `env` is set for every agent, without asking.
 // `docs` is its documentation (checked to exist); an npx or uvx server
 // without one links to its package (catalogDocs).
 // Descriptions, labels and help are getters, so they read in the current
 // language when shown.
 import { t } from './i18n'
 
-export const MCP_CATEGORIES = ['All', 'Browser', 'Docs', 'Code', 'Data', 'Services', 'Utility']
+export const MCP_CATEGORIES = ['All', 'Browser', 'Docs', 'Code', 'Data', 'Services', 'Productivity', 'Utility']
 
 // The category's name in the interface's language (the value stays English).
 export function categoryLabel(category) {
@@ -23,6 +24,7 @@ export function categoryLabel(category) {
     Code: () => t('mcp.category.code', 'Code'),
     Data: () => t('mcp.category.data', 'Data'),
     Services: () => t('mcp.category.services', 'Services'),
+    Productivity: () => t('mcp.category.productivity', 'Productivity'),
     Utility: () => t('mcp.category.utility', 'Utility')
   }
   return labels[category] ? labels[category]() : category
@@ -388,6 +390,122 @@ export const MCP_CATALOG = [
     url: 'https://mcp.vercel.com',
     docs: 'https://vercel.com/docs/mcp/vercel-mcp',
     auth: 'oauth'
+  },
+  {
+    id: 'google-workspace',
+    name: 'Gmail, Calendar, Drive', // i18n-ignore
+    category: 'Productivity',
+    accent: '#ea4335',
+    get desc() {
+      return t('mcp.catalog.google-workspace.desc', 'Search and read your mail and write drafts (it cannot send mail), manage your calendar, read your Drive. Community server that works with every agent.')
+    },
+    transport: 'stdio',
+    command: 'uvx workspace-mcp --permissions gmail:drafts calendar:full drive:readonly',
+    requires: 'uvx',
+    docs: 'https://workspacemcp.com/quick-start',
+    auth: 'oauth',
+    inputs: [
+      {
+        key: 'GOOGLE_OAUTH_CLIENT_ID',
+        get label() {
+          return t('mcp.catalog.google-workspace.clientId', 'Google OAuth client ID')
+        },
+        kind: 'text',
+        as: 'env',
+        get help() {
+          return t('mcp.catalog.google-workspace.clientIdHelp', 'At console.cloud.google.com: enable the Gmail, Calendar and Drive APIs, add yourself as a test user, then create an OAuth client of type Desktop app.')
+        }
+      },
+      {
+        key: 'GOOGLE_OAUTH_CLIENT_SECRET',
+        get label() {
+          return t('mcp.catalog.google-workspace.clientSecret', 'Google OAuth client secret')
+        },
+        kind: 'secret',
+        as: 'env'
+      }
+    ]
+  },
+  {
+    id: 'outlook',
+    name: 'Outlook, OneDrive', // i18n-ignore
+    category: 'Productivity',
+    accent: '#0f6cbd',
+    get desc() {
+      return t('mcp.catalog.outlook.desc', 'Personal Microsoft accounts: read your mail and write drafts (it cannot send mail), manage your calendar and contacts, read your OneDrive. Community server that works with every agent. Work accounts are not covered.')
+    },
+    transport: 'stdio',
+    command: 'npx -y @softeria/ms-365-mcp-server --discovery --allowed-scopes "Mail.ReadWrite Calendars.ReadWrite Contacts.ReadWrite Files.Read"',
+    // Its default sign-in ends after about an hour for personal accounts.
+    env: { MS365_MCP_TENANT_ID: 'consumers' },
+    requires: 'node',
+    docs: 'https://github.com/Softeria/ms-365-mcp-server',
+    auth: 'oauth'
+  },
+  {
+    id: 'dropbox',
+    name: 'Dropbox', // i18n-ignore
+    category: 'Productivity',
+    accent: '#0061ff',
+    get desc() {
+      return t('mcp.catalog.dropbox.desc', 'Find, read and organize your Dropbox files. Dropbox only accepts the apps it has approved, such as Claude Code, Codex and Cursor: other agents, like OpenCode, can be refused at sign-in.')
+    },
+    transport: 'http',
+    url: 'https://mcp.dropbox.com/mcp',
+    docs: 'https://help.dropbox.com/integrations/connect-dropbox-mcp-server',
+    auth: 'oauth'
+  },
+  {
+    id: 'todoist',
+    name: 'Todoist', // i18n-ignore
+    category: 'Productivity',
+    accent: '#e44332',
+    get desc() {
+      return t('mcp.catalog.todoist.desc', 'Read, add and complete your Todoist tasks and projects.')
+    },
+    transport: 'http',
+    url: 'https://ai.todoist.net/mcp',
+    docs: 'https://github.com/Doist/todoist-ai',
+    auth: 'oauth'
+  },
+  {
+    id: 'airtable',
+    name: 'Airtable', // i18n-ignore
+    category: 'Productivity',
+    accent: '#fcb400',
+    get desc() {
+      return t('mcp.catalog.airtable.desc', 'Read and change the records of your Airtable bases.')
+    },
+    transport: 'http',
+    url: 'https://mcp.airtable.com/mcp',
+    docs: 'https://support.airtable.com/docs/using-the-airtable-mcp-server',
+    auth: 'oauth'
+  },
+  {
+    id: 'clickup',
+    name: 'ClickUp', // i18n-ignore
+    category: 'Productivity',
+    accent: '#7b68ee',
+    get desc() {
+      return t('mcp.catalog.clickup.desc', 'Find, create and update tasks and documents in ClickUp.')
+    },
+    transport: 'http',
+    url: 'https://mcp.clickup.com/mcp',
+    docs: 'https://developer.clickup.com/docs/connect-an-ai-assistant-to-clickups-mcp-server',
+    auth: 'oauth'
+  },
+  {
+    id: 'monday',
+    name: 'monday.com', // i18n-ignore
+    category: 'Productivity',
+    accent: '#ff3d57',
+    get desc() {
+      return t('mcp.catalog.monday.desc', 'Read and update your monday.com boards and items.')
+    },
+    transport: 'http',
+    url: 'https://mcp.monday.com/mcp',
+    docs: 'https://github.com/mondaycom/mcp',
+    auth: 'oauth'
   }
 ]
 
@@ -412,10 +530,10 @@ export function catalogSpec(entry, answers, agent) {
     if (agent === 'codex' && entry.bearerEnvVar) spec.bearerEnvVar = entry.bearerEnvVar
   } else {
     spec.commandLine = fill(entry.command)
-    spec.env = (entry.inputs || [])
-      .filter((i) => i.as === 'env' && answers[i.key])
-      .map((i) => `${i.key}=${answers[i.key]}`)
-      .join('\n')
+    spec.env = [
+      ...Object.entries(entry.env || {}).map(([k, v]) => `${k}=${v}`),
+      ...(entry.inputs || []).filter((i) => i.as === 'env' && answers[i.key]).map((i) => `${i.key}=${answers[i.key]}`)
+    ].join('\n')
   }
   return spec
 }

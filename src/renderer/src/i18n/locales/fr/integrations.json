@@ -141,6 +141,7 @@
       "code": "Code",
       "data": "Données",
       "services": "Services",
+      "productivity": "Productivité",
       "utility": "Utilitaires"
     },
     "custom": {
@@ -268,6 +269,30 @@
       },
       "vercel": {
         "desc": "Projets, déploiements et journaux sur Vercel."
+      },
+      "google-workspace": {
+        "desc": "Chercher et lire vos courriels et écrire des brouillons (il ne peut pas envoyer de courriel), gérer votre agenda, lire votre Drive. Serveur communautaire qui fonctionne avec tous les agents.",
+        "clientId": "ID du client OAuth Google",
+        "clientIdHelp": "Sur console.cloud.google.com : activez les API Gmail, Calendar et Drive, ajoutez-vous comme utilisateur test, puis créez un client OAuth de type Application de bureau.",
+        "clientSecret": "Code secret du client OAuth Google"
+      },
+      "outlook": {
+        "desc": "Comptes Microsoft personnels : lire vos courriels et écrire des brouillons (il ne peut pas envoyer de courriel), gérer votre calendrier et vos contacts, lire votre OneDrive. Serveur communautaire qui fonctionne avec tous les agents. Les comptes professionnels ne sont pas pris en charge."
+      },
+      "dropbox": {
+        "desc": "Trouver, lire et organiser vos fichiers Dropbox. Dropbox accepte seulement les applications qu'il a approuvées, comme Claude Code, Codex et Cursor : les autres agents, comme OpenCode, peuvent être refusés à la connexion."
+      },
+      "todoist": {
+        "desc": "Lire, ajouter et terminer vos tâches et projets Todoist."
+      },
+      "airtable": {
+        "desc": "Lire et modifier les enregistrements de vos bases Airtable."
+      },
+      "clickup": {
+        "desc": "Trouver, créer et mettre à jour des tâches et des documents dans ClickUp."
+      },
+      "monday": {
+        "desc": "Lire et mettre à jour vos tableaux et éléments monday.com."
       },
       "addCount": "Ajouter {{count}} serveurs",
       "addedMark": "Ajouté ✓",
