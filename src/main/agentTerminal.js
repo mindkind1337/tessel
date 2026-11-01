@@ -443,11 +443,16 @@ export function createAgentTerminal({ verify, settings = () => ({ enabled: true 
     // that host first (once per host), before anything is opened there.
     if (args.id == null) {
       const h = await ask('terminalTarget', { agent: agentPane, op: 'host', host: args.host || null })
-      if (h && h.projectHost === false && h.hostId) {
-        const hk = key(agentPane, `host:${h.hostId}`)
+      // Another SSH host, or this computer for an agent that works on one:
+      // the PC is a place the agent's server does not give it, so it asks
+      // first, once per pane, as for any other host.
+      if (h && h.projectHost === false && (h.hostId || h.local)) {
+        // '@pc' cannot be an SSH host's id: this computer never shares a key with a host.
+        const hostKey = h.hostId || '@pc'
+        const hk = key(agentPane, `host:${hostKey}`)
         if (!hostPanes.has(hk)) {
           const label = String(h.label || h.hostId).slice(0, 100)
-          const answer = await card(agentPane, { id: `host:${h.hostId}`, name: label, own: false }, { kind: 'host', host: label, command: '', own: false, explanation: String(args.explanation || '').slice(0, MAX_TEXT), goal: String(args.goal || '').slice(0, MAX_TEXT), info: null, disclaimers: [], actions: [] })
+          const answer = await card(agentPane, { id: `host:${hostKey}`, name: label, own: false }, { kind: 'host', host: label, pc: h.local === true, command: '', own: false, explanation: String(args.explanation || '').slice(0, MAX_TEXT), goal: String(args.goal || '').slice(0, MAX_TEXT), info: null, disclaimers: [], actions: [] })
           if (answer.remember === 'pane') hostPanes.add(hk)
         }
       }

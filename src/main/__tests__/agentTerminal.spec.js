@@ -57,7 +57,10 @@ function fakeWindow({ target = OWN, approve = { allow: true }, run = { state: 'c
       case 'send':
         return { name: target.name, output: 'sent ok' }
       case 'host':
-        return params.host === 'other' ? { hostId: 'ssh-other', label: 'other', projectHost: false } : { hostId: null, label: 'this computer', projectHost: true }
+        if (params.host === 'other') return { hostId: 'ssh-other', label: 'other', projectHost: false }
+        // This computer, asked for from a project on an SSH host: not the project's host.
+        if (params.host === 'local' && target.pcFromRemote) return { hostId: null, local: true, label: 'this computer', projectHost: false }
+        return { hostId: null, label: 'this computer', projectHost: true }
       case 'active':
         return { ...target }
       case 'lastCommand':
@@ -554,6 +557,51 @@ describe('security review: another SSH host', () => {
   })
 })
 
+describe("security review: the user's own computer, asked for by an agent that works on an SSH host", () => {
+  // A local PowerShell of the agent's own, in a project that is on an SSH host.
+  const PC = { ...OWN, id: 'pane-pc', host: null, lang: 'powershell', shellKind: 'powershell', projectHost: false, pcFromRemote: true }
+  const run = (win, settings, extra = {}) => make(win, { settings }).at.handle(signed('run', { command: 'Get-ChildItem', explanation: 'x', goal: 'y', mode: 'sync', host: 'local', ...extra }))
+
+  it('the computer is asked about first (once per pane), then every command: never by rules, never by "allow all"', async () => {
+    const win = fakeWindow({ target: PC, approve: (p) => ({ allow: true, remember: p.card.kind === 'host' ? 'pane' : 'once', action: p.card.kind === 'command' ? { kind: 'session' } : null }) })
+    const { at } = make(win, { settings: { autoApprove: true, userRules: { 'Get-ChildItem': true } } })
+    await at.handle(signed('run', { command: 'Get-ChildItem', explanation: 'x', goal: 'y', mode: 'sync', host: 'local' }))
+    await at.handle(signed('run', { command: 'Get-ChildItem', explanation: 'x', goal: 'y', mode: 'sync', host: 'local' }))
+    expect(win.calls.filter((c) => c.op === 'approve').map((c) => c.card.kind)).toEqual(['host', 'command', 'command'])
+    // The question comes before any terminal is opened on the PC.
+    expect(win.ops().indexOf('approve')).toBeLessThan(win.ops().indexOf('prepare'))
+  })
+
+  it('an agent in Yolo is asked all the same: its own terminal on the PC is not on its project\'s host', async () => {
+    const win = fakeWindow({ target: { ...PC, agentYolo: true }, approve: (p) => ({ allow: true, remember: p.card.kind === 'host' ? 'pane' : 'once' }) })
+    const { at } = make(win, { settings: { autoApprove: true, yoloOwn: true } })
+    await at.handle(signed('run', { command: 'Get-ChildItem', explanation: 'x', goal: 'y', mode: 'sync', host: 'local' }))
+    expect(win.calls.filter((c) => c.op === 'approve').map((c) => c.card.kind)).toEqual(['host', 'command'])
+  })
+
+  it('the card says it is the PC (not an SSH host); its key is its own', async () => {
+    const win = fakeWindow({ target: PC, approve: (p) => ({ allow: true, remember: p.card.kind === 'host' ? 'pane' : 'once' }) })
+    const { at } = make(win, { settings: {} })
+    await at.handle(signed('run', { command: 'Get-ChildItem', explanation: 'x', goal: 'y', mode: 'sync', host: 'local' }))
+    const card = win.calls.find((c) => c.op === 'approve' && c.card.kind === 'host')
+    expect(card.card.pc).toBe(true)
+    expect(card.terminal).toBe('host:@pc')
+  })
+
+  it('an agent whose project is on this computer is asked nothing new for host "local"', async () => {
+    const win = fakeWindow({ target: { ...OWN, projectHost: true } })
+    const { at } = make(win, { settings: { autoApprove: true } })
+    await at.handle(signed('run', { command: 'ls', explanation: 'x', goal: 'y', mode: 'sync', host: 'local' }))
+    expect(win.calls.filter((c) => c.op === 'approve' && c.card.kind === 'host')).toHaveLength(0)
+  })
+
+  it('refused: nothing is opened on the PC', async () => {
+    const win = fakeWindow({ target: PC, approve: { allow: false } })
+    await expect(run(win, {})).rejects.toMatchObject({ code: 'denied' })
+    expect(win.ops()).not.toContain('prepare')
+  })
+})
+
 describe('security review: Stop and the session', () => {
   it('Stop takes back the agent’s "allow all" and session rules', async () => {
     const win = fakeWindow({ approve: { allow: true, action: { kind: 'session' } } })
@@ -704,12 +752,16 @@ describe('the tools tell agents when a terminal helps', () => {
     expect(run.description).toContain('for quick commands, use your own shell tool instead')
     expect(run.description).toContain("a long-running process that must stay up (a dev server, a watcher), a command the user should see, or a command on the project's SSH host when you are not on it")
     expect(run.description).toContain('it does not open sessions or terminals for the user')
+    // An agent on an SSH host is told how to reach the user's PC, and that it asks.
+    expect(run.description).toContain('"local" to run on the user\'s own computer')
+    expect(run.description).toContain('from a project on an SSH host the user is asked first, then for every command, even if you run in Yolo')
+    expect(run.inputSchema.properties.host.description).toContain('"local"')
     const open = mcp.TERMINAL_TOOLS.find((t) => t.name === 'open_terminal')
     expect(open.description).toContain('by default the same agent as you')
     expect(open.description).toContain('without saying which kind, open the same agent as you, or ask the user if it is unclear')
     expect(open.inputSchema.properties.kind.enum).toEqual(['agent', 'shell'])
     expect(mcp.TERMINAL_OPS.open_terminal).toBe('open')
-    expect(mcp.VERSION).toBe('1.11.9')
+    expect(mcp.VERSION).toBe('1.11.10')
   })
 })
 

@@ -43,7 +43,7 @@ const path = require('path')
 const crypto = require('crypto')
 const { randomUUID } = crypto
 
-const VERSION = '1.11.9'
+const VERSION = '1.11.10'
 const MAX_TEXT = 6000
 
 // --- An agent on an SSH host --------------------------------------------------
@@ -1456,7 +1456,7 @@ const RUN_DESCRIPTION = [
   'Interactive Input Handling:',
   '- Send exactly one answer per prompt with send_to_terminal, then read the next prompt with get_terminal_output before the next answer.',
   '',
-  'Tessel: set "host" to run on an SSH host the user set up in Tessel (its connection must be signed in); set "id" to run in one of the user\'s own shells instead (see terminal_list; the user approves it once for that terminal; never another agent\'s pane).'
+  'Tessel: set "host" to run on an SSH host the user set up in Tessel (its connection must be signed in), or "local" to run on the user\'s own computer (Windows PowerShell: their files, Tessel\'s logs in %APPDATA%\\tessel-dev\\logs, local tools; from a project on an SSH host the user is asked first, then for every command, even if you run in Yolo); set "id" to run in one of the user\'s own shells instead (see terminal_list; the user approves it once for that terminal; never another agent\'s pane).'
 ].join('\n')
 const TERMINAL_TOOLS = [
   {
@@ -1470,7 +1470,7 @@ const TERMINAL_TOOLS = [
         goal: { type: 'string', description: 'A short description of the goal or purpose of the command (e.g., "Install dependencies", "Start development server").' },
         mode: { type: 'string', enum: ['sync', 'async'], description: 'Execution mode for this command. Use sync (default) for nearly all commands.' },
         timeout: { type: 'number', description: 'Optional. Usually omit. In milliseconds, at most 120000 (the default). If it elapses, the command continues in the background and you get a terminal ID to check output later.' },
-        host: { type: 'string', description: 'Optional: an SSH host from Tessel (its name), to run there. Default: where your project is.' },
+        host: { type: 'string', description: 'Optional: an SSH host from Tessel (its name), to run there; or "local" for the user\'s own computer. Default: where your project is.' },
         id: { type: 'string', description: 'Optional: the id of one of the user\'s shells (terminal_list) to run the command there instead of your own terminal.' }
       },
       required: ['command', 'explanation', 'goal', 'mode']
@@ -1732,7 +1732,7 @@ const INSTRUCTIONS =
 // On an SSH host: the same tools, and where they run.
 const REMOTE_INSTRUCTIONS =
   INSTRUCTIONS +
-  " You run on an SSH host: Tessel's browser is on the user's computer (a page on the host is reached through an address that computer can open), and run_in_terminal opens your terminal on that host."
+  " You run on an SSH host: Tessel's browser is on the user's computer (a page on the host is reached through an address that computer can open), and run_in_terminal opens your terminal on that host. To look at something on the user's own computer (Tessel's logs, a local file, a local tool), call run_in_terminal with host \"local\": a Windows PowerShell opens there, the user is asked first and then for every command; do not ask the user to copy files to the server by hand."
 
 // signal: aborted when the client cancels this request (a waiting team_ask).
 function handle(msg, signal = null) {

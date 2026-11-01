@@ -47,6 +47,7 @@ const title = computed(() => {
   const c = props.card
   if (c.kind === 'open') return t('app.agentTerminal.openTitle', '{{agent}} wants to open panes for you', { agent: c.agentLabel })
   if (c.kind === 'read') return t('app.agentTerminal.readTitle', '{{agent}} wants to read the terminal "{{name}}" ({{where}})', { agent: c.agentLabel, name: c.name, where: c.where })
+  if (c.kind === 'host' && c.pc) return t('app.agentTerminal.pcTitle', '{{agent}} wants to run commands on your computer (this PC)', { agent: c.agentLabel })
   if (c.kind === 'host') return t('app.agentTerminal.hostTitle', '{{agent}} wants to run commands on the SSH host {{host}}', { agent: c.agentLabel, host: c.host || c.where })
   if (c.kind === 'pane') return t('app.agentTerminal.title', '{{agent}} wants to use the terminal "{{name}}" ({{where}})', { agent: c.agentLabel, name: c.name, where: c.where })
   if (c.kind === 'send') return t('app.agentTerminal.sendTitle', '{{agent}} wants to type in its terminal "{{name}}"', { agent: c.agentLabel, name: c.name })
@@ -76,7 +77,9 @@ function actionLabel(a) {
 const paneText = computed(() =>
   props.card.kind === 'read'
     ? t('app.agentTerminal.readText', 'It will read what this terminal shows and its scrollback, which may hold passwords, keys or other secrets you typed or printed. Allowing it for this terminal lets it read it again until Tessel restarts.')
-    : props.card.kind === 'host'
+    : props.card.kind === 'host' && props.card.pc
+      ? t('app.agentTerminal.pcText', 'It works on a server, not on your computer: Tessel opens a PowerShell here, on this PC, with your account. Each command still asks you, and the rules of your project do not apply there.')
+      : props.card.kind === 'host'
       ? t('app.agentTerminal.hostText', 'It is not the host of your project: Tessel opens a terminal there with your account, already signed in. Each command still asks you, and the rules of your project do not apply there.')
       : props.card.send
         ? t('app.agentTerminal.keysText', 'It will press these keys there:')
@@ -85,7 +88,9 @@ const paneText = computed(() =>
 const allowWholeLabel = computed(() =>
   props.card.kind === 'read'
     ? t('app.agentTerminal.allowRead', 'Allow reading this terminal')
-    : props.card.kind === 'host'
+    : props.card.kind === 'host' && props.card.pc
+      ? t('app.agentTerminal.allowPc', 'Allow on this computer')
+      : props.card.kind === 'host'
       ? t('app.agentTerminal.allowHost', 'Allow on this host')
       : t('app.agentTerminal.allowPane', 'Allow in this terminal')
 )

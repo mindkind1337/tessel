@@ -577,7 +577,8 @@ export function createAgentTerminalTargets(deps) {
     // Which host a command of its own would run on, opening nothing.
     if (req.op === 'host') {
       const hostId = hostOf(agentLeaf, ws, req.host)
-      return { hostId, label: hostId ? deps.hostLabel(hostId) : 'this computer', projectHost: (hostId || null) === ((ws.remote && ws.remote.hostId) || null) } // i18n-ignore
+      // local: this computer (the PC Tessel runs on), asked for by an agent that works on an SSH host.
+      return { hostId, local: !hostId, label: hostId ? deps.hostLabel(hostId) : 'this computer', projectHost: (hostId || null) === ((ws.remote && ws.remote.hostId) || null) } // i18n-ignore
     }
 
     if (req.op === 'prepare') {

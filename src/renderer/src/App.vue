@@ -11959,7 +11959,9 @@ const agentTerminalTargets = createAgentTerminalTargets({
       actions: c.actions,
       own: c.own,
       send: !!c.send,
-      host: c.host || null,
+      // pc: this computer, for an agent that works on an SSH host (its card says so, not "SSH host").
+      pc: c.pc === true,
+      host: c.pc === true ? t('app.agentTerminal.local', 'this computer') : c.host || null,
       open: c.open || null,
       agentLabel: c.agentLabel,
       name: c.name,

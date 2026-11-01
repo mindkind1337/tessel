@@ -931,7 +931,10 @@
       "hostText": "Ce n’est pas l’hôte de votre projet : Tessel y ouvre un terminal avec votre compte, déjà connecté. Chaque commande vous est quand même demandée, et les règles de votre projet ne s’y appliquent pas.",
       "allowRead": "Autoriser ce terminal",
       "allowHost": "Autoriser sur cet hôte",
-      "lines": "{{count}} lignes : lisez-les toutes avant d’autoriser."
+      "lines": "{{count}} lignes : lisez-les toutes avant d’autoriser.",
+      "pcTitle": "{{agent}} veut lancer des commandes sur votre ordinateur (ce PC)",
+      "pcText": "Il travaille sur un serveur, pas sur votre ordinateur : Tessel ouvre ici, sur ce PC, un PowerShell avec votre compte. Chaque commande vous est quand même demandée, et les règles de votre projet ne s'y appliquent pas.",
+      "allowPc": "Autoriser sur cet ordinateur"
     },
     "hostAccount": {
       "refused": "{{agent}} n’a pas été démarré sur son compte sur cet hôte : {{error}} Menu du panneau > Redémarrer sur… le démarre sur un autre.",
