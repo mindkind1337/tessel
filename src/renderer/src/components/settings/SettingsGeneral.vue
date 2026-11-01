@@ -2,6 +2,7 @@
 // Settings > General: how Tessel starts and closes, the tessel command.
 import { t } from '../../i18n'
 import CliSettings from '../CliSettings.vue'
+import BackupSettings from '../BackupSettings.vue'
 import SettingsToolRows from '../SettingsToolRows.vue'
 import SetupCheck from './SetupCheck.vue'
 import { settings, resetSettings } from '../../settings'
@@ -66,6 +67,8 @@ async function resetAll() {
     </div>
     <!-- The tessel command (Settings > General, as Orca's CLI section). -->
     <CliSettings v-if="page === 'general' || searching" />
+    <!-- Export / import the settings (BackupSettings.vue). -->
+    <BackupSettings v-if="page === 'general' || searching" />
     <div class="set-group">
       <h3 class="set-group-title">{{ t('settings.general.workspace', 'Workspace') }}</h3>
       <p class="set-group-desc">{{ t('settings.general.workspaceIntro', 'Where new workspaces are created, and deleting them.') }}</p>

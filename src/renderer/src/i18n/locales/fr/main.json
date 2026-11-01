@@ -1105,6 +1105,11 @@
       "tooLarge": "Ce fichier dépasse la limite de téléchargement ({{mb}} Mo).",
       "readFailed": "Le fichier distant n’a pas pu être téléchargé.",
       "failed": "Le fichier n’a pas pu être téléchargé ou enregistré à cet endroit."
+    },
+    "backup": {
+      "exportTitle": "Enregistrer les réglages de Tessel",
+      "importTitle": "Choisir un fichier de réglages Tessel",
+      "filter": "Réglages Tessel"
     }
   },
   "main.chat.image.tooLarge": "Cette image dépasse {{mb}} Mo.",

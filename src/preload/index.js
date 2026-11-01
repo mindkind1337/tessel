@@ -866,6 +866,12 @@ const api = {
     onHostRequest: (cb) => subscribe('liveShare:hostRequest', cb),
     onNotice: (cb) => subscribe('liveShare:notice', cb)
   },
+  // Export / import of the settings (src/main/settingsBackup.js).
+  backup: {
+    export: (categories) => ipcRenderer.invoke('backup:export', { categories }),
+    inspect: () => ipcRenderer.invoke('backup:inspect'),
+    apply: (token, categories) => ipcRenderer.invoke('backup:apply', { token, categories })
+  },
   // A development copy: new builds on GitHub (src/main/devUpdate.js).
   devUpdate: {
     status: () => ipcRenderer.invoke('devUpdate:status'),

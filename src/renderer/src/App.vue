@@ -3682,6 +3682,20 @@ async function readDevRestart() {
 const devUpdateShown = computed(() => isDev && (devUpdate.value.state === 'available' || devUpdate.value.state === 'updated'))
 // "Restart now": editor files are asked about first, everything is written, then
 // the main process starts the next Tessel and leaves (terminals keep running).
+// Settings > General > Backup: what is on disk is what is exported, so the window
+// writes its latest state first.
+provide('saveBeforeBackup', async () => {
+  saveLayoutNow()
+  await saveActivityNow({ closing: false })
+  if (taskSave.cancel()) {
+    try {
+      await saveBoard()
+    } catch {
+      /* the file on disk is exported */
+    }
+  }
+})
+provide('restartApp', (resolve) => restartDevNow(resolve))
 async function restartDevNow(resolve) {
   const dirty = Object.values(editorDocs)
     .filter((d) => d.dirty)

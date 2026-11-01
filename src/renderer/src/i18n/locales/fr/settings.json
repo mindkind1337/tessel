@@ -1078,6 +1078,41 @@
       "groupDesc": "Les installations passent par winget dans un nouveau panneau ; certains installateurs demandent une autorisation dans une invite Windows.",
       "failed": "Tessel n'a pas pu vérifier quels outils sont installés.",
       "notInstalled": "Non installé"
+    },
+    "backup": {
+      "title": "Sauvegarde",
+      "intro": "Enregistrez vos réglages dans un seul fichier, et restaurez-les si le dossier de données de Tessel est supprimé ou sur un autre ordinateur. Les connexions (Claude, Codex…), les mots de passe enregistrés et les clés ne sont jamais exportés : vous vous reconnectez.",
+      "export": "Exporter les réglages",
+      "exportHint": "Choisissez ce qui va dans le fichier.",
+      "exportButton": "Exporter…",
+      "saved": "Enregistré dans {{path}}. Les connexions et les mots de passe enregistrés n'y sont pas.",
+      "import": "Importer les réglages",
+      "importHint": "Choisissez un fichier créé par l'export. Rien ne change avant votre confirmation, et c'est appliqué au prochain démarrage de Tessel.",
+      "importButton": "Importer…",
+      "apply": "Restaurer…",
+      "from": "Créé le {{date}} par Tessel {{version}}",
+      "fromDate": "Créé le {{date}}",
+      "confirmTitle": "Restaurer ces réglages ?",
+      "confirmText": "Ils remplacent les réglages actuels au prochain démarrage de Tessel. Ne restaurez qu'un fichier que vous avez créé vous-même : les réglages et les dossiers de confiance décident de ce que vos agents peuvent faire. Les fichiers remplacés sont gardés dans le dossier import-backups du dossier de données de Tessel.",
+      "confirmApply": "Restaurer",
+      "staged": "Prêt : {{count}} fichier(s) seront restaurés au prochain démarrage de Tessel.",
+      "restartManual": "Fermez Tessel et rouvrez-le pour les appliquer.",
+      "cat": {
+        "settings": "Réglages, projets et leur disposition",
+        "hosts": "Hôtes SSH et leurs clés connues",
+        "board": "Tableau des tâches",
+        "trust": "Dossiers de confiance",
+        "liveshare": "Réglages Live Share et invités de confiance",
+        "activity": "Historique d'activité"
+      },
+      "err": {
+        "notBackup": "Ce fichier n'est pas un fichier de réglages Tessel.",
+        "newer": "Ce fichier vient d'une version plus récente de Tessel. Mettez d'abord Tessel à jour.",
+        "empty": "Ce fichier ne contient rien que Tessel puisse restaurer.",
+        "tooBig": "Ce fichier est trop gros.",
+        "nothing": "Choisissez au moins une partie à restaurer.",
+        "failed": "Ça n'a pas marché. Rien n'a été modifié."
+      }
     }
   },
   "accounts": {

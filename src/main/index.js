@@ -124,6 +124,7 @@ import { listProcesses, treeOf, waitForExit, killPids, listProcessNames, running
 import { pipeName, trimBuffer } from './ptyProtocol'
 import { createUpdater } from './updater'
 import { createDevUpdate, devRestartCommand } from './devUpdate'
+import { buildBackup, inspectBackup, stageImport, hasPendingImport, applyPendingImport } from './settingsBackup'
 import { createAgentUpdates } from './agentUpdates'
 import { createUpdateRunner, fakeSpawn, classifyFailure } from './agentUpdateRunner'
 import { createUpdateHistory } from './agentUpdateHistory'
@@ -245,6 +246,18 @@ app.setMaxListeners(40)
 // real workspaces).
 const DATA_DIR = app.isPackaged ? 'tessel' : 'tessel-dev'
 app.setPath('userData', process.env.TESSEL_USER_DATA || join(app.getPath('appData'), DATA_DIR))
+// Settings the user imported (settingsBackup.js) were staged by the last run: put them
+// in place now, before anything reads the data folder, and only if no other Tessel
+// is running on it (the lock is the one Tessel takes at start anyway).
+const importApplied = (() => {
+  try {
+    const dir = app.getPath('userData')
+    if (!hasPendingImport(dir)) return null
+    return app.requestSingleInstanceLock() ? applyPendingImport({ dir }) : { locked: true }
+  } catch (err) {
+    return { error: err.message }
+  }
+})()
 // Started by the tessel command (src/cli/tessel.js): its environment is a
 // clean one without the terminal's PATH; PATH comes from the registry, as a
 // Start-menu launch has it, so panes and agents never inherit a terminal's.
@@ -379,6 +392,11 @@ if (process.platform === 'win32') app.setAppUserModelId(APP_ID)
 
 // Logs: %APPDATA%\\tessel\\logs\\tessel.log (rotated, 1 MB x 4).
 const log = createLogger({ dir: join(app.getPath('userData'), 'logs') })
+if (importApplied) {
+  if (importApplied.locked) log.warn('backup', 'imported settings wait: another Tessel is using the data folder, they are applied at the next start') // i18n-ignore
+  else if (importApplied.error) log.warn('backup', `imported settings not applied: ${importApplied.error}`) // i18n-ignore
+  else log.info('backup', `imported settings applied: ${importApplied.applied.length} file(s)${importApplied.failed.length ? `, ${importApplied.failed.length} failed` : ''}`) // i18n-ignore
+}
 
 // When this process started (the startup line in the log, pty:reconcile),
 // when its code had run (a dev build just rebuilt is read slowly the first
@@ -5417,6 +5435,62 @@ ipcMain.handle('devUpdate:restart', (event) => {
   log.info('dev-update', 'restarting on the user\'s request: the next Tessel starts when this one is gone') // i18n-ignore
   setTimeout(() => app.exit(0), 700)
   return { ok: true }
+})
+// --- Export / import of the settings (settingsBackup.js) ---------------------
+// The file dialogs are Electron's; the window only gets what the file holds, never a
+// path it chose. An import is checked here, kept in memory under a token, and staged
+// when the window confirms: it is put in place at the next start.
+let backupInspected = null // { token, files }
+ipcMain.handle('backup:export', async (event, { categories } = {}) => {
+  if (!fromMainWindow(event)) return { ok: false, code: 'refused' }
+  try {
+    const built = await buildId.get().catch(() => null)
+    const { bundle, included, missing } = buildBackup({ dir: app.getPath('userData'), categories, appVersion: app.getVersion(), build: formatBuild(built) })
+    if (!included.length) return { ok: false, code: 'empty' }
+    const res = await dialog.showSaveDialog(mainWindow, {
+      title: t('main.backup.exportTitle', 'Save Tessel settings'),
+      defaultPath: join(app.getPath('documents'), `tessel-settings-${new Date().toISOString().slice(0, 10)}.json`),
+      filters: [{ name: t('main.backup.filter', 'Tessel settings'), extensions: ['json'] }]
+    })
+    if (res.canceled || !res.filePath) return { ok: false, code: 'cancelled' }
+    writeFileAtomic(res.filePath, JSON.stringify(bundle))
+    log.info('backup', `settings exported: ${included.map((c) => c.id).join(', ')}`) // i18n-ignore
+    return { ok: true, path: res.filePath, included, missing }
+  } catch (err) {
+    log.warn('backup', `export failed: ${err.code || err.message}`) // i18n-ignore
+    return { ok: false, code: err.code === 'too-big' ? 'too-big' : 'failed' }
+  }
+})
+ipcMain.handle('backup:inspect', async (event) => {
+  if (!fromMainWindow(event)) return { ok: false, code: 'refused' }
+  try {
+    const res = await dialog.showOpenDialog(mainWindow, {
+      title: t('main.backup.importTitle', 'Choose a Tessel settings file'),
+      properties: ['openFile'],
+      filters: [{ name: t('main.backup.filter', 'Tessel settings'), extensions: ['json'] }]
+    })
+    if (res.canceled || !res.filePaths.length) return { ok: false, code: 'cancelled' }
+    const st = fs.statSync(res.filePaths[0])
+    if (!st.isFile() || st.size > 250 * 1024 * 1024) return { ok: false, code: 'too-big' }
+    const { files, summary } = inspectBackup(fs.readFileSync(res.filePaths[0], 'utf8'))
+    backupInspected = { token: crypto.randomUUID(), files }
+    return { ok: true, token: backupInspected.token, summary }
+  } catch (err) {
+    backupInspected = null
+    return { ok: false, code: err.code || 'failed' }
+  }
+})
+ipcMain.handle('backup:apply', (event, { token, categories } = {}) => {
+  if (!fromMainWindow(event)) return { ok: false, code: 'refused' }
+  if (!backupInspected || typeof token !== 'string' || token !== backupInspected.token) return { ok: false, code: 'failed' }
+  try {
+    const r = stageImport({ dir: app.getPath('userData'), files: backupInspected.files, categories })
+    backupInspected = null
+    log.info('backup', `settings import staged: ${r.categories.join(', ')} (${r.count} file(s)), applied at the next start`) // i18n-ignore
+    return { ok: true, count: r.count }
+  } catch (err) {
+    return { ok: false, code: err.code || 'failed' }
+  }
 })
 ipcMain.handle('devUpdate:apply', (event) => (fromMainWindow(event) ? devUpdate.apply() : { ok: false, reason: 'refused' }))
 ipcMain.handle('update:status', () => updater.status)
