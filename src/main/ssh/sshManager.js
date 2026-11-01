@@ -17,12 +17,61 @@
 // - A server that refuses another channel on a busy connection (OpenSSH's
 //   MaxSessions, 10 by default) gets a second connection to the same host,
 //   signed in with the kept credentials (no new question).
-import { connectSsh } from './sshConnection'
+import net from 'node:net'
+import { connectSsh, KEEPALIVE_INTERVAL_MS, KEEPALIVE_COUNT_MAX } from './sshConnection'
 
 export const IDLE_CLOSE_MS = 5 * 60 * 1000
 export const RETRY_DELAYS_MS = [2000, 5000]
 export const CREDENTIALS_MAX_AGE_MS = 8 * 60 * 60 * 1000
 const MAX_CONNECTIONS_PER_HOST = 4
+
+// What a lost connection leaves in the log (one line, no secret): which event
+// ended it, the local port to match with sshd's own log, how long it lived, how
+// long since a byte moved either way, and whether this process itself stalled.
+const SAMPLE_MS = 1000
+const LAG_KEEP = 60
+const PROBE_TIMEOUT_MS = 3000
+const sec = (ms) => `${Math.max(0, Math.round(ms / 1000))}s`
+
+// How late this process's timers fire, sampled each second: a stalled process
+// (the terminal host) would let the keepalives expire. -> () => peak of the last minute, in ms.
+function createLagMeter(timers = { setTimeout, clearTimeout }) {
+  const peaks = []
+  let expected = Date.now() + SAMPLE_MS
+  const tick = () => {
+    const late = Math.max(0, Date.now() - expected)
+    peaks.push(late)
+    if (peaks.length > LAG_KEEP) peaks.shift()
+    expected = Date.now() + SAMPLE_MS
+    const h = timers.setTimeout(tick, SAMPLE_MS)
+    if (h && h.unref) h.unref()
+  }
+  const h = timers.setTimeout(tick, SAMPLE_MS)
+  if (h && h.unref) h.unref()
+  return () => (peaks.length ? Math.max(...peaks) : 0)
+}
+
+// Is the server's SSH port reachable right now (a plain TCP connect, nothing sent)?
+function probeTcp(host, port, run = net.connect) {
+  return new Promise((resolve) => {
+    const t0 = Date.now()
+    let done = false
+    const sock = run({ host, port })
+    const end = (result) => {
+      if (done) return
+      done = true
+      try {
+        sock.destroy()
+      } catch {
+        /* gone */
+      }
+      resolve(result)
+    }
+    sock.setTimeout(PROBE_TIMEOUT_MS, () => end(`no answer in ${PROBE_TIMEOUT_MS / 1000}s`))
+    sock.once('connect', () => end(`reachable in ${Date.now() - t0}ms`))
+    sock.once('error', (err) => end(`failed (${(err && (err.code || err.message)) || 'error'})`))
+  })
+}
 
 const endpointOf = (spec) => `${spec.username || ''}@${String(spec.host).toLowerCase()}:${spec.port || 22}`
 
@@ -43,6 +92,7 @@ export function createSshManager({
   const entries = new Map() // hostId\nendpoint -> entry
   const creds = new Map() // hostId\nendpoint -> { password, passphrases }
   const states = new Map() // hostId -> { status, code?, params? }
+  const lagPeak = createLagMeter(timers)
 
   function setState(hostId, state) {
     states.set(hostId, state)
@@ -123,11 +173,59 @@ export function createSshManager({
   // spare: a second connection opened for one channel (not closed as idle
   // before that channel is on it).
   function adopt(e, client, { spare = false } = {}) {
-    const conn = { client, channels: 0, closed: false, closing: false }
+    const conn = { client, channels: 0, closed: false, closing: false, openedAt: now(), events: [], why: '' }
     e.conns.push(conn)
+    // The socket under ssh2 (internal, so read defensively): its local port
+    // lets the line be matched with the server's log, its byte counters tell when
+    // something last moved.
+    const sock = client && client._sock
+    const traffic = { rx: sock ? sock.bytesRead : 0, tx: sock ? sock.bytesWritten : 0, rxAt: conn.openedAt, txAt: conn.openedAt }
+    const localPort = sock && sock.localPort ? sock.localPort : '?'
+    const sampler = sock
+      ? setInterval(() => {
+          if (sock.bytesRead !== traffic.rx) {
+            traffic.rx = sock.bytesRead
+            traffic.rxAt = now()
+          }
+          if (sock.bytesWritten !== traffic.tx) {
+            traffic.tx = sock.bytesWritten
+            traffic.txAt = now()
+          }
+        }, SAMPLE_MS)
+      : null
+    if (sampler && sampler.unref) sampler.unref()
+    const keepalive = `${(connectOptions.keepaliveMs || KEEPALIVE_INTERVAL_MS) / 1000}s x${KEEPALIVE_COUNT_MAX}`
+    log('info', `ssh connection opened: ${e.spec.host}:${e.spec.port || 22} account=${e.hostId} localPort=${localPort} keepalive=${keepalive}`)
+    const note = (event, detail = '') => {
+      if (conn.events.length < 8) conn.events.push(`${event}${detail ? `(${detail})` : ''}@${sec(now() - conn.openedAt)}`)
+    }
     const gone = () => {
       if (conn.closed) return
       conn.closed = true
+      if (sampler) clearInterval(sampler)
+      const t = now()
+      if (sock) {
+        if (sock.bytesRead !== traffic.rx) traffic.rxAt = t
+        if (sock.bytesWritten !== traffic.tx) traffic.txAt = t
+      }
+      log(
+        conn.closing ? 'info' : 'warn',
+        `ssh connection ended: ${e.spec.host}:${e.spec.port || 22} account=${e.hostId} localPort=${localPort} ` +
+          `by=${conn.closing ? `tessel(${conn.why || 'close'})` : 'link'} events=[${conn.events.join(' ') || 'none'}] ` +
+          `age=${sec(t - conn.openedAt)} sinceLastRx=${sec(t - traffic.rxAt)} sinceLastTx=${sec(t - traffic.txAt)} ` +
+          `channels=${conn.channels} bytesRx=${sock ? traffic.rx : '?'} bytesTx=${sock ? traffic.tx : '?'} ` +
+          `keepalive=${keepalive} loopLagMax60s=${Math.round(lagPeak())}ms`
+      )
+      // Not Tessel's doing: is the server reachable right now, and again shortly
+      // after (a blip that is already over, or a link that is still down)?
+      if (!conn.closing) {
+        const host = e.spec.host
+        const port = e.spec.port || 22
+        const probe = (label) => probeTcp(host, port).then((r) => log('info', `ssh probe ${label}: ${host}:${port} ${r} (after ${e.hostId} lost localPort=${localPort})`))
+        probe('now')
+        const h = timers.setTimeout(() => probe('+10s'), 10_000)
+        if (h && h.unref) h.unref()
+      }
       e.conns = e.conns.filter((c) => c !== conn)
       const wasUsed = conn.channels > 0
       conn.channels = 0
@@ -140,18 +238,26 @@ export function createSshManager({
         setState(e.hostId, { status: 'disconnected', code: 'lost', params: { host: e.spec.host, port: e.spec.port || 22 } })
       }
     }
-    client.on('close', gone)
-    client.on('end', gone)
-    client.on('error', () => {
-      /* followed by close */
+    client.on('close', (hadError) => {
+      note('close', hadError ? 'hadError' : '')
+      gone()
+    })
+    client.on('end', () => {
+      note('end')
+      gone()
+    })
+    // ssh2's own words: its keepalive giving up is level "client-timeout".
+    client.on('error', (err) => {
+      note('error', `${(err && (err.code || err.level)) || 'error'}${err && err.level ? `/${err.level}` : ''}: ${String((err && err.message) || '').replace(/[\u0000-\u001f]+/g, ' ').slice(0, 80)}`)
     })
     setState(e.hostId, { status: 'connected' })
     if (!spare) armIdle(e)
     return conn
   }
 
-  function closeConn(conn) {
+  function closeConn(conn, why = 'idle') {
     conn.closing = true
+    conn.why = why
     try {
       conn.client.end()
     } catch {
@@ -166,11 +272,11 @@ export function createSshManager({
     }
     // A spare connection with nothing on it goes at once.
     const live = liveConns(e)
-    for (const c of live.slice(1)) if (c.channels === 0) closeConn(c)
+    for (const c of live.slice(1)) if (c.channels === 0) closeConn(c, 'spare unused')
     if (channelCount(e) > 0 || !liveConns(e).length) return
     e.idleTimer = timers.setTimeout(() => {
       e.idleTimer = null
-      if (channelCount(e) === 0) for (const c of liveConns(e)) closeConn(c)
+      if (channelCount(e) === 0) for (const c of liveConns(e)) closeConn(c, 'idle')
     }, idleCloseMs)
     if (e.idleTimer && e.idleTimer.unref) e.idleTimer.unref()
   }
@@ -379,7 +485,7 @@ export function createSshManager({
       try {
         return track(e, extra, await openOn(extra, kind, opts))
       } catch (err2) {
-        closeConn(extra)
+        closeConn(extra, 'extra unused')
         throw channelError(err2)
       }
     }
@@ -401,7 +507,7 @@ export function createSshManager({
       e.generation++
       if (e.idleTimer) timers.clearTimeout(e.idleTimer)
       e.idleTimer = null
-      for (const c of liveConns(e)) closeConn(c)
+      for (const c of liveConns(e)) closeConn(c, 'disconnect')
       if (!e.connecting) entries.delete(e.key)
     }
     for (const k of [...creds.keys()]) if (k.startsWith(`${hostId}\n`)) creds.delete(k)

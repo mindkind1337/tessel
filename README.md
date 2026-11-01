@@ -94,6 +94,10 @@ working on Tessel itself (see [Build from source](#build-from-source)).
   has a time limit, a slow host says so, and when the connection comes back
   the project's panes reopen and agents resume their conversations. A stall of
   up to 3 minutes on the link does not drop the session.
+  When a connection ends, the terminal host log (`pty-host.log`) gets one line
+  with what ended it, the local port (to match the server's own log), its age, the
+  time since a byte last moved, the keepalive in force and how late the process's
+  timers were, then a probe of whether the server answers.
 - **Light on a production server**: Tessel's own commands on the host run at the
   lowest priority (`renice`, `ionice`), and git reads never take its locks. Above
   2,000 changes the line counts are skipped, and after a slow `git status` the
