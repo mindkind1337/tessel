@@ -30,9 +30,18 @@ export function gitRunner(root, run = execFile) {
 // What the user sees: the line of each new commit is only text.
 const oneLine = (s) => String(s || '').replace(/[\u0000-\u001f\u007f-\u009f]+/g, ' ').trim().slice(0, 140)
 
+// What a restart is needed for: the code the running app loaded when it started.
+// The renderer reloads by itself; these are read once at start.
+export const MAIN_PATHS = ['src/main', 'src/preload', 'launch.mjs', 'electron.vite.config.mjs']
+const RESTART_CACHE_MS = 5000
+const RESTART_LIST = 6
+
 export function createDevUpdate({ root, packaged = false, send = () => {}, git = gitRunner(root), now = Date.now, log = { info() {}, warn() {} } } = {}) {
   let status = { state: packaged ? 'disabled' : 'idle' }
   let busy = false
+  // The commit the running app started from (read once, at start).
+  const startHead = packaged ? Promise.resolve('') : git(['rev-parse', 'HEAD']).then((r) => (/^[0-9a-f]{40}$/.test(r.out) ? r.out : ''))
+  let restartCache = null
   const set = (next) => {
     status = { ...next, checkedAt: next.checkedAt || status.checkedAt || null }
     send('devUpdate:status', status)
@@ -133,6 +142,23 @@ export function createDevUpdate({ root, packaged = false, send = () => {}, git =
     }
   }
 
+  // Has the background code changed on disk (committed, merged or edited) since this
+  // app started? The app does not restart by itself in dev (launch.mjs), so the
+  // window shows a banner. -> { needed, count, files }
+  async function restartNeeded() {
+    if (packaged) return { needed: false, count: 0, files: [] }
+    if (restartCache && now() - restartCache.at < RESTART_CACHE_MS) return restartCache.value
+    const head = await startHead
+    let value = { needed: false, count: 0, files: [] }
+    if (head) {
+      const r = await git(['diff', '--name-only', head, '--', ...MAIN_PATHS])
+      const names = r.ok && r.out ? r.out.split('\n').filter(Boolean) : []
+      value = { needed: names.length > 0, count: names.length, files: names.slice(0, RESTART_LIST).map(oneLine) }
+    }
+    restartCache = { at: now(), value }
+    return value
+  }
+
   function start() {
     if (packaged) return
     setTimeout(check, FIRST_CHECK_MS).unref()
@@ -143,6 +169,7 @@ export function createDevUpdate({ root, packaged = false, send = () => {}, git =
     start,
     check,
     apply,
+    restartNeeded,
     get status() {
       return status
     }

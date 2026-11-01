@@ -5396,6 +5396,7 @@ const devUpdate = createDevUpdate({ root: app.getAppPath(), packaged: app.isPack
 const fromMainWindow = (event) => mainWindow && !mainWindow.isDestroyed() && event.sender === mainWindow.webContents
 ipcMain.handle('devUpdate:status', (event) => (fromMainWindow(event) ? devUpdate.status : { state: 'disabled' }))
 ipcMain.handle('devUpdate:check', (event) => (fromMainWindow(event) ? devUpdate.check() : { state: 'disabled' }))
+ipcMain.handle('devUpdate:restartNeeded', (event) => (fromMainWindow(event) ? devUpdate.restartNeeded() : { needed: false, count: 0, files: [] }))
 ipcMain.handle('devUpdate:apply', (event) => (fromMainWindow(event) ? devUpdate.apply() : { ok: false, reason: 'refused' }))
 ipcMain.handle('update:status', () => updater.status)
 ipcMain.handle('update:check', () => updater.check())

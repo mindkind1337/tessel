@@ -10,7 +10,9 @@ import { t } from '../i18n'
 const props = defineProps({
   status: { type: Object, required: true },
   // The build running (b<commits>), to compare with the new one.
-  build: { type: Object, default: null }
+  build: { type: Object, default: null },
+  // 'restart': the background code changed since Tessel started (status is { count, files }).
+  mode: { type: String, default: 'update' }
 })
 const emit = defineEmits(['apply', 'close', 'copy'])
 
@@ -19,8 +21,11 @@ const failed = ref('')
 const done = ref(null)
 
 const s = computed(() => props.status || {})
+const isRestart = computed(() => props.mode === 'restart')
 const head = computed(() =>
-  done.value || s.value.state === 'updated'
+  isRestart.value
+    ? t('app.devUpdate.restartTitle', 'Restart to apply the changes')
+    : done.value || s.value.state === 'updated'
     ? t('app.devUpdate.updatedTitle', 'Tessel is up to date')
     : t('app.devUpdate.title', 'New builds on GitHub: {{count}}', { count: s.value.behind || 0 })
 )
@@ -31,6 +36,7 @@ const line = computed(() => {
     ? t('app.devUpdate.from', 'You have {{now}}. GitHub has {{next}}.', { now, next })
     : t('app.devUpdate.fromShort', 'GitHub has builds this copy does not have.')
 })
+const restartLine = computed(() => t('app.devUpdate.restartLine', 'The code of the background part changed since Tessel started ({{count}} file): what runs is the old one.', { count: s.value.count || 0 }))
 const moreText = computed(() => t('app.devUpdate.more', '… and {{count}} more', { count: (s.value.behind || 0) - (s.value.commits || []).length }))
 const blockedText = computed(() =>
   s.value.blocked === 'dirty'
@@ -92,7 +98,17 @@ onMounted(() => cardEl.value && cardEl.value.focus())
         </button>
       </div>
 
-      <template v-if="!result">
+      <template v-if="isRestart">
+        <p class="update-line">{{ restartLine }}</p>
+        <ul v-if="s.files && s.files.length" class="dev-update-list" data-test="dev-restart-list">
+          <li v-for="f in s.files" :key="f">
+            <code>{{ f }}</code>
+          </li>
+          <li v-if="s.count > s.files.length" class="dim">{{ t('app.devUpdate.moreFiles', '… and more') }}</li>
+        </ul>
+        <p class="update-line dim">{{ t('app.devUpdate.restartHow', 'Close Tessel and run npm run dev again. Your terminals and agents keep running: the window reattaches to them. Nothing restarts by itself, so do it when it suits you.') }}</p>
+      </template>
+      <template v-else-if="!result">
         <p class="update-line">{{ line }}</p>
         <ul v-if="s.commits && s.commits.length" class="dev-update-list" data-test="dev-update-list">
           <li v-for="c in s.commits" :key="c.hash">
@@ -107,11 +123,11 @@ onMounted(() => cardEl.value && cardEl.value.focus())
       <p v-else class="update-line" data-test="dev-update-after">{{ afterText }}</p>
 
       <div class="update-actions">
-        <button class="exit-btn" @click="emit('close')">{{ result ? t('app.devUpdate.close', 'Close') : t('app.update.later', 'Later') }}</button>
-        <button v-if="!result && blockedText" class="exit-btn" data-test="dev-update-copy" @click="emit('copy', 'git pull --ff-only')">
+        <button class="exit-btn" @click="emit('close')">{{ result || isRestart ? t('app.devUpdate.close', 'Close') : t('app.update.later', 'Later') }}</button>
+        <button v-if="!isRestart && !result && blockedText" class="exit-btn" data-test="dev-update-copy" @click="emit('copy', 'git pull --ff-only')">
           <Copy :size="12" aria-hidden="true" /> {{ t('app.devUpdate.copy', 'Copy git pull') }}
         </button>
-        <button v-if="!result && !blockedText" class="exit-btn primary" :disabled="busy" data-test="dev-update-apply" @click="apply">
+        <button v-if="!isRestart && !result && !blockedText" class="exit-btn primary" :disabled="busy" data-test="dev-update-apply" @click="apply">
           {{ busy ? t('app.devUpdate.updating', 'Updating…') : t('app.devUpdate.apply', 'Update') }}
         </button>
       </div>

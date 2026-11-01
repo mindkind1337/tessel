@@ -32,10 +32,15 @@ if (process.argv.includes('--hidden')) {
   process.exit(0)
 }
 
-// In dev, --watch restarts the app when its background code changes. That is
-// safe: terminals live in the terminal host (src/main/ptyHost.js), so shells
-// and agents keep running and the window re-attaches to them.
-const args = mode === 'dev' ? [mode, '--watch'] : [mode]
+// In dev the app does NOT restart by itself when its background code changes
+// (src/main, src/preload, this file): a restart closes the window, cuts what an
+// agent was doing and can cut SSH sessions, and every agent that merges into this
+// folder would do it to you. The window reloads by itself for the renderer;
+// for the rest a banner says "restart to apply" and you restart when it suits
+// you. TESSEL_WATCH=1 brings electron-vite's --watch back (restart on every change).
+const watch = mode === 'dev' && process.env.TESSEL_WATCH === '1'
+const args = watch ? [mode, '--watch'] : [mode]
+if (mode === 'dev' && !watch) console.log('Tessel dev: changes to the background code (src/main, src/preload) wait for you to restart; a banner says when. TESSEL_WATCH=1 restarts on every change.')
 
 // Electron's program is downloaded by its own install step during
 // `npm install`, which is sometimes skipped (a network hiccup, a proxy,

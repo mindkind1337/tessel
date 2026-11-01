@@ -156,6 +156,13 @@ working on Tessel itself (see [Build from source](#build-from-source)).
   it touches nothing and gives you the command. It says whether to restart
   (main process changed) or run `npm install` (packages changed). An installed Tessel
   keeps its own updater: it downloads each release and asks you to restart.
+- **A development Tessel no longer restarts by itself** when the code of its background
+  part changes (`src/main`, `src/preload`, `launch.mjs`): that cut sessions every time an
+  agent merged into the folder. The window still reloads by itself for the
+  interface. When the background code changed since Tessel started, a yellow
+  **↻ restart** button next to **dev** lists the files and says to restart when
+  it suits you; your terminals and agents keep running. `TESSEL_WATCH=1 npm run dev`
+  brings the automatic restart back.
 - **Messages between projects**: an agent can write to an agent of any other
   project, on this computer or on any SSH host (`project_agents`, `project_send`,
   `project_inbox`); Tessel relays the message, with no terminal or SSH session to

@@ -3665,6 +3665,20 @@ window.addEventListener('focus', readBuild)
 // button next to "dev" opens the list; it is the same on every dev copy.
 const devUpdate = ref({ state: 'disabled' })
 const devUpdateOpen = ref(false)
+// The background code changed on disk since this app started: it does not
+// restart by itself (launch.mjs), a banner says so and the user restarts.
+const devRestart = ref({ needed: false, count: 0, files: [] })
+const devRestartOpen = ref(false)
+async function readDevRestart() {
+  const api = window.shellApi.devUpdate
+  if (!isDev || !api || !api.restartNeeded) return
+  try {
+    const r = await api.restartNeeded()
+    if (r && typeof r.needed === 'boolean') devRestart.value = r
+  } catch {
+    /* nothing shown */
+  }
+}
 const devUpdateShown = computed(() => isDev && (devUpdate.value.state === 'available' || devUpdate.value.state === 'updated'))
 function copyDevUpdateCommand(text) {
   if (navigator.clipboard) navigator.clipboard.writeText(text).catch(() => {})
@@ -3686,6 +3700,10 @@ function initDevUpdate() {
   api.status().then((s) => (devUpdate.value = s || { state: 'disabled' })).catch(() => {})
 }
 initDevUpdate()
+readDevRestart()
+window.addEventListener('focus', readDevRestart)
+const devRestartTimer = isDev ? setInterval(readDevRestart, 60000) : null
+onBeforeUnmount(() => devRestartTimer && clearInterval(devRestartTimer))
 const updateStatus = ref({ state: 'disabled' })
 const updateOpen = ref(false)
 const updateInstalling = ref(false)
@@ -14290,6 +14308,16 @@ onBeforeUnmount(() => {
           <span v-if="build" class="brand-build" :title="t('app.toolbar.build', 'Build {{build}} (commit {{hash}}): goes up with every push to GitHub; the version stays the release’s', { build: build.count, hash: build.hash })" data-test="brand-build">b{{ build.count }}</span>
           <span v-if="isDev" class="brand-dev" :title="t('app.toolbar.devBuild', 'Development build (npm run dev)')">{{ t('app.toolbar.dev', 'dev') }}</span>
           <button
+            v-if="isDev && devRestart.needed"
+            type="button"
+            class="brand-dev-update restart"
+            :title="t('app.toolbar.devRestart', 'The background code changed since Tessel started: restart to apply')"
+            data-test="dev-restart-button"
+            @click="devRestartOpen = true"
+          >
+            ↻ {{ t('app.toolbar.devRestartShort', 'restart') }}
+          </button>
+          <button
             v-if="devUpdateShown"
             type="button"
             class="brand-dev-update"
@@ -14897,6 +14925,12 @@ onBeforeUnmount(() => {
       @close="closeSkills"
     />
 
+    <DevUpdateDialog
+      v-if="devRestartOpen && devRestart.needed"
+      mode="restart"
+      :status="devRestart"
+      @close="devRestartOpen = false"
+    />
     <DevUpdateDialog
       v-if="devUpdateOpen && devUpdateShown"
       :status="devUpdate"

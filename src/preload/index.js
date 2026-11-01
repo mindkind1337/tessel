@@ -871,6 +871,7 @@ const api = {
     status: () => ipcRenderer.invoke('devUpdate:status'),
     check: () => ipcRenderer.invoke('devUpdate:check'),
     apply: () => ipcRenderer.invoke('devUpdate:apply'),
+    restartNeeded: () => ipcRenderer.invoke('devUpdate:restartNeeded'),
     onStatus: (cb) => subscribe('devUpdate:status', cb)
   },
   update: {

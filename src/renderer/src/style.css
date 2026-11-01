@@ -5323,6 +5323,12 @@ body.pane-dragging * {
   font-weight: 700;
   line-height: 1.3;
 }
+.brand-dev-update.restart {
+  background: transparent;
+  color: #facc15;
+  border: 1px solid #facc15;
+  padding: 0 6px;
+}
 .brand-dev-update:hover {
   filter: brightness(1.1);
 }

@@ -115,3 +115,42 @@ describe('bringing it in', () => {
     expect(await du.apply()).toEqual({ ok: false, reason: 'current' })
   })
 })
+
+describe('restart to apply: the background code changed since the app started', () => {
+  const clock = { t: 1_000_000 }
+  const fresh = () => {
+    const { du } = make({ now: () => (clock.t += 10_000) })
+    return du
+  }
+  const pushFrom = (file, text) => {
+    fs.mkdirSync(path.dirname(path.join(other, file)), { recursive: true })
+    commit(other, file, text, `change ${file}`)
+    git(other, 'push', '-q', 'origin', 'main')
+  }
+  it('nothing changed since the start: no banner', async () => {
+    expect(await fresh().restartNeeded()).toEqual({ needed: false, count: 0, files: [] })
+  })
+  it('a merge that changes src/main or src/preload or launch.mjs: the banner, with the files', async () => {
+    const du = fresh()
+    pushFrom('src/main/a.js', 'a')
+    pushFrom('launch.mjs', 'l')
+    await du.check()
+    expect((await du.restartNeeded()).needed).toBe(false) // fetched, not merged: the running code is the same files
+    await du.apply()
+    expect(await du.restartNeeded()).toEqual({ needed: true, count: 2, files: ['launch.mjs', 'src/main/a.js'] })
+  })
+  it('an edit not committed counts too; a renderer-only change does not', async () => {
+    fs.mkdirSync(path.join(mine, 'src/renderer'), { recursive: true })
+    fs.mkdirSync(path.join(mine, 'src/preload'), { recursive: true })
+    const du = fresh()
+    commit(mine, 'src/renderer/x.vue', 'x', 'renderer only')
+    expect((await du.restartNeeded()).needed).toBe(false)
+    fs.writeFileSync(path.join(mine, 'src/preload/p.js'), 'p')
+    git(mine, 'add', 'src/preload/p.js')
+    expect(await du.restartNeeded()).toMatchObject({ needed: true, count: 1, files: ['src/preload/p.js'] })
+  })
+  it('an installed Tessel never shows it', async () => {
+    const { du } = make({ packaged: true })
+    expect((await du.restartNeeded()).needed).toBe(false)
+  })
+})
