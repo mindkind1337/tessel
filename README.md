@@ -35,6 +35,9 @@ working on Tessel itself (see [Build from source](#build-from-source)).
   one). Switching never stops a running shell or agent, and everything
   (layout, panes, conversations, tasks, terminal output) is restored on the
   next launch.
+- **Groups of projects**: put projects of the same kind in a group of your own
+  (**Group** in a project's menu): a folding row with the projects under it, to
+  make room in the sidebar. Groups are saved with your settings.
 - **Git branches in the sidebar**: a project's other worktrees are listed under
   one folded "N other branches" line; an agent can work in its own copy (its
   own worktree and branch) so two agents never overwrite each other.
@@ -58,6 +61,21 @@ working on Tessel itself (see [Build from source](#build-from-source)).
   and a Source Control panel (changes by folder, stage per file, commit,
   commits graph with times, create a pull request, send failing checks or
   review comments to an agent).
+- **Files the editor shows in their own view** (read-only, on this computer
+  and on SSH hosts, up to 30 MB):
+  - **PDF** in an editor tab (pages drawn as they come into view, zoom);
+  - **Excel and OpenDocument sheets** (`.xlsx`, `.xlsm`, `.ods`): sheets as tabs,
+    tables with column letters;
+  - **Word and OpenDocument text** (`.docx`, `.odt`): headings, lists, tables,
+    links; **PowerPoint and OpenDocument slides** (`.pptx`, `.odp`): the text of
+    each slide;
+  - **audio and video** in Chromium's player;
+  - Markdown, Mermaid diagrams, CSV/TSV tables, JSON and images, as before.
+- **HTML preview like a real website**: the project's folder is served on this
+  computer (for an SSH project, its files are read on the host), so a page's
+  CSS, images and fonts load by their paths. As with VS Code's Workspace Trust,
+  one question per folder decides whether its scripts run; without trust the
+  page shows without them. A link to another site is held back until you click.
 - **Side panel**: Dashboard of agents, agent session history, task history
   (time, tokens and estimated cost per task), files, Source Control and web
   pages; each tab says when it is loading.
@@ -74,7 +92,12 @@ working on Tessel itself (see [Build from source](#build-from-source)).
   file links open the host's files.
 - **Stable on slow or dropped links**: your clicks go first, every remote call
   has a time limit, a slow host says so, and when the connection comes back
-  the project's panes reopen and agents resume their conversations.
+  the project's panes reopen and agents resume their conversations. A stall of
+  up to 3 minutes on the link does not drop the session.
+- **Light on a production server**: Tessel's own commands on the host run at the
+  lowest priority (`renice`, `ionice`), and git reads never take its locks. Above
+  2,000 changes the line counts are skipped, and after a slow `git status` the
+  automatic reads wait three times as long (up to 5 minutes).
 
 ### Agents
 
@@ -112,7 +135,18 @@ working on Tessel itself (see [Build from source](#build-from-source)).
   command asks first, with rules like VS Code's (allow a command for the
   session, the project or always; risky ones always ask). Reading or typing in
   your own terminals needs your approval, shows a badge with Stop, and is
-  logged. Passwords never go through the agent.
+  logged. Passwords never go through the agent. Each terminal keeps the list of
+  what agents ran in it (**Agent commands**): kind, agent, time, and the command,
+  folded when long, with Copy.
+- **Agents on an SSH host can reach your PC, with your approval**: with
+  `run_in_terminal` and `host: "local"`, a PowerShell opens on your computer. You
+  are asked first, then for every command, even for an agent in Yolo. The
+  `tessel_logs` tool reads Tessel's own logs, filtered and read only, with a
+  single approval. Agents already running get these after a restart.
+- **Sign-in from a terminal**: when an agent prints a sign-in page (Claude, Codex,
+  Grok, Gemini, Antigravity…), a banner offers **Open in Tessel**, **Open in my
+  browser** and **Copy the link**, with the whole address even if the program cut
+  it over several rows.
 
 ### Native chat
 
@@ -170,7 +204,9 @@ like VS Code Live Share:
 - It goes through a free Cloudflare tunnel (no account; Tessel downloads
   `cloudflared` the first time you share, checked against its published
   SHA-256), and everything is end-to-end encrypted, so the tunnel only
-  carries ciphertext. Editor, browser and chat panes are not shared yet.
+  carries ciphertext.
+- With the **Usage** right, a guest also sees your plans, how much of each is
+  used and when they reset; never your accounts or email addresses.
 
 ### Usage and search
 
@@ -219,6 +255,11 @@ Updates). **Restart and update** saves everything, installs silently and
 reopens the app; each pane comes back where it was and agents resume their
 conversations. Nothing installs until you click. Programs running in the
 terminals do stop.
+
+**Version and build**: the header shows the release version and a build number
+beside it, like `1.17.2 b1692`. The version only changes with a release; the
+build (`b` + the repository's number of commits, the commit on hover) goes up with
+every push to GitHub, so you can tell which code is running.
 
 ## Build from source
 
