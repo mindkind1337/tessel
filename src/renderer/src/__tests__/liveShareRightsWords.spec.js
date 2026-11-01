@@ -69,7 +69,7 @@ describe('rights: words for the catalog', () => {
 describe('access views: helpers', () => {
   it('initials', () => {
     expect(initials('Simpa')).toBe('SI')
-    expect(initials('Sam Claude')).toBe('JC')
+    expect(initials('Jean Claude')).toBe('JC')
     expect(initials('  ')).toBe('?')
     expect(initials('élodie')).toBe('ÉL')
   })

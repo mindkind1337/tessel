@@ -26,7 +26,7 @@ const folderKey = () => {
   // Old remote keys were lowercased and cannot prove which Linux directory
   // was approved. Use a new namespace and ask again instead of migrating them.
   const wsl = /^\\\\(?:wsl\$|wsl\.localhost)\\/i.test(folder)
-  return !wsl && /^[A-Za-z]:[\\/]|^\\\\/.test(folder) ? folder.toLowerCase() : `case-sensitive:${folder}`
+  return !wsl && /^[A-Za-z]:[\\/]|^\\\\/.test(folder) ? folder.toLowerCase() : `case-sensitive:${folder}` // i18n-ignore
 }
 function readTrust() {
   try {
