@@ -190,12 +190,18 @@ working on Tessel itself (see [Build from source](#build-from-source)).
   are asked first, then for every command, even for an agent in Yolo. The
   `tessel_logs` tool reads Tessel's own logs, filtered and read only, with a
   single approval. Agents already running get these after a restart.
+- **Importing a settings file is safe by default**: unless you tick the security part,
+  a file from elsewhere cannot choose what a pane starts with. Commands this computer
+  does not know, a Yolo pin, a conversation id that is not one, folders on a network
+  share and a host's proxy or jump host are all left out. A layout nested absurdly
+  deep is refused. An export no longer holds how panes were launched.
 - **Updating a development copy**: a Tessel started with `npm run dev` checks GitHub
   every 30 minutes (`git fetch` of the branch it follows) and, when there are newer
   builds, shows a yellow `↑ b1700` next to **dev**. It lists them and, for a copy with
   no change of its own, brings them in with a fast-forward; with changes of your own
   it touches nothing and gives you the command. It says whether to restart
-  (main process changed) or run `npm install` (packages changed). An installed Tessel
+  (main process changed). `npm run dev` installs the packages the code needs by itself
+  when they are missing or out of date, without changing `package-lock.json`. An installed Tessel
   keeps its own updater: it downloads each release and asks you to restart.
 - **Agents updated while a pane runs them**: when Tessel (or you) updates an agent's
   program, panes still running the old one restart by themselves with their conversation

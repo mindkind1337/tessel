@@ -1321,6 +1321,8 @@ function newUuid() {
 // The command that starts an agent: a fresh conversation, or the pane's own
 // previous one when `resume` is set and it exists.
 async function agentStartLine(agent, sessionId, resume, accountId, { known = false, hostId = null, hostNoDaemon = null } = {}) {
+  // It goes into a command line: whatever cannot be an id never gets there.
+  if (sessionId && !safeSessionId(sessionId)) sessionId = null
   const kind = sessionKind(agent)
   // A pane on an SSH host: its conversations are on the host, never in this
   // computer's transcripts. Asked there (never a sign-in): true / false, or
@@ -2165,7 +2167,7 @@ async function deserializeNode(snap, cwd = null, attaching = null) {
   }
   if (snap.type === 'leaf') {
     const agent =
-      snap.kind === 'agent' && snap.agentCommand
+      snap.kind === 'agent' && typeof snap.agentCommand === 'string' && snap.agentCommand
         ? {
             id: snap.agentId,
             name: snap.title || snap.agentId,
@@ -2222,7 +2224,7 @@ async function deserializeNode(snap, cwd = null, attaching = null) {
       id: savedId,
       ...(savedId && attaching && attaching.get(savedId) ? { attaching: attaching.get(savedId) } : {}),
       savedOutput: snap.id ? savedOutput[snap.id] || '' : '',
-      sessionId: snap.sessionId || null,
+      sessionId: safeSessionId(snap.sessionId) ? snap.sessionId : null,
       accountId:
         snap.accountId === null || (typeof snap.accountId === 'string' && /^[\w.-]{1,80}$/.test(snap.accountId))
           ? snap.accountId
