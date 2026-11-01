@@ -105,6 +105,18 @@ describe('a pane whose agent on an SSH host has no Tessel tools', () => {
     expect(wrapper.find('[data-test="remote-tools-note"]').exists()).toBe(false)
   })
 
+  it('an agent updated while its pane ran says so, and Restart restarts the pane; Close only hides the note', async () => {
+    mountPane({ staleVersionNote: 'Codex CLI was updated to 0.166.0 while this pane was running: it still runs the old version.' })
+    expect(wrapper.get('[data-test="stale-version-note"]').text()).toContain('still runs the old version')
+    await wrapper.get('[data-test="stale-version-close"]').trigger('click')
+    expect(ctx.restartLeaf).not.toHaveBeenCalled()
+    expect(wrapper.find('[data-test="stale-version-note"]').exists()).toBe(false)
+    wrapper.unmount()
+    mountPane({ staleVersionNote: 'Codex CLI was updated to 0.166.0 while this pane was running.' })
+    await wrapper.get('[data-test="stale-version-restart"]').trigger('click')
+    expect(ctx.restartLeaf).toHaveBeenCalledWith('pane-t1')
+  })
+
   it('Close hides it without restarting', async () => {
     mountPane({ remoteToolsNote: 'Tessel tools are not connected on Box: x.' })
     await wrapper.get('[data-test="remote-tools-close"]').trigger('click')

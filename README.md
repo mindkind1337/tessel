@@ -173,6 +173,10 @@ working on Tessel itself (see [Build from source](#build-from-source)).
   it touches nothing and gives you the command. It says whether to restart
   (main process changed) or run `npm install` (packages changed). An installed Tessel
   keeps its own updater: it downloads each release and asks you to restart.
+- **Agents updated while a pane runs them**: when Tessel (or you) updates an agent's
+  program, panes still running the old one restart by themselves with their conversation
+  when idle, and each of them shows a note with a **Restart** button until then (an old
+  program next to new files can fail in odd ways).
 - **Allow every account shown to agents at once** (the switch in the saved passwords
   list's header): follows the search, asks first with the number of accounts, and
   turning it off needs no question. Agent access stays off for every account until you

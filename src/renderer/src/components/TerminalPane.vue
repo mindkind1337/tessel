@@ -1763,7 +1763,16 @@ const accountMismatch = computed(() => {
   return { runs: hostAccountName(m.runs), saved: hostAccountName(typeof n.hostAccount === 'string' ? n.hostAccount : null) }
 })
 // Below the other notes shown above it.
-const accountNoteTop = computed(() => 36 + 44 * ((props.node.remoteToolsNote ? 1 : 0) + (props.node.rootNoYoloNote ? 1 : 0)))
+const accountNoteTop = computed(() => 36 + 44 * ((props.node.remoteToolsNote ? 1 : 0) + (props.node.rootNoYoloNote ? 1 : 0) + (props.node.staleVersionNote ? 1 : 0)))
+// The agent was updated while this pane ran it (App.vue onAgentUpdateResult): it still runs the old
+// version until restarted (the conversation resumes); a restart builds a new pane without the note.
+const staleNoteTop = computed(() => 36 + 44 * ((props.node.remoteToolsNote ? 1 : 0) + (props.node.rootNoYoloNote ? 1 : 0)))
+function dismissStaleNote() {
+  delete props.node.staleVersionNote
+}
+function restartStale() {
+  if (ctx.restartLeaf) ctx.restartLeaf(props.node.id)
+}
 function resolveAccountMismatch(update) {
   if (ctx.resolveHostAccountMismatch) ctx.resolveHostAccountMismatch(props.node.id, update)
 }
@@ -3072,7 +3081,7 @@ function mouseClickable() {
 }
 let signInTimer = null
 const signInNoteTop = computed(
-  () => 36 + 44 * ((props.node.remoteToolsNote ? 1 : 0) + (props.node.rootNoYoloNote ? 1 : 0) + (accountMismatch.value ? 1 : 0))
+  () => 36 + 44 * ((props.node.remoteToolsNote ? 1 : 0) + (props.node.rootNoYoloNote ? 1 : 0) + (props.node.staleVersionNote ? 1 : 0) + (accountMismatch.value ? 1 : 0))
 )
 function scheduleSignInScan() {
   if (signInTimer || props.node.backend === 'liveshare' || props.node.liveShare) return
@@ -4679,6 +4688,16 @@ const paneMenuBindings = computed(() => ({
     <div v-if="node.rootNoYoloNote && !node.failed && !node.startNote" :class="['root-note', { 'below-tools-note': !!node.remoteToolsNote }]" data-test="root-no-yolo-note" role="status" @mousedown.stop>
       <span class="root-note-text">{{ node.rootNoYoloNote }}</span>
       <button class="pane-nav-btn" data-test="root-no-yolo-close" :title="t('pane.rootNoYolo.close', 'Close')" :aria-label="t('pane.rootNoYolo.close', 'Close')" @click="dismissRootNote">
+        <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+          <path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
+        </svg>
+      </button>
+    </div>
+
+    <div v-if="node.staleVersionNote && !node.failed && !node.startNote" class="root-note" :style="{ top: `${staleNoteTop}px` }" data-test="stale-version-note" role="status" @mousedown.stop>
+      <span class="root-note-text">{{ node.staleVersionNote }}</span>
+      <button class="exit-btn primary" data-test="stale-version-restart" @click="restartStale">{{ t('pane.restart', 'Restart') }}</button>
+      <button class="pane-nav-btn" data-test="stale-version-close" :title="t('pane.rootNoYolo.close', 'Close')" :aria-label="t('pane.rootNoYolo.close', 'Close')" @click="dismissStaleNote">
         <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true">
           <path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
         </svg>

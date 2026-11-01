@@ -658,7 +658,8 @@
         "reminder": "un rappel vient d’y être tapé",
         "waiting": "en attente",
         "state": "état : {{state}}"
-      }
+      },
+      "paneStale": "{{name}} a été mis à jour vers {{version}} pendant que ce panneau tournait : il utilise encore l'ancienne version, et ses outils peuvent échouer. Redémarrez-le pour utiliser la nouvelle."
     },
     "message": {
       "noAgent": "{{where}} n'a aucun agent à qui écrire.",

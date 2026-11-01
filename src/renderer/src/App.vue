@@ -10973,6 +10973,13 @@ async function onAgentUpdateResult(agentId, r) {
     // Panes running the old version: restarted in place when each is safe.
     const plan = updatePlanFor(agentId)
     for (const id of plan.running) if (!plan.manual.some((m) => m.id === id)) restartAfterUpdate[id] = { agentId, version }
+    // Every pane still on the old version says so until it is restarted (a restart builds a
+    // new pane without the note): a busy pane can wait long, and an old program next to new
+    // files fails in ways that look like Tessel's (Codex 0.163 beside 0.166's files).
+    for (const id of plan.running) {
+      const stale = findLeaf(id)
+      if (stale) stale.staleVersionNote = t('app.agentUpdate.paneStale', '{{name}} was updated to {{version}} while this pane was running: it still runs the old version, and its tools may fail. Restart it to use the new one.', { name: job.name, version })
+    }
     job.manual = plan.manual
     job.phase = plan.running.length > plan.manual.length ? 'restarting' : 'done'
     const manualList = plan.manual.map((m) => m.label).join(', ')
