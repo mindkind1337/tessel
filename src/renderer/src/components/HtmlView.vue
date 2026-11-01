@@ -3,7 +3,7 @@ import { computed, ref, watch, onMounted, onBeforeUnmount } from 'vue'
 import { RotateCw, ExternalLink, ShieldCheck, ShieldAlert } from 'lucide-vue-next'
 import OrcaMenu from './OrcaMenu.vue'
 import { htmlPreview, htmlPlainText } from '../htmlPreview'
-import { resolveFrom } from '../../../shared/viewPaths'
+import { resolveFrom, resolvePreviewImage } from '../../../shared/viewPaths'
 import { openTarget } from '../links/openTarget'
 import { t } from '../i18n'
 const props = defineProps({ file: { type: String, required: true }, text: { type: String, default: '' }, plain: Boolean, root: { type: String, default: '' } })
@@ -21,7 +21,13 @@ const emit = defineEmits(['open'])
 // asks again. Never decided for you.
 const TRUST_KEY = 'tessel.htmlTrust'
 const OLD_KEY = 'tessel.htmlScripts' // before: a list of folders with scripts on
-const folderKey = () => String(props.root || props.file.replace(/[\\/][^\\/]*$/, '')).toLowerCase()
+const folderKey = () => {
+  const folder = String(props.root || props.file.replace(/[\\/][^\\/]*$/, ''))
+  // Old remote keys were lowercased and cannot prove which Linux directory
+  // was approved. Use a new namespace and ask again instead of migrating them.
+  const wsl = /^\\\\(?:wsl\$|wsl\.localhost)\\/i.test(folder)
+  return !wsl && /^[A-Za-z]:[\\/]|^\\\\/.test(folder) ? folder.toLowerCase() : `case-sensitive:${folder}`
+}
 function readTrust() {
   try {
     const map = JSON.parse(localStorage.getItem(TRUST_KEY) || '{}')
@@ -97,7 +103,7 @@ watch(() => props.text, () => {
   clearTimeout(liveTimer)
   liveTimer = setTimeout(openLive, 350)
 })
-watch(() => [props.file, props.plain], () => {
+watch(() => [props.file, props.root, props.plain], () => {
   trust.value = trustOf(folderKey())
   asking.value = false
   blocked.value = ''
@@ -164,7 +170,7 @@ function loaded(event) {
     }
   })
   for (const img of [...doc.querySelectorAll('img[data-local-src]')].slice(0, 100)) {
-    const target = resolveFrom(file, img.dataset.localSrc)
+    const target = resolvePreviewImage(file, img.dataset.localSrc)
     if (!target) continue
     window.shellApi?.viewImage?.(target).then((r) => {
       if (r?.ok && /^data:image\//.test(r.dataUrl)) img.src = r.dataUrl

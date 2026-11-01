@@ -7,6 +7,25 @@
 import { isLsharePath, parseLsharePath, lsharePath } from './liveSharePath.js'
 import { isRemotePath, parseRemotePath, remoteRoot } from './remotePath.js'
 
+// Passive previews must not contact a Windows network share (including a
+// device/UNC path) just because a document names an image. Explicit clicks
+// keep using resolveFrom; SSH/Live Share relative assets use their own session.
+export function resolvePreviewImage(file, href) {
+  const target = resolveFrom(file, href)
+  if (!target) return null
+  if (/^[\\/]{2}/.test(target)) {
+    const share = (p) => {
+      const m = /^\\\\([^\\/.?][^\\/]*)[\\/]([^\\/]+)/.exec(String(p))
+      return m ? `${m[1]}/${m[2]}`.toLowerCase() : null
+    }
+    const sourceShare = share(file)
+    // A document explicitly opened on a share may load that same share's
+    // images, but never initiate contact with a different host/share.
+    if (!sourceShare || sourceShare !== share(target)) return null
+  }
+  return target
+}
+
 function resolveVirtual(file, h) {
   // Absolute, a drive, a share, a scheme: never.
   if (/^[A-Za-z][A-Za-z0-9+.-]*:/.test(h) || /^[\\/]/.test(h)) return null
