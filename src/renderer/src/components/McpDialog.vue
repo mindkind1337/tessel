@@ -30,7 +30,7 @@ const props = defineProps({
   // Shown as a Settings page: no backdrop, card, title bar or Escape to close.
   embedded: { type: Boolean, default: false }
 })
-const emit = defineEmits(['close', 'run', 'tools', 'skills', 'orchestration'])
+const emit = defineEmits(['close', 'run', 'tools', 'skills', 'orchestration', 'connections'])
 
 const TABS = ['installed', 'catalog', 'custom']
 const m = useMcpState(props, emit)
@@ -119,7 +119,7 @@ onMounted(() => {
 
       <div id="mcpd-panel" role="tabpanel" :aria-labelledby="'mcpd-tab-' + tab">
         <McpInstalled v-if="tab === 'installed'" :m="m" :cwd="cwd" @browse="tab = 'catalog'" @orchestration="emit('orchestration')" />
-        <McpCatalog v-else-if="tab === 'catalog'" :m="m" :cwd="cwd" @tools="emit('tools')" />
+        <McpCatalog v-else-if="tab === 'catalog'" :m="m" :cwd="cwd" @tools="emit('tools')" @connections="emit('connections')" />
         <McpCustom v-else :m="m" :cwd="cwd" @added="tab = 'installed'" />
       </div>
     </div>

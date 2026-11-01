@@ -190,6 +190,7 @@
       "addToOther": "Ajouter à l'autre agent",
       "add": "Ajouter",
       "openTools": "Ouvrir les outils",
+      "useConnections": "Connectez ce compte dans Réglages > Connexions : un seul bouton, pour tous vos agents.",
       "browse": "Parcourir",
       "noMatch": "Aucun serveur ne correspond. Essayez l'onglet Personnalisé.",
       "playwright": {

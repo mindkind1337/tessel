@@ -14954,6 +14954,12 @@ onBeforeUnmount(() => {
           openSettingsAt('orchestration')
         }
       "
+      @connections="
+        () => {
+          mcpOpen = false
+          openSettingsAt('connections')
+        }
+      "
       @close="closeMcp"
     />
 

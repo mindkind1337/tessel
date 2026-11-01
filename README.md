@@ -146,13 +146,13 @@ working on Tessel itself (see [Build from source](#build-from-source)).
   themselves.
 - **MCP servers and tools**: see every MCP server for Claude Code and Codex,
   test the connection, copy a server to another agent, and install from a
-  catalog of popular servers and developer tools. Its Productivity group connects
-  agents to your accounts: Gmail, Google Calendar and Drive (with your own free
-  Google Cloud OAuth client), Outlook and OneDrive for personal Microsoft
-  accounts, Dropbox, Todoist, Airtable, ClickUp and monday.com. Gmail and Outlook
-  can read mail and write drafts, and offer agents no tool to send mail.
-- **Connections** (Settings → Connections): one Connect button per account
-  service, for all your agents at once. It adds the server to every agent that
+  catalog of popular servers and developer tools.
+- **Connections** (Settings → Connections): connect your accounts to your agents:
+  Gmail, Google Calendar and Drive (the first time, with your own free Google
+  Cloud OAuth client), Outlook and OneDrive for personal Microsoft accounts,
+  Dropbox, Todoist, Airtable, ClickUp and monday.com. Gmail and Outlook can read
+  mail and write drafts, and offer agents no tool to send mail. There is one
+  Connect button per service, for all your agents at once. It adds the server to every agent that
   lacks it and starts the sign-in in your own browser; Google and Microsoft sign
   in once for all agents, hosted services have one Sign in per agent. The page
   shows whether a Google or Microsoft sign-in still works. A server from a

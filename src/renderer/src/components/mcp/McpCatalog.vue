@@ -15,7 +15,11 @@ const props = defineProps({
   m: { type: Object, required: true }, // useMcpState()
   cwd: { type: String, default: null }
 })
-const emit = defineEmits(['tools'])
+const emit = defineEmits(['tools', 'connections'])
+
+// An account service (Gmail, Outlook, Dropbox...) has one place: Settings >
+// Connections, which adds it to every agent and signs in.
+const isAccount = (entry) => entry.category === 'Productivity'
 
 const needsToolLabel = (entry) =>
   t('mcp.catalog.needsTool', "This server needs {{tool}}, which isn't installed.", { tool: entry.requires === 'uvx' ? 'uv' : 'Node.js' })
@@ -63,7 +67,7 @@ const blocked = computed(() => {
   const has = props.m.addedTo(batch.value[0].id)
   return { ...props.m.unwritable, ...Object.fromEntries(agents.value.filter((a) => has.includes(a)).map((a) => [a, hasItLabel(a)])) }
 })
-const nothingToAdd = computed(() => batch.value.every((e) => props.m.fullyAdded(e.id)))
+const nothingToAdd = computed(() => batch.value.every((e) => props.m.fullyAdded(e.id) || isAccount(e)))
 
 const isOn = (a) => targets[a] !== false // on until turned off
 const chipTargets = computed(() => Object.fromEntries(agents.value.map((a) => [a, isOn(a)])))
@@ -85,7 +89,7 @@ function clearChecked() {
   for (const k of Object.keys(checked)) delete checked[k]
 }
 function toggleCheck(entry) {
-  if (props.m.fullyAdded(entry.id)) return
+  if (props.m.fullyAdded(entry.id) || isAccount(entry)) return
   checked[entry.id] = !checked[entry.id]
   answersOf(entry)
 }
@@ -128,7 +132,7 @@ async function add() {
     formError.value = t('mcp.chooseAgent', 'Choose at least one agent.')
     return
   }
-  const list = batch.value.filter((e) => !m.fullyAdded(e.id))
+  const list = batch.value.filter((e) => !m.fullyAdded(e.id) && !isAccount(e))
   // Everything a server needs, before adding any: the first one missing an
   // answer is shown, with what it lacks.
   for (const entry of list) {
@@ -223,7 +227,7 @@ const RESULT = {
               :aria-checked="checked[entry.id] ? 'true' : 'false'"
               :aria-label="selectLabel(entry)"
               :title="selectLabel(entry)"
-              :disabled="m.fullyAdded(entry.id)"
+              :disabled="m.fullyAdded(entry.id) || isAccount(entry)"
               @click="toggleCheck(entry)"
             >
               <Check v-if="checked[entry.id] || m.fullyAdded(entry.id)" :size="11" aria-hidden="true" />
@@ -267,7 +271,11 @@ const RESULT = {
           </div>
         </header>
         <p class="mcpc-desc">{{ viewed.desc }}</p>
-        <p v-if="viewed.auth === 'oauth'" class="set-hint mcpc-note">
+        <div v-if="isAccount(viewed)" class="set-callout mcpc-account">
+          <span class="set-callout-text">{{ t('mcp.catalog.useConnections', 'Connect this account under Settings > Connections: one button, for all your agents.') }}</span>
+          <button type="button" class="exit-btn small mcpc-connections" @click="emit('connections')">{{ t('settings.connections.open', 'Open Connections') }}</button>
+        </div>
+        <p v-else-if="viewed.auth === 'oauth'" class="set-hint mcpc-note">
           {{ t('mcp.catalog.oauthNote', 'It asks you to sign in the first time an agent uses it.') }}
         </p>
 
@@ -276,7 +284,7 @@ const RESULT = {
           <button type="button" class="exit-btn small" @click="emit('tools')">{{ t('mcp.catalog.openTools', 'Open Tools') }}</button>
         </div>
 
-        <div v-for="input in viewed.inputs || []" :key="input.key" class="mcpc-field">
+        <div v-for="input in isAccount(viewed) ? [] : viewed.inputs || []" :key="input.key" class="mcpc-field">
           <label :for="'mcpc-' + viewed.id + '-' + input.key">{{ input.label }}</label>
           <div class="mcpc-input-wrap">
             <input

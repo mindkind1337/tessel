@@ -458,6 +458,22 @@ describe('MCP servers dialog', () => {
     expect(wrapper.get('.mcp-error').text()).toBe('Codex: config locked')
   })
 
+  it('account services go to Connections: no client fields here and nothing to add', async () => {
+    const w = mountWith({ mcpList: async () => ({ claude: [], codex: [], others: {} }) }, { agents: agentsOf(['claude', 'codex']) })
+    await flushPromises()
+    await tabBtn(w, 'Catalog').trigger('click')
+    await catalogItem(w, 'google-workspace').get('.mcpc-row').trigger('click')
+    expect(w.find('.mcpc-input').exists()).toBe(false)
+    expect(catalogItem(w, 'google-workspace').get('[role="checkbox"]').attributes('disabled')).toBeDefined()
+    expect(w.get('.mcp-addbar-add').attributes('disabled')).toBeDefined()
+    await w.get('.mcpc-connections').trigger('click')
+    expect(w.emitted('connections')).toHaveLength(1)
+    // The others keep their fields.
+    await catalogItem(w, 'brave-search').get('.mcpc-row').trigger('click')
+    expect(w.find('.mcpc-input').exists()).toBe(true)
+    expect(w.find('.mcpc-connections').exists()).toBe(false)
+  })
+
   it("links each catalog server to its docs: its own, else its npm or PyPI package", () => {
     const byId = (id) => MCP_CATALOG.find((e) => e.id === id)
     expect(catalogDocs(byId('context7'))).toBe('https://github.com/upstash/context7')

@@ -31,6 +31,7 @@ const { page, searching, shown, go, mcpTab, emit } = useSettingsShell()
           @tools="go('devtools')"
           @skills="go('skills')"
           @orchestration="go('orchestration')"
+          @connections="go('connections')"
         />
       </div>
       <div v-else class="set-row">
