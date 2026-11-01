@@ -13,15 +13,16 @@ describe('LaunchMenu', () => {
     w.unmount()
   })
 
-  it('offers OpenCode as a chat only when OpenCode is installed', async () => {
-    const none = mount(LaunchMenu, { props: { shells: [], agents: [{ id: 'opencode', name: 'OpenCode', command: 'opencode', available: false, install: ['npm install -g opencode-ai'] }] }, attachTo: document.body })
-    expect(none.find('[data-test="launch-chat-opencode"]').exists()).toBe(false)
-    none.unmount()
-    const w = mount(LaunchMenu, { props: { shells: [], agents: [{ id: 'opencode', name: 'OpenCode', command: 'opencode', available: true }] }, attachTo: document.body })
-    const item = w.get('[data-test="launch-chat-opencode"]')
-    expect(item.text()).toContain('OpenCode (chat)')
-    await item.trigger('click')
-    expect(w.emitted('launch')).toEqual([[{ kind: 'chat', id: 'opencode' }]])
+  it('has no chat versions of the agents (Claude Code, Codex, OpenCode): their terminals only', () => {
+    const agents = [
+      { id: 'claude', name: 'Claude Code', command: 'claude', available: true },
+      { id: 'codex', name: 'Codex CLI', command: 'codex', available: true },
+      { id: 'opencode', name: 'OpenCode', command: 'opencode', available: true }
+    ]
+    const w = mount(LaunchMenu, { props: { shells: [], agents }, attachTo: document.body })
+    expect(w.findAll('[data-test^="launch-chat"]')).toHaveLength(0)
+    expect(w.text()).not.toContain('(chat)')
+    expect(w.findAll('.launch-item').filter((b) => /Claude Code|Codex|OpenCode/.test(b.text()))).toHaveLength(3)
     w.unmount()
   })
 })
@@ -66,7 +67,6 @@ describe('on an SSH project', () => {
     const w = mount(LaunchMenu, { props: { shells: [], agents }, attachTo: document.body })
     const install = w.get('[data-test="launch-host-install-codex"]')
     expect(install.text()).toContain('Install Codex CLI…')
-    expect(w.find('[data-test="launch-chat-codex"]').exists()).toBe(false)
     expect(w.findAll('.launch-item').filter((b) => b.text().trim() === 'Codex CLI')).toHaveLength(0)
     await install.trigger('click')
     expect(w.emitted('launch')).toEqual([[{ kind: 'install', id: 'codex' }]])

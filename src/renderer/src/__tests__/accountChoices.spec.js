@@ -51,6 +51,21 @@ describe('the accounts to choose from', () => {
     expect(twins.map((c) => c.name)).toEqual(['jc@home.test', 'jc@work.test'])
     expect(shortAccount('a-very-long-name-for-a-mailbox@x.test')).toBe('a-very-long-name-for-…')
   })
+  it('the same login twice (the system\u2019s sign-in and an added account with its email) is one choice: the default one stays', () => {
+    const dup = { id: 'a', email: 'ME@home.test', status: 'ready' }
+    // The system's sign-in is the default: the added copy goes, nothing left to choose.
+    expect(choicesFrom(claude({ accounts: [dup] }))).toEqual([])
+    // The added account is the default: it stays, the system's goes (new sessions keep their account).
+    expect(choicesFrom(claude({ selectedId: 'a', accounts: [dup] }))).toEqual([])
+    // Beside a really different one: that one and a single copy of the login.
+    const withOther = choicesFrom(claude({ selectedId: 'a', accounts: [dup, claude().accounts[0]] }))
+    expect(withOther.map((c) => [c.id, c.isDefault])).toEqual([['a', true], ['acc-1', false]])
+    const sys = choicesFrom(claude({ accounts: [dup, claude().accounts[0]] }))
+    expect(sys.map((c) => [c.id, c.isDefault])).toEqual([[null, true], ['acc-1', false]])
+    // Accounts with no email are never taken for each other.
+    const blank = choicesFrom(claude({ system: { status: 'ready', email: '' }, accounts: [{ id: 'b', email: '', status: 'ready' }] }))
+    expect(blank).toHaveLength(2)
+  })
   it('names the account a pane runs on only when its agent has more than one', async () => {
     await accounts([claude()])
     expect(accountChoices('claude')).toHaveLength(2)
@@ -87,7 +102,7 @@ describe('the + menu', () => {
   }
   const agentItem = (name) => wrapper.findAll('.launch-item').find((b) => b.text().includes(name) && !b.text().includes('chat'))
 
-  it('starts Claude Code on the default account, or on the one chosen, in a terminal or a chat', async () => {
+  it('starts Claude Code on the default account, or on the one chosen', async () => {
     await accounts([claude({ selectedId: 'acc-1' })])
     await open()
     const row = wrapper.get('[data-test="launch-account-claude"]')
@@ -99,8 +114,6 @@ describe('the + menu', () => {
     await row.get('[data-test="launch-account-claude-system"]').trigger('click')
     await agentItem('Claude Code').trigger('click')
     expect(wrapper.emitted('launch').at(-1)[0]).toEqual({ kind: 'agent', id: 'claude', accountId: null })
-    await wrapper.get('[data-test="launch-chat"]').trigger('click')
-    expect(wrapper.emitted('launch').at(-1)[0]).toEqual({ kind: 'chat', id: 'claude', accountId: null })
     // Codex has a single account here: started as before.
     await agentItem('Codex').trigger('click')
     expect(wrapper.emitted('launch').at(-1)[0]).toEqual({ kind: 'agent', id: 'codex' })

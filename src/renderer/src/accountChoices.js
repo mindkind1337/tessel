@@ -70,10 +70,24 @@ export function choicesFrom(provider) {
   if (!provider) return []
   const ready = (provider.accounts || []).filter((a) => a.status === 'ready')
   if (!ready.length) return []
-  const rows = [
+  const all = [
     { id: null, email: (provider.system && provider.system.email) || '', label: '' },
     ...ready.map((a) => ({ id: a.id, email: a.email || '', label: a.label || '' }))
   ]
+  // The same email twice (the system's sign-in and an added account that is
+  // the same login) is one choice, not two: the one new sessions use stays
+  // (the system's when neither is), so nothing starts on another account.
+  const isDefault = (r) => (provider.selectedId ?? null) === r.id
+  const rows = all.filter((r, i) => {
+    const key = r.email.trim().toLowerCase()
+    if (!key) return true
+    const same = all.filter((o) => o.email.trim().toLowerCase() === key)
+    if (same.length < 2) return true
+    const keep = same.find(isDefault) || same[0]
+    return all.indexOf(keep) === i
+  })
+  // Nothing to choose between any more: nothing is shown or asked.
+  if (rows.length < 2) return []
   const shorts = rows.map((r) => shortAccount(r.email))
   // Two with the same name before the @: their whole email.
   const clash = (i) => !!shorts[i] && shorts.filter((s) => s === shorts[i]).length > 1

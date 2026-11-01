@@ -143,9 +143,6 @@ function launch(kind, item) {
   if (kind === 'agent' && !item.available) return
   emit('launch', { kind, id: item.id, ...(kind === 'agent' ? accountOf(item.id) : {}), ...(picked.value ? { side: picked.value } : {}) })
 }
-function launchChat(id) {
-  emit('launch', { kind: 'chat', id, ...accountOf(id) })
-}
 
 // Arrow keys move between items; Enter activates; Esc closes.
 function onKeydown(e) {
@@ -341,43 +338,6 @@ onMounted(async () => {
         <BrandIcon :kind="agent.id" :accent="agent.accent" :label="agent.name" :size="16" />
         <span class="launch-name">{{ installLabel(agent) }}</span>
         <span class="launch-tag">{{ t('pane.launch.notOnHost', 'Not on the host') }}</span>
-      </button>
-    </div>
-    <!-- Claude as a chat (src/main/chat): no terminal, team messages as turns. -->
-    <div v-if="installedAgents.some((a) => a.id === 'claude' && a.available !== false)" class="launch-row">
-      <button
-        class="launch-item"
-        role="menuitem"
-        data-test="launch-chat"
-        :title="t('pane.launch.chatHint', 'Claude in a chat pane: no terminal; team messages reach it as turns of their own')"
-        @click="launchChat('claude')"
-      >
-        <BrandIcon kind="claude" :label="t('pane.launch.chat', 'Claude Code (chat)')" :size="16" />
-        <span class="launch-name">{{ t('pane.launch.chat', 'Claude Code (chat)') }}</span>
-      </button>
-    </div>
-    <div v-if="installedAgents.some((a) => a.id === 'codex' && a.available !== false)" class="launch-row">
-      <button
-        class="launch-item"
-        role="menuitem"
-        data-test="launch-chat-codex"
-        :title="t('pane.launch.chatCodexHint', 'Codex in a chat pane: no terminal; team messages reach it as turns of their own')"
-        @click="launchChat('codex')"
-      >
-        <BrandIcon kind="codex" :label="t('pane.launch.chatCodex', 'Codex (chat)')" :size="16" />
-        <span class="launch-name">{{ t('pane.launch.chatCodex', 'Codex (chat)') }}</span>
-      </button>
-    </div>
-    <div v-if="installedAgents.some((a) => a.id === 'opencode' && a.available !== false)" class="launch-row">
-      <button
-        class="launch-item"
-        role="menuitem"
-        data-test="launch-chat-opencode"
-        :title="t('pane.launch.chatOpencodeHint', 'OpenCode in a chat pane: no terminal; team messages reach it as turns of their own')"
-        @click="emit('launch', { kind: 'chat', id: 'opencode' })"
-      >
-        <BrandIcon kind="opencode" :label="t('pane.launch.chatOpencode', 'OpenCode (chat)')" :size="16" />
-        <span class="launch-name">{{ t('pane.launch.chatOpencode', 'OpenCode (chat)') }}</span>
       </button>
     </div>
     <!-- Tessel's browser (BrowserPane.vue): a web page next to the terminals. -->
