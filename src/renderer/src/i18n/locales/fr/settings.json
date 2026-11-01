@@ -416,6 +416,8 @@
     "general": {
       "restore": "Rouvrir mes espaces de travail au démarrage",
       "restoreHint": "Désactivé : démarre avec un seul terminal",
+      "startAsleep": "Démarrer les terminaux en veille",
+      "startAsleepHint": "Au lancement, les agents et les terminaux restent en veille : rien ne tourne avant que vous ouvriez leur panneau. Un terminal qui tourne encore est gardé.",
       "confirmClose": "Confirmer avant de fermer les terminaux en cours d'exécution",
       "confirmCloseHint": "Demander avant d'arrêter un agent ou une commande en cours à la fermeture d'un terminal.",
       "confirmQuit": "Demander avant de quitter quand des agents ou des terminaux tournent",

@@ -88,7 +88,7 @@ function load({ shared = false, tree = null } = {}) {
   }
   vm.createContext(ctx)
   vm.runInContext(
-    slice('async function deserializeNode(snap, cwd = null, attaching = null)', 'let persistReady') +
+    slice('async function deserializeNode(snap, cwd = null, attaching = null, startAsleep = false)', 'let persistReady') +
       slice('async function createLeaf(shellId, agent = null', 'function replaceNode(') +
       slice('const connectingLeaves = new Set()', '// Replace a pane with a fresh process') +
       '\nthis.api = { deserializeNode, createLeaf, connectLeaf }',

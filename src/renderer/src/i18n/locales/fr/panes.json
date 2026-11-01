@@ -215,6 +215,7 @@
       "held": "Le message attend votre approbation",
       "goToPane": "Aller au panneau",
       "sleepHint": "Arrête son terminal pour libérer de la mémoire ; rouvrir le panneau reprend la conversation.",
+      "sleepHintShell": "Arrête son terminal pour libérer de la mémoire ; rouvrir le panneau en démarre un nouveau, dans le même dossier.",
       "chatStopped": "Arrêté",
       "chatSignin": "Non connecté",
       "chatUntrusted": "Dossier non approuvé"
@@ -633,7 +634,8 @@
     },
     "sleep": {
       "overlay": "En veille depuis {{time}} : son terminal a été arrêté pour libérer de la mémoire. Sa conversation est conservée.",
-      "wake": "Le réveiller"
+      "wake": "Le réveiller",
+      "overlayShell": "En veille depuis {{time}} : son terminal est arrêté pour libérer de la mémoire. Le réveiller en démarre un nouveau, dans le même dossier."
     },
     "exit": {
       "withCode": "Le processus s'est terminé avec le code {{code}}.",

@@ -307,10 +307,11 @@ describe('the last pane of a project closed', () => {
 })
 
 describe('a restored layout', () => {
-  function restore(snaps, deserialize, { currentIndex = 0, attachPty = null, onCtx = null } = {}) {
+  function restore(snaps, deserialize, { currentIndex = 0, attachPty = null, onCtx = null, settings = {} } = {}) {
     const workspaces = ref([])
     const ctx = {
       workspaces,
+      settings,
       makeWorkspace: (name) => reactive({ id: 'ws-new', name, tree: null, activeId: null, cwd: null, remote: null, group: null }),
       nextWorkspaceName: () => 'Workspace',
       savedRemote: (r) => (r ? { ...r } : null),
@@ -414,6 +415,15 @@ describe('a restored layout', () => {
     expect(ctx.workspaces.value.map((w) => w.id)).toEqual(['ws-a'])
     // Left to the end of the restore (App.vue: the one now at its place).
     expect(ctx.currentWsId.value).toBe(null)
+  })
+
+  it('Start terminals asleep (Settings > General): each project is restored with it', async () => {
+    const leaf = (id) => ({ type: 'leaf', id })
+    const snaps = [{ id: 'ws-a', name: 'A', cwd: 'C:/a', tree: leaf('pane-a1') }]
+    const on = await restore(snaps, async (tree) => tree, { settings: { startAsleep: true } })
+    expect(on.deserializeNode.mock.calls[0][3]).toBe(true)
+    const off = await restore(snaps, async (tree) => tree)
+    expect(off.deserializeNode.mock.calls[0][3]).toBe(false)
   })
 
   it('its panes come back as before; nothing new is started', async () => {

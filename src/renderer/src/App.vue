@@ -148,7 +148,7 @@ import { runSettingsTool } from './settingsTools'
 import { paneModels, paneModelIds } from './paneModels'
 import { savedPaneModel } from './paneLastModel'
 import { buildSenderSnapshot, paneRemote, cleanSender } from './senderIdentity'
-import { sleepBlocker } from '../../shared/agentSleep'
+import { sleepBlocker, sleepsAtStart } from '../../shared/agentSleep'
 import { updateBlocker, planUpdate, autoUpdateMoment } from '../../shared/agentUpdatePlan'
 import { describeWaitingText } from './agentUpdateWhy'
 import { stopThenRetry, stuckMessage } from './agentUpdateRetry'
@@ -2135,7 +2135,7 @@ function validViewPath(v) {
   return typeof v === 'string' && v.length > 0 && v.length <= 1000
 }
 // attaching: the re-attaches asked ahead at startup (restoreAttach.js), or null.
-async function deserializeNode(snap, cwd = null, attaching = null) {
+async function deserializeNode(snap, cwd = null, attaching = null, startAsleep = false) {
   if (!snap) return null
   // An editor pane comes back with its tabs, without any terminal (a file
   // gone since shows its error in its tab).
@@ -2205,9 +2205,13 @@ async function deserializeNode(snap, cwd = null, attaching = null) {
           }
         : null
     const savedId = typeof snap.id === 'string' && /^pane-[\w-]+$/.test(snap.id) ? snap.id : null
+    // Start terminals asleep (Settings > General): at launch, a pane whose
+    // terminal no longer runs comes back asleep too; one still running is
+    // kept as it is.
+    const asleepAtStart = startAsleep && sleepsAtStart(snap) && !(await runsStill(savedId, attaching))
     // An agent put to sleep stays asleep: its pane, conversation, account and
     // copy are kept, no terminal is started until you open it (Wake).
-    if (agent && savedId && restoresAsleep(snap)) {
+    if (agent && savedId && (restoresAsleep(snap) || asleepAtStart)) {
       const asleep = reactive({
         type: 'leaf',
         id: savedId,
@@ -2221,7 +2225,8 @@ async function deserializeNode(snap, cwd = null, attaching = null) {
         worktree: snap.worktree && snap.worktree.path ? { path: snap.worktree.path, branch: snap.worktree.branch } : null,
         backend: 'conpty',
         startDir: typeof snap.startDir === 'string' ? snap.startDir : cwd,
-        sessionId: snap.sessionId,
+        // None yet (asleep at launch): it starts a new conversation on Wake.
+        sessionId: safeSessionId(snap.sessionId) ? snap.sessionId : null,
         accountId:
           snap.accountId === null || (typeof snap.accountId === 'string' && /^[\w.-]{1,80}$/.test(snap.accountId))
             ? snap.accountId
@@ -2233,7 +2238,7 @@ async function deserializeNode(snap, cwd = null, attaching = null) {
         // follows Settings again (Yolo on: every agent starts in Yolo).
         ...(snap.permissions === 'yolo' ? { permissions: 'yolo' } : {}),
         restoredText: savedOutput[savedId] || '',
-        sleeping: { at: snap.sleeping.at },
+        sleeping: { at: snap.sleeping && Number.isFinite(snap.sleeping.at) ? snap.sleeping.at : Date.now() },
         broadcast: snap.broadcast !== false,
         ...(snap.chatView === true ? { chatView: true } : {})
       })
@@ -2247,6 +2252,34 @@ async function deserializeNode(snap, cwd = null, attaching = null) {
       if (typeof snap.team === 'string') asleep.team = snap.team
       if (snap.teamTools) asleep.teamTools = true
       if (typeof snap.toolsVersion === 'string') asleep.toolsVersion = snap.toolsVersion
+      return asleep
+    }
+    // A terminal asleep at launch: its shell starts when you open it (Wake),
+    // in the same folder, with what it showed last time.
+    if (!agent && savedId && asleepAtStart) {
+      const asleep = reactive({
+        type: 'leaf',
+        id: savedId,
+        shellId: snap.shellId,
+        shellName: snap.shellId,
+        title: snap.title || snap.shellId,
+        kind: 'shell',
+        agentId: null,
+        agentCommand: null,
+        accent: null,
+        worktree: snap.worktree && snap.worktree.path ? { path: snap.worktree.path, branch: snap.worktree.branch } : null,
+        backend: 'conpty',
+        startDir: typeof snap.startDir === 'string' ? snap.startDir : null,
+        restoredText: savedOutput[savedId] || '',
+        sleeping: { at: snap.sleeping && Number.isFinite(snap.sleeping.at) ? snap.sleeping.at : Date.now() },
+        broadcast: snap.broadcast !== false
+      })
+      if (snap.paneName) asleep.paneName = snap.paneName
+      if (Number.isInteger(snap.num) && snap.num > 0) asleep.num = snap.num
+      if (snap.titleSet === true) asleep.titleSet = true
+      if (typeof snap.autoTitle === 'string' && snap.autoTitle) asleep.autoTitle = snap.autoTitle.slice(0, 80)
+      if (Number.isInteger(snap.fontZoom) && Math.abs(snap.fontZoom) <= 20) asleep.fontZoom = snap.fontZoom
+      if (typeof snap.team === 'string') asleep.team = snap.team
       return asleep
     }
     const leaf = await createLeaf(snap.shellId, agent, cwd, snap.worktree || null, {
@@ -2326,7 +2359,7 @@ async function deserializeNode(snap, cwd = null, attaching = null) {
   }
   const children = []
   for (const child of snap.children || []) {
-    const built = await deserializeNode(child, cwd, attaching)
+    const built = await deserializeNode(child, cwd, attaching, startAsleep)
     if (built) children.push(built)
   }
   if (!children.length) return null
@@ -2351,6 +2384,18 @@ function restoresAsleep(snap) {
     Number.isFinite(snap.sleeping.at) &&
     !!safeSessionId(snap.sessionId)
   )
+}
+// Its terminal still runs in the terminal host (the answer asked ahead at
+// startup, restoreAttach.js).
+async function runsStill(id, attaching) {
+  const asked = id && attaching ? attaching.get(id) : null
+  if (!asked) return false
+  try {
+    const a = await asked
+    return !!(a && a.ok)
+  } catch {
+    return false
+  }
 }
 // A saved leaf whose terminal may still run in the terminal host: re-attached
 // when it is restored (createLeaf), so asked ahead at startup.
@@ -7427,28 +7472,53 @@ function markPanesRead(ids) {
 function markPaneUnread(id) {
   if (findLeaf(id)) setAttention(id)
 }
-// "Sleep" from the sidebar: agents whose conversation can be resumed stop
-// their terminal now (opening the pane resumes them); the pane you are in
-// stays awake.
+// "Sleep" from the sidebar: agents whose conversation can be resumed, and
+// terminals on this computer, stop their terminal now (opening the pane
+// resumes the agent, or starts a new shell in the same folder under what the
+// old one showed); the pane you are in stays awake.
 function sleepPanes(ids) {
   const skipped = []
   let slept = 0
+  let shells = 0
   for (const id of ids || []) {
     const leaf = findLeaf(id)
-    if (!leaf || leaf.kind !== 'agent' || leaf.sleeping || leaf.notConnected || leaf.agentMissing || restartingLeaves.has(id)) continue
+    const shell = !!leaf && (!leaf.kind || leaf.kind === 'shell')
+    if (!leaf || (leaf.kind !== 'agent' && !shell) || leaf.sleeping || leaf.notConnected || leaf.agentMissing || restartingLeaves.has(id)) continue
+    if (liveShare.isGuestLeaf(leaf)) continue
     const ws = wsOfLeaf(id)
     if (ws && ws.id === currentWsId.value && id === activeId.value) {
       skipped.push(t('app.sleep.activePane', '{{pane}} (the pane you are in)', { pane: paneLabel(leaf) }))
       continue
     }
-    if (!sessionKind({ id: leaf.agentId }) || !safeSessionId(leaf.sessionId)) {
+    // Woken, it starts a shell on this computer (wakeShell): not one on an SSH host.
+    if (shell && leaf.remoteHostId) {
+      skipped.push(t('app.sleep.remoteShell', '{{pane}} (a terminal on an SSH host)', { pane: paneLabel(leaf) }))
+      continue
+    }
+    if (!shell && (!sessionKind({ id: leaf.agentId }) || !safeSessionId(leaf.sessionId))) {
       skipped.push(t('app.sleep.notResumable', '{{pane}} (its conversation cannot be resumed)', { pane: paneLabel(leaf) }))
       continue
     }
-    putToSleep(leaf)
+    if (shell) {
+      // What it shows now, above the new shell it gets when woken.
+      try {
+        const pane = getPane(id)
+        leaf.restoredText = pane && pane.screenText ? String(pane.screenText(200) || '').replace(/\r?\n/g, '\r\n') : ''
+      } catch {
+        leaf.restoredText = ''
+      }
+    }
+    putToSleep(leaf, 'from the sidebar')
     slept++
+    if (shell) shells++
   }
   if (skipped.length) showToast(t('app.sleep.staysAwake', 'Stays awake: {{list}}.', { list: skipped.join(', ') }), { timeout: 7000 })
+  else if (slept && shells)
+    showToast(
+      slept === 1
+        ? t('app.sleep.paneAsleepOne', '1 pane asleep. Open it to wake it.')
+        : t('app.sleep.panesAsleep', '{{count}} panes asleep. Open one to wake it.', { count: slept })
+    )
   else if (slept)
     showToast(
       slept === 1
@@ -10369,21 +10439,65 @@ async function sleepTick() {
     })
   }
 }
-function putToSleep(leaf) {
+function putToSleep(leaf, why = `idle ${settings.agentSleepMinutes} min`) { // i18n-ignore
   // Not connected (a restored remote pane): nothing runs, nothing to stop.
   // A Live Share pane runs on the host's computer.
   if (leaf.notConnected || leaf.agentMissing || liveShare.isGuestLeaf(leaf)) return
   leaf.sleeping = { at: Date.now() }
   window.shellApi.killPty(leaf.id)
-  if (window.shellApi.log) window.shellApi.log('info', `agent sleep: ${paneLabel(leaf)} asleep (idle ${settings.agentSleepMinutes} min)`)
+  if (window.shellApi.log) window.shellApi.log('info', `agent sleep: ${paneLabel(leaf)} asleep (${why})`)
 }
 // Opening a sleeping pane (or its Wake button): the same pane, the
 // conversation resumed.
 async function wakeLeaf(leafId) {
   const leaf = findLeaf(leafId)
   if (!leaf || !leaf.sleeping || restartingLeaves.has(leafId)) return
-  const ok = await restartInPlace(leafId, { resume: true })
+  const ok = leaf.kind === 'agent' ? await restartInPlace(leafId, { resume: true }) : await wakeShell(leafId)
   if (!ok && findLeaf(leafId) === leaf) showToast(t('app.sleep.wakeFailed', '{{name}} could not be woken: try Wake again.', { name: leaf.paneName || leaf.title }), { kind: 'error', timeout: 8000 })
+}
+// A terminal asleep (since launch, Settings > General, or from the sidebar's
+// Sleep): a new shell in the same pane and folder, what it showed last time
+// above it.
+async function wakeShell(leafId) {
+  if (restartingLeaves.has(leafId)) return false
+  restartingLeaves.add(leafId)
+  try {
+    const old = findLeaf(leafId)
+    const ws = wsOfLeaf(leafId)
+    if (!old || !ws || old.kind === 'agent') return false
+    const fresh = await createLeaf(old.shellId, null, ws.cwd, old.worktree, {
+      id: leafId,
+      savedOutput: old.restoredText || '',
+      startDir: old.startDir,
+      keepOnFailure: true
+    })
+    if (!fresh) return false
+    if (findLeaf(leafId) !== old) {
+      // Closed while it was starting: do not leave its terminal running.
+      window.shellApi.killPty(leafId)
+      return false
+    }
+    Object.assign(fresh, {
+      title: old.title,
+      ...(old.titleSet ? { titleSet: true } : {}),
+      ...(old.autoTitle ? { autoTitle: old.autoTitle } : {}),
+      ...(Number.isInteger(old.fontZoom) ? { fontZoom: old.fontZoom } : {}),
+      broadcast: old.broadcast,
+      num: old.num,
+      paneName: old.paneName,
+      team: old.team
+    })
+    // The workspace it is in now (it may have been moved during the wait).
+    const now = wsOfLeaf(leafId)
+    if (!now) {
+      window.shellApi.killPty(leafId)
+      return false
+    }
+    now.tree = replaceNode(now.tree, leafId, () => fresh)
+    return true
+  } finally {
+    restartingLeaves.delete(leafId)
+  }
 }
 // A sleeping pane you open wakes up.
 watch(
@@ -14125,7 +14239,7 @@ async function restoreOrSeedLayout() {
       const snap = snaps[i]
       const ws = made[i]
       try {
-        ws.tree = await deserializeNode(snap.tree, ws.cwd, attaching)
+        ws.tree = await deserializeNode(snap.tree, ws.cwd, attaching, !!settings.startAsleep)
       } catch {
         ws.tree = null
       }
