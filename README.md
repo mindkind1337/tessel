@@ -173,6 +173,10 @@ working on Tessel itself (see [Build from source](#build-from-source)).
   it touches nothing and gives you the command. It says whether to restart
   (main process changed) or run `npm install` (packages changed). An installed Tessel
   keeps its own updater: it downloads each release and asks you to restart.
+- **Allow every account shown to agents at once** (the switch in the saved passwords
+  list's header): follows the search, asks first with the number of accounts, and
+  turning it off needs no question. Agent access stays off for every account until you
+  allow it.
 - **Export and import of your settings** (Settings → General → Backup): one file
   with your settings, projects and their layout, SSH hosts, the task board, Live
   Share's settings and the activity history; you choose the parts. Sign-ins (Claude,

@@ -141,6 +141,45 @@ async function remove(entry) {
     : true
   if (ok === true) return run(() => api().passwordChange({ id: entry.id, action: 'delete' }), changed)
 }
+// The switch of the list's header: every account shown (all those matching the search, not
+// only the 200 drawn) at once. Allowing is asked first, with the number, because agents
+// can then use those logins; forbidding is not asked. One at a time: each change writes
+// the vault. Without a way to ask, nothing is allowed in bulk.
+const bulkTargets = computed(() => filtered.value)
+const allShownAllowed = computed(() => bulkTargets.value.length > 0 && bulkTargets.value.every((r) => r.allowAgents))
+const someShownAllowed = computed(() => bulkTargets.value.some((r) => r.allowAgents))
+const bulkLabel = computed(() => (allShownAllowed.value
+  ? t('browser.passwords.forbidAll', 'Forbid my local agents every account shown ({{count}})', { count: bulkTargets.value.length })
+  : t('browser.passwords.allowAll', 'Allow my local agents every account shown ({{count}})', { count: bulkTargets.value.length })))
+async function setAllowAll(on) {
+  const targets = bulkTargets.value.filter((r) => r.allowAgents !== on)
+  if (!targets.length || busy.value) return
+  if (on) {
+    const ok = askConfirm
+      ? await askConfirm({
+          title: t('browser.passwords.allowAllTitle', 'Allow {{count}} accounts for your local agents?', { count: targets.length }),
+          text: t('browser.passwords.allowAllText', 'Agents running on this computer will be able to sign in with these logins in Tessel’s browser. You can turn them off again here, all at once or one by one.'),
+          confirmLabel: t('browser.passwords.allowAllConfirm', 'Allow {{count}}', { count: targets.length }),
+          danger: true
+        })
+      : false
+    if (ok !== true) { await reload(); return }
+  }
+  busy.value = true; say('')
+  let done = 0
+  let failed = 0
+  try {
+    for (const r of targets) {
+      let res
+      try { res = await api().passwordChange({ id: String(r.id), action: 'allow', allowAgents: on }) } catch { res = { ok: false } }
+      if (res?.ok) done++; else failed++
+    }
+    await reload()
+    say(failed
+      ? t('browser.passwords.bulkPartial', '{{done}} changed, {{failed}} could not be changed.', { done, failed })
+      : t('browser.passwords.bulkDone', '{{count}} accounts changed.', { count: done }), failed > 0)
+  } catch { say(error(), true) } finally { busy.value = false }
+}
 function setAllow(entry, on) { return run(() => api().passwordChange({ id: entry.id, action: 'allow', allowAgents: on }), changed) }
 function fill(entry) { return run(() => api().passwordFill(props.guestId, entry.id), () => t('browser.passwords.filled', 'Login filled. The form was not submitted.')) }
 
@@ -224,8 +263,20 @@ watch(() => props.guestId, () => { open.value = false; entries.value = [] })
         </div>
 
         <div class="pw-list" data-test="pw-list">
-          <div v-if="rows.length" class="pw-row pw-list-head" aria-hidden="true">
-            <span>{{ t('browser.passwords.site', 'Site') }}</span><span>{{ t('browser.passwords.username', 'Username') }}</span><span>{{ t('browser.passwords.agents', 'Agents') }}</span><span></span><span></span>
+          <div v-if="rows.length" class="pw-row pw-list-head">
+            <span>{{ t('browser.passwords.site', 'Site') }}</span><span>{{ t('browser.passwords.username', 'Username') }}</span>
+            <input
+              type="checkbox"
+              class="set-switch"
+              data-test="pw-allow-all"
+              :checked="allShownAllowed"
+              :indeterminate.prop="someShownAllowed && !allShownAllowed"
+              :disabled="busy || !bulkTargets.length"
+              :title="bulkLabel"
+              :aria-label="bulkLabel"
+              @change="setAllowAll($event.target.checked)"
+            />
+            <span>{{ t('browser.passwords.agents', 'Agents') }}</span><span></span>
           </div>
           <div v-for="r in visible" :key="r.id" class="pw-row" data-test="pw-row">
             <span class="pw-site" :class="{ same: r.same }" :title="r.origin">{{ r.site }}</span>
