@@ -42,3 +42,16 @@ it('removes alternate automatic resource channels from raw Markdown HTML', () =>
   const doc = new DOMParser().parseFromString(html, 'text/html')
   expect(doc.querySelector('[srcset], [src], [poster], [background], [style], image[href]')).toBeNull()
 })
+
+it('keeps simple document styling but rejects resource functions and obfuscated CSS', () => {
+  const safe = '<div style="text-align:center">Title</div><img src="data:image/png;base64,AA==" style="width:120px">'
+  const doc = new DOMParser().parseFromString(renderMarkdown(safe), 'text/html')
+  expect(doc.querySelector('div').getAttribute('style')).toBe('text-align:center')
+  expect(doc.querySelector('img').getAttribute('style')).toBe('width:120px')
+  for (const style of ['background:URL (https://host.invalid/x)', 'background:image-set(\'https://host.invalid/x\' 1x)', 'background:-webkit-image-set(\'https://host.invalid/x\' 1x)', 'background:u\\72l(https://host.invalid/x)', 'background:u/**/rl(https://host.invalid/x)']) {
+    const parsed = new DOMParser().parseFromString(renderMarkdown(`<div style="${style}">x</div>`), 'text/html')
+    expect(parsed.querySelector('[style]'), style).toBeNull()
+  }
+  const untrusted = new DOMParser().parseFromString(renderMarkdown(safe, { untrusted: true }), 'text/html')
+  expect(untrusted.querySelector('[style]')).toBeNull()
+})

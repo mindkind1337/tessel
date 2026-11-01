@@ -24,7 +24,12 @@ md.renderer.rules.fence = (tokens, idx, options, env, self) => {
 function onElement(node) {
   // Raw HTML in Markdown is passive content. Do not let alternate resource
   // attributes bypass the controlled IMG loader (notably file:// UNC paths).
-  for (const attr of ['srcset', 'style']) node.removeAttribute(attr)
+  node.removeAttribute('srcset')
+  const style = node.getAttribute('style')
+  // Preserve ordinary document formatting. Escapes/comments can disguise a
+  // resource function, so reject those ambiguous forms as well as URL/image
+  // functions. The untrusted chat mode still removes all styles below.
+  if (style && /(?:url|image-set|image)\s*\(|\\|\/\*/i.test(style)) node.removeAttribute('style')
   for (const attr of ['poster', 'background', ...(node.nodeName === 'IMG' ? [] : ['src'])]) {
     const value = node.getAttribute(attr)
     if (value && !/^(?:data:|blob:)/i.test(value.trim())) node.removeAttribute(attr)
