@@ -594,7 +594,10 @@ const api = {
     stop: (paneId) => ipcRenderer.invoke('terminal:agentStop', paneId),
     allowAgain: (paneId, agentPane) => ipcRenderer.invoke('terminal:agentAllow', { paneId, agentPane }),
     onControl: (cb) => subscribe('terminal:agentControl', cb),
-    onLog: (cb) => subscribe('terminal:agentLog', cb)
+    onLog: (cb) => subscribe('terminal:agentLog', cb),
+    // Messages from other projects waiting for each pane (agentRelay.js).
+    relayUnread: () => ipcRenderer.invoke('terminal:relayUnread'),
+    onRelayUnread: (cb) => subscribe('terminal:relayUnread', cb)
   },
 
   // Chat agents (src/main/chat/sessions.js): Claude without a terminal. The

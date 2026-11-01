@@ -42,9 +42,10 @@ import crypto from 'crypto'
 import { CliError } from './cliServer'
 import { analyzeCommandLine, buildRules, rewritePwshChain, rulesOfAction, cleanRules } from '../shared/terminalRules'
 import { readLogs } from './agentLogs'
+import { MAX_RELAY_TEXT, PAIR_MAX, cleanText, oneLine, pairKey, relayInboxText } from './agentRelay'
 import { MAX_OUTPUT_LENGTH, MAX_POLL_OUTPUT, truncateLargeOutput, truncateOutputKeepingTail, detectsSensitiveInputPrompt } from '../shared/terminalOutput'
 
-export const TERMINAL_OPS = ['list', 'run', 'output', 'send', 'kill', 'lastCommand', 'selection', 'open', 'logs']
+export const TERMINAL_OPS = ['list', 'run', 'output', 'send', 'kill', 'lastCommand', 'selection', 'open', 'logs', 'relayList', 'relaySend', 'relayInbox']
 // open_terminal: panes opened in one call.
 export const MAX_OPEN_PANES = 4
 export const MAX_COMMAND_BYTES = 8 * 1024
@@ -200,11 +201,17 @@ function steering(id, hung) {
 //   logFile                    the commands log (JSON lines), or null
 //   outputDir                  where outputs over 20 KB are written, or null
 //   log, now
-export function createAgentTerminal({ verify, settings = () => ({ enabled: true }), ask, busyOf = async () => ({}), send = () => {}, logFile = null, outputDir = null, logDir = null, log = null, now = () => Date.now(), fsImpl = fs }) {
+export function createAgentTerminal({ verify, settings = () => ({ enabled: true }), ask, busyOf = async () => ({}), send = () => {}, logFile = null, outputDir = null, logDir = null, relay = null, log = null, now = () => Date.now(), fsImpl = fs }) {
   const approvedPanes = new Set() // "agent|pane": the user allowed this agent in this user terminal
   const readPanes = new Set() // "agent|pane": the user allowed this agent to read this terminal
   const hostPanes = new Set() // "agent|host:<id>": the user allowed this agent on this SSH host
   const logPanes = new Set() // agent pane: the user allowed this agent to read Tessel's logs
+  const relayPairs = new Set() // pairKey: the user allowed these two agents to write to each other
+  const relayDeclined = new Map() // pairKey -> when the user last said no: no new card for a while
+  const RELAY_DECLINED_MS = 10 * 60 * 1000
+  const forgetPairsOf = (pane) => {
+    for (const k of [...relayPairs]) if (k.split('|').includes(pane)) relayPairs.delete(k)
+  }
   const stopped = new Set() // "agent|pane": the user stopped it there
   const stoppedNoticeAt = new Map()
   const sessions = new Map() // agent pane -> { allowAll, rules }
@@ -252,6 +259,7 @@ export function createAgentTerminal({ verify, settings = () => ({ enabled: true 
     // What the agent was allowed for its session goes too: its next commands ask.
     sessions.set(who, { allowAll: false, rules: {} })
     for (const k of [...hostPanes]) if (k.startsWith(`${who}|`)) hostPanes.delete(k)
+    forgetPairsOf(who)
     release(target, { stopped: true })
     return true
   }
@@ -266,6 +274,7 @@ export function createAgentTerminal({ verify, settings = () => ({ enabled: true 
     for (const set of [approvedPanes, readPanes, stopped]) for (const k of [...set]) if (k.endsWith(`|${id}`) || k.startsWith(`${id}|`)) set.delete(k)
     sessions.delete(id)
     writes.delete(id)
+    forgetPairsOf(id)
     release(id)
   }
 
@@ -379,6 +388,7 @@ export function createAgentTerminal({ verify, settings = () => ({ enabled: true 
     })
     allowedNow()
     if (stopped.has(key(agentPane, t.id))) throw fail('stopped_by_user', `The user stopped you from using "${t.name}".`)
+    if (c.kind === 'relay' && (!answer || answer.allow !== true)) throw fail('denied', 'The user declined this message. Do not send it again unless they ask.')
     if (c.kind === 'open' && (!answer || answer.allow !== true)) throw fail('denied', 'The user declined opening these panes. Do not ask again unless they do.')
     if (!answer || answer.allow !== true) throw fail('denied', `The user skipped this ${c.kind === 'send' ? 'input' : 'command'}${t.own ? '' : ` in "${t.name}"`}. Do not run it again unless they ask.`)
     return answer
@@ -594,6 +604,60 @@ export function createAgentTerminal({ verify, settings = () => ({ enabled: true 
     return { text: r.text }
   }
 
+  // --- Messages between agents of different projects (agentRelay.js) -----------------
+  // Tessel is the relay: no terminal is opened. The user allows two agents once
+  // (until Tessel restarts, both ways), unless Settings says not to ask. A
+  // message never approves anything: the reader is told so (relayInboxText).
+  function relayOn() {
+    if (!relay) throw fail('no_relay', 'Tessel has no relay here.')
+    if (conf().relay === false) throw fail('relay_off', 'The user turned off messages between projects (Tessel Settings > Agents).')
+  }
+  async function relayList(agentPane) {
+    relayOn()
+    const r = await ask('terminalTarget', { agent: agentPane, op: 'relayList' })
+    const list = r && Array.isArray(r.agents) ? r.agents : []
+    if (!list.length) return { text: 'No other agent is open in Tessel.' }
+    return { text: `Agents you can write to with project_send (name, id, agent, project, where):\n${list.map((a) => `${oneLine(a.name)}  ${a.id}  ${oneLine(a.agent)}  "${oneLine(a.project)}"  ${oneLine(a.where)}${a.sameTeam ? '  (your team: use team_send)' : ''}`).join('\n')}` }
+  }
+  async function relaySend(agentPane, args) {
+    relayOn()
+    if (typeof args.to !== 'string' && typeof args.to !== 'number') throw fail('invalid_argument', 'Give "to": an agent\'s name or id (see project_agents).')
+    const text = typeof args.text === 'string' ? cleanText(args.text) : ''
+    if (!text) throw fail('invalid_argument', 'Give "text": the message.')
+    if (text.length > MAX_RELAY_TEXT) throw fail('invalid_argument', `A message is at most ${MAX_RELAY_TEXT} characters.`)
+    const r = await ask('terminalTarget', { agent: agentPane, op: 'relayResolve', to: args.to })
+    if (r.sameTeam) throw fail('same_team', `${r.to.name} is in your team: use team_send.`)
+    rateLimit(agentPane)
+    const pair = pairKey(agentPane, r.to.id)
+    // A project shared in Live Share: a guest may be behind this agent's words,
+    // or read what arrives. The user sees every message, whatever the settings.
+    if (r.shared || (conf().relayAsk !== false && !relayPairs.has(pair))) {
+      const declined = relayDeclined.get(pair)
+      if (declined && now() - declined < RELAY_DECLINED_MS) throw fail('denied', 'The user declined messages between you two a moment ago. Do not send it again unless they ask.')
+      let answer
+      try {
+        answer = await card(agentPane, { id: `relay:${pair}`, name: r.to.name, own: false }, { kind: 'relay', command: text, own: false, relay: { from: r.from, to: r.to, shared: !!r.shared }, explanation: '', goal: '', info: null, disclaimers: [], actions: [] })
+      } catch (err) {
+        if (err && err.code === 'denied') relayDeclined.set(pair, now())
+        throw err
+      }
+      relayDeclined.delete(pair)
+      if (answer.remember === 'pane' && !r.shared) relayPairs.add(pair)
+    }
+    if (!relay.allowPair(agentPane, r.to.id, Number(conf().relayMax) > 0 ? Number(conf().relayMax) : PAIR_MAX)) throw fail('rate_limited', `Too many messages between you and ${r.to.name} in the last hour (the user's limit, Tessel Settings > Agents). Stop, and tell the user.`)
+    const m = relay.add(r.to.id, { from: r.from.id, fromName: r.from.name, fromAgent: r.from.agent, fromProject: r.from.project, fromWhere: r.from.where, text, replyTo: args.reply_to })
+    send('terminal:relayUnread', { paneId: r.to.id, ...relay.unread(r.to.id), message: { fromId: r.from.id, fromName: r.from.name, text } })
+    writeLog({ at: now(), paneId: r.to.id, paneName: r.to.name, agent: r.from.name, agentPane, kind: 'relay', text: text.slice(0, 200) }, false)
+    return { text: `Sent to ${r.to.name} (project "${r.to.project}", ${r.to.where}), message ${m.id}. Tessel tells it when it is free, unless wake-ups are off in the user's settings (then it reads them when it calls project_inbox). It answers with project_send, and you read answers with project_inbox.` }
+  }
+  function relayInbox(agentPane) {
+    if (!relay) throw fail('no_relay', 'Tessel has no relay here.')
+    const list = relay.take(agentPane)
+    const left = relay.unread(agentPane)
+    send('terminal:relayUnread', { paneId: agentPane, ...left })
+    return { text: relayInboxText(list, left.count) }
+  }
+
   async function sendInput(agentPane, args) {
     const t = targetFrom(await ask('terminalTarget', { agent: agentPane, op: 'resolve', terminal: args.id }))
     writable(t)
@@ -750,6 +814,9 @@ export function createAgentTerminal({ verify, settings = () => ({ enabled: true 
       if (op === 'lastCommand') return await lastCommand(pane)
       if (op === 'open') return await openPanes(pane, args)
       if (op === 'logs') return await readTesselLogs(pane, args)
+      if (op === 'relayList') return await relayList(pane)
+      if (op === 'relaySend') return await relaySend(pane, args)
+      if (op === 'relayInbox') return relayInbox(pane)
       return await selection(pane)
     } catch (err) {
       if (err instanceof CliError) throw err

@@ -30,8 +30,8 @@ let previousFocus = null
 const { armed, press, mayAllow } = useApprovalArming(props.armMs)
 
 // A card for a whole terminal or host (allowed once, or until Tessel restarts).
-const whole = computed(() => ['pane', 'read', 'host', 'logs'].includes(props.card.kind))
-const editable = computed(() => props.card.kind !== 'send' && !props.card.send && !['read', 'host', 'open', 'logs'].includes(props.card.kind))
+const whole = computed(() => ['pane', 'read', 'host', 'logs', 'relay'].includes(props.card.kind))
+const editable = computed(() => props.card.kind !== 'send' && !props.card.send && !['read', 'host', 'open', 'logs', 'relay'].includes(props.card.kind))
 const shown = computed(() => !['read', 'host', 'open', 'logs'].includes(props.card.kind))
 // open_terminal: what the agent wants to open, beside its pane.
 const openText = computed(() => {
@@ -46,6 +46,7 @@ const openText = computed(() => {
 const title = computed(() => {
   const c = props.card
   if (c.kind === 'open') return t('app.agentTerminal.openTitle', '{{agent}} wants to open panes for you', { agent: c.agentLabel })
+  if (c.kind === 'relay') return t('app.agentTerminal.relayTitle', '{{from}} (project {{fromProject}}, {{fromWhere}}) wants to write to {{to}} (project {{toProject}}, {{where}})', { from: c.relay?.from?.name, fromProject: c.relay?.from?.project, fromWhere: c.relay?.from?.where, to: c.relay?.to?.name, toProject: c.relay?.to?.project, where: c.relay?.to?.where })
   if (c.kind === 'logs') return t('app.agentTerminal.logsTitle', '{{agent}} wants to read Tessel\u2019s logs on this computer', { agent: c.agentLabel })
   if (c.kind === 'read') return t('app.agentTerminal.readTitle', '{{agent}} wants to read the terminal "{{name}}" ({{where}})', { agent: c.agentLabel, name: c.name, where: c.where })
   if (c.kind === 'host' && c.pc) return t('app.agentTerminal.pcTitle', '{{agent}} wants to run commands on your computer (this PC)', { agent: c.agentLabel })
@@ -76,7 +77,11 @@ function actionLabel(a) {
   return t('app.agentTerminal.allowPrefix', 'Allow {{what}} {{scope}}', { what, scope: scopeLabel(a.scope) })
 }
 const paneText = computed(() =>
-  props.card.kind === 'logs'
+  props.card.kind === 'relay' && props.card.relay?.shared
+    ? t('app.agentTerminal.relayTextShared', 'One of these projects is shared in Live Share: a guest may be behind this message, or read what arrives. You are asked for every message while it is shared.')
+    : props.card.kind === 'relay'
+    ? t('app.agentTerminal.relayText', 'Tessel will carry this message to the other agent, which will read it as coming from another agent, with no permission from you. Allowing it lets these two write to each other, both ways, until Tessel restarts.')
+    : props.card.kind === 'logs'
     ? t('app.agentTerminal.logsText', 'It will read Tessel\u2019s own log files (what the app and its terminal host noted: paths, host names, addresses; keys and tokens are removed), filtered by time and words. Read only: it cannot change them and reads nothing else. Allowing it lets it read them again until Tessel restarts.')
     : props.card.kind === 'read'
     ? t('app.agentTerminal.readText', 'It will read what this terminal shows and its scrollback, which may hold passwords, keys or other secrets you typed or printed. Allowing it for this terminal lets it read it again until Tessel restarts.')
@@ -89,7 +94,9 @@ const paneText = computed(() =>
         : t('app.agentTerminal.paneText', 'It will type this command there and press Enter, with your rights on {{where}}. Allowing it in this terminal lets it type more commands there until Tessel restarts.', { where: props.card.where })
 )
 const allowWholeLabel = computed(() =>
-  props.card.kind === 'logs'
+  props.card.kind === 'relay'
+    ? t('app.agentTerminal.allowRelay', 'Allow these two to write')
+    : props.card.kind === 'logs'
     ? t('app.agentTerminal.allowLogs', 'Allow reading the logs')
     : props.card.kind === 'read'
     ? t('app.agentTerminal.allowRead', 'Allow reading this terminal')

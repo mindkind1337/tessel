@@ -98,6 +98,11 @@ export const DEFAULT_SETTINGS = Object.freeze({
   // (on its project's host) without the approval card: it could run them
   // through its own shell tool anyway. Your terminals and other hosts still ask.
   agentTerminalYoloNoAsk: true,
+  // Messages between agents of different projects, relayed by Tessel: on, the
+  // first message between two agents asks you, at most this many an hour.
+  agentRelay: true,
+  agentRelayAsk: true,
+  agentRelayMax: 30,
   // Background commands (async, or left running): 'one' terminal per agent
   // (its commands share it; one more opens only while a command it left
   // running holds it) or 'each' (a terminal for each). Either closes an
@@ -433,6 +438,7 @@ export function loadSettings(saved) {
     }
     if (key === 'agentPermissions' && !['manual', 'yolo'].includes(v)) continue
     if (key === 'agentTerminalBackground' && !['one', 'each'].includes(v)) continue
+    if (key === 'agentRelayMax' && ![10, 30, 100].includes(v)) continue
     if (key === 'projectOpen' && !validProjectOpen(v)) continue
     if (key === 'keepAwake' && !['off', 'agents', 'on'].includes(v)) continue
     if (key === 'promptCacheTtlMs' && ![300000, 3600000].includes(v)) continue

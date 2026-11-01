@@ -71,6 +71,7 @@ import { paneEnv } from './paneEnv'
 import { readForView, readImageForView, openPdfWindow } from './fileView'
 import { createPreviewServer } from './htmlPreviewServer'
 import { createBuildId, formatBuild } from './buildId'
+import { createAgentRelay } from './agentRelay'
 import { readForEdit, statForEdit, writeForEdit, headContent, createFileWatcher } from './editorFiles'
 import * as explorer from './explorer'
 import { extraToolDirs, withToolDirs } from './toolDirs'
@@ -3874,6 +3875,9 @@ ipcMain.handle('browser:agentStop', (event, id) => {
 // below), each request signed by its pane's team secret.
 // Off until the window says what the settings are (its first report comes at start).
 let agentTerminalSettings = { enabled: false }
+// Messages between agents of different projects: Tessel is the relay.
+const agentRelay = createAgentRelay({ file: join(app.getPath('userData'), 'agent-relay.json'), warn: (m) => log.warn('agent-relay', m) })
+ipcMain.handle('terminal:relayUnread', (event) => (mainWindow && !mainWindow.isDestroyed() && event.sender === mainWindow.webContents ? agentRelay.allUnread() : {}))
 const agentTerminal = createAgentTerminal({
   verify: (body, paneId) => verifyRequest(body, paneId, 'terminal'),
   settings: () => agentTerminalSettings,
@@ -3894,6 +3898,7 @@ const agentTerminal = createAgentTerminal({
   outputDir: join(os.tmpdir(), 'tessel-terminal-output'),
   // tessel_logs: the agents read these files (agentLogs.js), nothing else.
   logDir: log.dir,
+  relay: agentRelay,
   log
 })
 // Settings > Agents > Terminals (the window says it at start and on each change).
@@ -3903,7 +3908,7 @@ ipcMain.handle('terminal:agentSettings', (event, opts) => {
   const rulesOf = (v) => (v && typeof v === 'object' && !Array.isArray(v) ? v : {})
   const ws = {}
   for (const [k, v] of Object.entries(rulesOf(o.workspaceRules)).slice(0, 500)) if (typeof k === 'string' && k.length <= 2000) ws[k] = rulesOf(v)
-  agentTerminalSettings = { enabled: o.enabled === true, autoApprove: o.autoApprove === true, ignoreDefaults: o.ignoreDefaults === true, userRules: rulesOf(o.userRules), workspaceRules: ws, yoloOwn: o.yoloOwn === true }
+  agentTerminalSettings = { enabled: o.enabled === true, autoApprove: o.autoApprove === true, ignoreDefaults: o.ignoreDefaults === true, userRules: rulesOf(o.userRules), workspaceRules: ws, yoloOwn: o.yoloOwn === true, relay: o.relay !== false, relayAsk: o.relayAsk !== false, relayMax: Number.isInteger(o.relayMax) && o.relayMax > 0 && o.relayMax <= 1000 ? o.relayMax : 30 }
   if (!agentTerminalSettings.enabled) agentTerminal.releaseAll()
   return true
 })

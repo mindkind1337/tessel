@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { reactive } from 'vue'
-import { createAgentTerminalTargets, paneRunsYolo, placeNear, ownTerminalOf, AUTO_CLOSE_MS, CLOSED_KEEP_MS } from '../agentTerminal/agentTerminalTargets'
+import { toolsTooOld, createAgentTerminalTargets, paneRunsYolo, placeNear, ownTerminalOf, AUTO_CLOSE_MS, CLOSED_KEEP_MS } from '../agentTerminal/agentTerminalTargets'
 import { splitDirFor } from '../browser/agentBrowserTargets'
 import { fakeTerminal } from './fakeTerminal'
 
@@ -430,6 +430,15 @@ describe('agent terminals: placed in the grid', () => {
     expect(tree.children[0].id).toBe('pane-ada')
     expect(tree.children[1]).toMatchObject({ dir: 'col' })
     expect(tree.children[1].children.map((c) => c.id)).toEqual(['t1', 't2'])
+  })
+
+  it('an agent started before the relay cannot read a message', () => {
+    expect(toolsTooOld('1.11.11')).toBe(true)
+    expect(toolsTooOld('1.4.3')).toBe(true)
+    expect(toolsTooOld('1.11.12')).toBe(false)
+    expect(toolsTooOld('1.12.0')).toBe(false)
+    expect(toolsTooOld('2.0')).toBe(false)
+    expect(toolsTooOld(null)).toBe(false)
   })
 
   it('which way: below when taller than wide or too narrow for two columns, beside otherwise', () => {

@@ -145,6 +145,13 @@ working on Tessel itself (see [Build from source](#build-from-source)).
   are asked first, then for every command, even for an agent in Yolo. The
   `tessel_logs` tool reads Tessel's own logs, filtered and read only, with a
   single approval. Agents already running get these after a restart.
+- **Messages between projects**: an agent can write to an agent of any other
+  project, on this computer or on any SSH host (`project_agents`, `project_send`,
+  `project_inbox`); Tessel relays the message, with no terminal or SSH session to
+  open, and tells the other agent when it is free. The first message between two
+  agents asks you, a message gives the reader no permission, and there is an
+  hourly limit per pair (Settings → Agents). In a project shared in Live Share,
+  every message asks you. Agents get these tools after a restart.
 - **Sign-in from a terminal**: when an agent prints a sign-in page (Claude, Codex,
   Grok, Gemini, Antigravity…), a banner offers **Open in Tessel**, **Open in my
   browser** and **Copy the link**, with the whole address even if the program cut

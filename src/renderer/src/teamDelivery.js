@@ -45,13 +45,15 @@ export const POINTER = {
 
 // No count and no digit in it: typed while a menu was open in the agent
 // (Codex's "switch to a smaller model? 1. Yes 2. No"), a "1" answered it.
+// The same for messages relayed from other projects (agentRelay.js).
+export const RELAY_POINTER = '[Tessel] You have new messages from other projects: read them with project_inbox.' // i18n-ignore
 export function pointerText() {
   return '[Tessel] You have new team messages: read them with team_inbox.' // i18n-ignore
 }
 
 // The pointer, whitespace removed (a TUI wraps its input box itself, with
 // its own indentation, so the words can be cut anywhere on screen).
-const POINTER_SQUASHED = /\[Tessel\]Youhave(?:\d+)?newteammessages?:read(?:it|them)withteam_inbox\./
+const POINTER_SQUASHED = /\[Tessel\]Youhave(?:\d+)?new(?:team)?messages?(?:fromotherprojects)?:read(?:it|them)with(?:team|project)_inbox\./
 
 // A pointer is still typed in the agent's input box (not sent). The screen
 // cannot always tell the input box from the transcript: an input line shown
@@ -193,7 +195,7 @@ export function createTeamDelivery(deps) {
     // A pointer from before is still in the input box (its Enter was
     // lost): Enter only, never a second pointer on top of it.
     const typed = s.outstanding && pointerStillTyped(pane, deps.inputEmpty ? deps.inputEmpty(id) : null)
-    if (!typed) pane.paste(pointerText(mail.count))
+    if (!typed) pane.paste(deps.pointerText ? deps.pointerText() : pointerText(mail.count))
     // The watermark moves as soon as something is in the terminal.
     for (const m of mail.ids || []) s.pointed.add(m)
     s.pointedCount = mail.count

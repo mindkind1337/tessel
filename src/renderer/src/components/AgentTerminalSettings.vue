@@ -100,6 +100,31 @@ async function setAutoApprove(e) {
         </div>
         <input id="settings-agent-terminal-yolo" v-model="settings.agentTerminalYoloNoAsk" type="checkbox" class="set-switch" data-setting="agentTerminalYoloNoAsk" />
       </div>
+      <div class="set-row" data-test="settings-agent-relay">
+        <div class="set-label">
+          <label for="settings-agent-relay">{{ t('settings.agents.relay', 'Messages between projects') }}</label>
+          <span class="set-hint">{{ t('settings.agents.relayShort', 'Agents can write to agents of other projects, on this computer or on SSH hosts; Tessel relays the messages. Needs terminals allowed for agents, and wake-ups on so that they are told') }}</span>
+        </div>
+        <input id="settings-agent-relay" v-model="settings.agentRelay" type="checkbox" class="set-switch" data-setting="agentRelay" />
+      </div>
+      <div v-if="settings.agentRelay !== false" class="set-row" data-test="settings-agent-relay-ask">
+        <div class="set-label">
+          <label for="settings-agent-relay-ask">{{ t('settings.agents.relayAsk', 'Ask before two agents write to each other') }}</label>
+          <span class="set-hint">{{ t('settings.agents.relayAskShort', 'Asked once for each pair of agents, until Tessel restarts. Off: any agent can write to any other, including agents on servers to agents on this computer') }}</span>
+        </div>
+        <input id="settings-agent-relay-ask" v-model="settings.agentRelayAsk" type="checkbox" class="set-switch" data-setting="agentRelayAsk" />
+      </div>
+      <div v-if="settings.agentRelay !== false" class="set-row" data-test="settings-agent-relay-max">
+        <div class="set-label">
+          <label for="settings-agent-relay-max">{{ t('settings.agents.relayMax', 'Messages an hour between two agents') }}</label>
+          <span class="set-hint">{{ t('settings.agents.relayMaxShort', 'Past it they are refused: two agents answering each other would spend your quota') }}</span>
+        </div>
+        <ThemedSelect id="settings-agent-relay-max" v-model.number="settings.agentRelayMax" class="set-select" data-setting="agentRelayMax">
+          <option :value="10">10</option>
+          <option :value="30">30</option>
+          <option :value="100">100</option>
+        </ThemedSelect>
+      </div>
       <div class="set-row" data-test="settings-terminal-background">
         <div class="set-label">
           <label for="settings-agent-terminal-background">{{ t('settings.agents.terminalBackground', 'Background commands') }}</label>

@@ -324,7 +324,13 @@
       "rulesOpenHint": "Les changements enregistrés s'appliquent aussitôt",
       "argumentsLabel": "Arguments",
       "yoloAddsReplaced": "Yolo ajoute {{args}} ; les arguments définis ici le remplacent",
-      "yoloSets": "Yolo définit {{names}}"
+      "yoloSets": "Yolo définit {{names}}",
+      "relay": "Messages entre projets",
+      "relayShort": "Les agents peuvent écrire aux agents d'autres projets, sur cet ordinateur ou sur des hôtes SSH ; Tessel relaie les messages. Nécessite que les terminaux soient permis aux agents, et les réveils activés pour qu'ils soient prévenus",
+      "relayAsk": "Demander avant que deux agents s'écrivent",
+      "relayAskShort": "Demandé une fois pour chaque paire d'agents, jusqu'au redémarrage de Tessel. Désactivé : n'importe quel agent peut écrire à n'importe quel autre, y compris d'un serveur vers cet ordinateur",
+      "relayMax": "Messages par heure entre deux agents",
+      "relayMaxShort": "Au-delà, ils sont refusés : deux agents qui se répondent sans fin dépenseraient votre quota"
     },
     "orchestration": {
       "checkAgain": "Revérifier",

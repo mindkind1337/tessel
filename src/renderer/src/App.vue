@@ -131,7 +131,7 @@ import { setCommitRoots } from './links/commitLinks'
 import { automationsState, applySnapshot as applyAutomations, subscribeAutomations } from './automationsStore'
 import { trackAgent } from '../../shared/tracking'
 import { pasteAndConfirm, turnStarting } from './deliver'
-import { createTeamDelivery } from './teamDelivery'
+import { createTeamDelivery, RELAY_POINTER } from './teamDelivery'
 import { dropBuffer, exitOf, seedBuffer } from './ptyStore'
 import { prefetchAttaches, terminalLeafIds } from './restoreAttach'
 import { afterStartup, startupBegins, startupFinished } from './startupIdle'
@@ -3445,7 +3445,7 @@ function projectActivity(wsId) {
   const events = []
   for (let i = activity.length - 1; i >= 0 && events.length < 600; i--) {
     const e = activity[i]
-    if (!e) continue
+    if (!e || e.scope === 'relay') continue // between projects: never for a guest
     if (e.wsId === wsId || (e.wsId == null && ((e.paneId && panes.has(e.paneId)) || (e.teamId && teamIds.has(e.teamId))))) events.push(toRaw(e))
   }
   return { events: events.reverse(), teams: own.map((tm) => ({ id: tm.id, name: tm.name, color: tm.color || null })) }
@@ -3803,7 +3803,7 @@ provide('panelCtx', {
   paneUserTyping: (id) => userIsTyping(id),
   // A message of Tessel's being typed into it, or waiting to be (keys of the
   // chat view's mode picker wait for it).
-  paneDelivering: (id) => delivering.has(id) || !!(pendingMessages[id] && pendingMessages[id].length) || !!unsent[id] || teamPointer.inFlight(id),
+  paneDelivering: (id) => delivering.has(id) || !!(pendingMessages[id] && pendingMessages[id].length) || !!unsent[id] || teamPointer.inFlight(id) || relayPointer.inFlight(id),
   pendingSwitch: (id) => pendingSwitch[id] || null,
   toggleYoloFolder,
   permissionsOf,
@@ -7722,7 +7722,7 @@ const teamPointer = createTeamDelivery({
   setTimeout: (fn, ms) => setTimeout(fn, ms),
   clearTimeout: (h) => clearTimeout(h),
   unread: (id) => ({ count: teamUnread[id] || 0, ids: teamUnreadIds[id] || null }),
-  blocked: (id) => pointerBlocked(id),
+  blocked: (id, { phase } = {}) => pointerBlocked(id) || (phase === 'write' && relayPointer.state(id)?.flying ? 'a relayed message pointer is being typed there' : ''),
   getPane: (id) => {
     const leaf = findLeaf(id)
     return leaf && !leaf.sleeping && !leaf.notConnected ? getPane(id) || null : null
@@ -7750,6 +7750,86 @@ const teamPointer = createTeamDelivery({
   }
 })
 onBeforeUnmount(() => teamPointer.dispose())
+// Messages from agents of other projects (src/main/agentRelay.js): the same
+// pointer rules, its own text. A solo agent has no team poll to wake it: the
+// waiting ones are tried every few seconds.
+const relayUnread = Object.create(null) // leafId -> { count, ids }
+const relayChatPointed = Object.create(null) // chat leafId -> Set of message ids it was told about
+const relayPointer = createTeamDelivery({
+  now: () => Date.now(),
+  setTimeout: (fn, ms) => setTimeout(fn, ms),
+  clearTimeout: (h) => clearTimeout(h),
+  unread: (id) => relayUnread[id] || { count: 0, ids: null },
+  // Team mail goes first, but only for a new pointer: Enter on one already typed
+  // always goes, or each would wait for the other. Not when the team's pointer gave up.
+  blocked: (id, { phase, retry } = {}) => {
+    const why = pointerBlocked(id)
+    if (why) return why
+    if (settings.agentTerminal === false) return 'terminal tools are off in Settings (project_inbox would be refused)'
+    const team = teamPointer.state(id)
+    if (phase === 'write' && (team?.flying || (!retry && teamUnread[id] && !team?.gaveUp))) return 'team messages go first'
+    return ''
+  },
+  getPane: (id) => {
+    const leaf = findLeaf(id)
+    return leaf && !leaf.sleeping && !leaf.notConnected ? getPane(id) || null : null
+  },
+  inputEmpty: (id) => (findLeaf(id)?.agentId === 'codex' ? inputShownEmpty(id) : null),
+  noSubmit: (id) => findLeaf(id)?.agentId === 'cursor',
+  generation: (id) => {
+    const leaf = findLeaf(id)
+    return leaf ? `${leaf.gen || 0}:${leaf.agentLaunchToken || ''}` : null
+  },
+  label: (id) => {
+    const leaf = findLeaf(id)
+    return `${leaf ? paneLabel(leaf) : 'pane'} (${id})`
+  },
+  log: (level, text) => {
+    if (window.shellApi.log) window.shellApi.log(level, `relay delivery: ${text}`)
+  },
+  pointerText: () => RELAY_POINTER
+})
+function onRelayUnread(ev) {
+  if (!ev || typeof ev.paneId !== 'string') return
+  if (ev.count > 0) relayUnread[ev.paneId] = { count: ev.count, ids: Array.isArray(ev.ids) ? ev.ids : null }
+  else delete relayUnread[ev.paneId]
+  // What the agents say to each other stays in sight of the user (the activity
+  // log), never of a Live Share guest (scope 'relay': projectActivity skips it).
+  if (ev.message) logMessage(ev.paneId, 'sent', ev.message.text, { source: 'agent', from: ev.message.fromName, scope: 'relay' })
+  pointRelay(ev.paneId)
+}
+// A pane not there yet (still being restored) is tried again by the timer.
+function pointRelay(id) {
+  const leaf = findLeaf(id)
+  if (!leaf) return
+  if (leaf.kind === 'chat') return pointRelayChat(id)
+  relayPointer.notify(id)
+}
+// A chat takes a pointer as a message of its own, once for what is new.
+function pointRelayChat(id) {
+  const u = relayUnread[id]
+  if (!u) {
+    delete relayChatPointed[id]
+    return
+  }
+  const api = window.shellApi.chat
+  if (!settings.teamWakeUps || settings.agentTerminal === false || !api || !api.sendTeam) return
+  const seen = relayChatPointed[id] || (relayChatPointed[id] = new Set())
+  const ids = u.ids || []
+  if (!ids.some((m) => !seen.has(m))) return
+  Promise.resolve(api.sendTeam({ paneId: id, messages: [{ id: newId('msg'), from: 'Tessel', text: RELAY_POINTER }] }))
+    .then((r) => {
+      if (r && r.ok !== false) for (const m of ids) seen.add(m)
+    })
+    .catch(() => {})
+}
+const relayTimer = setInterval(() => {
+  for (const id of Object.keys(relayUnread)) pointRelay(id)
+}, 5000)
+onBeforeUnmount(() => {
+  clearInterval(relayTimer)
+  relayPointer.dispose()
+})
 
 // Ask the user what happened to an unconfirmed message, then go on.
 // The question about an unconfirmed message: Enter pressed and not seen
@@ -7962,7 +8042,7 @@ function flushPending() {
     // Tessel watches the agent take it (src/renderer/src/deliver.js) before
     // the next one goes.
     // The user is typing there: wait until the line is sent or cleared.
-    if (delivering.has(id) || unsent[id] || userIsTyping(id) || teamPointer.inFlight(id)) {
+    if (delivering.has(id) || unsent[id] || userIsTyping(id) || teamPointer.inFlight(id) || relayPointer.inFlight(id)) {
       waiting = true
       continue
     }
@@ -11870,6 +11950,7 @@ const agentTerminalTargets = createAgentTerminalTargets({
   paneLabel,
   hostLabel: (id) => remoteHostLabel(id),
   agentName: (leaf) => programLabel(leaf),
+  projectShared: (id) => !!(liveHostOn.value && liveShare.isShared(id)),
   // From the pane's own launch state (Tessel's), never from the agent's request.
   agentYolo: (leaf) => paneRunsYolo(leaf),
   userTyping: (id) => userIsTyping(id),
@@ -11968,6 +12049,7 @@ const agentTerminalTargets = createAgentTerminalTargets({
       pc: c.pc === true,
       host: c.pc === true ? t('app.agentTerminal.local', 'this computer') : c.host || null,
       open: c.open || null,
+      relay: c.relay || null,
       agentLabel: c.agentLabel,
       name: c.name,
       where,
@@ -12105,6 +12187,9 @@ watch(
     autoApprove: settings.agentTerminalAutoApprove === true,
     ignoreDefaults: settings.agentTerminalIgnoreDefaultRules === true,
     yoloOwn: settings.agentTerminalYoloNoAsk !== false,
+    relay: settings.agentRelay !== false,
+    relayAsk: settings.agentRelayAsk !== false,
+    relayMax: settings.agentRelayMax,
     userRules: JSON.parse(JSON.stringify(settings.agentTerminalRules || {})),
     workspaceRules: JSON.parse(JSON.stringify(settings.agentTerminalWorkspaceRules || {}))
   }),
@@ -12129,6 +12214,14 @@ const offTerminalAgent = []
       })
     )
   if (api && typeof api.onLog === 'function') offTerminalAgent.push(api.onLog(onTerminalLog))
+  if (api && typeof api.onRelayUnread === 'function') offTerminalAgent.push(api.onRelayUnread(onRelayUnread))
+  // What waited through a restart of the window.
+  if (api && typeof api.relayUnread === 'function')
+    Promise.resolve(api.relayUnread())
+      .then((all) => {
+        for (const [paneId, u] of Object.entries(all || {})) onRelayUnread({ paneId, ...u })
+      })
+      .catch(() => {})
 }
 onBeforeUnmount(() => {
   for (const off of offTerminalAgent.splice(0)) if (typeof off === 'function') off()

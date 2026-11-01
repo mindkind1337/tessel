@@ -61,6 +61,19 @@ export const BACKGROUND_MODES = ['one', 'each']
 // of its group as equal rows (addPageNear: the agent's pane keeps its room
 // instead of being halved each time). mine(leaf): a pane of that group
 // (`leaf` itself excluded); makeSplit(dir, children, sizes) -> a split node.
+// The tools version that has project_inbox: an agent started before it cannot
+// read a message (null: not known, it may).
+const RELAY_TOOLS = [1, 11, 12]
+export function toolsTooOld(v) {
+  if (typeof v !== 'string' || !/^\d+(\.\d+)*$/.test(v)) return false
+  const parts = v.split('.').map(Number)
+  for (let i = 0; i < RELAY_TOOLS.length; i++) {
+    const d = (parts[i] || 0) - RELAY_TOOLS[i]
+    if (d !== 0) return d < 0
+  }
+  return false
+}
+
 export function placeNear(tree, anchorId, leaf, { forEachLeaf, mine, makeSplit, firstDir = 'row' }) {
   let last = null
   forEachLeaf(tree, (l) => l !== leaf && mine(l) && (last = l))
@@ -190,6 +203,18 @@ export function createAgentTerminalTargets(deps) {
     return found
   }
 
+  // An agent of any project another agent may write to: never itself, never a
+  // Live Share host's pane on a guest's screen, never a chat on an SSH host (it
+  // has no Tessel tools to read with).
+  const relayTarget = (l, me, w) => l && l.type === 'leaf' && l.id !== me.id && (l.kind === 'agent' || (l.kind === 'chat' && !l.remoteHostId && !(w && w.remote))) && l.backend !== 'liveshare'
+  const projectShared = (w) => !!(deps.projectShared && w && deps.projectShared(w.id))
+  const relayWho = (l, w) => ({
+    id: l.id,
+    name: deps.paneLabel(l),
+    agent: l.kind === 'chat' ? 'chat' : deps.agentName(l),
+    project: String(w.name || '').slice(0, 100),
+    where: l.remoteHostId ? `SSH ${deps.hostLabel(l.remoteHostId)}` : 'this computer' // i18n-ignore
+  })
   const isTerminal = (l, me) => l && l.type === 'leaf' && l.id !== me.id && (l.kind === 'shell' || l.kind === 'agent')
   const ownBy = (id, agentPane) => {
     const s = terms.get(id)
@@ -594,9 +619,34 @@ export function createAgentTerminalTargets(deps) {
 
     // A card about no terminal yet: another SSH host ("host:<id>"), panes to
     // open ("open:<agent pane>"); shown from the agent's own pane.
-    if (req.op === 'approve' && typeof req.terminal === 'string' && /^(host|open|logs):/.test(req.terminal))
+    if (req.op === 'approve' && typeof req.terminal === 'string' && /^(host|open|logs|relay):/.test(req.terminal))
       return plainAnswer(await deps.approve({ ...req.card, agentLeaf, agentLabel, leaf: agentLeaf, name: agentLabel, ws }))
 
+    // Messages between projects: who can be written to, and who a name means.
+    if (req.op === 'relayList') {
+      const agents = []
+      // From a project a guest is in: only the projects that are shared too (a
+      // guest must not learn the others through the agent).
+      const sharedOnly = projectShared(ws)
+      for (const w of deps.workspaces()) {
+        if (sharedOnly && !projectShared(w)) continue
+        deps.forEachLeaf(w.tree, (l) => relayTarget(l, agentLeaf, w) && agents.push({ ...relayWho(l, w), sameTeam: !!(l.team && l.team === agentLeaf.team) }))
+      }
+      return { agents }
+    }
+    if (req.op === 'relayResolve') {
+      const raw = String(req.to == null ? '' : req.to).trim().toLowerCase()
+      const all = []
+      for (const w of deps.workspaces()) deps.forEachLeaf(w.tree, (l) => relayTarget(l, agentLeaf, w) && all.push({ l, w }))
+      const byId = all.filter((x) => x.l.id.toLowerCase() === raw)
+      const hits = byId.length ? byId : all.filter((x) => deps.paneLabel(x.l).toLowerCase() === raw)
+      if (!hits.length) throw refuse('agent_not_found', `No agent "${String(req.to).slice(0, 60)}" in Tessel: see project_agents.`) // i18n-ignore
+      if (hits.length > 1) throw refuse('ambiguous', `${hits.length} agents have this name, give its id: ${hits.map((x) => `${x.l.id} ("${x.w.name || ''}")`).join(', ')}.`) // i18n-ignore
+      const { l, w } = hits[0]
+      if (l.kind === 'agent' && !l.teamTools) throw refuse('no_tools', `${deps.paneLabel(l)} runs without Tessel's tools: it cannot read messages.`) // i18n-ignore
+      if (l.kind === 'agent' && toolsTooOld(l.toolsVersion)) throw refuse('agent_outdated', `${deps.paneLabel(l)} started before Tessel could relay messages: ask the user to restart it (right-click its pane, Restart).`) // i18n-ignore
+      return { to: relayWho(l, w), from: relayWho(agentLeaf, ws), sameTeam: !!(l.team && l.team === agentLeaf.team), shared: projectShared(ws) || projectShared(w) }
+    }
     // tessel_logs: only who is asking, for the card.
     if (req.op === 'logsInfo') return { agentLabel }
     // open_terminal: what would open (the main process asks the user first).

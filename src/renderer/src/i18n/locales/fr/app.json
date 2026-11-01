@@ -937,7 +937,11 @@
       "allowPc": "Autoriser sur cet ordinateur",
       "logsTitle": "{{agent}} veut lire les journaux de Tessel sur cet ordinateur",
       "logsText": "Il va lire les fichiers journaux de Tessel (ce que l'application et son hôte de terminaux ont noté : chemins, noms d'hôtes, adresses ; clés et jetons retirés), filtrés par heure et par mots. Lecture seule : il ne peut pas les modifier et ne lit rien d'autre. L'autoriser lui permet de les relire jusqu'au redémarrage de Tessel.",
-      "allowLogs": "Autoriser la lecture des journaux"
+      "allowLogs": "Autoriser la lecture des journaux",
+      "relayTitle": "{{from}} (projet {{fromProject}}, {{fromWhere}}) veut écrire à {{to}} (projet {{toProject}}, {{where}})",
+      "relayText": "Tessel transmettra ce message à l'autre agent, qui le lira comme venant d'un autre agent, sans aucune permission de votre part. L'autoriser permet à ces deux agents de s'écrire, dans les deux sens, jusqu'au redémarrage de Tessel.",
+      "allowRelay": "Autoriser ces deux agents à s'écrire",
+      "relayTextShared": "Un de ces projets est partagé dans Live Share : un invité peut être derrière ce message, ou lire ce qui arrive. La question est posée pour chaque message tant qu'il est partagé."
     },
     "hostAccount": {
       "refused": "{{agent}} n’a pas été démarré sur son compte sur cet hôte : {{error}} Menu du panneau > Redémarrer sur… le démarre sur un autre.",
