@@ -18,7 +18,12 @@ const fail = (code) => Object.assign(new Error(code), { code })
 
 const OID = {
   pbeWithSha1AndTripleDES: '1.2.840.113549.1.12.5.1.3',
-  pbes2: '1.2.840.113549.1.5.13'
+  pbes2: '1.2.840.113549.1.5.13',
+  // What each login field itself is encrypted with (the PK11SDR blob's algorithm):
+  // older profiles DES-EDE3-CBC with a 24-byte key and an 8-byte IV, newer Firefox
+  // AES-256-CBC with a 32-byte key and a 16-byte IV.
+  des3cbc: '1.2.840.113549.3.7',
+  aes256cbc: '2.16.840.1.101.3.4.1.42'
 }
 // The fixed object id (CKA_ID) of the wrapped SDR key row in nssPrivate.
 const CKA_ID = Buffer.from('f8000000000000000000000000000001', 'hex')
@@ -122,11 +127,9 @@ function stripPadding(buf) {
   return buf.subarray(0, end)
 }
 
-// The unwrapped 3DES key, after checking the password works against the fixed
-// "password-check" marker. Throws { code: 'primary-password' } when the marker
-// does not match (a Primary Password is set, or the store cannot be read with
-// an empty one).
-export function deriveLoginKey({ globalSalt, item2, a11, primaryPassword = Buffer.alloc(0) }) {
+// The password-check marker: throws { code: 'primary-password' } when it does not
+// match (a Primary Password is set, or the store cannot be read with an empty one).
+export function checkPassword({ globalSalt, item2, primaryPassword = Buffer.alloc(0) }) {
   let check
   try {
     check = stripPadding(decryptWrapped(parseDer(item2), globalSalt, primaryPassword)).toString('latin1')
@@ -134,8 +137,30 @@ export function deriveLoginKey({ globalSalt, item2, a11, primaryPassword = Buffe
     throw fail('primary-password')
   }
   if (check !== PASSWORD_CHECK) throw fail('primary-password')
-  const material = decryptWrapped(parseDer(a11), globalSalt, primaryPassword)
-  return material.subarray(0, 24)
+}
+
+// The raw record of one wrapped key (nssPrivate row): 24 bytes of 3DES key then
+// padding, or a 32-byte AES-256 key. Which of the two a login field wants is
+// said by the field itself (decryptField); the padding is not stripped here, an
+// AES key may end in any byte.
+export function unwrapKey({ globalSalt, a11, primaryPassword = Buffer.alloc(0) }) {
+  return Buffer.from(decryptWrapped(parseDer(a11), globalSalt, primaryPassword))
+}
+
+// The default (3DES-era) key, for callers that only need that one.
+export function deriveLoginKey({ globalSalt, item2, a11, primaryPassword = Buffer.alloc(0) }) {
+  checkPassword({ globalSalt, item2, primaryPassword })
+  return unwrapKey({ globalSalt, a11, primaryPassword })
+}
+
+// The id of the key a logins.json field says it was encrypted with (hex), or ''.
+export function fieldKeyId(b64) {
+  try {
+    const node = parseDer(Buffer.from(String(b64 || ''), 'base64'))
+    return node.children[0].content.toString('hex')
+  } catch {
+    return ''
+  }
 }
 
 // One logins.json field (base64 PK11SDR blob) -> plaintext string, or null when
@@ -150,9 +175,17 @@ export function decryptField(b64, key) {
   if (!blob.length) return null
   try {
     const node = parseDer(blob) // [ keyId, [ algo, iv ], ciphertext ]
+    const algo = oid(node.children[1].children[0])
     const iv = node.children[1].children[1].content
     const cipher = node.children[2].content
-    const d = crypto.createDecipheriv('des-ede3-cbc', key, iv)
+    let d
+    if (algo === OID.aes256cbc) {
+      if (!key || key.length < 32 || iv.length !== 16) return null
+      d = crypto.createDecipheriv('aes-256-cbc', key.subarray(0, 32), iv)
+    } else if (algo === OID.des3cbc) {
+      if (!key || key.length < 24 || iv.length !== 8) return null
+      d = crypto.createDecipheriv('des-ede3-cbc', key.subarray(0, 24), iv)
+    } else return null
     return Buffer.concat([d.update(cipher), d.final()]).toString('utf8')
   } catch {
     return null
@@ -167,12 +200,15 @@ export function readKey4(dbPath) {
   try {
     const meta = db.prepare("SELECT item1, item2 FROM metaData WHERE id = 'password'").get()
     if (!meta || meta.item1 == null || meta.item2 == null) throw fail('unreadable')
-    let a11 = null
+    // Every wrapped key, by its id: a login field names the one it needs (a newer
+    // profile holds an AES key next to the old 3DES one).
+    const keys = new Map()
     for (const row of db.prepare('SELECT a11, a102 FROM nssPrivate').all()) {
-      if (row.a102 != null && Buffer.from(row.a102).equals(CKA_ID)) { a11 = Buffer.from(row.a11); break }
+      if (row.a102 != null && row.a11 != null && keys.size < 16) keys.set(Buffer.from(row.a102).toString('hex'), Buffer.from(row.a11))
     }
-    if (!a11) throw fail('unreadable')
-    return { globalSalt: Buffer.from(meta.item1), item2: Buffer.from(meta.item2), a11 }
+    if (!keys.size) throw fail('unreadable')
+    const a11 = keys.get(CKA_ID.toString('hex')) || [...keys.values()][0]
+    return { globalSalt: Buffer.from(meta.item1), item2: Buffer.from(meta.item2), a11, keys }
   } finally {
     db.close()
   }
@@ -181,14 +217,30 @@ export function readKey4(dbPath) {
 // Decrypts a logins.json object with a key4.db already read by readKey4.
 // -> { incoming: [{ origin, username, password }], skipped } or throws
 // { code: 'primary-password' }.
-export function decryptLogins(loginsJson, { globalSalt, item2, a11 }) {
-  const key = deriveLoginKey({ globalSalt, item2, a11 })
+export function decryptLogins(loginsJson, { globalSalt, item2, a11, keys }) {
+  checkPassword({ globalSalt, item2 })
+  // Each key is unwrapped once, the first time a field names it.
+  const unwrapped = new Map()
+  const keyFor = (b64) => {
+    const id = fieldKeyId(b64)
+    if (!unwrapped.has(id)) {
+      let material = null
+      try {
+        const row = (keys && keys.get(id)) || (!keys || !id ? a11 : null)
+        material = row ? unwrapKey({ globalSalt, a11: row }) : null
+      } catch {
+        material = null
+      }
+      unwrapped.set(id, material)
+    }
+    return unwrapped.get(id)
+  }
   const logins = Array.isArray(loginsJson && loginsJson.logins) ? loginsJson.logins : []
   const incoming = []
   let skipped = 0
   for (const login of logins.slice(0, MAX_LOGINS)) {
-    const password = decryptField(login && login.encryptedPassword, key)
-    const username = decryptField(login && login.encryptedUsername, key)
+    const password = decryptField(login && login.encryptedPassword, keyFor(login && login.encryptedPassword))
+    const username = decryptField(login && login.encryptedUsername, keyFor(login && login.encryptedUsername))
     if (password == null || typeof (login && login.hostname) !== 'string') { skipped++; continue }
     incoming.push({ origin: login.hostname, username: username || '', password })
   }
