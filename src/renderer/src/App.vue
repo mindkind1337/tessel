@@ -93,7 +93,7 @@ import { acquirePassthrough, trackPointerDrag } from './browser/webviewPassthrou
 import { pageOf, pageGuests, viewPartition } from './browser/pageHost'
 import { guestUrlTarget } from './liveShareGuestLinks'
 import { paneDropZone, placeLeaf, sidePageFromLeaf, leafFromSidePage, saveSideBrowsers, restoreSideBrowsers, newSidePageId } from './browser/pageMove'
-import { createAgentBrowserTargets, addPageNear } from './browser/agentBrowserTargets'
+import { createAgentBrowserTargets, addPageNear, splitDirFor } from './browser/agentBrowserTargets'
 import { inheritsAgentSession, inheritsGuestSession } from './browser/agentSession'
 import { createAgentTerminalTargets, paneRunsYolo, placeNear, ownTerminalOf, MAX_OPEN_PANES } from './agentTerminal/agentTerminalTargets'
 import { createAgentAccountTargets, AgentAccountError } from './agentAccounts'
@@ -11693,7 +11693,7 @@ const agentBrowserTargets = createAgentBrowserTargets({
     if (settings.browserAgentSeparateSession) leaf.agentSession = true
     keepView(leaf, near, ws)
     ws.tree = addPageNear(ws.tree, near.id, leaf, {
-      dir: stack ? 'col' : 'row',
+      dir: stack ? 'col' : agentSplitDir(near.id),
       mine: (n) => n === leaf || (n.type === 'leaf' && n.kind === 'browser' && !!near.openedBy && n.openedBy === near.openedBy),
       makeSplit: (dir, children, sizes) => reactive({ type: 'split', id: newId('split'), dir, sizes, children })
     })
@@ -11857,6 +11857,11 @@ function workspaceRulesKey(ws) {
   return String((ws.remote && `${ws.remote.hostId}:${ws.remote.path}`) || ws.cwd || ws.id || '')
 }
 const makeAgentSplit = (dir, children, sizes) => reactive({ type: 'split', id: newId('split'), dir, sizes, children })
+// Which way a pane opened for an agent splits it, from its size on screen.
+function agentSplitDir(leafId) {
+  const el = document.querySelector(`.pane[data-pane-id="${leafId}"]`) // i18n-ignore
+  return splitDirFor(el ? el.getBoundingClientRect() : null)
+}
 const agentTerminalTargets = createAgentTerminalTargets({
   enabled: () => settings.agentTerminal !== false,
   workspaces: () => workspaces.value,
@@ -11894,7 +11899,7 @@ const agentTerminalTargets = createAgentTerminalTargets({
     keepView(leaf, agentLeaf, ws)
     // Its first terminal beside it, the next ones stacked under that one
     // (rows of one area): the agent's pane is not halved again each time.
-    ws.tree = placeNear(ws.tree, agentLeaf.id, leaf, { forEachLeaf, mine: ownTerminalOf(agentLeaf.id), makeSplit: makeAgentSplit })
+    ws.tree = placeNear(ws.tree, agentLeaf.id, leaf, { forEachLeaf, mine: ownTerminalOf(agentLeaf.id), makeSplit: makeAgentSplit, firstDir: agentSplitDir(agentLeaf.id) })
     refitSoon()
     return leaf
   },
@@ -11933,7 +11938,7 @@ const agentTerminalTargets = createAgentTerminalTargets({
       }
       leaf.openedNear = agentLeaf.id
       keepView(leaf, agentLeaf, ws)
-      ws.tree = placeNear(ws.tree, agentLeaf.id, leaf, { forEachLeaf, mine: (l) => l.openedNear === agentLeaf.id, makeSplit: makeAgentSplit })
+      ws.tree = placeNear(ws.tree, agentLeaf.id, leaf, { forEachLeaf, mine: (l) => l.openedNear === agentLeaf.id, makeSplit: makeAgentSplit, firstDir: agentSplitDir(agentLeaf.id) })
       out.push(leaf)
     }
     refitSoon()

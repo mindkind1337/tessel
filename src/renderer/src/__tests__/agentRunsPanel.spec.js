@@ -1,6 +1,8 @@
 // What agents ran in a terminal (AgentRunsPanel.vue): cards, newest first,
 // the long command folded, a copy button.
 import { describe, it, expect } from 'vitest'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { mount } from '@vue/test-utils'
 import AgentRunsPanel from '../components/AgentRunsPanel.vue'
 
@@ -58,5 +60,18 @@ describe('the list of what agents ran', () => {
     const cards = w.findAll('[data-test="pane-agent-term-row"]')
     expect(cards).toHaveLength(2)
     expect(cards[1].get('[data-test="arp-cmd"]').classes()).not.toContain('folded')
+  })
+})
+
+describe('its place in the pane', () => {
+  it('stays inside the pane however narrow: placed against the header, never a fixed width from the badge', () => {
+    const css = readFileSync(join(__dirname, '..', 'style.css'), 'utf8').replace(/\r/g, '')
+    const rule = css.slice(css.indexOf('\n.pane-agent-term-log {'), css.indexOf('}', css.indexOf('\n.pane-agent-term-log {')))
+    expect(rule).toContain('left: 8px')
+    expect(rule).toContain('right: 8px')
+    expect(rule).toContain('max-width: 580px')
+    expect(rule).not.toMatch(/\n\s*width:/)
+    const badge = css.slice(css.indexOf('\n.pane-agent-term {'), css.indexOf('}', css.indexOf('\n.pane-agent-term {')))
+    expect(badge).not.toContain('position: relative')
   })
 })

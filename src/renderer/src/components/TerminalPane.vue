@@ -1119,6 +1119,16 @@ onBeforeUnmount(() => {
 const agentUser = computed(() => terminalControl[props.node.id] || null)
 const agentRuns = computed(() => terminalLog[props.node.id] || [])
 const agentLogOpen = ref(false)
+// The list fits the pane's height: the pane cuts what goes past it.
+const agentLogStyle = ref(null)
+function toggleAgentLog(event) {
+  agentLogOpen.value = !agentLogOpen.value
+  const pane = event.currentTarget && event.currentTarget.closest('.pane')
+  const nav = event.currentTarget && event.currentTarget.closest('.pane-nav')
+  if (!pane || !nav) return
+  const room = pane.getBoundingClientRect().bottom - nav.getBoundingClientRect().bottom - 8
+  agentLogStyle.value = room > 0 ? { maxHeight: `${Math.round(Math.max(120, Math.min(520, room)))}px` } : null
+}
 const agentBadgeText = computed(() =>
   agentUser.value
     ? t('pane.agentTerminal.using', '{{agent}} is using this terminal', { agent: agentUser.value.agent })
@@ -4449,14 +4459,14 @@ const paneMenuBindings = computed(() => ({
           data-test="pane-agent-terminal-log"
           :title="t('pane.agentTerminal.logHint', 'What agents ran in this terminal')"
           :aria-expanded="agentLogOpen"
-          @click.stop="agentLogOpen = !agentLogOpen"
+          @click.stop="toggleAgentLog($event)"
         >
           {{ agentBadgeText }}
         </button>
         <button v-if="agentUser" type="button" class="pane-agent-term-stop" data-test="pane-agent-terminal-stop" :title="t('pane.agentTerminal.stopHint', 'Stop this agent from typing in this terminal')" @click.stop="stopTerminalAgent">
           {{ t('pane.agentTerminal.stop', 'Stop') }}
         </button>
-        <div v-if="agentLogOpen" class="pane-agent-term-log" @click.stop>
+        <div v-if="agentLogOpen" class="pane-agent-term-log" :style="agentLogStyle" @click.stop>
           <AgentRunsPanel :runs="agentRuns" @copy="copyAgentRun" />
         </div>
       </div>

@@ -56,15 +56,16 @@ export const MAX_OPEN_PANES = 4
 export const BACKGROUND_MODES = ['one', 'each']
 
 // Where a pane opened for an agent goes in its grid (a new tree): the first
-// one beside `anchorId` (the agent), the next ones stacked with the others
+// one beside `anchorId` (the agent), or below it (firstDir 'col': splitDirFor,
+// no room beside it), the next ones stacked with the others
 // of its group as equal rows (addPageNear: the agent's pane keeps its room
 // instead of being halved each time). mine(leaf): a pane of that group
 // (`leaf` itself excluded); makeSplit(dir, children, sizes) -> a split node.
-export function placeNear(tree, anchorId, leaf, { forEachLeaf, mine, makeSplit }) {
+export function placeNear(tree, anchorId, leaf, { forEachLeaf, mine, makeSplit, firstDir = 'row' }) {
   let last = null
   forEachLeaf(tree, (l) => l !== leaf && mine(l) && (last = l))
   return addPageNear(tree, last ? last.id : anchorId, leaf, {
-    dir: last ? 'col' : 'row',
+    dir: last ? 'col' : firstDir,
     mine: (n) => n === leaf || (n.type === 'leaf' && mine(n)),
     makeSplit
   })

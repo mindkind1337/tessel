@@ -849,7 +849,6 @@ body.popup-open .toolbar {
 /* An agent typing in this terminal (its terminal tools): "Ada is using this
    terminal · Stop", like the browser's Agent badge; its log under it. */
 .pane-agent-term {
-  position: relative;
   display: inline-flex;
   align-items: center;
   gap: 4px;
@@ -894,12 +893,16 @@ body.popup-open .toolbar {
 .pane-agent-term-stop:hover {
   filter: brightness(1.1);
 }
+/* Placed in the pane's header, not under its badge: it stays inside the pane
+   however narrow (TerminalPane.vue sets its height from the pane's). */
 .pane-agent-term-log {
   position: absolute;
-  top: 26px;
-  right: 0;
+  top: 100%;
+  left: 8px;
+  right: 8px;
   z-index: 20;
-  width: min(580px, 92vw);
+  max-width: 580px;
+  margin-left: auto;
   max-height: min(64vh, 520px);
   overflow: auto;
   padding: 0;

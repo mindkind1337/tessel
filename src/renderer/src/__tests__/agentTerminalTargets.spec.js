@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { reactive } from 'vue'
 import { createAgentTerminalTargets, paneRunsYolo, placeNear, ownTerminalOf, AUTO_CLOSE_MS, CLOSED_KEEP_MS } from '../agentTerminal/agentTerminalTargets'
+import { splitDirFor } from '../browser/agentBrowserTargets'
 import { fakeTerminal } from './fakeTerminal'
 
 function forEachLeaf(node, fn) {
@@ -419,11 +420,32 @@ describe('agent terminals: placed in the grid', () => {
     expect(tree.children[0].id).toBe('pane-x')
   })
 
+  it('no room beside the agent: the first one goes below it, the next stack under it', () => {
+    const agent = { type: 'leaf', id: 'pane-ada', kind: 'agent' }
+    const opts = { forEachLeaf, mine: ownTerminalOf('pane-ada'), makeSplit, firstDir: 'col' }
+    let tree = placeNear(agent, 'pane-ada', own('t1'), opts)
+    expect(tree).toMatchObject({ dir: 'col', sizes: [50, 50] })
+    expect(tree.children.map((c) => c.id)).toEqual(['pane-ada', 't1'])
+    tree = placeNear(tree, 'pane-ada', own('t2'), opts)
+    expect(tree.children[0].id).toBe('pane-ada')
+    expect(tree.children[1]).toMatchObject({ dir: 'col' })
+    expect(tree.children[1].children.map((c) => c.id)).toEqual(['t1', 't2'])
+  })
+
+  it('which way: below when taller than wide or too narrow for two columns, beside otherwise', () => {
+    expect(splitDirFor({ width: 770, height: 1290 })).toBe('col') // the tall pane of a 3-column screen
+    expect(splitDirFor({ width: 900, height: 700 })).toBe('col') // two columns of 450
+    expect(splitDirFor({ width: 1400, height: 800 })).toBe('row')
+    expect(splitDirFor({ width: 800, height: 300 })).toBe('row') // two rows of 150 are too short
+    expect(splitDirFor({ width: 0, height: 0 })).toBe('row') // a project not on screen
+    expect(splitDirFor(null)).toBe('row')
+  })
+
   it('the window places its terminals with it (App.vue)', async () => {
     const fs = await import('fs')
     const { join } = await import('path')
     const app = fs.readFileSync(join(__dirname, '..', 'App.vue'), 'utf8').replace(/\r\n/g, '\n')
-    expect(app).toContain('ws.tree = placeNear(ws.tree, agentLeaf.id, leaf, { forEachLeaf, mine: ownTerminalOf(agentLeaf.id), makeSplit: makeAgentSplit })')
+    expect(app).toContain('ws.tree = placeNear(ws.tree, agentLeaf.id, leaf, { forEachLeaf, mine: ownTerminalOf(agentLeaf.id), makeSplit: makeAgentSplit, firstDir: agentSplitDir(agentLeaf.id) })')
   })
 })
 
@@ -583,7 +605,7 @@ describe('open_terminal: panes for the user', () => {
     const { join } = await import('path')
     const app = fs.readFileSync(join(__dirname, '..', 'App.vue'), 'utf8').replace(/\r\n/g, '\n')
     expect(app).toContain('const leaf = await createLeaf(selectedShell.value, def, ws.cwd, worktree, wsLeafOpts(ws, {}))')
-    expect(app).toContain("ws.tree = placeNear(ws.tree, agentLeaf.id, leaf, { forEachLeaf, mine: (l) => l.openedNear === agentLeaf.id, makeSplit: makeAgentSplit })")
+    expect(app).toContain("ws.tree = placeNear(ws.tree, agentLeaf.id, leaf, { forEachLeaf, mine: (l) => l.openedNear === agentLeaf.id, makeSplit: makeAgentSplit, firstDir: agentSplitDir(agentLeaf.id) })")
   })
 })
 

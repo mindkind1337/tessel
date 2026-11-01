@@ -131,7 +131,9 @@ working on Tessel itself (see [Build from source](#build-from-source)).
   stop it. After you import cookies, agents use a separate session without
   your logins (Settings → Browser).
 - **Terminal tools for agents**: an agent runs commands in a terminal of its
-  own next to its pane (on the project's SSH host when it is there). Each
+  own next to its pane, or below it when there is no room beside it (on the
+  project's SSH host when it is there). Its web pages and the panes it opens for
+  you are placed the same way. Each
   command asks first, with rules like VS Code's (allow a command for the
   session, the project or always; risky ones always ask). Reading or typing in
   your own terminals needs your approval, shows a badge with Stop, and is

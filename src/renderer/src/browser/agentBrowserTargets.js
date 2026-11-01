@@ -45,6 +45,20 @@ export function addPageNear(tree, nearId, page, { dir = 'row', mine = () => fals
   return walk(tree)
 }
 
+// Which way a pane opened for an agent splits it, from the size it has on
+// screen: below when it is taller than wide or would leave two narrow columns,
+// beside otherwise. Beside when below would leave two rows too short to read,
+// and when its size is not known (a project not on screen).
+export const MIN_SPLIT_WIDTH = 520
+export const MIN_SPLIT_HEIGHT = 180
+export function splitDirFor(size) {
+  const w = size && size.width
+  const h = size && size.height
+  if (!(w > 0) || !(h > 0)) return 'row'
+  if (h / 2 < MIN_SPLIT_HEIGHT) return 'row'
+  return h > w || w / 2 < MIN_SPLIT_WIDTH ? 'col' : 'row'
+}
+
 export const GUEST_WAIT_MS = 10000
 // Pages one agent may have opened at a time (browser_open).
 export const MAX_AGENT_PAGES = 5
