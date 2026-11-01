@@ -24,13 +24,26 @@ describe('the line of tabs', () => {
   it('Terminal first, a tab per open file, then the browser', () => {
     const w = mount(ViewTabs, { props: { leaves: [editor, browser], shown: 'ed1' } })
     const tabs = w.findAll('[data-test="view-tab"]')
-    expect(tabs.map((t) => t.text().trim())).toEqual(['Terminal', 'a.js', 'b.js', 'Example'])
+    expect(tabs.map((t) => t.find('.view-tab-label').text().trim())).toEqual(['Terminal', 'a.js', 'b.js', 'Example'])
     // The editor's current file is the active tab; the preview is in italics.
     expect(tabs[2].classes()).toContain('active')
     expect(tabs[1].classes()).not.toContain('active')
     expect(tabs[1].classes()).toContain('preview')
   })
 
+  it("a file's tab has its own icon (the one of the explorer), an empty editor the code icon", () => {
+    const img = { type: 'leaf', kind: 'editor', id: 'ed2', activePath: 'C:\p\Numérisation_1.png', files: [{ path: 'C:\p\Numérisation_1.png', preview: false }] }
+    const w = mount(ViewTabs, { props: { leaves: [img, { type: 'leaf', kind: 'editor', id: 'ed3', files: [] }], shown: 'ed2' } })
+    const tabs = w.findAll('[data-test="view-tab"]')
+    // An image: Seti's picture glyph (U+E04C) in its purple, not the code brackets.
+    const icon = tabs[1].find('[data-test="file-icon"]')
+    expect(icon.exists()).toBe(true)
+    expect(icon.text()).toBe(String.fromCodePoint(0xe04c))
+    expect(tabs[1].find('svg.view-tab-icon').exists()).toBe(false)
+    // No file open: the generic editor icon.
+    expect(tabs[2].find('[data-test="file-icon"]').exists()).toBe(false)
+    expect(tabs[2].find('svg.view-tab-icon').exists()).toBe(true)
+  })
   it("a file's tab: shown, kept (double-click on a preview), closed in its editor", async () => {
     const w = mount(ViewTabs, { props: { leaves: [editor], shown: 'terminal' } })
     const a = w.findAll('[data-test="view-tab"]')[1]

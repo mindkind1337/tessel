@@ -14,6 +14,7 @@ import { tabLabel } from '../editor/tabLabels'
 import { BLANK_URL, displayUrl, hostOf } from '../../../shared/browserUrl'
 import { isLiveSharePage } from '../paneViews'
 import PageAudioButton from './PageAudioButton.vue'
+import FileIcon from './FileIcon.vue'
 
 const props = defineProps({
   // The view's editor and browser panes, in the order of its tree.
@@ -41,6 +42,8 @@ function editorTabs(leaf) {
       key: `${leaf.id}|${f.path}`,
       id: leaf.id,
       path: f.path,
+      // The file itself (a diff tab's path is its own key): for its icon.
+      file: path,
       kind: 'editor',
       label,
       host: !!hostOf2(leaf),
@@ -124,6 +127,8 @@ function onAuxClick(e, tab) {
       @auxclick="onAuxClick($event, tab)"
     >
       <SquareTerminal v-if="tab.kind === 'terminal'" class="view-tab-icon" :size="14" aria-hidden="true" />
+      <!-- A file's tab: its icon, the one the explorer and the editor's tabs show. -->
+      <FileIcon v-else-if="tab.kind === 'editor' && tab.file" class="view-tab-icon" :name="tab.file" />
       <svg v-else-if="tab.kind === 'editor'" class="view-tab-icon" width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
         <path d="M5.5 4.5L2 8l3.5 3.5M10.5 4.5L14 8l-3.5 3.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
       </svg>
