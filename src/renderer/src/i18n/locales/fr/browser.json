@@ -92,7 +92,8 @@
       "thisFile": "ce fichier",
       "permission": "{{origin}} a demandé {{what}} ; Tessel a refusé.",
       "download": "Tessel ne télécharge pas de fichiers. Ouvrir {{name}} dans votre navigateur par défaut ?",
-      "openDefault": "Ouvrir dans le navigateur par défaut"
+      "openDefault": "Ouvrir dans le navigateur par défaut",
+      "downloadFailed": "Impossible de lancer le téléchargement de {{name}}."
     },
     "zoom": {
       "percent": "{{percent}} %"
