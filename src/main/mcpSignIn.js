@@ -164,7 +164,7 @@ function openServer(cfg, baseEnv, spawnFn, killTree = defaultKillTree) {
       const id = nextId++
       const timer = setTimeout(() => {
         waiting.delete(id)
-        reject(new Error('no answer'))
+        reject(new Error('no answer')) // i18n-ignore internal: callers answer with the reason noAnswer
       }, ANSWER_MS)
       waiting.set(id, { resolve, reject, timer })
       write({ jsonrpc: '2.0', id, method, params })
