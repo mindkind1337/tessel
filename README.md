@@ -65,7 +65,14 @@ working on Tessel itself (see [Build from source](#build-from-source)).
   `logins.json`/`key4.db`. Two cases cannot be read directly and are reported
   with the fix: Chrome/Edge 127+ entries under **App-Bound Encryption** and
   Firefox profiles with a **Primary Password** — for both, and for Safari, the
-  dialog explains how to export a CSV and import that instead.
+  dialog explains how to export a CSV and import that instead. **Import from
+  all browsers** reads every profile in one go and shows one result line per
+  profile (new, updated, already saved, skipped, what needs a CSV export); one
+  failing profile does not stop the others, and a login already saved is left
+  as it is, its agent access included. The saved list is one compact row per
+  login, sorted by site, with an instant search over sites and usernames
+  ("12 of 73"), how many accounts agents may use, and a per-account agents
+  switch, Fill and Remove (asks first).
 - **Files, editor and Source Control**: a compact file explorer like VS Code's
   (compact folders, indent guides, only visible rows drawn), an editor pane,
   and a Source Control panel (changes by folder, stage per file, commit,

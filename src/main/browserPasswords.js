@@ -70,17 +70,20 @@ export function createPasswordVault({ file, safeStorage }) {
   }
   function importRows(incoming) {
     const rows = read()
-    let imported = 0, skipped = 0
+    // imported = added + updated. An identical login already saved is left as
+    // it is (unchanged), agent access included; a changed password replaces
+    // the old one and turns agent access off again until re-allowed.
+    let added = 0, updated = 0, unchanged = 0, skipped = 0
     for (const item of incoming) {
       const origin = loginOrigin(item.origin)
       if (!origin || typeof item.password !== 'string' || !item.password || item.password.length > 16384 || typeof item.username !== 'string' || item.username.length > 2000) { skipped++; continue }
       const old = rows.find((r) => r.origin === origin && r.username === item.username)
-      if (old) { old.password = item.password; old.allowAgents = false }
-      else rows.push({ id: crypto.randomUUID(), origin, username: item.username, password: item.password, allowAgents: false })
-      imported++
+      if (old && old.password === item.password) unchanged++
+      else if (old) { old.password = item.password; old.allowAgents = false; updated++ }
+      else { rows.push({ id: crypto.randomUUID(), origin, username: item.username, password: item.password, allowAgents: false }); added++ }
     }
-    write(rows)
-    return { ok: true, imported, skipped }
+    if (added || updated) write(rows)
+    return { ok: true, imported: added + updated, added, updated, unchanged, skipped }
   }
   function change(id, action, allowAgents) {
     const rows = read()

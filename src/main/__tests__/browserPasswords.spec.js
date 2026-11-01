@@ -41,8 +41,13 @@ it('imports quoted CSV and seals secrets; exact origins and explicit agent opt-i
     expect(() => f.vault.credential(entry.id, entry.origin, true)).toThrow()
     f.vault.change(entry.id, 'allow', true)
     expect(f.vault.list(entry.origin, true)).toHaveLength(1)
-    f.vault.importRows(parsed)
+    // The same login imported again (import from all browsers): left as it is,
+    // agent access kept. A changed password turns agent access off again.
+    expect(f.vault.importRows(parsed)).toMatchObject({ imported: 0, added: 0, updated: 0, unchanged: 1, skipped: 0 })
+    expect(f.vault.list(entry.origin, true)).toHaveLength(1)
+    expect(f.vault.importRows([{ ...parsed[0], password: 'fixture-changed' }])).toMatchObject({ imported: 1, added: 0, updated: 1, unchanged: 0 })
     expect(f.vault.list(entry.origin, true)).toEqual([])
+    expect(f.vault.list()).toHaveLength(1)
     const again = createPasswordVault({ file: f.file, safeStorage: f.safeStorage })
     expect(again.list()).toHaveLength(1)
     f.vault.change(entry.id, 'delete')
