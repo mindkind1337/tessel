@@ -240,6 +240,10 @@ function unread(ctx) {
   return list
 }
 
+// A drive without hard links: an SFTP / network drive (RaiDrive answers
+// ENOTSUP), FAT, some file-sync folders.
+const NO_HARD_LINKS = new Set(['ENOTSUP', 'EOPNOTSUPP', 'ENOSYS', 'EXDEV', 'EPERM', 'EINVAL'])
+
 // Claim each message before returning it. Hooks and MCP tools may have
 // selected the same unread snapshot: publishing an already complete ack
 // without replacing an existing one lets only one reader return it.
@@ -254,11 +258,21 @@ function markRead(ctx, messages) {
   for (const m of messages) {
     const file = ackPath(ctx.root, m.toId, m.id)
     const tmp = `${file}.${process.pid}.${randomUUID()}.tmp`
+    const ack = JSON.stringify({ id: m.id, toId: m.toId, at: Date.now() })
     try {
-      fs.writeFileSync(tmp, JSON.stringify({ id: m.id, toId: m.toId, at: Date.now() }))
-      // Same-directory hard link: atomic, complete, and exclusive. Unlike
-      // rename it cannot replace the claim made by another reader.
-      fs.linkSync(tmp, file)
+      fs.writeFileSync(tmp, ack)
+      try {
+        // Same-directory hard link: atomic, complete, and exclusive. Unlike
+        // rename it cannot replace the claim made by another reader.
+        fs.linkSync(tmp, file)
+      } catch (err) {
+        // A project on a drive without hard links (Y: on RaiDrive): every
+        // read failed here and nothing was ever shown or marked read. An
+        // exclusive create claims it only once too; Tessel reads an ack still
+        // being written on its next round (takeTeamAcks).
+        if (!NO_HARD_LINKS.has(err.code)) throw err
+        fs.writeFileSync(file, ack, { flag: 'wx' })
+      }
       done.push(m)
     } catch (err) {
       // Another reader won this message; later messages can still be ours.
