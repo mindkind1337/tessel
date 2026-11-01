@@ -35,7 +35,7 @@ const labels = {
   cancelled: () => t('browser.download.cancelled', 'Cancelled'),
   interrupted: () => t('browser.download.interrupted', 'Download interrupted')
 }
-const label = (r) =>(labels[r.state] || labels.interrupted)()
+const label = (r) => (labels[r.state] || labels.interrupted)()
 </script>
 
 <template>
