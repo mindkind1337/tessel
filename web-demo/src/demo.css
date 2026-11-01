@@ -1,0 +1,48 @@
+/* What the demo page adds around Tessel: nothing of Tessel's own styles changes. */
+
+/* Windows' caption buttons, inert: where Electron's title bar overlay would draw them
+   (39 px high, over the toolbar's reserved 150 px). */
+#demo-window-buttons {
+  position: fixed;
+  top: 0;
+  right: 0;
+  z-index: 2147483000;
+  display: flex;
+  height: 39px;
+  pointer-events: none;
+  user-select: none;
+  background: #101216;
+  color: #d6d9df;
+}
+#demo-window-buttons span {
+  display: grid;
+  place-items: center;
+  width: 46px;
+  height: 39px;
+  opacity: 0.85;
+}
+
+/* The discreet tag: says it is a simulation, in the status bar's row. */
+#demo-tag {
+  position: fixed;
+  left: 50%;
+  bottom: 3px;
+  z-index: 2147483000;
+  transform: translateX(-50%);
+  padding: 1px 8px;
+  border: 1px solid rgba(245, 197, 66, 0.45);
+  border-radius: 999px;
+  font: 500 10.5px/14px 'Segoe UI Variable Text', 'Segoe UI', system-ui, sans-serif;
+  letter-spacing: 0.02em;
+  color: #f5c542;
+  background: rgba(16, 18, 22, 0.86);
+  user-select: none;
+  /* Never in the way of a click. */
+  pointer-events: none;
+}
+/* Settings covers the status bar's row: the tag goes to the corner of its menu. */
+body:has(.settings-page) #demo-tag {
+  left: 12px;
+  bottom: 8px;
+  transform: none;
+}

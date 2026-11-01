@@ -1,0 +1,10 @@
+{
+  "name": "tessel-agents",
+  "compatibility_date": "2026-10-23",
+  "assets": { "directory": "./public" },
+  "workers_dev": false,
+  "routes": [
+    { "pattern": "tesselcode.com", "custom_domain": true },
+    { "pattern": "www.tesselcode.com", "custom_domain": true }
+  ]
+}

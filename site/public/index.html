@@ -1,0 +1,260 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Tessel: AI coding agents and terminals, side by side</title>
+  <meta name="description" content="Tessel is a Windows desktop app for working with terminals and AI coding agents side by side: split one window into panes, run Claude Code, Codex, Gemini CLI and 20+ other agents, and let them work as a team. Tessel Agents connects your Gmail, Google Calendar and Google Drive to the agents on your own computer.">
+  <meta name="color-scheme" content="light dark">
+  <meta property="og:title" content="Tessel: AI coding agents and terminals, side by side">
+  <meta property="og:description" content="A Windows desktop app: split one window into panes, run your AI coding agents side by side, and let them work as a team. Try the demo in the page.">
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://tesselcode.com/">
+  <link rel="canonical" href="https://tesselcode.com/">
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="apple-touch-icon.png">
+  <link rel="stylesheet" href="site.css">
+  <script>
+    /* Language before the first paint: a saved choice, then #fr / #en, then the browser's language. */
+    (function () {
+      var l = null;
+      try { l = localStorage.getItem('tessel-lang'); } catch (e) {}
+      if (location.hash === '#fr') l = 'fr';
+      else if (location.hash === '#en') l = 'en';
+      if (l !== 'fr' && l !== 'en') {
+        var b = (navigator.languages && navigator.languages[0]) || navigator.language || '';
+        l = /^fr\b/i.test(b) ? 'fr' : 'en';
+      }
+      document.documentElement.lang = l;
+    })();
+  </script>
+  <script src="site.js" defer></script>
+  <noscript><style>.lang-switch{display:none}</style></noscript>
+</head>
+<body>
+  <a class="skip" href="#features"><span lang="en">Skip the demo</span><span lang="fr">Passer la démo</span></a>
+
+  <header class="top">
+    <a class="brand" href="./" aria-label="Tessel">
+      <img src="icon.svg" alt="" width="26" height="26">
+      <span>Tessel</span>
+    </a>
+    <nav class="top-nav" aria-label="Sections">
+      <a href="#features"><span lang="en">Features</span><span lang="fr">Fonctions</span></a>
+      <a href="#agents">Agents</a>
+      <a href="#google">Google</a>
+      <a href="https://github.com/mindkind1337/tessel">GitHub</a>
+    </nav>
+    <div class="top-end">
+      <div class="lang-switch" role="group" aria-label="Language / Langue">
+        <button type="button" data-set-lang="en" aria-pressed="true" title="English">EN</button>
+        <button type="button" data-set-lang="fr" aria-pressed="false" title="Français">FR</button>
+      </div>
+      <a class="btn btn-small" href="https://github.com/mindkind1337/tessel/releases/latest"><span lang="en">Download</span><span lang="fr">Télécharger</span></a>
+    </div>
+  </header>
+
+  <main>
+    <section class="hero">
+      <div class="hero-text">
+        <h1>
+          <span lang="en">All your AI coding agents, side by side in one window.</span>
+          <span lang="fr">Tous vos agents d’IA pour le code, côte à côte dans une seule fenêtre.</span>
+        </h1>
+        <p class="lead" lang="en">Tessel is a Windows desktop app for terminals and AI coding agents. Split one window into as many panes as you need, run Claude Code, Codex, OpenCode and 20+ other agent CLIs in them, and let them work together as a team while you follow everything from a sidebar, a task board and a usage meter.</p>
+        <p class="lead" lang="fr">Tessel est une application de bureau Windows pour les terminaux et les agents d’IA pour le code. Divisez une fenêtre en autant de panneaux qu’il vous faut, lancez-y Claude Code, Codex, OpenCode et plus de 20 autres agents en ligne de commande, et laissez-les travailler en équipe pendant que vous suivez tout depuis la barre latérale, le tableau des tâches et le compteur d’utilisation.</p>
+      </div>
+      <div class="hero-cta">
+        <a class="btn" href="https://github.com/mindkind1337/tessel/releases/latest">
+          <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path d="M8 2v8M4.5 7 8 10.5 11.5 7M3 13.5h10" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <span lang="en">Download for Windows</span><span lang="fr">Télécharger pour Windows</span>
+        </a>
+        <p class="cta-note" lang="en">Free for now. Nothing else to install, and the app updates itself. <a href="https://github.com/mindkind1337/tessel">Source on GitHub</a>, MIT licence.</p>
+        <p class="cta-note" lang="fr">Gratuit pour l’instant. Rien d’autre à installer, et l’application se met à jour elle-même. <a href="https://github.com/mindkind1337/tessel">Code source sur GitHub</a>, licence MIT.</p>
+        <p class="cta-small" lang="en">The installer is not code-signed, so Windows SmartScreen may warn the first time: choose More info, then Run anyway.</p>
+        <p class="cta-small" lang="fr">Le programme d’installation n’est pas signé : Windows SmartScreen peut vous avertir la première fois. Choisissez Informations complémentaires, puis Exécuter quand même.</p>
+      </div>
+    </section>
+
+    <section class="demo-wrap" aria-labelledby="demo-title">
+      <h2 id="demo-title" class="sr-only"><span lang="en">Try Tessel in this page</span><span lang="fr">Essayez Tessel dans cette page</span></h2>
+      <div id="demo" class="demo-frame">
+        <noscript>
+          <p class="demo-nojs">The demo needs JavaScript. It is Tessel’s real interface, with scripted agents, running in this page. / La démo a besoin de JavaScript. C’est la vraie interface de Tessel, avec des agents scénarisés, qui tourne dans cette page.</p>
+        </noscript>
+      </div>
+      <p class="demo-note" lang="en">A simulation: Tessel’s real interface, running in this page with scripted agents. Click around. Nothing runs, and nothing leaves this page.</p>
+      <p class="demo-note" lang="fr">Une simulation : la vraie interface de Tessel, qui tourne dans cette page avec des agents scénarisés. Cliquez partout. Rien ne s’exécute et rien ne quitte cette page.</p>
+      <p class="demo-small" lang="en">Tessel is a desktop window: on a small screen it is shown reduced, to look at. Open this page on a computer to use it.</p>
+      <p class="demo-small" lang="fr">Tessel est une fenêtre de bureau : sur un petit écran, elle est réduite, pour la regarder. Ouvrez cette page sur un ordinateur pour l’utiliser.</p>
+    </section>
+
+    <section id="features" class="band">
+      <h2><span lang="en">What you get</span><span lang="fr">Ce que vous obtenez</span></h2>
+      <div class="tiles">
+        <article class="tile tile-wide">
+          <h3><span lang="en">One window, as many panes as you need</span><span lang="fr">Une fenêtre, autant de panneaux qu’il vous faut</span></h3>
+          <p lang="en">Real shells (PowerShell, Command Prompt, Git Bash, WSL) and agents in the same window. Split right or down, drag the dividers, pick an even grid, drag a pane by its header to any side of another, or maximize one.</p>
+          <p lang="fr">De vrais terminaux (PowerShell, Invite de commandes, Git Bash, WSL) et des agents dans la même fenêtre. Scindez à droite ou en bas, glissez les séparateurs, choisissez une grille égale, glissez un panneau par son en-tête sur n’importe quel côté d’un autre, ou agrandissez-en un.</p>
+          <div class="layouts" aria-hidden="true">
+            <i class="lay lay-a"><b></b><b></b></i>
+            <i class="lay lay-b"><b></b><b></b><b></b></i>
+            <i class="lay lay-c"><b></b><b></b><b></b><b></b></i>
+            <i class="lay lay-d"><b></b><b></b><b></b><b></b><b></b><b></b></i>
+          </div>
+        </article>
+        <article class="tile">
+          <h3><span lang="en">See at a glance who needs you</span><span lang="fr">Voyez d’un coup d’œil qui vous attend</span></h3>
+          <p lang="en">Each agent’s live state is a dot on its logo, in its pane and in the sidebar. It comes from the agents’ own hooks, with the screen as a fallback.</p>
+          <p lang="fr">L’état en direct de chaque agent est un point sur son logo, dans son panneau et dans la barre latérale. Il vient des hooks de l’agent, avec l’écran comme solution de repli.</p>
+          <ul class="states">
+            <li><i style="--dot:#1fae63"></i><span lang="en">working</span><span lang="fr">au travail</span></li>
+            <li><i style="--dot:#e0920f"></i><span lang="en">waiting for you</span><span lang="fr">vous attend</span></li>
+            <li><i style="--dot:#e0920f"></i><span lang="en">approval needed</span><span lang="fr">approbation requise</span></li>
+            <li><i style="--dot:#e5484d"></i><span lang="en">usage limit</span><span lang="fr">limite d’utilisation</span></li>
+            <li><i style="--dot:#e5484d"></i><span lang="en">interrupted</span><span lang="fr">interrompu</span></li>
+            <li><i style="--dot:#7b8494"></i><span lang="en">idle</span><span lang="fr">inactif</span></li>
+          </ul>
+        </article>
+
+        <article class="tile">
+          <h3><span lang="en">Agents that work as a team</span><span lang="fr">Des agents qui travaillent en équipe</span></h3>
+          <p lang="en">Put agents in a team: they message each other, and a lead can start workers in new panes, hand out tasks and review their work. An agent can work in its own copy of the project (its own worktree and branch), so two agents never overwrite each other.</p>
+          <p lang="fr">Mettez des agents en équipe : ils s’écrivent, et un chef peut lancer des agents dans de nouveaux panneaux, distribuer les tâches et examiner le travail. Un agent peut travailler dans sa propre copie du projet (son worktree et sa branche) : deux agents ne s’écrasent jamais.</p>
+        </article>
+        <article class="tile">
+          <h3><span lang="en">A task board you share with them</span><span lang="fr">Un tableau des tâches partagé avec eux</span></h3>
+          <p lang="en">You and the agents add and move cards, so you can see who does what. Each task keeps its tokens, time and estimated cost, and the Conversations tab shows what the agents say to each other and to you.</p>
+          <p lang="fr">Vous et les agents ajoutez et déplacez des cartes : vous voyez qui fait quoi. Chaque tâche garde ses jetons, son temps et son coût estimé, et l’onglet Conversations montre ce que les agents se disent et vous disent.</p>
+          <p class="flow" lang="en">To do <i>›</i> Doing <i>›</i> Review <i>›</i> Done</p>
+          <p class="flow" lang="fr">À faire <i>›</i> En cours <i>›</i> À examiner <i>›</i> Terminé</p>
+        </article>
+        <article class="tile">
+          <h3><span lang="en">A terminal or a native chat</span><span lang="fr">Un terminal ou un vrai chat</span></h3>
+          <p lang="en">Claude Code, Codex and OpenCode can run as a chat instead of a terminal, with Markdown, diffs, tool runs and approval cards you answer in place. Switch a pane between the two at any time: same conversation, same pane.</p>
+          <p lang="fr">Claude Code, Codex et OpenCode peuvent tourner en chat plutôt qu’en terminal, avec Markdown, diffs, exécutions d’outils et cartes d’approbation auxquelles vous répondez sur place. Passez un panneau de l’un à l’autre à tout moment : même conversation, même panneau.</p>
+        </article>
+
+        <article class="tile">
+          <h3><span lang="en">You decide what agents may run</span><span lang="fr">Vous décidez de ce que les agents peuvent lancer</span></h3>
+          <p lang="en">An agent running a command in a terminal of its own asks first, with rules like VS Code’s: allow a command for the session, the project or always; risky ones always ask. Reading or typing in your own terminals needs your approval and is logged. Prefer no prompts? Yolo mode, everywhere or only in chosen folders.</p>
+          <p lang="fr">Un agent qui lance une commande dans son propre terminal demande d’abord, avec des règles comme celles de VS Code : autoriser une commande pour la session, le projet ou toujours ; les commandes risquées demandent toujours. Lire ou écrire dans vos terminaux à vous exige votre approbation et est journalisé. Pas d’invites ? Le mode Yolo, partout ou seulement dans les dossiers choisis.</p>
+        </article>
+        <article class="tile">
+          <h3><span lang="en">Survives restarts and crashes</span><span lang="fr">Résiste aux redémarrages et aux plantages</span></h3>
+          <p lang="en">Terminals run in a separate process, so they survive an app restart or crash. Layout, panes, conversations, tasks and terminal output are restored on the next launch, and agents come back with their conversation.</p>
+          <p lang="fr">Les terminaux tournent dans un processus séparé : ils survivent à un redémarrage ou à un plantage de l’application. Disposition, panneaux, conversations, tâches et sortie des terminaux sont restaurés au lancement suivant, et les agents reviennent avec leur conversation.</p>
+        </article>
+        <article class="tile">
+          <h3><span lang="en">On your servers too</span><span lang="fr">Sur vos serveurs aussi</span></h3>
+          <p lang="en">Like VS Code Remote-SSH: hosts from <code>~/.ssh/config</code>, one shared connection for terminals, files and git. Claude Code and Codex start on the server with all of Tessel’s tools, no root needed. When a dropped link comes back, panes reopen and agents resume.</p>
+          <p lang="fr">Comme VS Code Remote-SSH : les hôtes de <code>~/.ssh/config</code>, une seule connexion pour les terminaux, les fichiers et git. Claude Code et Codex démarrent sur le serveur avec tous les outils de Tessel, sans droits root. Quand un lien coupé revient, les panneaux se rouvrent et les agents reprennent.</p>
+        </article>
+
+        <article class="tile">
+          <h3><span lang="en">A browser agents can use</span><span lang="fr">Un navigateur que les agents peuvent utiliser</span></h3>
+          <p lang="en">A real browser in a pane or the side panel. An agent can open pages, click, fill, read and take screenshots; you see a badge on the page and can stop it. After you import cookies, agents use a separate session without your logins.</p>
+          <p lang="fr">Un vrai navigateur dans un panneau ou le panneau latéral. Un agent peut ouvrir des pages, cliquer, remplir, lire et prendre des captures ; vous voyez un badge sur la page et pouvez l’arrêter. Si vous importez vos cookies, les agents utilisent une session séparée, sans vos connexions.</p>
+        </article>
+        <article class="tile">
+          <h3><span lang="en">Your quotas, always in view</span><span lang="fr">Vos quotas, toujours en vue</span></h3>
+          <p lang="en">The quotas of Claude, Codex and other providers: 5-hour and weekly windows, plan and reset times, refreshed every 2 minutes. The icon turns yellow at 60 % and red at 80 %.</p>
+          <p lang="fr">Les quotas de Claude, de Codex et d’autres fournisseurs : fenêtres de 5 heures et de la semaine, forfait et heures de réinitialisation, actualisés toutes les 2 minutes. L’icône passe au jaune à 60 % et au rouge à 80 %.</p>
+          <div class="meter" aria-hidden="true"><i></i><i></i><i></i></div>
+        </article>
+        <article class="tile tile-also">
+          <h3><span lang="en">Also in the box</span><span lang="fr">Aussi inclus</span></h3>
+          <ul lang="en">
+            <li><strong>Live Share:</strong> others join from their own Tessel and watch a project of yours live, end-to-end encrypted. They only act when you let them.</li>
+            <li>File explorer, editor and Source Control.</li>
+            <li>Session search, command palette, and an interface in English and French.</li>
+          </ul>
+          <ul lang="fr">
+            <li><strong>Live Share :</strong> d’autres se joignent depuis leur propre Tessel et regardent un de vos projets en direct, chiffré de bout en bout. Ils n’agissent que si vous le leur permettez.</li>
+            <li>Explorateur de fichiers, éditeur et contrôle de code source.</li>
+            <li>Recherche de sessions, palette de commandes, et une interface en anglais et en français.</li>
+          </ul>
+        </article>
+      </div>
+    </section>
+
+    <section id="agents" class="band band-split">
+      <div>
+        <h2><span lang="en">Works with the agents you already use</span><span lang="fr">Fonctionne avec les agents que vous utilisez déjà</span></h2>
+        <p lang="en">Tessel detects more than 20 agent CLIs on your computer, and missing ones can be installed from Tessel. Each agent signs in with its own provider.</p>
+        <p lang="fr">Tessel détecte plus de 20 agents en ligne de commande sur votre ordinateur, et ceux qui manquent peuvent être installés depuis Tessel. Chaque agent se connecte chez son propre fournisseur.</p>
+        <p lang="en">Every agent gets its own name (Ada, Bohr, Curie…) shown in its pane, the sidebar, the task board and team messages. You pick its model and effort per pane, and Tessel can update your agents in the background, then restart each pane on the new version when it is idle, with its conversation resumed.</p>
+        <p lang="fr">Chaque agent reçoit son propre nom (Ada, Bohr, Curie…), affiché dans son panneau, la barre latérale, le tableau des tâches et les messages d’équipe. Vous choisissez le modèle et l’effort par panneau, et Tessel peut mettre vos agents à jour en arrière-plan, puis redémarrer chaque panneau sur la nouvelle version quand il est inactif, avec sa conversation reprise.</p>
+      </div>
+      <ul class="agents">
+        <li>Claude Code</li>
+        <li>Codex</li>
+        <li>OpenCode</li>
+        <li>Gemini CLI</li>
+        <li>GitHub Copilot CLI</li>
+        <li>Cursor</li>
+        <li>Cline</li>
+        <li>Aider</li>
+        <li>Amp</li>
+        <li>Grok</li>
+        <li>Kimi</li>
+        <li>Qwen Code</li>
+        <li class="agents-more"><span lang="en">and more</span><span lang="fr">et d’autres</span></li>
+      </ul>
+    </section>
+
+    <section id="google" class="band">
+      <h2>
+        <span lang="en">Your Google account, for the agents on your computer</span>
+        <span lang="fr">Votre compte Google, pour les agents de votre ordinateur</span>
+      </h2>
+      <p class="band-lead" lang="en">Tessel can connect Gmail, Google Calendar and Google Drive to your agents. Tessel Agents is the sign-in that lets those agents work with your Google account when you ask them to.</p>
+      <p class="band-lead" lang="fr">Tessel peut connecter Gmail, Google Agenda et Google Drive à vos agents. Tessel Agents est la connexion qui permet à ces agents d’utiliser votre compte Google quand vous le leur demandez.</p>
+
+      <div class="tiles tiles-3">
+        <article class="tile">
+          <h3>Gmail</h3>
+          <p lang="en">Search and read your mail, label it and write drafts. Agents are given no tool to send mail.</p>
+          <p lang="fr">Chercher et lire vos courriels, les classer avec des libellés et écrire des brouillons. Les agents n’ont aucun outil pour envoyer un courriel.</p>
+        </article>
+        <article class="tile">
+          <h3><span lang="en">Google Calendar</span><span lang="fr">Google Agenda</span></h3>
+          <p lang="en">Read your calendars, and create or change events.</p>
+          <p lang="fr">Lire vos agendas, et créer ou modifier des événements.</p>
+        </article>
+        <article class="tile">
+          <h3>Google Drive</h3>
+          <p lang="en">Find and read your files.</p>
+          <p lang="fr">Trouver et lire vos fichiers.</p>
+        </article>
+      </div>
+
+      <div class="google-text">
+        <div>
+          <h3><span lang="en">Why it asks for access to your Google data</span><span lang="fr">Pourquoi l’accès à vos données Google est demandé</span></h3>
+          <p lang="en">Your agents can only read your mail, calendar and files with your permission. You give that permission on Google’s own page, and you can take it back at any time from your <a href="https://myaccount.google.com/permissions">Google Account</a>.</p>
+          <p lang="fr">Vos agents ne peuvent lire vos courriels, votre agenda et vos fichiers qu’avec votre permission. Vous la donnez sur la page de Google, et vous pouvez la retirer à tout moment depuis votre <a href="https://myaccount.google.com/permissions">compte Google</a>.</p>
+        </div>
+        <div>
+          <h3><span lang="en">Where your data goes</span><span lang="fr">Où vont vos données</span></h3>
+          <p lang="en">The connection runs on your own computer. There is no Tessel server between you and Google here, and your mail, calendar and files are not sent to the people who make Tessel. When an agent reads something for you, that agent passes it to its AI provider to do the work. The <a href="privacy.html">privacy policy</a> explains this in full.</p>
+          <p lang="fr">La connexion tourne sur votre propre ordinateur. Aucun serveur de Tessel ne se place ici entre vous et Google, et vos courriels, votre agenda et vos fichiers ne sont pas envoyés aux personnes qui créent Tessel. Quand un agent lit quelque chose pour vous, il le transmet à son fournisseur d’IA pour faire le travail. La <a href="privacy.html#fr">politique de confidentialité</a> explique tout cela en détail.</p>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="foot">
+    <a class="brand" href="./" aria-label="Tessel">
+      <img src="icon.svg" alt="" width="22" height="22">
+      <span>Tessel</span>
+    </a>
+    <nav aria-label="Footer">
+      <a lang="en" href="privacy.html">Privacy policy</a>
+      <a lang="fr" href="privacy.html#fr">Politique de confidentialité</a>
+      <a href="mailto:contact@tesselcode.com">contact@tesselcode.com</a>
+      <a href="https://github.com/mindkind1337/tessel">GitHub</a>
+    </nav>
+  </footer>
+</body>
+</html>

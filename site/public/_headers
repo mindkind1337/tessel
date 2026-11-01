@@ -1,0 +1,11 @@
+# Cloudflare Workers static assets: https://developers.cloudflare.com/workers/static-assets/headers/
+# The demo's page has the same policy in its own <meta> tag; this one also covers its
+# workers, which a page's <meta> does not reach. Nothing there may call out.
+/demo/*
+  Content-Security-Policy: default-src 'self'; connect-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'none'; worker-src 'self' blob:; font-src 'self' data:; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: no-referrer
+
+# Its files have a hash in their names: a returning visitor need not ask again.
+/demo/assets/*
+  Cache-Control: public, max-age=31536000, immutable

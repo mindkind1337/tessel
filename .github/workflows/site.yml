@@ -1,0 +1,79 @@
+name: Site
+
+# Builds the public site (site/) with its demo, the app's real renderer (web-demo/),
+# checks it (scripts/check-demo.mjs) and puts it online. Only from main, never for a
+# pull request: a deploy needs the repository's secrets.
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'site/**'
+      - 'web-demo/**'
+      - 'src/renderer/**'
+      - 'src/shared/**'
+      - 'src/preload/**'
+      # The demo's launcher lists the agents of src/main/index.js.
+      - 'src/main/index.js'
+      - 'scripts/check-demo.mjs'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/workflows/site.yml'
+
+permissions:
+  contents: read
+
+# One deploy at a time, the newest one last: never one cut off half way.
+concurrency:
+  group: site-deploy
+  cancel-in-progress: false
+
+jobs:
+  # A job's `if` cannot read secrets: this one says whether they are there. Without
+  # them (a fork, or not set up yet) the deploy below is skipped, not failed.
+  secrets:
+    runs-on: ubuntu-latest
+    outputs:
+      ready: ${{ steps.check.outputs.ready }}
+    steps:
+      - id: check
+        env:
+          TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          ACCOUNT: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          if [ -n "$TOKEN" ] && [ -n "$ACCOUNT" ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::CLOUDFLARE_API_TOKEN or CLOUDFLARE_ACCOUNT_ID is not set: the site is not deployed."
+          fi
+
+  deploy:
+    needs: secrets
+    if: needs.secrets.outputs.ready == 'true'
+    # As the tests (test.yml): npm ci finds node-pty's Windows prebuild here.
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The header's build number counts the commits (web-demo/vite.config.mjs).
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      # .npmrc (legacy-peer-deps) is read from the repo: electron-vite 5 caps its Vite
+      # peer at ^7 while we run Vite 8.
+      - run: npm ci
+
+      # Builds site/public/demo, then runs scripts/check-demo.mjs: a problem stops here.
+      - run: npm run build:site
+
+      - name: Deploy
+        working-directory: site
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: npx --yes wrangler@4 deploy

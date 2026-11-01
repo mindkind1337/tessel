@@ -1,0 +1,565 @@
+/* The home page. The palette comes from the app (src/renderer/src/style.css)
+   and from its icon; style.css, used by privacy.html, carries the same colours. */
+:root {
+  color-scheme: light dark;
+  --bg: #f6f7f9;
+  --bg-2: #ffffff;
+  --text: #14171c;
+  --dim: #4c5563;
+  --line: #d8dce3;
+  --accent: #2a5bd7;
+  --on-accent: #ffffff;
+  --accent-hover: #2149b3;
+  --sans: 'Segoe UI Variable Text', 'Segoe UI', system-ui, -apple-system, 'Helvetica Neue', Roboto, sans-serif;
+  --display: 'Segoe UI Variable Display', 'Segoe UI', system-ui, -apple-system, 'Helvetica Neue', Roboto, sans-serif;
+  --mono: 'Cascadia Mono', 'Cascadia Code', Consolas, 'SF Mono', Menlo, ui-monospace, monospace;
+  --page: 1320px;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0f1117;
+    --bg-2: #161920;
+    --text: #e7e9ee;
+    --dim: #a1a9b6;
+    --line: #272b34;
+    --accent: #8cadff;
+    --on-accent: #0b0d12;
+    --accent-hover: #a9c2ff;
+  }
+}
+
+/* Both languages are in the HTML: show the one <html lang> names. */
+html[lang='en'] [lang='fr'],
+html[lang='fr'] [lang='en'] {
+  display: none !important;
+}
+
+* {
+  box-sizing: border-box;
+}
+html {
+  -webkit-text-size-adjust: 100%;
+}
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 16px/1.55 var(--sans);
+  -webkit-font-smoothing: antialiased;
+}
+a {
+  color: var(--accent);
+  text-underline-offset: 2px;
+}
+a:hover {
+  color: var(--accent-hover);
+}
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 3px;
+}
+code {
+  font-family: var(--mono);
+  font-size: 0.9em;
+}
+h1,
+h2,
+h3 {
+  font-family: var(--display);
+  text-wrap: balance;
+}
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+.skip {
+  position: absolute;
+  left: 16px;
+  top: -60px;
+  z-index: 20;
+  padding: 8px 12px;
+  border-radius: 6px;
+  background: var(--accent);
+  color: var(--on-accent);
+}
+.skip:focus {
+  top: 8px;
+  color: var(--on-accent);
+}
+
+/* ---------- header ---------- */
+.top,
+.hero,
+.band,
+.foot,
+.demo-wrap {
+  width: 100%;
+  max-width: var(--page);
+  margin-inline: auto;
+  padding-inline: 24px;
+}
+.top {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 24px;
+  padding-block: 14px;
+}
+.brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  color: var(--text);
+  font-family: var(--display);
+  font-size: 18px;
+  font-weight: 650;
+  text-decoration: none;
+}
+.brand:hover {
+  color: var(--text);
+}
+.brand img {
+  display: block;
+}
+.top-nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 18px;
+  font-size: 14.5px;
+}
+.top-nav a {
+  color: var(--dim);
+  text-decoration: none;
+}
+.top-nav a:hover {
+  color: var(--text);
+  text-decoration: underline;
+}
+.top-end {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-left: auto;
+}
+.lang-switch {
+  display: inline-flex;
+  padding: 2px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+}
+.lang-switch button {
+  min-width: 34px;
+  height: 28px;
+  padding: 0 7px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--dim);
+  cursor: pointer;
+  font: 600 12.5px var(--sans);
+}
+.lang-switch button:hover {
+  color: var(--text);
+}
+.lang-switch button[aria-pressed='true'] {
+  background: var(--text);
+  color: var(--bg);
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  min-height: 46px;
+  padding: 0 20px;
+  border-radius: 8px;
+  background: var(--accent);
+  color: var(--on-accent);
+  font-size: 16px;
+  font-weight: 600;
+  text-decoration: none;
+  transition: background 0.12s;
+}
+.btn:hover {
+  background: var(--accent-hover);
+  color: var(--on-accent);
+}
+.btn-small {
+  min-height: 34px;
+  padding: 0 13px;
+  border-radius: 7px;
+  font-size: 14px;
+}
+
+/* ---------- hero ---------- */
+.hero {
+  display: grid;
+  grid-template-columns: minmax(0, 2.3fr) minmax(280px, 1fr);
+  gap: 16px 48px;
+  align-items: end;
+  padding-block: 18px 22px;
+}
+h1 {
+  margin: 0;
+  font-size: clamp(30px, 3.4vw, 46px);
+  font-weight: 650;
+  line-height: 1.08;
+  letter-spacing: -0.022em;
+}
+.lead {
+  max-width: 84ch;
+  margin: 10px 0 0;
+  color: var(--dim);
+  font-size: 16.5px;
+  line-height: 1.5;
+}
+.hero-cta .btn {
+  width: 100%;
+}
+.cta-note {
+  margin: 10px 0 0;
+  font-size: 14px;
+  line-height: 1.45;
+}
+.cta-small {
+  margin: 6px 0 0;
+  color: var(--dim);
+  font-size: 12.5px;
+  line-height: 1.4;
+}
+
+/* ---------- sections ---------- */
+.band {
+  padding-block: 56px 8px;
+}
+.band h2 {
+  margin: 0 0 18px;
+  font-size: clamp(25px, 2.6vw, 34px);
+  font-weight: 650;
+  line-height: 1.15;
+  letter-spacing: -0.015em;
+}
+.band-lead {
+  max-width: 72ch;
+  margin: -6px 0 22px;
+  color: var(--dim);
+  font-size: 17px;
+}
+
+/* Features are laid out like the app's panes: tiles split by hairlines. */
+.tiles {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--line);
+}
+.tile {
+  min-width: 0;
+  padding: 20px 22px 22px;
+  background: var(--bg-2);
+}
+.tile-wide {
+  grid-column: span 2;
+}
+.tile h3 {
+  margin: 0 0 8px;
+  font-size: 18px;
+  font-weight: 650;
+  line-height: 1.25;
+}
+.tile p {
+  margin: 0;
+  color: var(--dim);
+  font-size: 15px;
+  line-height: 1.5;
+}
+.tile ul {
+  margin: 0;
+  padding-left: 18px;
+  color: var(--dim);
+  font-size: 15px;
+  line-height: 1.5;
+}
+.tile li + li {
+  margin-top: 6px;
+}
+.tile li strong {
+  color: var(--text);
+}
+
+.layouts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  margin-top: 16px;
+}
+.lay {
+  display: grid;
+  gap: 2px;
+  width: 92px;
+  height: 58px;
+  padding: 2px;
+  border-radius: 5px;
+  background: var(--line);
+}
+.lay b {
+  border-radius: 2px;
+  background: var(--bg);
+}
+.lay-a {
+  grid-template-columns: 1fr 1fr;
+}
+.lay-b {
+  grid-template: 1fr 1fr / 1fr 1fr;
+}
+.lay-b b:first-child {
+  grid-row: span 2;
+}
+.lay-c {
+  grid-template: 1fr 1fr / 1fr 1fr;
+}
+.lay-d {
+  grid-template: 1fr 1fr / 1fr 1fr 1fr;
+}
+.lay b:first-child {
+  background: #6b8fff;
+}
+
+.states {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 5px 12px;
+  margin-top: 12px !important;
+  padding: 0 !important;
+  list-style: none;
+  font-size: 14px !important;
+}
+.states li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 !important;
+  color: var(--text);
+}
+.states i {
+  flex: 0 0 auto;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--dot);
+}
+
+.flow {
+  margin-top: 12px !important;
+  color: var(--text) !important;
+  font-family: var(--mono);
+  font-size: 13px !important;
+}
+.flow i {
+  color: var(--dim);
+  font-style: normal;
+}
+
+.meter {
+  display: flex;
+  gap: 2px;
+  height: 6px;
+  margin-top: 14px;
+}
+.meter i {
+  display: block;
+  border-radius: 2px;
+}
+.meter i:nth-child(1) {
+  flex: 60;
+  background: #1fae63;
+}
+.meter i:nth-child(2) {
+  flex: 20;
+  background: #e0920f;
+}
+.meter i:nth-child(3) {
+  flex: 20;
+  background: #e5484d;
+}
+
+/* ---------- agents ---------- */
+.band-split {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 16px 48px;
+  align-items: start;
+}
+.band-split p {
+  margin: 0 0 12px;
+  color: var(--dim);
+}
+.agents {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+  gap: 1px;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--line);
+  list-style: none;
+}
+.agents li {
+  padding: 11px 14px;
+  background: var(--bg-2);
+  font-family: var(--mono);
+  font-size: 13.5px;
+}
+.agents-more {
+  flex-grow: 1;
+  grid-column: 1 / -1;
+  color: var(--dim);
+}
+
+/* ---------- google ---------- */
+.tiles-3 .tile h3 {
+  font-size: 17px;
+}
+.google-text {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px 48px;
+  margin-top: 24px;
+}
+.google-text h3 {
+  margin: 0 0 6px;
+  font-size: 18px;
+  font-weight: 650;
+}
+.google-text p {
+  margin: 0;
+  color: var(--dim);
+  font-size: 15.5px;
+}
+
+/* ---------- footer ---------- */
+.foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px 24px;
+  margin-top: 64px;
+  padding-block: 22px 32px;
+  border-top: 1px solid var(--line);
+}
+.foot nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 20px;
+  font-size: 14.5px;
+}
+
+/* ---------- smaller screens ---------- */
+@media (max-width: 980px) {
+  .hero {
+    grid-template-columns: minmax(0, 1fr);
+    align-items: start;
+  }
+  .hero-cta .btn {
+    width: auto;
+  }
+  .tiles {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .tile-also {
+    grid-column: span 2;
+  }
+  .band-split {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .tiles-3 {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+@media (max-width: 680px) {
+  .top,
+  .hero,
+  .band,
+  .foot,
+  .demo-wrap {
+    padding-inline: 16px;
+  }
+  .top-nav {
+    order: 3;
+    width: 100%;
+  }
+  .hero-cta .btn {
+    width: 100%;
+  }
+  .tiles,
+  .tiles-3 {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .tile-wide,
+  .tile-also {
+    grid-column: auto;
+  }
+  .google-text {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 18px;
+  }
+  .band {
+    padding-top: 44px;
+  }
+  .lay {
+    width: 66px;
+    height: 44px;
+  }
+}
+
+/* ---------- the demo: Tessel's real interface in a frame (site.js loads it) ---------- */
+.demo-frame {
+  position: relative;
+  overflow: hidden;
+  min-height: 120px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  /* Tessel's own background, also while it loads. */
+  background: #101216;
+}
+.demo-frame iframe {
+  display: block;
+  border: 0;
+  transform-origin: 0 0;
+  background: #101216;
+}
+/* Too small to use: it is there to look at, and the page scrolls over it. */
+.demo-frame.is-small iframe {
+  pointer-events: none;
+}
+.demo-nojs {
+  margin: 0;
+  padding: 24px;
+  color: var(--text);
+  background: var(--bg-2);
+}
+.demo-note,
+.demo-small {
+  margin: 10px 2px 0;
+  font-size: 13.5px;
+  color: var(--dim);
+}
+.demo-small {
+  display: none;
+}
+.demo-frame.is-small ~ .demo-small {
+  display: block;
+}

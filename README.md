@@ -296,6 +296,10 @@ like VS Code Live Share:
 - Command palette (`Ctrl+Shift+P`), find in terminal, zoom, copy on select,
   notifications when an agent needs you, themed menus and lists everywhere.
 - Low CPU and GPU use: hidden terminals stop drawing while agents work.
+- **Try it in your browser**: [tesselcode.com](https://tesselcode.com) runs Tessel's
+  real interface in the page, built from this code and rebuilt with every change,
+  with scripted agents in place of real ones. Click anything: nothing runs, and
+  nothing leaves the page.
 
 ## Keyboard shortcuts
 
@@ -360,6 +364,11 @@ npm run dist     # writes dist/Tessel-Setup-<version>.exe
 The installer is not code-signed, so Windows SmartScreen may warn the first
 time; choose **More info → Run anyway**. `npm run dist:dir` builds an unpacked
 copy in `dist/win-unpacked/` without the installer.
+
+The website is in `site/` and its demo in `web-demo/`: `npm run build:site` builds
+the demo into `site/public/demo/` and checks it (no local path, user name, token or
+oversized file). A push to `main` that touches them or the interface puts the site
+online (`.github/workflows/site.yml`).
 
 Saved workspaces, settings and tasks live in `%APPDATA%\tessel` for the
 installed app and `%APPDATA%\tessel-dev` for the dev build, so one of each can

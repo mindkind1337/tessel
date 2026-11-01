@@ -15,7 +15,8 @@
     "format": "prettier --write .",
     "test": "vitest run",
     "dist": "npm run build && electron-builder --win --x64 --publish never",
-    "dist:dir": "npm run build && electron-builder --win --x64 --dir --publish never"
+    "dist:dir": "npm run build && electron-builder --win --x64 --dir --publish never",
+    "build:site": "vite build --config web-demo/vite.config.mjs --configLoader native && node scripts/check-demo.mjs"
   },
   "dependencies": {
     "@tanstack/vue-virtual": "^3.13.39",
