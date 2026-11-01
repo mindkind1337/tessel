@@ -1,19 +1,18 @@
 // Settings > Tessel account: the optional sign-in to tessel-server. Logging in happens
 // on a web page in the person's own browser (Google, GitHub, or an address and a
-// password), so no password ever passes through the app. The browser comes back to a
-// listener on 127.0.0.1 (RFC 8252) and the code is swapped for a session here, with
-// PKCE. The session token is sealed with the OS (safeStorage) and never leaves the
+// password), so no password ever passes through the app. The browser comes back through
+// Tessel's own link (tessel://, RFC 8252) and the code is swapped for a session here, with
+// PKCE, so another program claiming that link gets nothing. The session token is sealed with the OS (safeStorage) and never leaves the
 // main process: the window only gets who is signed in. Answers carry codes, which the
 // page words in its language.
 import fs from 'fs'
-import http from 'http'
 import { createHash, randomBytes, randomUUID } from 'crypto'
 import { join } from 'path'
 import { secureStorageAvailable } from './credentialProtection'
 
 export const API_URL = 'https://api.tesselcode.com'
 // The web pages a person sees.
-export const ACCOUNT_URL = 'https://account.tesselcode.com'
+export const ACCOUNT_URL = 'https://tesselcode.com'
 // Long enough to create an account on the page and confirm it from the mailbox.
 const SIGN_IN_MS = 15 * 60 * 1000
 const REQUEST_MS = 15 * 1000
@@ -27,13 +26,10 @@ const cleanUser = (user) => ({
   hasGoogle: !!user?.has_google,
   hasGitHub: !!user?.has_github
 })
-// Words only: nothing from the request is echoed into this page.
-const donePage = (title, text) =>
-  `<!doctype html><html><head><meta charset="utf-8"><title>Tessel</title><style>:root{color-scheme:light dark}body{font:16px/1.5 system-ui,sans-serif;margin:12vh auto;max-width:480px;padding:0 16px}</style></head><body><h1>${title}</h1><p>${text}</p></body></html>`
-const SIGNED_IN_PAGE = donePage('Tessel', 'You are signed in. You can close this page and go back to Tessel.<br>Vous êtes connecté. Vous pouvez fermer cette page et revenir à Tessel.')
-const FAILED_PAGE = donePage('Tessel', 'The sign-in did not finish. Go back to Tessel to try again.<br>La connexion n’a pas abouti. Revenez à Tessel pour réessayer.')
+// The way back from the web page in a command line (a second launch of Tessel), if any.
+export const findAppLink = (argv, scheme) => (Array.isArray(argv) ? argv.find((arg) => typeof arg === 'string' && arg.toLowerCase().startsWith(`${scheme}://`)) : undefined)
 
-export function createTesselAccount({ dir, safeStorage, openExternal, fetchFn = fetch, apiUrl = API_URL, accountUrl = ACCOUNT_URL, signInMs = SIGN_IN_MS, requestMs = REQUEST_MS } = {}) {
+export function createTesselAccount({ dir, safeStorage, openExternal, onSignedIn = () => {}, scheme = 'tessel', fetchFn = fetch, apiUrl = API_URL, accountUrl = ACCOUNT_URL, signInMs = SIGN_IN_MS, requestMs = REQUEST_MS } = {}) {
   const file = join(dir, 'session.json')
   let session // undefined until read; null when signed out
   let pending = null // the sign-in waiting for the browser
@@ -115,12 +111,9 @@ export function createTesselAccount({ dir, safeStorage, openExternal, fetchFn = 
 
   function endPending(error = null) {
     if (!pending) return
-    const { server, timer } = pending
+    clearTimeout(pending.timer)
     pending = null
-    clearTimeout(timer)
     lastError = error
-    server.close()
-    server.closeAllConnections?.()
   }
 
   async function swap(code, verifier) {
@@ -158,53 +151,37 @@ export function createTesselAccount({ dir, safeStorage, openExternal, fetchFn = 
     const verifier = base64url(randomBytes(32))
     const challenge = base64url(createHash('sha256').update(verifier).digest())
     const state = base64url(randomBytes(18))
-    let port = 0
-    const server = http.createServer((req, res) => {
-      let url
-      try {
-        url = new URL(req.url, 'http://127.0.0.1')
-      } catch {
-        res.writeHead(404).end()
-        return
-      }
-      // Only the browser's way back. Anything else, from a page guessing the port
-      // or a name pointed at this address, neither ends the sign-in nor learns of it.
-      const ours = req.method === 'GET' && url.pathname === '/callback' && url.searchParams.get('state') === state && req.headers.host === `127.0.0.1:${port}`
-      if (!ours || !pending || pending.server !== server) {
-        res.writeHead(404).end()
-        return
-      }
-      const code = url.searchParams.get('code')
-      const denied = !code
-      const answer = (html) => res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' }).end(html)
-      if (denied) {
-        answer(FAILED_PAGE)
-        endPending({ access_denied: 'denied', account_exists: 'accountExists' }[url.searchParams.get('error')] || 'failed')
-        return
-      }
-      swap(code, verifier).then((error) => {
-        answer(error ? FAILED_PAGE : SIGNED_IN_PAGE)
-        endPending(error)
-      })
-    })
-    await new Promise((resolve, reject) => {
-      server.once('error', reject)
-      server.listen(0, '127.0.0.1', resolve)
-    }).catch(() => {
-      lastError = 'failed'
-    })
-    if (lastError) return view()
-    port = server.address().port
-    pending = { server, timer: setTimeout(() => endPending('expired'), signInMs) }
+    pending = { state, verifier, timer: setTimeout(() => endPending('expired'), signInMs) }
     if (pending.timer.unref) pending.timer.unref()
-    server.unref?.()
-    const params = new URLSearchParams({ challenge, state, port: String(port) })
+    const params = new URLSearchParams({ challenge, state, app: scheme })
     try {
       await openExternal(`${accountUrl}/login?${params}`)
     } catch {
       endPending('failed')
     }
     return view()
+  }
+
+  // The browser's way back: <scheme>://callback?code=&state= (or error=). Any page can try
+  // such a link, so what does not carry this sign-in's state does nothing at all.
+  async function handleLink(link) {
+    let url
+    try {
+      url = new URL(link)
+    } catch {
+      return
+    }
+    if (url.protocol !== `${scheme}:` || url.hostname !== 'callback') return
+    if (!pending || pending.swapping || url.searchParams.get('state') !== pending.state) return
+    const code = url.searchParams.get('code')
+    if (!code) {
+      endPending({ access_denied: 'denied', account_exists: 'accountExists' }[url.searchParams.get('error')] || 'failed')
+      return
+    }
+    pending.swapping = true
+    const error = await swap(code, pending.verifier)
+    endPending(error)
+    if (!error) onSignedIn()
   }
 
   function cancelSignIn() {
@@ -283,5 +260,5 @@ export function createTesselAccount({ dir, safeStorage, openExternal, fetchFn = 
     return { ...view(), deleted: true }
   }
 
-  return { status, signIn, passwordLink, cancelSignIn, signOut, deleteAccount, close: () => endPending() }
+  return { status, signIn, handleLink, passwordLink, cancelSignIn, signOut, deleteAccount, close: () => endPending() }
 }

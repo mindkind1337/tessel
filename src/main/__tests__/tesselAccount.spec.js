@@ -1,12 +1,10 @@
 // @vitest-environment node
 import { describe, it, expect, afterEach, vi } from 'vitest'
-import http from 'node:http'
-import net from 'node:net'
 import { createHash } from 'node:crypto'
 import { mkdtempSync, readFileSync, rmSync, existsSync, writeFileSync, readdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { createTesselAccount } from '../tesselAccount'
+import { createTesselAccount, findAppLink } from '../tesselAccount'
 
 const API = 'https://api.test'
 const ACCOUNT = 'https://account.test'
@@ -28,34 +26,27 @@ function setup(over = {}) {
   dirs.push(dir)
   const opened = []
   const calls = []
+  const onSignedIn = vi.fn()
   const answers = { '/auth/token': () => jsonResponse(200, { token: TOKEN, expires_at: Date.now() + 1000000, user: USER }), '/api/me': () => jsonResponse(200, { user: USER }), '/auth/logout': () => jsonResponse(204, {}), ...over.answers }
   const fetchFn = vi.fn(async (url, options = {}) => {
     calls.push({ url, ...options })
     const answer = answers[new URL(url).pathname]
     return typeof answer === 'function' ? answer(options) : answer
   })
-  const account = createTesselAccount({ dir, safeStorage: over.safeStorage || sealing, openExternal: over.openExternal || (async (url) => opened.push(url)), fetchFn, apiUrl: API, accountUrl: ACCOUNT, signInMs: over.signInMs })
+  const account = createTesselAccount({ dir, safeStorage: over.safeStorage || sealing, openExternal: over.openExternal || (async (url) => opened.push(url)), onSignedIn, scheme: 'tessel', fetchFn, apiUrl: API, accountUrl: ACCOUNT, signInMs: over.signInMs })
   accounts.push(account)
-  return { dir, account, opened, calls, answers }
+  return { dir, account, opened, calls, answers, onSignedIn }
 }
-function get(port, path, headers = {}) {
-  return new Promise((resolve, reject) => {
-    http.get({ host: '127.0.0.1', port, path, headers }, (res) => {
-      let body = ''
-      res.on('data', (d) => (body += d))
-      res.on('end', () => resolve({ status: res.statusCode, body }))
-    }).on('error', reject)
-  })
-}
+const back = (params) => `tessel://callback?${new URLSearchParams(params)}`
 async function startedSignIn(env) {
   const view = await env.account.signIn()
   expect(view.signingIn).toBe(true)
   const url = new URL(env.opened.at(-1))
-  return { url, port: Number(url.searchParams.get('port')), state: url.searchParams.get('state'), challenge: url.searchParams.get('challenge') }
+  return { url, state: url.searchParams.get('state'), challenge: url.searchParams.get('challenge') }
 }
 async function signedIn(env) {
-  const { port, state } = await startedSignIn(env)
-  await get(port, `/callback?${new URLSearchParams({ code: 'one-time-code', state })}`)
+  const { state } = await startedSignIn(env)
+  await env.account.handleLink(back({ code: 'one-time-code', state }))
 }
 
 afterEach(() => {
@@ -64,28 +55,28 @@ afterEach(() => {
 })
 
 describe('signing in', () => {
-  it('opens the server page with a PKCE challenge, on an IPv4 listener', async () => {
+  it('opens the web page with a PKCE challenge, naming this app so the browser can come back to it', async () => {
     const env = setup()
-    const { url, port, state, challenge } = await startedSignIn(env)
+    const { url, state, challenge } = await startedSignIn(env)
     expect(url.origin + url.pathname).toBe(`${ACCOUNT}/login`)
-    expect(port).toBeGreaterThan(1023)
+    expect(url.searchParams.get('app')).toBe('tessel')
+    expect(url.searchParams.get('port')).toBeNull()
     expect(state.length).toBeGreaterThanOrEqual(16)
     expect(challenge).toHaveLength(43)
     expect((await env.account.status()).signingIn).toBe(true)
   })
 
-  it('swaps the code with the verifier that matches the challenge, then keeps the session sealed', async () => {
+  it('swaps the code with the verifier that matches the challenge, keeps the session sealed, and says so once', async () => {
     const env = setup()
-    const { port, state, challenge } = await startedSignIn(env)
-    const res = await get(port, `/callback?${new URLSearchParams({ code: 'one-time-code', state })}`)
-    expect(res.status).toBe(200)
-    expect(res.body).toContain('You are signed in')
+    const { state, challenge } = await startedSignIn(env)
+    await env.account.handleLink(back({ code: 'one-time-code', state }))
 
     const swap = env.calls.find((c) => c.url === `${API}/auth/token`)
     const sent = JSON.parse(swap.body)
     expect(sent.code).toBe('one-time-code')
     expect(createHash('sha256').update(sent.verifier).digest('base64url')).toBe(challenge)
     expect(swap.signal).toBeInstanceOf(AbortSignal)
+    expect(env.onSignedIn).toHaveBeenCalledTimes(1)
 
     expect(await env.account.status()).toMatchObject({ signedIn: true, signingIn: false, user: { email: 'me@gmail.com', name: 'Me' }, error: null })
     const onDisk = readFileSync(join(env.dir, 'session.json'), 'utf8')
@@ -102,51 +93,78 @@ describe('signing in', () => {
   })
 
   it.each([
-    ['a wrong state', (state) => `/callback?${new URLSearchParams({ code: 'x', state: `${state}x` })}`, {}],
-    ['no state', () => '/callback?code=x', {}],
-    ['another path', (state) => `/other?${new URLSearchParams({ code: 'x', state })}`, {}],
-    ['another host name', (state) => `/callback?${new URLSearchParams({ code: 'x', state })}`, { host: 'evil.example' }]
-  ])('%s neither ends the sign-in nor reaches the server', async (_what, path, headers) => {
+    ['a wrong state', (state) => back({ code: 'x', state: `${state}x` })],
+    ['no state', () => 'tessel://callback?code=x'],
+    ['another path', (state) => `tessel://other?${new URLSearchParams({ code: 'x', state })}`],
+    ['another app', (state) => `tessel-dev://callback?${new URLSearchParams({ code: 'x', state })}`],
+    ['a web address', (state) => `https://callback/?${new URLSearchParams({ code: 'x', state })}`],
+    ['something that is no address', () => 'not a link']
+  ])('a link with %s does nothing at all: any page can try one', async (_what, link) => {
     const env = setup()
-    const { port, state } = await startedSignIn(env)
-    const res = await get(port, path(state), headers)
-    expect(res.status).toBe(404)
-    expect(res.body).toBe('')
+    const { state } = await startedSignIn(env)
+    await env.account.handleLink(link(state))
     expect(env.calls).toEqual([])
+    expect(env.onSignedIn).not.toHaveBeenCalled()
     expect((await env.account.status()).signingIn).toBe(true)
+  })
+
+  it('with no sign-in waiting, a link does nothing', async () => {
+    const env = setup()
+    await env.account.handleLink(back({ code: 'x', state: 's'.repeat(24) }))
+    expect(env.calls).toEqual([])
+    expect((await env.account.status()).signedIn).toBe(false)
+  })
+
+  it('the same link twice, even at once, swaps the code once', async () => {
+    const env = setup()
+    const { state } = await startedSignIn(env)
+    const link = back({ code: 'c', state })
+    await Promise.all([env.account.handleLink(link), env.account.handleLink(link)])
+    await env.account.handleLink(link)
+    expect(env.calls.filter((c) => c.url === `${API}/auth/token`)).toHaveLength(1)
+    expect(env.onSignedIn).toHaveBeenCalledTimes(1)
   })
 
   it.each([
     ['a refusal at the provider', 'access_denied', 'denied'],
     ['a failure on the server', 'sign_in_failed', 'failed'],
     ['an account already on that address', 'account_exists', 'accountExists']
-  ])('reports %s, and stops listening', async (_what, error, code) => {
+  ])('reports %s, and stops waiting', async (_what, error, code) => {
     const env = setup()
-    const { port, state } = await startedSignIn(env)
-    const res = await get(port, `/callback?${new URLSearchParams({ error, state })}`)
-    expect(res.body).toContain('did not finish')
+    const { state } = await startedSignIn(env)
+    await env.account.handleLink(back({ error, state }))
     expect(await env.account.status()).toMatchObject({ signedIn: false, signingIn: false, error: code })
-    await expect(get(port, '/callback')).rejects.toThrow()
+    expect(env.onSignedIn).not.toHaveBeenCalled()
   })
 
-  it('reports a code the server refuses, and being offline, without keeping anything', async () => {
-    let env = setup({ answers: { '/auth/token': () => jsonResponse(400, { error: 'invalid_grant' }) } })
-    let started = await startedSignIn(env)
-    await get(started.port, `/callback?${new URLSearchParams({ code: 'c', state: started.state })}`)
-    expect(await env.account.status()).toMatchObject({ signedIn: false, error: 'refused' })
-    expect(existsSync(join(env.dir, 'session.json'))).toBe(false)
-
-    env = setup({
-      answers: {
-        '/auth/token': () => {
-          throw new Error('offline')
+  it.each([
+    ['refused by the server', () => jsonResponse(400, { error: 'invalid_grant' }), 'refused'],
+    [
+      'with no way to reach the server',
+      () => {
+        throw new Error('offline')
+      },
+      'offline'
+    ],
+    [
+      'answered with something that is not JSON, by a proxy for example',
+      () => ({
+        ok: true,
+        status: 200,
+        json: async () => {
+          throw new Error('not json')
         }
-      }
-    })
-    started = await startedSignIn(env)
-    const res = await get(started.port, `/callback?${new URLSearchParams({ code: 'c', state: started.state })}`)
-    expect(res.body).toContain('did not finish')
-    expect(await env.account.status()).toMatchObject({ signedIn: false, error: 'offline' })
+      }),
+      'refused'
+    ],
+    ['answered with the JSON word null', () => ({ ok: true, status: 200, json: async () => null }), 'refused']
+  ])('a code %s ends the sign-in and keeps nothing', async (_what, answer, error) => {
+    const env = setup({ answers: { '/auth/token': answer } })
+    const { state } = await startedSignIn(env)
+    await env.account.handleLink(back({ code: 'c', state }))
+    expect(await env.account.status()).toMatchObject({ signedIn: false, signingIn: false, error })
+    expect(existsSync(join(env.dir, 'session.json'))).toBe(false)
+    expect(env.onSignedIn).not.toHaveBeenCalled()
   })
 
   it('ends by itself when the time runs out', async () => {
@@ -156,14 +174,16 @@ describe('signing in', () => {
     expect(await env.account.status()).toMatchObject({ signingIn: false, error: 'expired' })
   })
 
-  it('Cancel stops listening, and a second sign-in replaces the first', async () => {
+  it('Cancel stops it, and a second sign-in replaces the first', async () => {
     const env = setup()
     const first = await startedSignIn(env)
     const second = await startedSignIn(env)
     expect(second.state).not.toBe(first.state)
-    await expect(get(first.port, '/callback')).rejects.toThrow()
+    await env.account.handleLink(back({ code: 'old', state: first.state }))
+    expect(env.calls).toEqual([])
     expect((await env.account.cancelSignIn()).signingIn).toBe(false)
-    await expect(get(second.port, '/callback')).rejects.toThrow()
+    await env.account.handleLink(back({ code: 'late', state: second.state }))
+    expect(env.calls).toEqual([])
   })
 
   it('a browser that cannot be opened ends it', async () => {
@@ -180,6 +200,16 @@ describe('signing in', () => {
     expect(await env.account.signIn()).toMatchObject({ signingIn: false, error: 'noSecureStorage' })
     expect(env.opened).toEqual([])
     expect(readdirSync(env.dir)).toEqual([])
+  })
+})
+
+describe('finding the link in a command line', () => {
+  it('finds this app\'s link, and no other', () => {
+    const link = 'tessel://callback?code=c&state=s'
+    expect(findAppLink(['electron.exe', 'C:\\Tessel', link], 'tessel')).toBe(link)
+    expect(findAppLink(['electron.exe', 'tessel-dev://callback?code=c'], 'tessel')).toBeUndefined()
+    expect(findAppLink(['electron.exe', '--flag'], 'tessel')).toBeUndefined()
+    expect(findAppLink(undefined, 'tessel')).toBeUndefined()
   })
 })
 
@@ -224,33 +254,6 @@ describe('staying signed in', () => {
     expect(await env.account.status({ check: true })).toMatchObject({ signedIn: true, offline: true })
     env.answers['/api/me'] = () => jsonResponse(200, { user: USER })
     expect(await env.account.status({ check: true })).toMatchObject({ signedIn: true, offline: false })
-  })
-})
-
-describe('the listener and odd answers', () => {
-  it('a request whose address cannot be read gets a 404 and leaves the sign-in waiting', async () => {
-    const env = setup()
-    const { port } = await startedSignIn(env)
-    const answer = await new Promise((resolve, reject) => {
-      const socket = net.connect(port, '127.0.0.1', () => socket.write('GET // HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n'))
-      let text = ''
-      socket.on('data', (d) => (text += d))
-      socket.on('end', () => resolve(text))
-      socket.on('error', reject)
-    })
-    expect(answer).toContain('404')
-    expect((await env.account.status()).signingIn).toBe(true)
-  })
-
-  it.each([
-    ['not JSON, from a proxy for example', async () => { throw new Error('not json') }],
-    ['the JSON word null', async () => null]
-  ])('an answer that is %s ends the sign-in instead of hanging', async (_what, json) => {
-    const env = setup({ answers: { '/auth/token': () => ({ ok: true, status: 200, json }) } })
-    const { port, state } = await startedSignIn(env)
-    const res = await get(port, `/callback?${new URLSearchParams({ code: 'c', state })}`)
-    expect(res.body).toContain('did not finish')
-    expect(await env.account.status()).toMatchObject({ signedIn: false, signingIn: false, error: 'refused' })
   })
 })
 

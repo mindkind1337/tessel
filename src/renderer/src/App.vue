@@ -330,6 +330,9 @@ function openSettingsAt(section, anchor = null) {
   settingsAnchor.value = typeof anchor === 'string' ? anchor : null
   settingsOpen.value = true
 }
+// Back from logging in on the web page: Settings shows who is signed in.
+const stopAccountSignedIn = window.shellApi?.tesselAccount?.onSignedIn?.(() => openSettingsAt('tessel-account'))
+onBeforeUnmount(() => stopAccountSignedIn?.())
 // Markdown, diagrams, tables, JSON, images and PDFs open as editor tabs with
 // Orca's view toggle (Preview | Source | Changes, Table, the picture, the PDF's
 // pages). A PDF goes to its own window (Chromium's viewer) only when no

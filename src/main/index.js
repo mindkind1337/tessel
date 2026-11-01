@@ -142,7 +142,7 @@ import {
   runAgentCommand
 } from './agentTools'
 import { startSignIn, signInStatus, activeSignIns, cancelSignIn, cancelAllSignIns, signInState } from './mcpSignIn'
-import { createTesselAccount } from './tesselAccount'
+import { createTesselAccount, findAppLink } from './tesselAccount'
 import { listAgyPlugins, setAgyPlugin, removeAgyPlugin } from './agyPlugins'
 import { createMusePlugins } from './musePlugins'
 import {
@@ -3145,11 +3145,25 @@ ipcMain.handle(
 )
 app.on('will-quit', () => cancelAllSignIns())
 
-// Settings > Tessel account: the optional sign-in to tesselcode.com.
+// Settings > Tessel account: the optional sign-in to tesselcode.com. The dev copy has its
+// own link, so that it never takes the installed copy's sign-in.
+const APP_LINK_SCHEME = app.isPackaged ? 'tessel' : 'tessel-dev'
+function showMainWindow() {
+  if (!mainWindow) return
+  if (mainWindow.isMinimized()) mainWindow.restore()
+  mainWindow.show()
+  mainWindow.focus()
+}
 const tesselAccount = createTesselAccount({
   dir: join(app.getPath('userData'), 'tessel-account'),
   safeStorage,
-  openExternal: (url) => shell.openExternal(url)
+  openExternal: (url) => shell.openExternal(url),
+  scheme: APP_LINK_SCHEME,
+  // Back from the web page: the window comes forward and shows who is signed in.
+  onSignedIn: () => {
+    showMainWindow()
+    send('tesselAccount:signedIn')
+  }
 })
 ipcMain.handle(
   'tesselAccount:status',
@@ -6094,6 +6108,8 @@ async function instanceHolder() {
 async function waitInstanceLock() {
   if (app.requestSingleInstanceLock()) return true
   if (app.isPackaged) return false
+  // Started to hand a link to the running copy, which now has it: nothing to wait for.
+  if (findAppLink(process.argv, APP_LINK_SCHEME)) return false
   const started = Date.now()
   log.info('app', 'waiting for the previous Tessel to exit (dev restart)')
   let holder = null
@@ -6144,12 +6160,14 @@ Promise.all([acquireInstanceLock(), app.whenReady()]).then(([gotInstanceLock]) =
     if (err && err.switchPending) log.info('accounts', 'Claude account switch waits for the sessions started before the update') // i18n-ignore log
     else log.warn('accounts', `Claude account migration: ${err && err.message}`) // i18n-ignore log
   })
-  app.on('second-instance', () => {
-    if (!mainWindow) return
-    if (mainWindow.isMinimized()) mainWindow.restore()
-    mainWindow.show()
-    mainWindow.focus()
+  app.on('second-instance', (_event, argv) => {
+    showMainWindow()
+    const link = findAppLink(argv, APP_LINK_SCHEME)
+    if (link) tesselAccount.handleLink(link).catch(() => {})
   })
+  // Windows opens this copy for its links: the way back from logging in on the web page.
+  if (app.isPackaged) app.setAsDefaultProtocolClient(APP_LINK_SCHEME)
+  else app.setAsDefaultProtocolClient(APP_LINK_SCHEME, process.execPath, [app.getAppPath()])
   log.info(
     'app',
     `started v${app.getVersion()} (${app.isPackaged ? 'installed' : 'dev'}) electron ${process.versions.electron} node ${process.versions.node} ${process.platform} ${os.release()} ${os.arch()}`

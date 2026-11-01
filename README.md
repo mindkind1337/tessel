@@ -149,7 +149,8 @@ working on Tessel itself (see [Build from source](#build-from-source)).
   catalog of popular servers and developer tools.
 - **Tessel account** (Settings → Tessel account): an optional account. You log in
   on a web page in your own browser, with Google, GitHub or an email address and a
-  password, so no password passes through the app. You confirm your address by
+  password, so no password passes through the app, and the browser then asks to open
+  Tessel, which shows who is signed in. You confirm your address by
   email, can reset a forgotten password by email, get a link to change it, sign out
   or delete the account; security changes are confirmed by email. Tessel works the
   same without an account. It keeps your email address, name, password as a hash
