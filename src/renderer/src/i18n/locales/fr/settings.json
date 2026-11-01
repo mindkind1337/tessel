@@ -39,6 +39,10 @@
         "title": "Skills",
         "desc": "Voir, ajouter, mettre à jour et retirer les compétences de vos agents."
       },
+      "tessel-account": {
+        "title": "Compte Tessel",
+        "desc": "Votre compte facultatif : connectez-vous, déconnectez-vous ou supprimez-le."
+      },
       "connections": {
         "title": "Connexions",
         "desc": "Connectez Gmail, Outlook, Dropbox et d'autres comptes une seule fois, pour tous vos agents."
@@ -1046,6 +1050,48 @@
       "installed": "Compétences installées",
       "installedHint": "Chaque compétence, les agents qui la voient et son emplacement ; ajoutez-en une depuis GitHub ou un dossier.",
       "open": "Ouvrir Skills"
+    },
+    "tesselAccount": {
+      "cancel": "Annuler",
+      "changePassword": "Changer le mot de passe",
+      "changePasswordHint": "Nous vous envoyons un lien par courriel. Une fois le nouveau choisi, vous vous reconnectez sur tous vos ordinateurs.",
+      "data": "Votre adresse courriel, votre nom, votre mot de passe sous forme de hachage si vous en avez choisi un et, si vous les utilisez, votre identifiant Google ou GitHub, sur le serveur de Tessel. Jamais vos courriels, votre agenda ni vos fichiers.",
+      "dataTitle": "Ce qu'un compte conserve",
+      "delete": "Supprimer mon compte",
+      "deleteButton": "Supprimer",
+      "deleteConfirm": "Supprimer votre compte Tessel ?",
+      "deleteDetail": "Votre adresse courriel et votre nom sont effacés du serveur et vous êtes déconnecté. C'est irréversible. Vos réglages, vos projets et vos connexions Google sur cet ordinateur ne changent pas.",
+      "deleted": "Votre compte a été supprimé.",
+      "deleteHint": "Efface votre compte du serveur. Rien ne change sur cet ordinateur.",
+      "error": {
+        "accountExists": "Un compte utilise déjà cette adresse. Connectez-vous autrement : avec Google, ou avec votre mot de passe. Si vous n'en avez pas, utilisez « Mot de passe oublié » sur la page de connexion.",
+        "denied": "La connexion a été refusée. Rien n'a changé.",
+        "expired": "La connexion a pris trop de temps. Réessayez.",
+        "failed": "Ça n'a pas fonctionné. Réessayez.",
+        "noSecureStorage": "Le stockage sécurisé n'est pas disponible sur cet ordinateur, donc Tessel ne peut pas garder votre connexion.",
+        "offline": "Tessel n'a pas pu joindre son serveur. Vérifiez votre connexion et réessayez.",
+        "rateLimited": "Trop d'essais. Attendez une minute, puis réessayez.",
+        "refused": "Le serveur a refusé cette connexion. Réessayez.",
+        "signedOut": "Votre session a pris fin. Connectez-vous de nouveau."
+      },
+      "included": "Inclus avec votre compte",
+      "intro": "Connectez-vous pour obtenir ce qui vient avec un compte. C'est facultatif : Tessel fonctionne de la même façon sans compte.",
+      "itemGoogle": "Gmail en un clic",
+      "itemGoogleHint": "Connectez Gmail, Agenda et Drive à vos agents sans configurer de client Google.",
+      "itemSync": "Vos réglages partout",
+      "itemSyncHint": "Retrouvez vos réglages et vos projets sur tous vos ordinateurs, chiffrés avant de quitter celui-ci.",
+      "linkSent": "Le courriel est en route. Son lien fonctionne pendant 30 minutes.",
+      "needsRestart": "Redémarrez Tessel pour terminer l'installation de cette page.",
+      "offline": "Tessel ne peut pas joindre son serveur pour le moment. Vous restez connecté.",
+      "open": "Se connecter à Tessel",
+      "privacy": "Politique de confidentialité",
+      "sendLink": "Envoyer le lien",
+      "setPassword": "Choisir un mot de passe",
+      "setPasswordHint": "Pour aussi vous connecter avec une adresse et un mot de passe, recevez un lien par courriel.",
+      "signOut": "Se déconnecter",
+      "soon": "Bientôt",
+      "waiting": "Terminez la connexion dans votre navigateur",
+      "waitingHint": "Une page s'est ouverte dans votre navigateur. Cette page se met à jour toute seule."
     },
     "connections": {
       "account": "Connecté avec {{account}}.",

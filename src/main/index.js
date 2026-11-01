@@ -142,6 +142,7 @@ import {
   runAgentCommand
 } from './agentTools'
 import { startSignIn, signInStatus, activeSignIns, cancelSignIn, cancelAllSignIns, signInState } from './mcpSignIn'
+import { createTesselAccount } from './tesselAccount'
 import { listAgyPlugins, setAgyPlugin, removeAgyPlugin } from './agyPlugins'
 import { createMusePlugins } from './musePlugins'
 import {
@@ -3143,6 +3144,38 @@ ipcMain.handle(
   safe((ref) => signInState(ref, { baseEnv: freshEnv() }))
 )
 app.on('will-quit', () => cancelAllSignIns())
+
+// Settings > Tessel account: the optional sign-in to tesselcode.com.
+const tesselAccount = createTesselAccount({
+  dir: join(app.getPath('userData'), 'tessel-account'),
+  safeStorage,
+  openExternal: (url) => shell.openExternal(url)
+})
+ipcMain.handle(
+  'tesselAccount:status',
+  safe((options) => tesselAccount.status(options))
+)
+ipcMain.handle(
+  'tesselAccount:signIn',
+  safe(() => tesselAccount.signIn())
+)
+ipcMain.handle(
+  'tesselAccount:passwordLink',
+  safe(() => tesselAccount.passwordLink())
+)
+ipcMain.handle(
+  'tesselAccount:cancel',
+  safe(() => tesselAccount.cancelSignIn())
+)
+ipcMain.handle(
+  'tesselAccount:signOut',
+  safe(() => tesselAccount.signOut())
+)
+ipcMain.handle(
+  'tesselAccount:delete',
+  safe(() => tesselAccount.deleteAccount())
+)
+app.on('will-quit', () => tesselAccount.close())
 
 // Agent skills (the Skills window, skillsManager.js): listed per agent and
 // scope, added from a folder or GitHub after a preview, removed to the

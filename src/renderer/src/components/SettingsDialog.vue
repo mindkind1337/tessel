@@ -32,6 +32,7 @@ import SettingsAutomations from './settings/SettingsAutomations.vue'
 import SettingsQuickCommands from './settings/SettingsQuickCommands.vue'
 import SettingsSsh from './settings/SettingsSsh.vue'
 import SettingsUpdates from './settings/SettingsUpdates.vue'
+import SettingsTesselAccount from './settings/SettingsTesselAccount.vue'
 
 const props = defineProps({
   shells: { type: Array, default: () => [] },
@@ -451,6 +452,7 @@ onUnmounted(() => {
         <SettingsQuickCommands />
         <SettingsSsh />
         <SettingsStats :worktree-paths="worktreePaths" />
+        <SettingsTesselAccount />
         <SettingsUpdates :update-status="updateStatus" />
       </div>
     </main>

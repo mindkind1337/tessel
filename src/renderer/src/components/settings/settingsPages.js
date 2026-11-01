@@ -183,6 +183,17 @@ export const PAGES = {
     },
     icon: 'M9 1.5L3.5 9H8l-1 5.5L12.5 7H8z'
   },
+  // The optional account on tesselcode.com (SettingsTesselAccount.vue). Its id
+  // is apart from 'accounts', which are the sign-ins of the AI providers.
+  'tessel-account': {
+    get title() {
+      return t('settings.pages.tessel-account.title', 'Tessel account')
+    },
+    get desc() {
+      return t('settings.pages.tessel-account.desc', 'Your optional account: sign in, sign out or delete it.')
+    },
+    icon: 'M8 8a2.75 2.75 0 100-5.5A2.75 2.75 0 008 8zM2.75 13.5c.7-2.3 2.8-3.75 5.25-3.75s4.55 1.45 5.25 3.75'
+  },
   // About & updates (its id stays 'updates': openSettings('updates')).
   updates: {
     get title() {
@@ -220,7 +231,7 @@ export const GROUPS = [
     get title() {
       return t('settings.groups.workspace', 'Workspace')
     },
-    pages: ['general', 'appearance', 'terminal', 'editor', 'browser', 'alerts', 'voice']
+    pages: ['tessel-account', 'general', 'appearance', 'terminal', 'editor', 'browser', 'alerts', 'voice']
   },
   {
     id: 'workflows',
@@ -266,6 +277,7 @@ export const PAGE_TITLES_EN = {
   skills: 'Skills', // i18n-ignore
   mcp: 'MCP servers', // i18n-ignore
   connections: 'Connections', // i18n-ignore
+  'tessel-account': 'Tessel account', // i18n-ignore
   context: 'Context', // i18n-ignore
   orchestration: 'Orchestration', // i18n-ignore
   voice: 'Voice typing', // i18n-ignore

@@ -475,6 +475,14 @@ const api = {
   mcpSignInActive: () => ipcRenderer.invoke('mcp:signInActive'),
   mcpSignInCancel: (id) => ipcRenderer.invoke('mcp:signInCancel', id),
   mcpSignInState: (ref) => ipcRenderer.invoke('mcp:signInState', ref),
+  tesselAccount: {
+    status: (options) => ipcRenderer.invoke('tesselAccount:status', options),
+    signIn: () => ipcRenderer.invoke('tesselAccount:signIn'),
+    passwordLink: () => ipcRenderer.invoke('tesselAccount:passwordLink'),
+    cancel: () => ipcRenderer.invoke('tesselAccount:cancel'),
+    signOut: () => ipcRenderer.invoke('tesselAccount:signOut'),
+    delete: () => ipcRenderer.invoke('tesselAccount:delete')
+  },
   // Settings > Context and the token tags (src/main/contextCost): token counts
   // of what each agent loads; Measure starts an MCP server, on click only.
   mcpMeasure: (q) => ipcRenderer.invoke('mcp:measure', q),

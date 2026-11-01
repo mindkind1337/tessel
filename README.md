@@ -147,6 +147,13 @@ working on Tessel itself (see [Build from source](#build-from-source)).
 - **MCP servers and tools**: see every MCP server for Claude Code and Codex,
   test the connection, copy a server to another agent, and install from a
   catalog of popular servers and developer tools.
+- **Tessel account** (Settings → Tessel account): an optional account. You log in
+  on a web page in your own browser, with Google, GitHub or an email address and a
+  password, so no password passes through the app. You confirm your address by
+  email, can reset a forgotten password by email, get a link to change it, sign out
+  or delete the account; security changes are confirmed by email. Tessel works the
+  same without an account. It keeps your email address, name, password as a hash
+  and Google or GitHub ID on Tessel's server, never your mail, calendar or files.
 - **Connections** (Settings → Connections): connect your accounts to your agents:
   Gmail, Google Calendar and Drive (the first time, with your own free Google
   Cloud OAuth client), Outlook and OneDrive for personal Microsoft accounts,
