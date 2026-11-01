@@ -195,6 +195,10 @@ working on Tessel itself (see [Build from source](#build-from-source)).
   does not know, a Yolo pin, a conversation id that is not one, folders on a network
   share and a host's proxy or jump host are all left out. A layout nested absurdly
   deep is refused. An export no longer holds how panes were launched.
+- **Antigravity CLI on an SSH host picks its conversation back up**: when its pane restarts,
+  as on your computer. Tessel finds which conversation the pane is in from the host's own
+  files, and resumes it if it is still there. It starts fresh until you have sent it a first
+  message.
 - **Updating a development copy**: a Tessel started with `npm run dev` checks GitHub
   every 30 minutes (`git fetch` of the branch it follows) and, when there are newer
   builds, shows a yellow `↑ b1700` next to **dev**. It lists them and, for a copy with

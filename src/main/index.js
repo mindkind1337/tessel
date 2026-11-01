@@ -1843,6 +1843,11 @@ ipcMain.handle('agents:inbox', (_evt, q = {}) =>
 )
 ipcMain.handle('sessions:find', async (_evt, q = {}) => {
   try {
+    // A pane on an SSH host: its conversation is on the host, never in this computer's files.
+    if (q && typeof q.hostId === 'string') {
+      if (q.agent !== 'antigravity' || !remoteHosts.get(q.hostId)) return null
+      return await remoteFs.findAntigravitySession(q.hostId, q)
+    }
     return await accountSessions.find(q || {})
   } catch {
     return null
@@ -1877,6 +1882,7 @@ const sessionExistsAsked = new Map() // host\nagent\nid -> { at, promise }
 ipcMain.handle('remote:agentSessionExists', async (_evt, hostId, agent, id) => {
   try {
     if (typeof hostId !== 'string' || !remoteHosts.get(hostId)) return null
+    if (agent === 'antigravity') return await remoteFs.antigravityConversationExists(hostId, id)
     const key = `${hostId}\n${agent}\n${id}`
     const hit = sessionExistsAsked.get(key)
     if (hit && Date.now() - hit.at < 20_000) return await hit.promise

@@ -1396,7 +1396,10 @@ async function agentStartLine(agent, sessionId, resume, accountId, { known = fal
     const id = sessionId || newUuid()
     return { line: `${agent.command} --session-id ${id}`, sessionId: id, resumed: false } // i18n-ignore
   }
-  const args = sessionId && resume ? await resumeArgs(kind, sessionId, window.shellApi) : null
+  // Antigravity on an SSH host: its conversation is there, so that is where it is asked for.
+  // Not known (a slow answer): resumed all the same, as Claude Code and Codex are.
+  const onThatHost = hostId && kind === 'antigravity' ? { agentResumeTarget: async () => ((await onHost('antigravity')) === false ? null : {}) } : null
+  const args = sessionId && resume ? await resumeArgs(kind, sessionId, onThatHost || window.shellApi) : null
   if (args) return { line: resumeLine(kind, agent.command, args), sessionId, resumed: true }
   return { line: agent.command, sessionId: null, resumed: false }
 }
@@ -1406,22 +1409,29 @@ async function agentStartLine(agent, sessionId, resume, accountId, { known = fal
 // first message: looked for during 30 minutes), so the pane can resume it
 // next time.
 function watchFoundSession(leaf, kind) {
+  // On an SSH host, only Antigravity is looked for this way, and there, not in this computer's
+  // files (Claude Code picks its id, Codex's comes from its hooks).
+  const hostId = leaf.remoteHostId || null
+  if (hostId && kind !== 'antigravity') return
+  const folder = hostId ? leaf.remotePath : leaf.startDir
   const find = window.shellApi.findAgentSession
     ? (q) => window.shellApi.findAgentSession({ ...q, agent: kind, ...(leaf.accountId !== undefined ? { accountId: leaf.accountId } : {}) })
     : kind === 'codex'
       ? window.shellApi.findCodexSession
       : null
-  if (!find || !leaf.startDir) return
+  if (!find || !folder) return
   let tries = 0
   const tick = async () => {
-    if (leaf.sessionId || !findLeaf(leaf.id) || leaf.agentId !== kind || ++tries > 120) return
+    // On a host, a first message may come hours later: it keeps looking, less often.
+    if (leaf.sessionId || !findLeaf(leaf.id) || leaf.agentId !== kind || ++tries > (hostId ? 450 : 120)) return
     const exclude = []
     forEachWsLeaf((l) => {
       if (l.sessionId) exclude.push(l.sessionId)
     })
     try {
       const id = await find({
-        cwd: leaf.startDir,
+        ...(hostId ? { hostId } : {}),
+        cwd: folder,
         since: leaf.launchedAt,
         exclude,
         latest: !!leaf.launchGuessed,
@@ -1434,7 +1444,7 @@ function watchFoundSession(leaf, kind) {
     } catch {
       /* try again */
     }
-    setTimeout(tick, 15000)
+    setTimeout(tick, tries > 120 ? 120000 : 15000)
   }
   setTimeout(tick, 8000)
 }

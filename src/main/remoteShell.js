@@ -186,6 +186,11 @@ export const FUNCTIONS = new Set([
   // The agent sessions on this host (the shim's `sessions`): ids, folders,
   // titles, never their contents.
   '__t_rsess',
+  // Antigravity CLI's conversations on this host, to match a pane to its own:
+  // the start of each recent transcript and the end of its history, read from
+  // its own folder only (remoteAgent/antigravityOnHost.js); whether one is there.
+  '__t_agyfind',
+  '__t_agyhas',
   // One agent conversation file on this host (Claude Code's transcript or a
   // Codex rollout), found by its session id in the agent's own folder only
   // (or a Codex account folder Tessel made there: its conversations are its
@@ -773,6 +778,41 @@ __t_findnode() {
   if [ -z "$__nd" ]; then for __c in "$HOME"/.nvm/versions/node/*/bin/node "$HOME"/.volta/bin/node "$HOME"/.local/bin/node /usr/local/bin/node /opt/homebrew/bin/node; do [ -x "$__c" ] && __nd=$__c; done; fi
   if [ -z "$__nd" ]; then __nd=$(ls -td -- "$HOME"/.vscode-server/cli/servers/*/server/node "$HOME"/.vscode-server/bin/*/node "$HOME"/.cursor-server/cli/servers/*/server/node "$HOME"/.cursor-server/bin/*/node 2>/dev/null | head -n 1) || __nd=; case $__nd in /*) ;; *) __nd= ;; esac; fi
   [ -n "$__nd" ] && [ -x "$__nd" ]
+}
+__t_agyfind() {
+  case $1 in ''|*[!0-9]*) return 90 ;; esac
+  case $2 in ''|*[!0-9]*) return 90 ;; esac
+  case $3 in ''|*[!0-9]*) return 90 ;; esac
+  case $4 in ''|*[!0-9]*) return 90 ;; esac
+  __r="$HOME/.gemini/antigravity-cli"
+  [ -d "$__r/brain" ] && [ ! -L "$__r/brain" ] || return 91
+  ls -1t "$__r"/brain/*/.system_generated/logs/transcript.jsonl 2>/dev/null | head -n "$2" | while IFS= read -r __f; do
+    [ -f "$__f" ] && [ ! -L "$__f" ] || continue
+    __i=\${__f#"$__r/brain/"}; __i=\${__i%%/*}
+    case $__i in ''|*[!0-9A-Za-z_-]*) continue ;; esac
+    __s=$(__t_sig "$__f") || continue
+    __m=\${__s#* }; __m=\${__m%% *}
+    [ "$__m" -ge "$1" ] || continue
+    __z=\${__s%% *}
+    [ "$__z" -gt "$3" ] && __z=$3
+    printf '@file %s %s %s\\n' "$__i" "$__m" "$__z"
+    head -c "$__z" "$__f"
+    printf '\\n'
+  done
+  __h="$__r/history.jsonl"
+  if [ -f "$__h" ] && [ ! -L "$__h" ] && __s=$(__t_sig "$__h"); then
+    __z=\${__s%% *}
+    [ "$__z" -gt "$4" ] && __z=$4
+    printf '@history %s\\n' "$__z"
+    tail -c "$__z" "$__h"
+    printf '\\n'
+  fi
+  return 0
+}
+__t_agyhas() {
+  case $1 in ''|*[!0-9A-Za-z_-]*) return 90 ;; esac
+  __f="$HOME/.gemini/antigravity-cli/brain/$1/.system_generated/logs/transcript.jsonl"
+  [ -f "$__f" ] && [ ! -L "$__f" ] || return 91
 }
 __t_rsess() {
   case $1 in ''|*[!0-9]*) return 90 ;; esac
