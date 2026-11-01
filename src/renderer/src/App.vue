@@ -1879,6 +1879,15 @@ async function createLeaf(shellId, agent = null, cwd = null, worktree = null, op
   const codexDaemonKnown = agent && agent.id === 'codex' && opts.remoteHostId ? hostCodexNoDaemon(remoteAgentTools[opts.remoteHostId]) : null
   if (agent && agent.command && launchCommand) {
     if (opts.remoteHostId && typeof opts.onStartStep === 'function') opts.onStartStep('agent')
+    // Claude Code on an SSH host does not stop at "Do you trust this folder?"
+    // in a project you added: its trust is written there first, in the config
+    // its account reads (main checks the project, the setting and that the
+    // host is signed in; a few seconds at most, never a sign-in). Not done:
+    // it asks, as before.
+    if (agent.id === 'claude' && opts.remoteHostId && opts.remotePath && settings.agentFolderTrust !== false && window.shellApi.remoteAgents && window.shellApi.remoteAgents.preTrust) {
+      await window.shellApi.remoteAgents.preTrust({ hostId: opts.remoteHostId, agentId: agent.id, remotePath: opts.remotePath, hostAccount: hostPrefix && hostAccount ? hostAccount : null, enabled: true }).catch(() => null)
+      if (typeof paneStep === 'function') paneStep('folder trust')
+    }
     const start = await agentStartLine({ ...agent, command: launchCommand }, opts.sessionId || null, !!opts.resume, accountId, {
       known: opts.remoteSession === true && !!opts.remoteHostId,
       hostId: opts.remoteHostId || null,

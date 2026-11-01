@@ -107,6 +107,7 @@ import { createOpencodeChat } from './chat/opencodeChat'
 import { createServerPidFile, reapOpencodeServers } from './chat/opencodeServers'
 import { createChatTrust } from './chat/chatTrust'
 import { createAgentFolderTrust } from './agentFolderTrust'
+import { createRemoteAgentFolderTrust } from './remoteAgent/remoteAgentFolderTrust'
 import { createWorkerCopies } from './chat/workerCopies'
 import { createLogger, describe } from './logger'
 import { guardIpc, mainFrameSender } from './ipcGuard'
@@ -1038,6 +1039,8 @@ ipcMain.on('layout:save', (_evt, data) => {
   if (isLayout(data)) worktreeList.setRoots(localRepoRootsOfLayout(data))
   // ...and the projects whose folder an agent may be pre-trusted in.
   if (isLayout(data)) agentFolderTrust.setRoots(chosenRootsOfLayout(data))
+  // ...and, on SSH hosts, the remote projects whose folder Claude Code may be pre-trusted in.
+  if (isLayout(data)) remoteAgentTrust.setRoots(remoteRootsOfLayout(data))
   // ...and the project it shows (named in the window's memory reports).
   if (isLayout(data)) {
     const w = Array.isArray(data.workspaces) ? data.workspaces[data.currentIndex] : null
@@ -2311,10 +2314,32 @@ setGitTrust(
 // session per host, the same askpass dialog.
 const remoteFs = createRemoteFs({ hosts: remoteHosts, askpass: sshAskpass, ssh: sshRemote, send: (channel, payload) => send(channel, payload), log })
 registerRemoteFs({ ipcMain, service: remoteFs })
+// Claude Code's folder trust on an SSH host, written there before its start
+// line is typed (remoteAgent/remoteAgentFolderTrust.js): a saved remote
+// project only, on a connection already signed in (never a sign-in).
+const remoteAgentTrust = createRemoteAgentFolderTrust({
+  run: (hostId, fn, args, opts) => remoteFs.accountCall(hostId, fn, args, opts),
+  connected: (hostId) => remoteFs.connectedQuietly(hostId),
+  homeOf: (hostId) => remoteFs.hostHome(hostId),
+  loginDir: (hostId, agent) => remoteAccounts.loginDir(hostId, agent),
+  isSavedHost: (hostId) => !!remoteHosts.get(hostId),
+  log
+})
+// ({ hostId, agentId, remotePath, hostAccount, enabled }) -> an outcome word
+// (the window waits for it, at most a few seconds; it never throws).
+ipcMain.handle('remoteAgents:preTrust', async (_evt, q) => {
+  const o = q && typeof q === 'object' ? q : {}
+  try {
+    return await remoteAgentTrust.apply({ agentId: o.agentId, hostId: o.hostId, remotePath: o.remotePath, hostAccount: o.hostAccount === undefined ? null : o.hostAccount, enabled: o.enabled === true })
+  } catch {
+    return 'failed'
+  }
+})
 // The saved remote projects (the layout on disk; each save updates them).
 try {
   const saved = readJsonSafe(layoutFile(), isLayout)
   remoteFs.setRoots(remoteRootsOfLayout(saved && saved.data))
+  remoteAgentTrust.setRoots(remoteRootsOfLayout(saved && saved.data))
   worktreeList.setRoots(localRepoRootsOfLayout(saved && saved.data))
   agentFolderTrust.setRoots(chosenRootsOfLayout(saved && saved.data))
 } catch {

@@ -21,7 +21,8 @@ import shellSource from './remoteAccounts.sh?raw'
 import { cleanSubscription, planDisplayName } from '../../shared/claudeSubscription'
 
 // The functions the host's session may run for this (remoteShell.js FUNCTIONS).
-export const ACCOUNT_FUNCTIONS = ['__t_accts', '__t_acctmk', '__t_acctrm', '__t_acctout', '__t_acctpane', '__t_acctdiag', '__t_acctplan']
+// __t_trust: Claude Code's folder trust for a project folder (remoteAgentFolderTrust.js).
+export const ACCOUNT_FUNCTIONS = ['__t_accts', '__t_acctmk', '__t_acctrm', '__t_acctout', '__t_acctpane', '__t_acctdiag', '__t_acctplan', '__t_trust']
 // Their definitions, for the prelude (a checkout with CRLF line ends must not
 // reach a POSIX sh).
 export const ACCOUNTS_SHELL = String(shellSource).replace(/\r/g, '')
@@ -703,6 +704,14 @@ export function createRemoteAccounts({
     copyPolicy,
     planCheck,
     cached: (hostId) => (cache.get(hostId) || {}).value || null,
+    // The login shell's CLAUDE_CONFIG_DIR / CODEX_HOME there, as this
+    // connection's detection read it: a folder, null (it sets none), or
+    // undefined (not asked yet on this connection).
+    loginDir: (hostId, agent) => {
+      const kept = logins.get(hostId)
+      if (!kept || !FOLDER_AGENTS.includes(agent)) return undefined
+      return typeof kept[agent] === 'string' ? kept[agent] : null
+    },
     forget: (hostId) => {
       cache.delete(hostId)
       logins.delete(hostId)

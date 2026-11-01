@@ -122,6 +122,13 @@ working on Tessel itself (see [Build from source](#build-from-source)).
   the project's folder, with **all of Tessel's tools** (team, task board,
   browser, terminals) through a small helper Tessel puts in your home folder
   there (no root needed). A missing agent shows a card in its pane to install it.
+- **No "trust this folder?" question in your remote projects**: with Settings →
+  Agents → "Trust the folder when Tessel starts an agent" on, Tessel marks a
+  project folder you added on the host (or a folder below it) as trusted in
+  Claude Code's own config there, for the account the pane runs on, just before
+  it starts. Only that one entry changes; a config file Tessel cannot read is
+  left alone, the home folder and anything above it are never trusted, and it
+  happens only on a connection that is already signed in. Codex still asks.
 - Their conversations, history, model, cost and skills are read on the host;
   file links open the host's files.
 - **Sessions that survive a dropped connection** (per host, Advanced → *Keep

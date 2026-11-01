@@ -670,6 +670,239 @@ __t_acctdiag() {
   printf 'd keyring.secretTool %s\n' "$(__ta_yn command -v secret-tool)"
   return 0
 }
+# Claude Code's "Do you trust the files in this folder?" answered yes for one
+# project folder, before Tessel starts it there (remoteAgentFolderTrust.js
+# decides when): projects["<folder>"].hasTrustDialogAccepted = true in the
+# config file that agent reads, every other key kept.
+#   __t_trust <config> <folder>
+# <config>: - (the agent's own folder, ~/.claude), acct:<id> (a folder Tessel
+# made, its marker checked) or an absolute folder (the login shell's
+# CLAUDE_CONFIG_DIR). <folder>: absolute, ~ or ~/... Prints one word:
+# granted, unchanged, refused, unparseable, locked, no-tool or failed.
+# Refused (nothing changed): a folder that is not an absolute path, holds a
+# control character, is not a folder, or is /, the home folder or a folder
+# above it (Claude Code trusts every folder below a trusted one). A file that
+# cannot be read or parsed, or is not a JSON object, is never rewritten. The
+# write: a temporary file next to it with its mode (600 when new), renamed
+# over it, under Claude Code's own lock (<file>.lock, never broken). The work
+# is node's (the one Tessel's helper uses, else node on PATH), else python3's;
+# neither: no-tool. The folder and file reach it in its environment, never in
+# its code.
+__ta_trust_js='
+const fs = require("fs"), p = require("path").posix
+const say = (w) => { process.stdout.write(w + "\n"); process.exit(0) }
+const isObj = (v) => !!v && typeof v === "object" && !Array.isArray(v)
+const CTRL = /[\u0000-\u001f\u007f-\u009f]/
+try {
+  const file = process.env.TT_FILE || "", raw = process.env.TT_FOLDER || "", home = process.env.TT_HOME || ""
+  if (CTRL.test(file + raw + home) || !file.startsWith("/") || !home.startsWith("/")) say("refused")
+  let f = raw === "~" ? home : raw.startsWith("~/") ? home + raw.slice(1) : raw
+  if (!f.startsWith("/")) say("refused")
+  const clean = (x) => { const n = p.normalize(x.normalize("NFC")); return n.length > 1 ? n.replace(/\/+$/, "") : n }
+  const real = (x) => { try { return clean(fs.realpathSync(x)) } catch (e) { return clean(x) } }
+  f = clean(f)
+  let st = null
+  try { st = fs.statSync(f) } catch (e) { say("refused") }
+  if (!st.isDirectory()) say("refused")
+  const keys = [...new Set([f, real(f)])]
+  const homes = [...new Set([clean(home), real(home)])]
+  if (keys.some((k) => k === "/" || homes.some((h) => h === k || h.startsWith(k + "/")))) say("refused")
+  let target = file
+  try { if (fs.lstatSync(file).isSymbolicLink()) target = fs.realpathSync(file) } catch (e) { if (e.code !== "ENOENT") say("failed") }
+  const read = () => {
+    let text
+    try { text = fs.readFileSync(target, "utf8") } catch (e) { return e.code === "ENOENT" ? { cfg: {}, mode: 0o600 } : null }
+    let cfg
+    try { cfg = JSON.parse(text) } catch (e) { return null }
+    if (!isObj(cfg) || (cfg.projects !== undefined && !isObj(cfg.projects))) return null
+    return { cfg, mode: fs.statSync(target).mode & 0o7777 }
+  }
+  const trusted = (cfg) => keys.some((k) => cfg.projects && isObj(cfg.projects[k]) && cfg.projects[k].hasTrustDialogAccepted === true)
+  const first = read()
+  if (!first) say("unparseable")
+  if (trusted(first.cfg)) say("unchanged")
+  const lock = target + ".lock"
+  const nap = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms)
+  let held = false
+  for (let i = 0; i < 5 && !held; i++) {
+    try { fs.mkdirSync(lock); held = true } catch (e) { if (e.code !== "EEXIST") say("failed"); nap(Math.min(250, 50 * 2 ** i)) }
+  }
+  if (!held) say("locked")
+  let word = "failed"
+  const tmp = p.join(p.dirname(target), "." + p.basename(target) + ".tessel-trust-" + process.pid)
+  try {
+    const cur = read()
+    if (!cur) word = "unparseable"
+    else if (trusted(cur.cfg)) word = "unchanged"
+    else {
+      const projects = { ...(cur.cfg.projects || {}) }
+      for (const k of keys) projects[k] = isObj(projects[k]) ? { ...projects[k], hasTrustDialogAccepted: true } : { hasTrustDialogAccepted: true }
+      const text = JSON.stringify({ ...cur.cfg, projects }, null, 2) + "\n"
+      try {
+        fs.writeFileSync(tmp, text, { encoding: "utf8", mode: cur.mode, flag: "wx" })
+        fs.chmodSync(tmp, cur.mode)
+        fs.renameSync(tmp, target)
+        word = "granted"
+      } catch (e) {
+        try { fs.unlinkSync(tmp) } catch (e2) {}
+      }
+    }
+  } finally {
+    try { fs.rmdirSync(lock) } catch (e) {}
+  }
+  say(word)
+} catch (e) {
+  say("failed")
+}
+'
+__ta_trust_py='
+import json, os, posixpath, re, sys, time, unicodedata
+def say(w):
+    sys.stdout.write(w + "\n")
+    sys.stdout.flush()
+    os._exit(0)
+def is_obj(v):
+    return isinstance(v, dict)
+CTRL = re.compile("[\x00-\x1f\x7f-\x9f]")
+try:
+    env = os.environ
+    file = env.get("TT_FILE", ""); raw = env.get("TT_FOLDER", ""); home = env.get("TT_HOME", "")
+    if CTRL.search(file + raw + home) or not file.startswith("/") or not home.startswith("/"):
+        say("refused")
+    f = home if raw == "~" else (home + raw[1:] if raw.startswith("~/") else raw)
+    if not f.startswith("/"):
+        say("refused")
+    def clean(x):
+        n = posixpath.normpath(unicodedata.normalize("NFC", x))
+        if n.startswith("//"):
+            n = "/" + n.lstrip("/")
+        return n.rstrip("/") if len(n) > 1 else n
+    def real(x):
+        try:
+            return clean(os.path.realpath(x))
+        except Exception:
+            return clean(x)
+    f = clean(f)
+    if not os.path.isdir(f):
+        say("refused")
+    keys = list(dict.fromkeys([f, real(f)]))
+    homes = list(dict.fromkeys([clean(home), real(home)]))
+    if any(k == "/" or any(h == k or h.startswith(k + "/") for h in homes) for k in keys):
+        say("refused")
+    target = file
+    if os.path.islink(file):
+        target = os.path.realpath(file)
+    def bad_constant(x):
+        raise ValueError(x)
+    def read():
+        try:
+            with open(target, "r", encoding="utf-8", newline="") as fh:
+                text = fh.read()
+        except FileNotFoundError:
+            return ({}, 0o600)
+        except Exception:
+            return None
+        try:
+            cfg = json.loads(text, parse_constant=bad_constant)
+        except Exception:
+            return None
+        if not is_obj(cfg) or ("projects" in cfg and not is_obj(cfg["projects"])):
+            return None
+        return (cfg, os.stat(target).st_mode & 0o7777)
+    def trusted(cfg):
+        pr = cfg.get("projects")
+        return any(is_obj(pr) and is_obj(pr.get(k)) and pr[k].get("hasTrustDialogAccepted") is True for k in keys)
+    first = read()
+    if first is None:
+        say("unparseable")
+    if trusted(first[0]):
+        say("unchanged")
+    lock = target + ".lock"
+    held = False
+    for i in range(5):
+        try:
+            os.mkdir(lock)
+            held = True
+            break
+        except FileExistsError:
+            time.sleep(min(0.25, 0.05 * 2 ** i))
+        except Exception:
+            say("failed")
+    if not held:
+        say("locked")
+    word = "failed"
+    tmp = posixpath.join(posixpath.dirname(target), "." + posixpath.basename(target) + ".tessel-trust-" + str(os.getpid()))
+    try:
+        cur = read()
+        if cur is None:
+            word = "unparseable"
+        elif trusted(cur[0]):
+            word = "unchanged"
+        else:
+            cfg, mode = cur
+            projects = dict(cfg.get("projects") or {})
+            for k in keys:
+                projects[k] = dict(projects[k], hasTrustDialogAccepted=True) if is_obj(projects.get(k)) else {"hasTrustDialogAccepted": True}
+            cfg = dict(cfg)
+            cfg["projects"] = projects
+            text = json.dumps(cfg, indent=2, ensure_ascii=False) + "\n"
+            try:
+                fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, mode)
+                with os.fdopen(fd, "w", encoding="utf-8", newline="") as fh:
+                    fh.write(text)
+                os.chmod(tmp, mode)
+                os.replace(tmp, target)
+                word = "granted"
+            except Exception:
+                try:
+                    os.unlink(tmp)
+                except Exception:
+                    pass
+    finally:
+        try:
+            os.rmdir(lock)
+        except Exception:
+            pass
+    say(word)
+except SystemExit:
+    raise
+except Exception:
+    say("failed")
+'
+__t_trust() {
+  case $1$2 in *'
+'*) echo refused; return 0 ;; esac
+  case $2 in /*|'~'|'~/'*) ;; *) echo refused; return 0 ;; esac
+  case $1 in
+    -) __tb=$HOME; __td=$HOME/.claude ;;
+    acct:*)
+      __ti=${1#acct:}
+      __ta_id "$__ti" || { echo refused; return 0; }
+      __td=$HOME/.tessel-server/accounts/claude/$__ti; __tb=$__td
+      [ -d "$__td" ] && [ ! -L "$__td" ] && [ -O "$__td" ] && __ta_mark "$__td" claude "$__ti" || { echo refused; return 0; }
+      ;;
+    /*)
+      __td=${1%/}; __tb=$__td
+      [ -d "$__td" ] && [ -O "$__td" ] || { echo refused; return 0; }
+      ;;
+    *) echo refused; return 0 ;;
+  esac
+  if [ -e "$__td/.config.json" ]; then __tf=$__td/.config.json; else __tf=$__tb/.claude.json; fi
+  # A Tessel folder's own files are never links (__t_acctmk refuses them too).
+  case $1 in acct:*) [ -L "$__tf" ] && { echo refused; return 0; } ;; esac
+  __tn=$(cat "$HOME/.tessel-server/bin/NODE" 2>/dev/null) || __tn=
+  case $__tn in /*) [ -f "$__tn" ] && [ -x "$__tn" ] || __tn= ;; *) __tn= ;; esac
+  [ -n "$__tn" ] || __tn=$(command -v node 2>/dev/null) || __tn=
+  case $__tn in /*) ;; *) __tn= ;; esac
+  if [ -n "$__tn" ]; then
+    TT_FILE=$__tf TT_FOLDER=$2 TT_HOME=$HOME "$__tn" -e "$__ta_trust_js" </dev/null 2>/dev/null | head -n 1
+  elif command -v python3 >/dev/null 2>&1; then
+    TT_FILE=$__tf TT_FOLDER=$2 TT_HOME=$HOME python3 -I -c "$__ta_trust_py" </dev/null 2>/dev/null | head -n 1
+  else
+    echo no-tool
+  fi
+  return 0
+}
 # Sign the agent out of its own default login there (Tessel asks you first):
 # its credentials file only, as its own logout does. On macOS Claude Code
 # keeps its login in the Keychain: that one stays (Tessel says so).

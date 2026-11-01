@@ -813,6 +813,16 @@ const api = {
   // true }: the host itself, not a check of a few seconds ago).
   remoteAgents: {
     check: (hostId, opts) => ipcRenderer.invoke('remoteAgents:check', hostId, opts && opts.fresh === true ? { fresh: true } : undefined),
+    // Claude Code's folder trust written on the host before its start line
+    // (main checks the project, the setting and the connection): an outcome word.
+    preTrust: (q) =>
+      ipcRenderer.invoke('remoteAgents:preTrust', {
+        hostId: q && q.hostId,
+        agentId: q && q.agentId,
+        remotePath: q && q.remotePath,
+        hostAccount: q && typeof q.hostAccount === 'string' ? q.hostAccount : null,
+        enabled: !!(q && q.enabled === true)
+      }),
     onStatus: (cb) => {
       const handler = (_e, payload) => cb(payload)
       ipcRenderer.on('remoteAgents:status', handler)
