@@ -11,6 +11,7 @@ export function registerIssueServices({ ipcMain, dir, safeStorage, github, linea
   const methods = {
     github: [
       'status',
+      'chooseRepo',
       'list',
       'detail',
       'createIssue',

@@ -160,6 +160,53 @@ export function githubRepoSpec(url) {
   if (!/^[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?$/.test(host) || !NAME.test(owner) || !NAME.test(repo)) return null
   return `${host.toLowerCase()}/${owner}/${repo}`
 }
+// The repository the user typed for a folder that is no clone of it:
+// owner/name, host/owner/name or the repository's URL -> "host/owner/name",
+// or null.
+export function chosenRepoSpec(value) {
+  if (typeof value !== 'string') return null
+  const text = value.trim()
+  const fromUrl = githubRepoSpec(text)
+  if (fromUrl) return fromUrl
+  const parts = text.replace(/\/+$/, '').replace(/\.git$/i, '').split('/')
+  if (parts.length === 2) parts.unshift('github.com')
+  return parts.length === 3 ? githubRepoSpec(`https://${parts.join('/')}`) : null
+}
+// The repositories chosen for local folders that are no Git clone with a
+// GitHub remote (the GitHub dialog's "Use this repository"), in a small JSON
+// file: { version: 1, repos: { <folder>: "host/owner/name" } }. Read at each
+// request, so a hand edit applies at once.
+export function createChosenRepos({ file, platform = process.platform }) {
+  const key = (cwd) => {
+    const full = path.resolve(cwd)
+    return platform === 'win32' ? full.toLowerCase() : full
+  }
+  const read = () => {
+    try {
+      const data = JSON.parse(fs.readFileSync(file, 'utf8'))
+      return object(data?.repos) ? data.repos : {}
+    } catch {
+      return {}
+    }
+  }
+  return {
+    get(cwd) {
+      const repos = read()
+      const k = key(cwd)
+      const spec = Object.hasOwn(repos, k) ? repos[k] : null
+      return typeof spec === 'string' && chosenRepoSpec(spec) === spec ? spec : null
+    },
+    async set(cwd, spec) {
+      const repos = read()
+      if (spec) repos[key(cwd)] = spec
+      else delete repos[key(cwd)]
+      await fsp.mkdir(path.dirname(file), { recursive: true })
+      const temp = `${file}.${process.pid}.tmp`
+      await fsp.writeFile(temp, JSON.stringify({ version: 1, repos }, null, 2), 'utf8')
+      await fsp.rename(temp, file)
+    }
+  }
+}
 
 function branchInput(value, head = false) {
   if (typeof value !== 'string' || !value || value.length > 255)
@@ -395,7 +442,11 @@ export function createGithubService({
   tempDir = os.tmpdir(),
   // Projects on an SSH host: { isRemote(cwd), context(cwd) -> { ok, remoteUrl,
   // branch } | { ok: false, error } } (remoteFs.js githubContext).
-  remote = null
+  remote = null,
+  // Repositories chosen for local folders that are no clone of one:
+  // { get(cwd) -> "host/owner/name" | null, set(cwd, spec | null) }
+  // (createChosenRepos).
+  chosen = null
 } = {}) {
   const execute = runner || defaultRunner
   const local = env.LOCALAPPDATA || path.join(home, 'AppData', 'Local')
@@ -512,16 +563,32 @@ export function createGithubService({
       if (!spec) fail('repository', t('main.github.noRepo', 'The current directory has no supported GitHub repository.'))
       return { cwd: home, spec, branch: typeof ctx.branch === 'string' ? ctx.branch : '', remote: true }
     }
-    return { cwd: await cwdInput(cwd) }
+    const dir = await cwdInput(cwd)
+    // A folder with a chosen repository: gh is told which one (--repo), as
+    // for a remote project, and runs in the folder without needing Git there.
+    let spec
+    try {
+      spec = chosen ? chosen.get(dir) : null
+    } catch {
+      spec = null
+    }
+    return spec ? { cwd: dir, spec, chosen: true } : { cwd: dir }
   }
   async function repository(at) {
-    const value = json(
-      await command(
-        executable,
-        ['repo', 'view', ...(at.spec ? [at.spec] : []), '--json', 'nameWithOwner,defaultBranchRef,url'],
-        at.cwd
-      )
+    const result = await command(
+      executable,
+      ['repo', 'view', ...(at.spec ? [at.spec] : []), '--json', 'nameWithOwner,defaultBranchRef,url'],
+      at.cwd,
+      { raw: true }
     )
+    if (result.code !== 0) {
+      // A folder that is no Git clone, or one without a GitHub remote: said
+      // as such, not as a failed request.
+      if (!at.spec && /not a git repository|no git remotes|none of the git remotes/i.test(result.stderr))
+        fail('repository', t('main.github.noRepo', 'The current directory has no supported GitHub repository.'))
+      commandError(result)
+    }
+    const value = json(result)
     const name = value?.nameWithOwner
     const url = httpsUrl(value?.url)
     if (
@@ -772,10 +839,32 @@ export function createGithubService({
               repo: {
                 nameWithOwner: repo.nameWithOwner,
                 defaultBranch: repo.defaultBranch,
-                url: repo.url
+                url: repo.url,
+                ...(at.chosen ? { chosen: true } : {})
               }
             }
           : {})
+      }
+    }),
+    // Names the repository of a local folder that is no clone of it (or,
+    // with an empty repo, forgets the choice). Checked with gh first: only a
+    // repository gh can read is kept.
+    chooseRepo: safe(async ({ cwd, repo = '' }) => {
+      if (!chosen || (remote && typeof cwd === 'string' && remote.isRemote(cwd)))
+        fail('validation', t('main.github.chooseLocal', 'A repository can be chosen only for a local folder.'))
+      const dir = await cwdInput(cwd)
+      if (repo === '' || repo === null) {
+        await chosen.set(dir, null)
+        return { ok: true }
+      }
+      textInput(repo, t('main.github.field.repository', 'repository'), 2048, true)
+      const spec = chosenRepoSpec(repo)
+      if (!spec) fail('validation', t('main.github.invalidChoice', 'Enter a GitHub repository as owner/name or its URL.'))
+      const found = await repository({ cwd: dir, spec })
+      await chosen.set(dir, found.repoArg)
+      return {
+        ok: true,
+        repo: { nameWithOwner: found.nameWithOwner, defaultBranch: found.defaultBranch, url: found.url, chosen: true }
       }
     }),
     list: safe(async ({ cwd, kind, preset = 'all', query = '' }) => {
@@ -892,6 +981,9 @@ export function createGithubService({
       const at = await place(cwd)
       cwd = at.cwd
       const repo = await repository(at)
+      // A folder with a chosen repository has no current branch to offer.
+      if (!head && at.chosen)
+        fail('validation', t('main.github.needHead', 'This folder is not a Git clone: enter the head branch.'))
       if (!head)
         head = branchInput(
           // A remote project: its branch as read on the host.
@@ -1048,6 +1140,8 @@ export function createGithubService({
       const at = await place(cwd)
       // It fetches into a local checkout: none for a project on a host.
       if (at.remote) fail('validation', t('main.github.remoteStartPoint', 'Not available for a project on a remote host.'))
+      if (at.chosen)
+        fail('validation', t('main.github.chosenStartPoint', 'Not available: this folder is not a Git clone of the repository.'))
       cwd = at.cwd
       const repo = await repository(at)
       const item = await prHead(cwd, repo, id)

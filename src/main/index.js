@@ -34,7 +34,7 @@ import { createCodexTurnEnd, allowedCodexHome, TURN_END_CHECK_MS } from './codex
 import { createUsageStatsTracker } from './usageStatsTracker'
 import { copyUsageImage } from './usageClipboard'
 import { registerIssueServices } from './issueServicesIpc'
-import { createGithubService } from './githubService'
+import { createChosenRepos, createGithubService } from './githubService'
 import { createRemoteHosts, registerRemoteHosts, findSshExe } from './remoteHosts'
 import { remoteProjectLaunch, validateRemotePath } from './remoteProject'
 import { createSshRemote } from './ssh/sshRemote'
@@ -2132,12 +2132,16 @@ ipcMain.handle(
 )
 const accountOptions = { userData: app.getPath('userData'), runLogin: createProviderLogin() }
 // A remote project's GitHub form and Create PR: its repository named from
-// its remote's URL, read on the host (remoteFs.js githubContext).
+// its remote's URL, read on the host (remoteFs.js githubContext). A local
+// folder that is no clone of one gets the repository chosen for it.
 registerIssueServices({
   ipcMain,
   dir: join(app.getPath('userData'), 'linear'),
   safeStorage,
-  github: createGithubService({ remote: { isRemote: isRemotePath, context: (root) => remoteFs.githubContext(root) } }),
+  github: createGithubService({
+    remote: { isRemote: isRemotePath, context: (root) => remoteFs.githubContext(root) },
+    chosen: createChosenRepos({ file: join(app.getPath('userData'), 'github-repos.json') })
+  }),
   onPrCreated: (url) => usageStats.prCreated(url)
 })
 // Remote hosts over SSH (remoteHosts.js): Settings > SSH Hosts, the status bar.
