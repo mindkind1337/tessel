@@ -32,7 +32,7 @@ describe('Settings > Backup', { timeout: 30_000 }, () => {
     await w.get('[data-test="backup-export"]').trigger('click')
     await flushPromises()
     expect(saveBeforeBackup).toHaveBeenCalledTimes(1)
-    expect(backup.export).toHaveBeenCalledWith(['settings', 'hosts', 'board', 'trust', 'liveshare'])
+    expect(backup.export).toHaveBeenCalledWith(['settings', 'hosts', 'board', 'liveshare', 'security'])
     expect(w.get('[data-test="backup-export-note"]').text()).toContain('tessel-settings.json')
     expect(w.text()).toMatch(/Sign-ins and saved passwords are not in it/i)
   })
@@ -96,16 +96,16 @@ describe('Settings > Backup', { timeout: 30_000 }, () => {
     expect(restartApp).toHaveBeenCalledTimes(1)
   })
 
-  it('trusted folders are not restored unless ticked: a file from someone else must not decide what agents may do', async () => {
+  it('commands and permissions are not restored unless ticked: a file from someone else must not decide what agents may do', async () => {
     backup.inspect.mockResolvedValueOnce({
       ok: true,
       token: 'tok2',
-      summary: { createdAt: 1_700_000_000_000, appVersion: '1', build: '', categories: [{ id: 'settings', files: [] }, { id: 'trust', files: [] }] }
+      summary: { createdAt: 1_700_000_000_000, appVersion: '1', build: '', categories: [{ id: 'settings', files: [] }, { id: 'security', files: [] }] }
     })
     const w = mountIt({ askConfirm: vi.fn().mockResolvedValue(true) })
     await w.get('[data-test="backup-import"]').trigger('click')
     await flushPromises()
-    expect(w.get('[data-test="backup-import-trust"]').element.checked).toBe(false)
+    expect(w.get('[data-test="backup-import-security"]').element.checked).toBe(false)
     expect(w.get('[data-test="backup-import-settings"]').element.checked).toBe(true)
     await w.get('[data-test="backup-apply"]').trigger('click')
     await flushPromises()

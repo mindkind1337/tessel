@@ -5424,6 +5424,9 @@ ipcMain.handle('devUpdate:restart', (event) => {
   const root = app.getAppPath()
   if (!fs.existsSync(join(root, 'launch.mjs'))) return { ok: false, reason: 'no-launcher' }
   try {
+    // Let go of the instance lock now: the next Tessel (which may apply an import before
+    // reading anything) must not find it held by a process that is only closing.
+    app.releaseSingleInstanceLock()
     const cmd = devRestartCommand({ root, pid: process.pid })
     const child = spawn(cmd.file, cmd.args, cmd.options)
     child.on('error', (err) => log.warn('dev-update', `restart: the new Tessel did not start: ${err.message}`)) // i18n-ignore
@@ -5471,9 +5474,14 @@ ipcMain.handle('backup:inspect', async (event) => {
     })
     if (res.canceled || !res.filePaths.length) return { ok: false, code: 'cancelled' }
     const st = fs.statSync(res.filePaths[0])
-    if (!st.isFile() || st.size > 250 * 1024 * 1024) return { ok: false, code: 'too-big' }
+    if (!st.isFile() || st.size > 150 * 1024 * 1024) return { ok: false, code: 'too-big' }
     const { files, summary } = inspectBackup(fs.readFileSync(res.filePaths[0], 'utf8'))
     backupInspected = { token: crypto.randomUUID(), files }
+    // What was read is not kept for long if nothing is restored.
+    const mine = backupInspected
+    setTimeout(() => {
+      if (backupInspected === mine) backupInspected = null
+    }, 10 * 60 * 1000).unref()
     return { ok: true, token: backupInspected.token, summary }
   } catch (err) {
     backupInspected = null

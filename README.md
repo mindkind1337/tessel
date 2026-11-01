@@ -167,13 +167,15 @@ working on Tessel itself (see [Build from source](#build-from-source)).
   (main process changed) or run `npm install` (packages changed). An installed Tessel
   keeps its own updater: it downloads each release and asks you to restart.
 - **Export and import of your settings** (Settings → General → Backup): one file
-  with your settings, projects and their layout, SSH hosts and their known keys, the
-  task board, the folders you trusted, Live Share's settings and trusted guests, and
-  the activity history; you choose the parts. Sign-ins (Claude, Codex…), saved
-  passwords, cookies and keys are never in it: you sign in again. An import is checked,
-  then put in place when Tessel starts again (the replaced files are kept in
-  `import-backups`), so it can bring back a deleted data folder or move your setup
-  to another computer.
+  with your settings, projects and their layout, SSH hosts, the task board, Live
+  Share's settings and the activity history; you choose the parts. Sign-ins (Claude,
+  Codex…), saved passwords, cookies, keys and agents' environment variables are never
+  in it: you sign in again. What decides what agents may do (agent commands and rules,
+  Yolo, SSH proxy commands and host keys, trusted guests and folders) is a separate
+  part, restored only if you tick it: otherwise those settings stay as they are on
+  this computer. An import is checked, then put in place when Tessel starts again
+  (the replaced files are kept in `import-backups`), so it can bring back a deleted
+  data folder or move your setup to another computer.
 - **A development Tessel no longer restarts by itself** when the code of its background
   part changes (`src/main`, `src/preload`, `launch.mjs`): that cut sessions every time an
   agent merged into the folder. The window still reloads by itself for the

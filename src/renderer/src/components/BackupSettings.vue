@@ -11,15 +11,15 @@ const saveBeforeBackup = inject('saveBeforeBackup', null)
 const restartApp = inject('restartApp', null)
 const isDev = !!window.shellApi.isDev
 
-const CATEGORY_IDS = ['settings', 'hosts', 'board', 'trust', 'liveshare', 'activity']
+const CATEGORY_IDS = ['settings', 'hosts', 'board', 'liveshare', 'activity', 'security']
 const label = (id) =>
   ({
     settings: t('settings.backup.cat.settings', 'Settings, projects and their layout'),
     hosts: t('settings.backup.cat.hosts', 'SSH hosts and their known keys'),
     board: t('settings.backup.cat.board', 'Task board'),
-    trust: t('settings.backup.cat.trust', 'Folders you trusted'),
-    liveshare: t('settings.backup.cat.liveshare', 'Live Share settings and trusted guests'),
-    activity: t('settings.backup.cat.activity', 'Activity history')
+    liveshare: t('settings.backup.cat.liveshare', 'Live Share settings'),
+    activity: t('settings.backup.cat.activity', 'Activity history'),
+    security: t('settings.backup.cat.security', 'Commands and permissions: agent commands and rules, Yolo, SSH proxy commands and host keys, trusted guests and folders')
   })[id] || id
 
 const exportChoice = ref(Object.fromEntries(CATEGORY_IDS.map((id) => [id, true])))
@@ -85,9 +85,9 @@ async function pick() {
     const r = await window.shellApi.backup.inspect()
     if (r && r.ok) {
       inspected.value = { token: r.token, summary: r.summary }
-      // What the user trusted (folders agents may run in) is only restored if they tick it: a file
-      // from someone else could otherwise decide what their agents may do.
-      importChoice.value = Object.fromEntries(r.summary.categories.map((c) => [c.id, c.id !== 'trust']))
+      // What decides what agents may do is only restored if the user ticks it: a file from
+      // someone else must not decide that. Without it, those settings stay as they are here.
+      importChoice.value = Object.fromEntries(r.summary.categories.map((c) => [c.id, c.id !== 'security']))
     } else if (r && r.code !== 'cancelled') {
       inspected.value = null
       importFailed.value = why(r.code)
@@ -108,7 +108,7 @@ async function apply() {
   }
   const question = {
     title: t('settings.backup.confirmTitle', 'Restore these settings?'),
-    text: t('settings.backup.confirmText', 'They replace the current ones when Tessel starts again. Only restore a file you made yourself: settings and trusted folders decide what your agents may do. The files they replace are kept in the import-backups folder of Tessel’s data folder.'),
+    text: t('settings.backup.confirmText', 'They replace the current ones when Tessel starts again, and terminals that are not in the restored layout are closed. Only restore a file you made yourself. The files they replace are kept in the import-backups folder of Tessel’s data folder.'),
     confirmLabel: t('settings.backup.confirmApply', 'Restore'),
     danger: true
   }
@@ -143,7 +143,7 @@ async function restartNow() {
   <div class="set-group" data-group="backup" data-test="backup-settings">
     <h3 class="set-group-title">{{ t('settings.backup.title', 'Backup') }}</h3>
     <p class="set-group-desc">
-      {{ t('settings.backup.intro', 'Save your settings in one file, and restore them if Tessel’s data folder is deleted or on another computer. Sign-ins (Claude, Codex…), saved passwords and keys are never exported: you sign in again.') }}
+      {{ t('settings.backup.intro', 'Save your settings in one file, and restore them if Tessel’s data folder is deleted or on another computer. Sign-ins (Claude, Codex…), saved passwords, keys and agents’ environment variables are never exported: you sign in again. Commands and URLs are saved as you wrote them, so keep secrets out of them.') }}
     </p>
     <div class="set-card">
       <div class="set-row set-foot">
