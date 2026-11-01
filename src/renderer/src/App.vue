@@ -14954,6 +14954,7 @@ onBeforeUnmount(() => {
           @focus-pane="focusPane"
           @review="openReview"
           @sleep="sleepPanes"
+          @close-pane="(id) => closeLeaf(id)"
           @page-drag="beginSidePageDrag"
         />
       </aside>

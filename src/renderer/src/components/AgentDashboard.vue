@@ -4,12 +4,14 @@
 // a thin bar coloured by state, a Status / Project grouping, filter chips, a
 // search box, and "Sleep idle" (Tessel's sleep: the conversation is kept,
 // opening the pane wakes it). Each agent is a small card; a click brings its
-// pane to the front (its project and worktree view too).
+// pane to the front (its project and worktree view too), a right-click opens
+// its menu (go to its pane, sleep or wake it, close it).
 // The rows come from the left sidebar's own data (App's sidebarProjects,
 // sidebarModel.js paneRow), so both always agree.
-import { computed, inject } from 'vue'
-import { Search, X, Moon } from 'lucide-vue-next'
+import { computed, inject, ref } from 'vue'
+import { Search, X, Moon, Sun, SquareTerminal } from 'lucide-vue-next'
 import BrandIcon from './BrandIcon.vue'
+import OrcaMenu from './OrcaMenu.vue'
 import AgentStateDot from './sidebar/AgentStateDot.vue'
 import { isAgentPane, paneRow } from '../sidebarModel'
 import { buildDashboard, dashboardBucket, DASHBOARD_STATES, dashboardView } from '../agentDashboard'
@@ -27,9 +29,32 @@ const props = defineProps({
   // listed yet, and the tab says it is loading, not "No agents yet".
   ready: { type: Boolean, default: true }
 })
-const emit = defineEmits(['focus-pane', 'sleep'])
+const emit = defineEmits(['focus-pane', 'sleep', 'close-pane'])
 
 const askConfirm = inject('askConfirm', null)
+
+// A card's right-click menu, where it was clicked.
+const menu = ref(null) // { anchor, label, items }
+function openCardMenu(r, e) {
+  const items = [
+    { type: 'label', label: cardTitle(r) },
+    { type: 'item', icon: SquareTerminal, label: t('sidebar.row.goToPane', 'Go to Pane'), onSelect: () => emit('focus-pane', r.id) },
+    { type: 'separator' }
+  ]
+  // Opening its pane is what wakes it. A chat agent has no terminal to stop.
+  if (r.sleeping) items.push({ type: 'item', icon: Sun, label: t('pane.sleep.wake', 'Wake it'), onSelect: () => emit('focus-pane', r.id) })
+  else if (!r.chat)
+    items.push({
+      type: 'item',
+      icon: Moon,
+      label: t('sidebar.card.sleep', 'Sleep'),
+      title: t('sidebar.row.sleepHint', 'Stop its terminal to free memory; opening the pane resumes the conversation.'),
+      onSelect: () => emit('sleep', [r.id])
+    })
+  // Closed as its pane's own close button does (asked first, Settings > General).
+  items.push({ type: 'item', icon: X, label: t('agentDashboard.card.close', 'Close'), danger: true, onSelect: () => emit('close-pane', r.id) })
+  menu.value = { anchor: { x: e.clientX, y: e.clientY }, label: cardTitle(r), items }
+}
 
 // Grouping, filter and search: kept while Tessel runs (the tab is created
 // again when the panel reopens).
@@ -277,6 +302,7 @@ async function sleepIdle() {
             data-test="adb-card"
             :data-pane-id="r.id"
             @click="emit('focus-pane', r.id)"
+            @contextmenu.prevent="openCardMenu(r, $event)"
           >
             <span class="adb-card-icon">
               <span
@@ -299,5 +325,14 @@ async function sleepIdle() {
         </div>
       </section>
     </div>
+    <OrcaMenu
+      :open="!!menu"
+      :anchor="menu && menu.anchor"
+      :offset="0"
+      :width="224"
+      :items="menu ? menu.items : []"
+      :label="menu ? menu.label : ''"
+      @close="menu = null"
+    />
   </div>
 </template>

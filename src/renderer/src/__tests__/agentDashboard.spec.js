@@ -183,6 +183,32 @@ describe('AgentDashboard.vue', () => {
     expect(w.emitted('sleep')).toEqual([[['4']]])
   })
 
+  it('a right-click on a card: go to its pane, sleep it (or wake it when asleep), close it', async () => {
+    const w = make({ attachTo: document.body })
+    const card = (id) => w.findAll('[data-test="adb-card"]').find((c) => c.attributes('data-pane-id') === id)
+    const items = () => [...document.body.querySelectorAll('.orca-menu-item')]
+    const labels = () => items().map((b) => b.textContent.trim())
+    await card('4').trigger('contextmenu', { clientX: 10, clientY: 20 })
+    expect(labels()).toEqual(['Go to Pane', 'Sleep', 'Close'])
+    items()[1].click()
+    await nextTick()
+    expect(w.emitted('sleep')).toEqual([[['4']]])
+    await card('4').trigger('contextmenu')
+    items()[2].click()
+    await nextTick()
+    expect(w.emitted('close-pane')).toEqual([['4']])
+    // Asleep: Wake it (opening its pane is what wakes it).
+    await card('6').trigger('contextmenu')
+    expect(labels()).toEqual(['Go to Pane', 'Wake it', 'Close'])
+    items()[1].click()
+    await nextTick()
+    expect(w.emitted('focus-pane')).toEqual([['6']])
+    // A chat agent has no terminal to stop: no Sleep.
+    await card('c').trigger('contextmenu')
+    expect(labels()).toEqual(['Go to Pane', 'Close'])
+    w.unmount()
+  })
+
   it("a card in a team shows the team's number on its icon, the lead's marked", () => {
     const list = projects()
     const agents = list[0].panes.filter((p) => p.kind === 'agent' || p.kind === 'chat')
