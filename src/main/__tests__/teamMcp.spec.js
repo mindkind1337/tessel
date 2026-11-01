@@ -91,6 +91,25 @@ describe('Tessel team tools (background messages)', () => {
     expect(mcp.readInbox(as(B))).toMatch(/two/)
   })
 
+  it('a project on a drive without hard links (RaiDrive: ENOTSUP) still shows a message once and marks it read', () => {
+    mcp.send(as(A), '#4', 'over sftp')
+    pollTeamChannel({ dir, teamId })
+    const realLink = fs.linkSync
+    fs.linkSync = (...a) => {
+      if (String(a[1]).includes('acks')) throw Object.assign(new Error('operation not supported on socket'), { code: 'ENOTSUP' })
+      return realLink(...a)
+    }
+    try {
+      expect(mcp.readInbox(as(B))).toMatch(/over sftp/)
+      expect(mcp.readInbox(as(B))).toBe('')
+    } finally {
+      fs.linkSync = realLink
+    }
+    const acks = fs.readdirSync(join(dir, '.tessel', 'team-channel', teamId, 'acks'))
+    expect(acks.filter((n) => n.endsWith('.json'))).toHaveLength(1)
+    expect(acks.filter((n) => n.endsWith('.tmp'))).toEqual([])
+  })
+
   it('refuses a message that is too long instead of cutting it', () => {
     const r = mcp.send(as(A), '#4', 'x'.repeat(6000) + ' DO NOT MERGE')
     expect(r.error).toMatch(/too long/)
