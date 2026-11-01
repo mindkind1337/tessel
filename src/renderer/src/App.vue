@@ -132,7 +132,7 @@ import { setCommitRoots } from './links/commitLinks'
 import { automationsState, applySnapshot as applyAutomations, subscribeAutomations } from './automationsStore'
 import { trackAgent } from '../../shared/tracking'
 import { pasteAndConfirm, turnStarting } from './deliver'
-import { createTeamDelivery, RELAY_POINTER } from './teamDelivery'
+import { createTeamDelivery, relayPointerText } from './teamDelivery'
 import { dropBuffer, exitOf, seedBuffer } from './ptyStore'
 import { prefetchAttaches, terminalLeafIds } from './restoreAttach'
 import { afterStartup, startupBegins, startupFinished } from './startupIdle'
@@ -7838,7 +7838,7 @@ onBeforeUnmount(() => teamPointer.dispose())
 // Messages from agents of other projects (src/main/agentRelay.js): the same
 // pointer rules, its own text. A solo agent has no team poll to wake it: the
 // waiting ones are tried every few seconds.
-const relayUnread = Object.create(null) // leafId -> { count, ids }
+const relayUnread = Object.create(null) // leafId -> { count, ids, senders }
 const relayChatPointed = Object.create(null) // chat leafId -> Set of message ids it was told about
 const relayPointer = createTeamDelivery({
   now: () => Date.now(),
@@ -7872,11 +7872,11 @@ const relayPointer = createTeamDelivery({
   log: (level, text) => {
     if (window.shellApi.log) window.shellApi.log(level, `relay delivery: ${text}`)
   },
-  pointerText: () => RELAY_POINTER
+  pointerText: (id) => relayPointerText(relayUnread[id]?.senders, relayUnread[id]?.count)
 })
 function onRelayUnread(ev) {
   if (!ev || typeof ev.paneId !== 'string') return
-  if (ev.count > 0) relayUnread[ev.paneId] = { count: ev.count, ids: Array.isArray(ev.ids) ? ev.ids : null }
+  if (ev.count > 0) relayUnread[ev.paneId] = { count: ev.count, ids: Array.isArray(ev.ids) ? ev.ids : null, senders: ev.senders }
   else delete relayUnread[ev.paneId]
   // What the agents say to each other stays in sight of the user (the activity
   // log), never of a Live Share guest (scope 'relay': projectActivity skips it).
@@ -7902,7 +7902,7 @@ function pointRelayChat(id) {
   const seen = relayChatPointed[id] || (relayChatPointed[id] = new Set())
   const ids = u.ids || []
   if (!ids.some((m) => !seen.has(m))) return
-  Promise.resolve(api.sendTeam({ paneId: id, messages: [{ id: newId('msg'), from: 'Tessel', text: RELAY_POINTER }] }))
+  Promise.resolve(api.sendTeam({ paneId: id, messages: [{ id: newId('msg'), from: 'Tessel', text: relayPointerText(u.senders, u.count) }] }))
     .then((r) => {
       if (r && r.ok !== false) for (const m of ids) seen.add(m)
     })

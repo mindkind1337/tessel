@@ -47,13 +47,34 @@ export const POINTER = {
 // (Codex's "switch to a smaller model? 1. Yes 2. No"), a "1" answered it.
 // The same for messages relayed from other projects (agentRelay.js).
 export const RELAY_POINTER = '[Tessel] You have new messages from other projects: read them with project_inbox.' // i18n-ignore
+// It says who wrote. This is typed into an agent's input box as Tessel's own words, so a name
+// or a project goes in as plain words only, short, with no digit, for the reason above.
+const pointerWords = (text) =>
+  String(text || '')
+    .replace(/[^\p{L}\p{M} ._-]/gu, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 32)
+    .trim()
+export function relayPointerText(senders, count = 1) {
+  const who = (Array.isArray(senders) ? senders : [])
+    .map((s) => {
+      const name = pointerWords(s && s.name)
+      const project = pointerWords(s && s.project)
+      return name && project ? `${name} (project ${project})` : name
+    })
+    .filter(Boolean)
+  if (!who.length) return RELAY_POINTER
+  const from = who.length > 2 ? `${who.slice(0, 2).join(', ')} and others` : who.join(' and ')
+  return count > 1 ? `[Tessel] New messages from ${from}: read them with project_inbox.` : `[Tessel] New message from ${from}: read it with project_inbox.` // i18n-ignore
+}
 export function pointerText() {
   return '[Tessel] You have new team messages: read them with team_inbox.' // i18n-ignore
 }
 
 // The pointer, whitespace removed (a TUI wraps its input box itself, with
 // its own indentation, so the words can be cut anywhere on screen).
-const POINTER_SQUASHED = /\[Tessel\]Youhave(?:\d+)?new(?:team)?messages?(?:fromotherprojects)?:read(?:it|them)with(?:team|project)_inbox\./
+const POINTER_SQUASHED = /\[Tessel\](?:Youhave(?:\d+)?new(?:team)?messages?(?:fromotherprojects)?|Newmessages?from.{1,160}?):read(?:it|them)with(?:team|project)_inbox\./
 
 // A pointer is still typed in the agent's input box (not sent). The screen
 // cannot always tell the input box from the transcript: an input line shown
@@ -195,7 +216,7 @@ export function createTeamDelivery(deps) {
     // A pointer from before is still in the input box (its Enter was
     // lost): Enter only, never a second pointer on top of it.
     const typed = s.outstanding && pointerStillTyped(pane, deps.inputEmpty ? deps.inputEmpty(id) : null)
-    if (!typed) pane.paste(deps.pointerText ? deps.pointerText() : pointerText(mail.count))
+    if (!typed) pane.paste(deps.pointerText ? deps.pointerText(id) : pointerText(mail.count))
     // The watermark moves as soon as something is in the terminal.
     for (const m of mail.ids || []) s.pointed.add(m)
     s.pointedCount = mail.count
