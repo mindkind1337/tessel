@@ -14003,11 +14003,3 @@ body:has(.settings-page) > .orca-menu {
   box-shadow: 0 2px 10px rgba(0, 0, 0, 0.35);
 }
 
-/* The build's sub id beside the version (App.vue): quieter than the version. */
-.brand-build {
-  margin-left: 4px;
-  font-size: 11px;
-  color: var(--text-dim);
-  opacity: 0.8;
-  font-variant-numeric: tabular-nums;
-}

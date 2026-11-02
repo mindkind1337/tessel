@@ -17,12 +17,12 @@ Every push that adds, changes or removes something a user can see updates
 `version` in `package.json` belongs to releases. Do not change it for a normal
 fix or feature: only change it when the user asks for a release.
 
-Tessel's header shows a build number beside the version, like `1.17.2 b1692`,
+Tessel's header shows a build number after the version, like `1.17.2.1692`,
 which comes from git and goes up by itself with every commit. After each push,
 give the user the build so they know which code is running:
 
 ```sh
-git rev-list --count HEAD      # the number after the "b"
+git rev-list --count HEAD      # the number after the version
 git rev-parse --short=7 HEAD   # the commit
 ```
 

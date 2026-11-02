@@ -501,10 +501,10 @@ reopens the app; each pane comes back where it was and agents resume their
 conversations. Nothing installs until you click. Programs running in the
 terminals do stop.
 
-**Version and build**: the header shows the release version and a build number
-beside it, like `1.17.2 b1692`. The version only changes with a release; the
-build (`b` + the repository's number of commits, the commit on hover) goes up with
-every push to GitHub, so you can tell which code is running.
+**Version and build**: the header shows the release version followed by a build
+number, like `1.17.2.1692`. The version only changes with a release; the build
+(the repository's number of commits, the commit on hover) goes up with every push
+to GitHub, so you can tell which code is running.
 
 ## Build from source
 

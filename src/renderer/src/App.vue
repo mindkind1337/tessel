@@ -14734,10 +14734,8 @@ onBeforeUnmount(() => {
             <rect x="16.5" y="16" width="5.5" height="5.5" rx="1.2" fill="#e6e6e6" />
           </svg>
           <span class="brand-name">Tessel</span>
-          <!-- The version running (the updater's status: app.getVersion()). -->
-          <span v-if="updateStatus.current" class="brand-version" :title="t('app.toolbar.version', 'Tessel version {{version}}', { version: updateStatus.current })" data-test="brand-version">{{ updateStatus.current }}</span>
-          <!-- The build's sub id: b<commits of the repository> (the commit): it goes up with every push, the version stays the release's. -->
-          <span v-if="build" class="brand-build" :title="t('app.toolbar.build', 'Build {{build}} (commit {{hash}}): goes up with every push to GitHub; the version stays the release’s', { build: build.count, hash: build.hash })" data-test="brand-build">b{{ build.count }}</span>
+          <!-- The version running (the updater's status: app.getVersion()), then the build's number, the commits of the repository: 1.17.2.1692. It goes up with every push, the version stays the release's. -->
+          <span v-if="updateStatus.current || build" class="brand-version" :title="build ? t('app.toolbar.build', 'Build {{build}} (commit {{hash}}): goes up with every push to GitHub; the version stays the release’s', { build: build.count, hash: build.hash }) : t('app.toolbar.version', 'Tessel version {{version}}', { version: updateStatus.current })" data-test="brand-version">{{ [updateStatus.current, build && build.count].filter(Boolean).join('.') }}</span>
           <span v-if="isDev" class="brand-dev" :title="t('app.toolbar.devBuild', 'Development build (npm run dev)')">{{ t('app.toolbar.dev', 'dev') }}</span>
           <button
             v-if="isDev && devRestart.needed"

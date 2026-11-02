@@ -83,9 +83,9 @@ describe('the one a running Tessel gives', () => {
 
 describe('it is shown and sent', () => {
   const read = (...p) => fs.readFileSync(path.join(__dirname, '..', '..', ...p), 'utf8')
-  it('beside the version in the header, from the main process, baked into an installed build; the release version is untouched', () => {
+  it('after the version in the header (1.17.2.1692), from the main process, baked into an installed build; the release version is untouched', () => {
     const app = read('renderer', 'src', 'App.vue')
-    expect(app).toContain('data-test="brand-build"')
+    expect(app).toContain("[updateStatus.current, build && build.count].filter(Boolean).join('.')")
     expect(app).toContain("window.addEventListener('focus', readBuild)")
     expect(read('preload', 'index.js')).toContain("build: () => ipcRenderer.invoke('app:build')")
     const main = read('main', 'index.js')
