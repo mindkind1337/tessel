@@ -312,6 +312,7 @@ describe('a restored layout', () => {
     const ctx = {
       workspaces,
       settings,
+      restoreHeld: false,
       makeWorkspace: (name) => reactive({ id: 'ws-new', name, tree: null, activeId: null, cwd: null, remote: null, group: null }),
       nextWorkspaceName: () => 'Workspace',
       savedRemote: (r) => (r ? { ...r } : null),

@@ -96,6 +96,7 @@ function makeWindow({ running = [], settings = {}, layout = null, held = false }
     resumeArgs,
     resumeLine,
     sleepsAtStart,
+    connectorsOffWords: async () => '',
     RESUMABLE: ['claude', 'openclaude', 'codex', 'gemini', 'qwen', ...OWN_ID_AGENTS],
     FOUND_AFTER_START: ['codex', ...FOUND_IN_FILES],
     savedOutput: {},
