@@ -295,7 +295,7 @@ describe('an agent on a host restarted in place', () => {
       Date
     }
     vm.createContext(ctx)
-    vm.runInContext(slice('async function restartInPlaceNow(leafId, opts) {', '\n// --- Chat <-> terminal') + '\nthis.restartInPlaceNow = restartInPlaceNow', ctx)
+    vm.runInContext(slice('const heldFirstStart =', '// This start follows a layout from elsewhere') + slice('async function restartInPlaceNow(leafId, opts) {', '\n// --- Chat <-> terminal') + '\nthis.restartInPlaceNow = restartInPlaceNow', ctx)
     expect(await ctx.restartInPlaceNow('pane-a', { resume: true })).toBe(true)
     expect(ctx.createLeaf.mock.calls[0][4]).toMatchObject({ id: 'pane-a', sessionId: SESSION, resume: true, remoteHostId: HOST, remotePath: '/srv/app' })
   })

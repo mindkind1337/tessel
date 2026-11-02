@@ -213,7 +213,8 @@ working on Tessel itself (see [Build from source](#build-from-source)).
   that is out of shape in any way is refused whole. Nothing starts by itself on the
   computer that gets a copy: an agent or a terminal waits until you click Wake it and a
   chat until you write to it, and that first start asks before acting, whatever a Yolo
-  setting says, so you choose Yolo from its menu if you want it. Only a terminal that was
+  setting or your own arguments for that agent say, so you choose Yolo from its menu if you
+  want it. Only a terminal that was
   already running here carries on as it is. An agent whose folder or program is not on
   this computer comes back as a plain terminal in your home folder, and that stays
   between you and this computer: the other computers keep their agent. Agents ask before

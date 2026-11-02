@@ -1624,10 +1624,12 @@ async function createLeaf(shellId, agent = null, cwd = null, worktree = null, op
   // terminal): that mode, unless your own arguments set one.
   const permissionMode = agent && agent.id === 'claude' && permissions === 'manual' && MANUAL_CLAUDE_MODES.includes(opts.permissionMode) ? opts.permissionMode : null
   // What it runs with, flags included (for the signature and the header).
-  const launchAll = agent ? effectiveAgent(agent, settings.agentPrefs, permissions, sessionValues, agentModels) : null
-  const launch = workerChoice ? effectiveAgent(agent, settings.agentPrefs, permissions, null, agentModels) : launchAll
+  // The first start of a pane from elsewhere: no Yolo flag, your own arguments included.
+  const firstStart = { firstStart: opts.firstStart === true }
+  const launchAll = agent ? effectiveAgent(agent, settings.agentPrefs, permissions, sessionValues, agentModels, firstStart) : null
+  const launch = workerChoice ? effectiveAgent(agent, settings.agentPrefs, permissions, null, agentModels, firstStart) : launchAll
   // The model flags really added (none when your own arguments set them).
-  const modelApplied = !!(launchAll && sessionValues && launchAll.args !== effectiveAgent(agent, settings.agentPrefs, permissions).args)
+  const modelApplied = !!(launchAll && sessionValues && launchAll.args !== effectiveAgent(agent, settings.agentPrefs, permissions, null, null, firstStart).args)
   const extraEnv = launch ? { ...launch.env } : {}
   let unsetEnv = []
   // The account's own variables go separately, so they are never crowded out
@@ -2431,8 +2433,9 @@ async function deserializeNode(snap, cwd = null, attaching = null, startAsleep =
 // The first start of a pane held since a layout came from elsewhere asks first, whatever its pin,
 // Settings or a Yolo folder say: what it is, and where, may not be what those were decided for. The
 // person chooses Yolo from its menu if they want it (restartWithPermissions).
+const heldFirstStart = (leaf) => !!leaf && (leaf.held === true || (!!leaf.sleeping && leaf.sleeping.held === true))
 function firstStartPermissions(leaf) {
-  return leaf.sleeping && leaf.sleeping.held === true ? 'manual' : leaf.permissions
+  return heldFirstStart(leaf) ? 'manual' : leaf.permissions
 }
 // This start follows a layout from elsewhere (restoreOrSeedLayout asks main): see deserializeNode.
 let restoreHeld = false
@@ -10170,7 +10173,8 @@ async function restartInPlaceNow(leafId, opts) {
     hostAccount: 'hostAccount' in opts ? opts.hostAccount : old.hostAccount,
     sessionOptions: old.sessionOptions,
     permissions: firstStartPermissions(old),
-    permissionMode: old.sleeping && old.sleeping.held === true ? undefined : old.permissionMode,
+    permissionMode: heldFirstStart(old) ? undefined : old.permissionMode,
+    firstStart: heldFirstStart(old),
     resume: !!old.sessionId && opts.resume !== false,
     // On its SSH host again (its conversation is there), in its folder.
     ...(old.remoteHostId ? { remoteHostId: old.remoteHostId } : {}),
@@ -10319,11 +10323,12 @@ async function switchToTerminal(leafId) {
       ...(sessionOptions ? { sessionOptions } : {}),
       // The terminal follows Settings (Yolo, Yolo folders) like a new one;
       // a chat known to ask first, or a worker capped by its coordinator,
-      // keeps asking first.
-      ...(old.chatPermissions === 'manual' || old.maxPermissions === 'manual' ? { permissions: 'manual' } : {}),
+      // keeps asking first, and so does the first start of a chat from elsewhere.
+      ...(old.chatPermissions === 'manual' || old.maxPermissions === 'manual' || heldFirstStart(old) ? { permissions: 'manual' } : {}),
+      ...(heldFirstStart(old) ? { firstStart: true } : {}),
       // Claude Code: the chat's own mode (Ask, Accept edits, Plan), never
       // its default for new sessions (which may be auto).
-      ...(old.agentId === 'claude' ? { permissionMode: old.chatPermissionMode || 'default' } : {}),
+      ...(old.agentId === 'claude' ? { permissionMode: heldFirstStart(old) ? 'default' : old.chatPermissionMode || 'default' } : {}),
       resume: true,
       wake: { teamId: old.team || null, gen: 1 }
     })
@@ -10421,9 +10426,9 @@ async function switchToChat(leafId) {
     if (choice && choice.model) leaf.model = choice.model
     if (choice && typeof choice.effort === 'string') leaf.effort = choice.effort
     // The chat follows Settings (Yolo, Yolo folders) like any new chat, as
-    // a restart does; only a pane you set to ask first, or a worker capped
-    // by its coordinator, keeps asking.
-    if (old.permissions === 'manual' || old.maxPermissions === 'manual') leaf.maxPermissions = 'manual'
+    // a restart does; only a pane you set to ask first, a worker capped by
+    // its coordinator, or the first start of a pane from elsewhere, keeps asking.
+    if (old.permissions === 'manual' || old.maxPermissions === 'manual' || heldFirstStart(old)) leaf.maxPermissions = 'manual'
     // A worker stays one (its cap is kept across a Tessel restart only for a worker).
     if (old.worker) leaf.worker = true
     now.tree = replaceNode(now.tree, leafId, () => leaf)

@@ -1145,7 +1145,8 @@
           "weakPhrase": "Cette phrase est trop facile à deviner : le serveur détient de quoi essayer des suppositions. Utilisez plusieurs mots sans lien entre eux, ou laissez Tessel en suggérer une.",
           "refusedCopy": "Cette copie contient des éléments que Tessel n'accepte pas dans une copie : elle a été refusée en entier. Rien n'a changé ici.",
           "unreadableFile": "Un fichier de votre configuration ne peut pas être lu, donc rien n'a été envoyé : {{files}}.",
-          "tooManyPanes": "Votre configuration a plus de panneaux, de projets ou de cartes qu'une copie ne peut en contenir. Rien n'a été envoyé."
+          "tooManyPanes": "Votre configuration a plus de panneaux, de projets ou de cartes qu'une copie ne peut en contenir. Rien n'a été envoyé.",
+          "numberFull": "La numérotation de cette copie a atteint sa limite, ce que seule une copie trafiquée peut faire : rien n'a été envoyé. Désactivez la synchronisation, puis recommencez avec une nouvelle phrase."
         },
         "first": "Une copie de {{device}}, enregistrée {{date}}, est sur le serveur. Utilisez-la ici, ou gardez la configuration de cet ordinateur, qui la remplace.",
         "keepButton": "Garder celle de cet ordinateur",

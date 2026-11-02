@@ -144,7 +144,7 @@ async function computer(server, { name = 'DESKTOP-1', safeStorage = sealing, use
   const dir = join(dataDir, 'tessel-account')
   mkdirSync(dir, { recursive: true })
   const opened = []
-  const account = createTesselAccount({ dir, safeStorage, openExternal: async (url) => opened.push(url), scheme: 'tessel', fetchFn: server.fetch, apiUrl: API, accountUrl: 'https://account.test', onDeleted: () => me.sync.accountDeleted(), onSignedOut: () => me.sync.signedOut() })
+  const account = createTesselAccount({ dir, safeStorage, openExternal: async (url) => opened.push(url), scheme: 'tessel', fetchFn: server.fetch, apiUrl: API, accountUrl: 'https://account.test', onDeleted: (id) => me.sync.accountDeleted(id), onSignedOut: () => me.sync.signedOut() })
   const clock = { now: 1_800_000_000_000 }
   const changed = []
   const newer = []
@@ -2102,6 +2102,115 @@ describe('second review', () => {
       expect(existsSync(join(a.dir, 'sync-floor.json'))).toBe(false)
     })
 
+    it('N5: one number per account: another account turning off here leaves this one\'s', async () => {
+      const server = fakeServer()
+      put(server, await sealed({ seq: 50, version: 50 }))
+      const a = await computer(server)
+      await on(a)
+      await a.sync.turnOff()
+      await a.account.signOut()
+      await a.signIn(OTHER_USER)
+      const otherRow = { ...server.row }
+      server.row = null
+      await on(a)
+      expect(stateOf(a).highWater).toBe(1)
+      await a.sync.turnOff()
+      expect(JSON.parse(readFileSync(join(a.dir, 'sync-floor.json'), 'utf8'))).toEqual({ [USER.id]: 50, [OTHER_USER.id]: 1 })
+      await a.account.signOut()
+      await a.signIn(USER)
+      server.row = otherRow
+      put(server, await sealed({ name: 'Old', seq: 3, version: 51 }))
+      expect((await on(a)).remote.older).toBe(true)
+      expect(stateOf(a).highWater).toBe(50)
+    })
+
+    it('N5: deleting an account takes only its number, also when it was already turned off', async () => {
+      const server = fakeServer()
+      const a = await computer(server)
+      await on(a)
+      await a.sync.turnOff()
+      await a.account.signOut()
+      await a.signIn(OTHER_USER)
+      server.row = null
+      await on(a)
+      await a.sync.turnOff()
+      await a.account.deleteAccount()
+      expect(JSON.parse(readFileSync(join(a.dir, 'sync-floor.json'), 'utf8'))).toEqual({ [USER.id]: 1 })
+    })
+
+    describe('N5: a new phrase the person went on with', () => {
+      // B starts over on a fresh computer: its numbers start low. A knows much higher ones.
+      const startedOver = async () => {
+        const server = fakeServer()
+        put(server, await sealed({ seq: 50, version: 50 }))
+        const a = await computer(server)
+        await on(a)
+        await a.sync.apply()
+        applyPendingImport({ dir: a.dataDir })
+        a.sync.start({ applied: true })
+        a.sync.close()
+        const b = await computer(server, { name: 'LAPTOP-2' })
+        await b.sync.startOver('a brand new phrase for all')
+        return { server, a, b }
+      }
+      const change = async (c, size) => {
+        edit(c, (d) => {
+          d.settings.fontSize = size
+        })
+        await c.sync.syncNow()
+      }
+
+      it('it can only be told once: the question says older, the person goes on, and later copies of that phrase are not called older', async () => {
+        const { server, a, b } = await startedOver()
+        const first = await on(a, 'a brand new phrase for all')
+        expect(first.remote.older).toBe(true)
+        await a.sync.apply()
+        applyPendingImport({ dir: a.dataDir })
+        a.sync.start({ applied: true })
+        expect(stateOf(a).era).toEqual({ salt: server.row.salt, seq: 1 })
+        expect(stateOf(a).highWater).toBe(50)
+        for (const size of [20, 21, 22]) {
+          await change(b, size)
+          expect((await a.sync.status({ check: true })).remote.older).toBe(false)
+        }
+      })
+
+      it('within that run, an older copy is still older', async () => {
+        const { server, a, b } = await startedOver()
+        await on(a, 'a brand new phrase for all')
+        await a.sync.apply()
+        applyPendingImport({ dir: a.dataDir })
+        a.sync.start({ applied: true })
+        await change(b, 23)
+        const old = { ...server.row }
+        await change(b, 24)
+        expect((await a.sync.status({ check: true })).remote.older).toBe(false)
+        server.row = old
+        expect((await a.sync.status({ check: true })).remote.older).toBe(true)
+      })
+
+      it('the old phrase\'s era coming back is older, whatever was accepted since', async () => {
+        const { server, a } = await startedOver()
+        await on(a, 'a brand new phrase for all')
+        await a.sync.apply()
+        applyPendingImport({ dir: a.dataDir })
+        a.sync.start({ applied: true })
+        put(server, await sealed({ name: 'Old era', seq: 7, version: 900, salt: OTHER_SALT }))
+        expect((await a.sync.status({ check: true })).remote.saltChanged).toBe(true)
+        expect((await on(a)).remote.older).toBe(true)
+      })
+
+      it('going on with this computer\'s own: its number is above everything, and that counts again', async () => {
+        const { server, a, b } = await startedOver()
+        await on(a, 'a brand new phrase for all')
+        await a.sync.keepMine()
+        expect(stateOf(a)).toMatchObject({ highWater: 51, era: null })
+        expect((await openCopy({ blob: server.row.blob, key: keyOf(a), userId: USER.id })).seq).toBe(51)
+        await b.sync.status({ check: true })
+        expect((await b.sync.status()).remote.older).toBe(false)
+      })
+    })
+
     it('Look at the copy says older, as any other question does, and remembers the highest', async () => {
       const server = fakeServer()
       const a = await computer(server, { setup: { settings: layout({ workspaces: [{ id: 'ws-a', name: 'A', cwd: null, tree: null }] }) } })
@@ -2266,9 +2375,11 @@ describe('second review', () => {
     it('a sealed number beyond any real one cannot be opened; the limit itself can', async () => {
       const key = Buffer.alloc(32, 7)
       const blobOf = (seq) => sealCopy({ bundle: bundleOf('x'), key, userId: 'u', seq })
-      await expect(openCopy({ blob: await blobOf(Number.MAX_SAFE_INTEGER), key, userId: 'u' })).rejects.toMatchObject({ code: 'unreadable' })
-      await expect(openCopy({ blob: await blobOf(MAX_SEQ + 1), key, userId: 'u' })).rejects.toMatchObject({ code: 'unreadable' })
-      expect((await openCopy({ blob: await blobOf(MAX_SEQ), key, userId: 'u' })).seq).toBe(MAX_SEQ)
+      await expect(openCopy({ blob: await blobOf(Number.MAX_SAFE_INTEGER), key, userId: 'u' })).rejects.toMatchObject({ code: 'refused' })
+      await expect(openCopy({ blob: await blobOf(MAX_SEQ + 1), key, userId: 'u' })).rejects.toMatchObject({ code: 'refused' })
+      // N6: at the limit too.
+      await expect(openCopy({ blob: await blobOf(MAX_SEQ), key, userId: 'u' })).rejects.toMatchObject({ code: 'refused' })
+      expect((await openCopy({ blob: await blobOf(MAX_SEQ - 1), key, userId: 'u' })).seq).toBe(MAX_SEQ - 1)
     })
 
     it('such a copy leaves the number as it was, and is not offered', async () => {
@@ -2278,11 +2389,11 @@ describe('second review', () => {
       const key = keyOf(a)
       const salt = stateOf(a).salt
       server.row = { version: 9, salt, updated_at: 1, blob: await sealCopy({ bundle: bundleOf('x'), key, userId: USER.id, seq: Number.MAX_SAFE_INTEGER, device: 'OTHER', at: 5 }) }
-      expect((await a.sync.status({ check: true })).remote.unreadable).toBe(true)
+      expect((await a.sync.status({ check: true })).remote.refused).toBe(true)
       expect(stateOf(a).highWater).toBe(1)
     })
 
-    it('at the very top, nothing is sealed that nobody could open: it says so', async () => {
+    it('N6: a copy exactly at the limit is refused like any above it: on this computer\'s question, and uploads go on', async () => {
       const server = fakeServer()
       const a = await computer(server)
       await on(a)
@@ -2290,11 +2401,32 @@ describe('second review', () => {
       const salt = stateOf(a).salt
       server.head = 2
       server.row = { version: 2, salt, updated_at: 1, blob: await sealCopy({ bundle: bundleOf('x'), key, userId: USER.id, seq: MAX_SEQ, device: 'OTHER', at: 5 }) }
+      expect((await a.sync.status({ check: true })).remote.refused).toBe(true)
+      expect(stateOf(a).highWater).toBe(1)
+      expect(await a.sync.keepMine()).toMatchObject({ state: 'on', problem: null })
+      expect((await openCopy({ blob: server.row.blob, key, userId: USER.id })).seq).toBe(2)
+    })
+
+    it('N6: the right phrase on a computer that has nothing: refused as a copy, not as a wrong phrase', async () => {
+      const server = fakeServer()
+      put(server, await sealed({ seq: MAX_SEQ }))
+      const a = await computer(server)
+      expect(await on(a)).toMatchObject({ on: true, state: 'newer', problem: 'refusedCopy', remote: { refused: true } })
+    })
+
+    it('N6: just under the limit, nothing is sealed that nobody could open, and it says why', async () => {
+      const server = fakeServer()
+      const a = await computer(server)
+      await on(a)
+      const key = keyOf(a)
+      const salt = stateOf(a).salt
+      server.head = 2
+      server.row = { version: 2, salt, updated_at: 1, blob: await sealCopy({ bundle: bundleOf('x'), key, userId: USER.id, seq: MAX_SEQ - 1, device: 'OTHER', at: 5 }) }
       await a.sync.status({ check: true })
       const puts = server.puts().length
-      await a.sync.keepMine()
+      expect((await a.sync.keepMine()).error).toBe('numberFull')
       expect(server.puts()).toHaveLength(puts)
-      expect((await a.sync.status()).problem).toBe('failed')
+      expect((await a.sync.status()).problem).toBe('numberFull')
     })
 
     it('starting over then begins again', async () => {
@@ -2304,7 +2436,7 @@ describe('second review', () => {
       const key = keyOf(a)
       const salt = stateOf(a).salt
       server.head = 2
-      server.row = { version: 2, salt, updated_at: 1, blob: await sealCopy({ bundle: bundleOf('x'), key, userId: USER.id, seq: MAX_SEQ, device: 'OTHER', at: 5 }) }
+      server.row = { version: 2, salt, updated_at: 1, blob: await sealCopy({ bundle: bundleOf('x'), key, userId: USER.id, seq: MAX_SEQ - 1, device: 'OTHER', at: 5 }) }
       await a.sync.status({ check: true })
       expect((await a.sync.startOver('a brand new phrase for all')).state).toBe('on')
       expect(stateOf(a).highWater).toBe(1)

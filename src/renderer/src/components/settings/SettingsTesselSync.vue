@@ -37,6 +37,7 @@ const errorText = (code) =>
     weakPhrase: () => t('settings.tesselAccount.sync.error.weakPhrase', 'This phrase is too easy to guess: the server holds what a guess can be tried on. Use several unrelated words, or let Tessel suggest one.'),
     refusedCopy: () => t('settings.tesselAccount.sync.error.refusedCopy', 'This copy holds things Tessel does not accept in a copy, so it was refused whole. Nothing changed here.'),
     unreadableFile: () => t('settings.tesselAccount.sync.error.unreadableFile', 'A file of your setup cannot be read, so nothing was sent: {{files}}.', { files: (state.value?.unreadable || []).join(', ') }),
+    numberFull: () => t('settings.tesselAccount.sync.error.numberFull', 'This copy\'s numbering has reached its limit, which only a tampered copy can do, so nothing was sent. Turn this off, then start over with a new phrase.'),
     tooManyPanes: () => t('settings.tesselAccount.sync.error.tooManyPanes', 'Your setup has more panes, projects or cards than a copy can hold. Nothing was sent.'),
     mismatch: () => t('settings.tesselAccount.sync.error.mismatch', 'The two phrases are not the same.'),
     wrongPhrase: () => t('settings.tesselAccount.sync.error.wrongPhrase', 'This phrase does not open your copy on the server, or the copy was damaged. Nothing changed.'),

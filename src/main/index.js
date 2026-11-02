@@ -3194,7 +3194,7 @@ const tesselAccount = createTesselAccount({
     settingsSync.wake()
   },
   onSignedOut: () => settingsSync.signedOut(),
-  onDeleted: () => settingsSync.accountDeleted()
+  onDeleted: (userId) => settingsSync.accountDeleted(userId)
 })
 // Tessel's own connectors (tesselApps/): the first one connected sets the tools up for the agents.
 const tesselApps = createTesselApps({

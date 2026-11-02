@@ -42,7 +42,7 @@ const MAX_STATE = 2 * 1024 * 1024
 // copy is refused, not kept until its state no longer fits.
 const MAX_SHADOW = 512 * 1024
 // The sealed number goes up by one per upload, and the server takes 500 a day: this lasts thousands
-// of years. A copy above it is refused, and nothing is ever sealed above it.
+// of years. A copy at it or above is refused whole, and nothing is ever sealed at it or above.
 export const MAX_SEQ = 1_000_000_000
 const MAX_DEVICE = 80
 const KEY_BYTES = 32
@@ -174,7 +174,9 @@ export async function openCopy({ blob, key, userId }) {
   } catch {
     throw fail('unreadable')
   }
-  if (!sealed || !Number.isSafeInteger(sealed.seq) || sealed.seq < 1 || sealed.seq > MAX_SEQ || !sealed.bundle || typeof sealed.bundle !== 'object') throw fail('unreadable')
+  if (!sealed || !Number.isSafeInteger(sealed.seq) || sealed.seq < 1 || !sealed.bundle || typeof sealed.bundle !== 'object') throw fail('unreadable')
+  // The right key, a number no real copy reaches: it can be replaced, never used.
+  if (sealed.seq >= MAX_SEQ) throw fail('refused')
   return { seq: sealed.seq, device: deviceLabel(sealed.device), at: Number.isFinite(sealed.at) ? sealed.at : null, bundle: sealed.bundle }
 }
 
@@ -288,14 +290,27 @@ export function createSettingsSync({
     }
   }
 
-  function readFloor(userId) {
+  // One number per account: another account turning off here leaves this one's.
+  function readFloors() {
     try {
       const data = JSON.parse(fs.readFileSync(floorFile, 'utf8'))
-      return data && data.userId === userId && Number.isSafeInteger(data.highWater) && data.highWater <= MAX_SEQ ? data.highWater : 0
+      return data && typeof data === 'object' && !Array.isArray(data) ? data : {}
     } catch {
-      return 0
+      return {}
     }
   }
+  function readFloor(userId) {
+    const floors = readFloors()
+    const value = Object.prototype.hasOwnProperty.call(floors, userId) ? floors[userId] : 0
+    return Number.isSafeInteger(value) && value > 0 && value < MAX_SEQ ? value : 0
+  }
+  function writeFloors(floors) {
+    fs.writeFileSync(floorFile, JSON.stringify(floors), { mode: 0o600 })
+  }
+  // What a copy is compared with. A new phrase the person went on with (Use them) starts its own
+  // run of numbers, which may be low (started over on a fresh computer): within it, that run counts.
+  // Under any other salt, and before the person's word, the highest number ever seen does.
+  const comparedTo = (state) => (state.era && state.era.salt === state.salt ? state.era.seq : state.highWater || 0)
 
   // What this account's highest number is, on this computer, whatever the phrase or the salt.
   function highestOf(userId) {
@@ -364,7 +379,7 @@ export function createSettingsSync({
     }
     if (saved && saved.highWater) {
       try {
-        fs.writeFileSync(floorFile, JSON.stringify({ userId: saved.userId, highWater: saved.highWater }), { mode: 0o600 })
+        writeFloors({ ...readFloors(), [saved.userId]: saved.highWater })
       } catch (err) {
         log.warn('sync', `could not keep its number: ${(err && err.code) || 'error'}`) // i18n-ignore
       }
@@ -598,8 +613,8 @@ export function createSettingsSync({
     }
     if (!evenIfSame && built.hash === tooBigHash) return 'failed'
     const seq = (state.highWater || 0) + 1
-    if (seq > MAX_SEQ) {
-      problem = 'failed'
+    if (seq >= MAX_SEQ) {
+      problem = 'numberFull'
       return 'failed'
     }
     const at = now()
@@ -635,7 +650,8 @@ export function createSettingsSync({
         problem = 'failed'
         return 'failed'
       }
-      update({ base: answer.version, baseSeq: seq, highWater: seq, hash: built.hash, shape: built.shape, at, shrunk: null, erased: false, alert: null })
+      // Above everything now: the highest number is what counts again.
+      update({ base: answer.version, baseSeq: seq, highWater: seq, era: null, newEra: false, hash: built.hash, shape: built.shape, at, shrunk: null, erased: false, alert: null })
       remote = null
       problem = null
       tooBigHash = null
@@ -733,9 +749,10 @@ export function createSettingsSync({
     }
     if (opened) {
       if (problem === 'tampered' || problem === 'refusedCopy' || problem === 'newerApp') problem = null
-      const highest = state.highWater || 0
+      const highest = comparedTo(state)
       // What is highest is remembered at once, whatever the person answers: it never drops.
-      if (opened.seq > highest) update({ highWater: opened.seq })
+      if (opened.seq > (state.highWater || 0)) update({ highWater: opened.seq })
+      if (state.era && state.era.salt === state.salt && opened.seq > state.era.seq) update({ era: { salt: state.salt, seq: opened.seq } })
       // The copy this computer last had, under another number: there is nothing to ask.
       if (opened.seq === state.baseSeq) {
         update({ base: copy.version })
@@ -895,6 +912,7 @@ export function createSettingsSync({
                 base: staged.version,
                 baseSeq: staged.seq,
                 highWater: Math.max(state.highWater || 0, staged.seq || 0),
+                ...(state.newEra ? { era: { salt: state.salt, seq: staged.seq }, newEra: false } : {}),
                 hash: null,
                 shape: staged.shape || null,
                 shadow: staged.shadow || null,
@@ -974,6 +992,7 @@ export function createSettingsSync({
     // The number never drops, whatever phrase or salt comes: an old copy under a salt it had before
     // is still old. Only a number at the very top starts over (nothing could be sealed above it).
     const highest = highestOf(userId)
+    const era = same && same.era ? same.era : null
     // Staged from another account's copy, or under another phrase: it does not follow.
     if (saved && saved.staged && !same) dropPendingImport({ dir: dataDir })
     saved = {
@@ -983,7 +1002,9 @@ export function createSettingsSync({
       sealedKey: sealKey(raw),
       base: same ? same.base || 0 : 0,
       baseSeq: same ? same.baseSeq || 0 : 0,
-      highWater: highest < MAX_SEQ ? highest : 0,
+      highWater: highest < MAX_SEQ - 1 ? highest : 0,
+      era,
+      newEra: same ? !!same.newEra : highest > 0,
       hash: same ? same.hash || null : null,
       shape: same ? same.shape || null : null,
       shadow: same ? same.shadow || null : null,
@@ -1044,7 +1065,7 @@ export function createSettingsSync({
       unfit = true
     }
     if (era !== epoch) return view()
-    const before = highestOf(userId)
+    const before = saved && saved.userId === userId && saved.salt === copy.salt ? Math.max(comparedTo(saved), 0) : highestOf(userId)
     adopt({ userId, salt: copy.salt, raw })
     if (opened && opened.seq > before) update({ highWater: opened.seq })
     if (opened && opened.seq === saved.baseSeq) {
@@ -1289,8 +1310,8 @@ export function createSettingsSync({
         problem = err && err.code === 'newer' ? 'newerApp' : err && err.code === 'refused' ? 'refusedCopy' : 'tampered'
         return refusal(problem)
       }
-      const highest = state.highWater || 0
-      update({ shrunk: null, highWater: Math.max(highest, opened.seq) })
+      const highest = comparedTo(state)
+      update({ shrunk: null, highWater: Math.max(state.highWater || 0, opened.seq) })
       clearAlert('shrunk')
       remote = { ...metaOf(copy), older: opened.seq < highest, ...(await describe(opened)) }
       return view()
@@ -1374,10 +1395,13 @@ export function createSettingsSync({
 
   // The account was deleted, and the server's copies with it. Whatever was on its way by now
   // does not bring this back (forget).
-  function accountDeleted() {
+  function accountDeleted(deleted = null) {
+    const userId = deleted || (saved && saved.userId)
     forget()
     try {
-      fs.rmSync(floorFile, { force: true })
+      const { [userId]: gone, ...others } = readFloors() // eslint-disable-line no-unused-vars -- what goes with it
+      if (Object.keys(others).length) writeFloors(others)
+      else fs.rmSync(floorFile, { force: true })
     } catch (err) {
       log.warn('sync', `could not remove its number: ${(err && err.code) || 'error'}`) // i18n-ignore
     }

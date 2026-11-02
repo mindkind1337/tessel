@@ -238,7 +238,7 @@ describe('a restart in place (the real restartInPlaceNow)', () => {
       Promise,
       Date
     }
-    vm.runInNewContext(`${restartNow}\nthis.go = (o) => restartInPlaceNow('p1', o)`, ctx)
+    vm.runInNewContext(`${slice('const heldFirstStart =', '// This start follows a layout from elsewhere')}${restartNow}\nthis.go = (o) => restartInPlaceNow('p1', o)`, ctx)
     return ctx.go(opts).then((ok) => ({ ok, createLeaf }))
   }
 

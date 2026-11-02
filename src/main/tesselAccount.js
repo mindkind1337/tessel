@@ -330,7 +330,7 @@ export function createTesselAccount({ dir, safeStorage, openExternal, onSignedIn
     }
     forgetSession()
     lastError = null
-    onDeleted()
+    onDeleted(current.user && current.user.id)
     return { ...view(), deleted: true }
   }
 

@@ -31,7 +31,7 @@ export const SYNCED_FILE_NAMES = [LAYOUT, HOSTS, BOARD]
 
 // Control characters, and those that show nothing or turn what follows around: a name must read as
 // what it is. What a sender has of them is taken out; a copy that holds them is refused.
-const HIDDEN = '\\u00ad\\u034f\\u061c\\u115f\\u1160\\u17b4\\u17b5\\u180b-\\u180f\\u200b-\\u200f\\u202a-\\u202e\\u2060-\\u206f\\u3164\\ufe00-\\ufe0f\\ufeff\\uffa0\\ufff9-\\ufffb'
+const HIDDEN = '\\u00ad\\u034f\\u061c\\u115f\\u1160\\u17b4\\u17b5\\u180b-\\u180f\\u200b-\\u200f\\u202a-\\u202e\\u2060-\\u206f\\u3164\\ufe00-\\ufe0f\\ufeff\\uffa0\\ufff0-\\ufffb\\u2028\\u2029\\u{1bca0}-\\u{1bca3}\\u{1d173}-\\u{1d17a}\\u{e0000}-\\u{e0fff}'
 // eslint-disable-next-line no-misleading-character-class -- hidden characters, one by one, are what is looked for
 const CONTROL = new RegExp(`[\\u0000-\\u001f\\u007f-\\u009f${HIDDEN}]`, 'u')
 // eslint-disable-next-line no-misleading-character-class -- hidden characters, one by one, are what is looked for
@@ -440,7 +440,7 @@ export function rebuildBoard(board, { strict = false } = {}) {
     }
     const id = c.text(src.id, 80, CARD_ID)
     // eslint-disable-next-line no-misleading-character-class -- hidden characters, one by one, are what is looked for
-    const title = strict ? c.text(src.title, 2000) : typeof src.title === 'string' ? src.title.replace(new RegExp(CONTROL.source, 'g'), ' ').slice(0, 2000) : undefined
+    const title = strict ? c.text(src.title, 2000) : typeof src.title === 'string' ? src.title.replace(new RegExp(CONTROL.source, 'gu'), ' ').slice(0, 2000) : undefined
     if (!id || !title) {
       c.bad()
       continue
@@ -647,7 +647,11 @@ const PANE_SYNCED = {
   editor: ['files', 'activePath']
 }
 const PANE_COMMON = ['type', 'id', 'kind', 'num', 'paneName', 'viewPath']
-const folderKey = (p) => String(p).replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase()
+// A drive's folders do not care for case; a POSIX system's do.
+const folderKey = (p) => {
+  const key = String(p).replace(/\\/g, '/').replace(/\/+$/, '')
+  return /^[A-Za-z]:/.test(key) ? key.toLowerCase() : key
+}
 // What a pane may do, here. It was decided for what that pane was: not for what a copy makes of it.
 const PANE_PINS = ['permissions', 'permissionMode', 'launchYolo', 'launchSig', 'launchedAt', 'rootNoYolo']
 const sameFolder = (a, b) => (a ? folderKey(a) : '') === (b ? folderKey(b) : '')
@@ -756,9 +760,10 @@ export function hostChangesOf(copyBody, currentBody, copyLayoutBody = null, curr
   const current = parse(currentBody)
   const own = isObject(current) && Array.isArray(current.targets) ? current.targets.filter(isObject) : []
   const copied = isObject(copy) && Array.isArray(copy.targets) ? copy.targets.filter(isObject) : []
-  const labelOf = (id) => {
-    const host = own.find((t) => t.id === id) || copied.find((t) => t.id === id)
-    return String((host && host.label) || id)
+  // Its name can be anyone's: where it connects says which host this is.
+  const hostText = (id, ...places) => {
+    const host = places.flat().find((t) => t.id === id)
+    return host ? `${String(host.label || id)} (${address(host)})` : String(id)
   }
   for (const target of copied) {
     const mine = own.find((t) => t.id === target.id)
@@ -768,17 +773,18 @@ export function hostChangesOf(copyBody, currentBody, copyLayoutBody = null, curr
   const layout = parse(copyLayoutBody)
   const here = parse(currentLayoutBody)
   if (isObject(layout) && Array.isArray(layout.workspaces) && isObject(here) && Array.isArray(here.workspaces)) {
-    const where = (w) => (w.remote ? `${labelOf(w.remote.hostId)}:${w.remote.path}` : String(w.cwd || ''))
-    const onHost = (pane) => (pane.remoteHostId ? `${labelOf(pane.remoteHostId)}${pane.remotePath ? `:${pane.remotePath}` : ''}` : '')
+    // What it is now as this computer has it; what it would be as the copy has it.
+    const where = (w, ...places) => (w.remote ? `${hostText(w.remote.hostId, ...places)}:${w.remote.path}` : String(w.cwd || ''))
+    const onHost = (pane, ...places) => (pane.remoteHostId ? `${hostText(pane.remoteHostId, ...places)}${pane.remotePath ? `:${pane.remotePath}` : ''}` : '')
     const panes = new Map()
     for (const w of here.workspaces) if (isObject(w)) forEachPane(w.tree, (pane) => panes.set(pane.id, pane))
     for (const w of layout.workspaces) {
       if (!isObject(w)) continue
       const mine = here.workspaces.find((p) => isObject(p) && p.id === w.id)
-      if (mine && !sameRemote(mine.remote, w.remote)) out.push({ kind: 'moved', id: w.id, label: String(mine.name || w.name || '').slice(0, 120), from: where(mine), to: where(w) })
+      if (mine && !sameRemote(mine.remote, w.remote)) out.push({ kind: 'moved', id: w.id, label: String(mine.name || w.name || '').slice(0, 120), from: where(mine, own, copied), to: where(w, copied, own) })
       forEachPane(w.tree, (pane) => {
         const was = panes.get(pane.id)
-        if (was && (!same(pane.remoteHostId, was.remoteHostId) || !same(pane.remotePath, was.remotePath))) out.push({ kind: 'moved', id: pane.id, label: String(was.paneName || was.title || pane.paneName || pane.id).slice(0, 120), from: onHost(was), to: onHost(pane) })
+        if (was && (!same(pane.remoteHostId, was.remoteHostId) || !same(pane.remotePath, was.remotePath))) out.push({ kind: 'moved', id: pane.id, label: String(was.paneName || was.title || pane.paneName || pane.id).slice(0, 120), from: onHost(was, own, copied), to: onHost(pane, copied, own) })
       })
     }
   }

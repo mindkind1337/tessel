@@ -40,6 +40,11 @@ const CODE = [
   slice('async function wakeShell(leafId)', '// A sleeping pane you open wakes up'),
   slice('const sideRoot = computed(() => {', '// The folders commit links may ask git about'),
   slice('function automationWorkspace(a)', 'function automationAgent(id)'),
+  slice('async function restartInPlaceNow(leafId, opts)', '// --- Chat <-> terminal'),
+  slice('async function switchToTerminal(leafId)', 'async function switchToChat(leafId)'),
+  slice('async function switchToChat(leafId)', 'const switchingLeaves = new Set()'),
+  slice('async function restartWithPermissions(leafId, mode)', '// The folders a pane counts as working'),
+  slice('async function chatOpen(leaf, {', 'async function chatSetOption'),
   slice('function firstLeafId(node)', '// The pane a restored workspace opens on'),
   slice('function firstAwakeLeafId(node)', '// --- Workspace persistence'),
   slice('async function restoreOrSeedLayout()', '// Startup that never finishes leaves teams off')
@@ -55,6 +60,7 @@ const AGENTS = new Map([
 function makeWindow({ running = [], settings = {}, layout = null, held = false } = {}) {
   const writes = []
   const creates = []
+  const chatOpens = []
   let counter = 0
   const shellApi = {
     attachPty: vi.fn(async (id) => (running.includes(id) ? { ok: true, shell: { id: 'powershell', name: 'PowerShell' }, backend: 'conpty', pid: 7, buffer: '', cwd: HERE } : { ok: false })),
@@ -71,7 +77,14 @@ function makeWindow({ running = [], settings = {}, layout = null, held = false }
     killPty: () => {},
     loadLayout: async () => layout,
     layoutHeld: async () => held,
-    loadScrollback: async () => ({})
+    loadScrollback: async () => ({}),
+    chat: {
+      open: async (o) => {
+        chatOpens.push(o)
+        return { ok: true }
+      },
+      close: async () => ({ ok: true })
+    }
   }
   const current = { value: null }
   const tree = { value: null }
@@ -123,6 +136,8 @@ function makeWindow({ running = [], settings = {}, layout = null, held = false }
     allowedBrowserUrl,
     BLANK_URL,
     seedBuffer: () => {},
+    scheduleSave: () => {},
+    setDraft: () => {},
     savedPaneModel: () => null,
     exitOf: () => null,
     performance,
@@ -167,6 +182,12 @@ function makeWindow({ running = [], settings = {}, layout = null, held = false }
     setTimeout: (fn) => fn(),
     wsById: () => null,
     console,
+    agentById: (id) => ({ id, name: id, command: id, available: true }),
+    switchingLeaves: new Set(),
+    validHostAccount: () => false,
+    dropBuffer: () => {},
+    clearAgentStatus: () => {},
+    restartInPlace: (id, opts) => api.restartInPlaceNow(id, opts || {}),
     // What the real restore needs around it.
     loadUnlocked: (load) => load(),
     shells: { value: [{ id: 'powershell', name: 'PowerShell' }] },
@@ -211,8 +232,8 @@ function makeWindow({ running = [], settings = {}, layout = null, held = false }
   const api = {}
   vm.createContext(scope)
   scope.__api = api
-  vm.runInContext(`${CODE}\nObject.assign(__api, { deserializeNode, createLeaf, holdRestore, restoresTerminal, firstStartPermissions, wakeShell, sideRoot, automationWorkspace, restoreOrSeedLayout })`, scope)
-  return { api, scope, writes, creates, shellApi, current, tree }
+  vm.runInContext(`${CODE}\nObject.assign(__api, { deserializeNode, createLeaf, holdRestore, restoresTerminal, firstStartPermissions, wakeShell, sideRoot, automationWorkspace, restoreOrSeedLayout, restartInPlaceNow, switchToTerminal, switchToChat, chatOpen, restartWithPermissions })`, scope)
+  return { api, scope, writes, creates, chatOpens, shellApi, current, tree }
 }
 
 // A copy received: rebuilt strictly, made ready, and laid over this computer's file at the next start.
@@ -439,7 +460,8 @@ describe('finding 4: a first Wake never starts in Yolo', () => {
   it('restartInPlaceNow uses the rule', () => {
     const body = slice('async function restartInPlaceNow(leafId, opts)', 'function wakeLeaf')
     expect(body).toContain('permissions: firstStartPermissions(old)')
-    expect(body).toContain('permissionMode: old.sleeping && old.sleeping.held === true ? undefined : old.permissionMode')
+    expect(body).toContain('permissionMode: heldFirstStart(old) ? undefined : old.permissionMode')
+    expect(body).toContain('firstStart: heldFirstStart(old)')
   })
 
   it.each([
@@ -480,6 +502,103 @@ describe('finding 4: a first Wake never starts in Yolo', () => {
     const chatPane = readFileSync(join(__dirname, '../components/chat/ChatPane.vue'), 'utf8').replace(/\r\n/g, '\n')
     expect(chatPane).toContain("delete props.node.held\n    // ...and it asks first, whatever Settings or a Yolo folder say: as a held agent's first Wake.\n    props.node.maxPermissions = 'manual'")
     expect(APP).toContain("const narrowed = leaf.maxPermissions === 'manual'")
+  })
+})
+
+describe('N1 and N3: every way a held pane can start, with Yolo everywhere it can be', () => {
+  const YOLO = /dangerously|bypass|--yolo|--auto\b/i
+  const yoloSettings = { agentPermissions: 'yolo', yoloFolders: [HERE] }
+  const ready = async (copy, settings = yoloSettings) => {
+    const { onDisk } = received(copy)
+    const win = await restored(onDisk, { settings })
+    win.tree.value = win.spaces[0].tree
+    win.current.value = win.spaces[0]
+    win.scope.findLeaf = (id) => win.scope.findLeafIn(win.current.value.tree, id)
+    win.scope.wsOfLeaf = () => win.current.value
+    win.scope.replaceNode = (node, id, make) => (node && node.id === id ? make(node) : node)
+    return win
+  }
+  const chat = copyOf({ type: 'leaf', id: 'pane-c', kind: 'chat', agentId: 'claude', cwd: 'C:\\here\\planted', sessionId: 'abcdef12-3456' })
+  const agent = copyOf({ type: 'leaf', id: 'pane-a', kind: 'agent', agentId: 'claude', sessionId: 'abcdef-444444' })
+
+  it('a held chat > Continue in a terminal: no Yolo flag, and it asks first', async () => {
+    const win = await ready(chat)
+    expect(await win.api.chatOpen(leavesOf({ spaces: [win.current.value] })[0], { askTrust: true })).toEqual({ ok: false, code: 'held' })
+    await win.api.switchToTerminal('pane-c')
+    expect(win.writes).toHaveLength(1)
+    expect(win.writes[0].data).not.toMatch(YOLO)
+    expect(win.current.value.tree.permissions).toBe('manual')
+  })
+
+  it('a held chat > Continue in a terminal, with the flag in its own arguments: the same', async () => {
+    const win = await ready(chat, { ...yoloSettings, agentPrefs: { claude: { args: '--dangerously-skip-permissions --verbose' } } })
+    await win.api.switchToTerminal('pane-c')
+    expect(win.writes[0].data).not.toMatch(YOLO)
+    expect(win.writes[0].data).toContain('--verbose')
+  })
+
+  it('an ordinary chat > Continue in a terminal follows Settings, as it always did', async () => {
+    const win = await ready(chat)
+    delete win.current.value.tree.held
+    await win.api.switchToTerminal('pane-c')
+    expect(win.writes[0].data).toMatch(YOLO)
+  })
+
+  it('a held agent > Open as chat: what reaches chat.open is capped, with Yolo on', async () => {
+    const win = await ready(agent)
+    await win.api.switchToChat('pane-a')
+    const leaf = win.current.value.tree
+    expect(leaf).toMatchObject({ kind: 'chat', maxPermissions: 'manual' })
+    await win.api.chatOpen(leaf, { askTrust: false })
+    expect(win.chatOpens[0]).toMatchObject({ permissions: 'manual', maxPermissions: 'manual' })
+  })
+
+  it('an ordinary agent > Open as chat follows Settings, as it always did', async () => {
+    const win = await ready(agent)
+    win.current.value.tree.sleeping = { at: 1 }
+    await win.api.switchToChat('pane-a')
+    await win.api.chatOpen(win.current.value.tree, { askTrust: false })
+    expect(win.chatOpens[0].permissions).toBe('yolo')
+  })
+
+  it('Wake: the real restart, with Yolo in Settings and in a Yolo folder', async () => {
+    const win = await ready(agent)
+    await win.api.restartInPlaceNow('pane-a', { resume: true })
+    expect(win.writes).toHaveLength(1)
+    expect(win.writes[0].data).not.toMatch(YOLO)
+  })
+
+  it.each([
+    ['the flag alone', '--dangerously-skip-permissions', ''],
+    ['the flag among others', '--verbose --dangerously-skip-permissions --model opus', '--verbose --model opus'],
+    ['another way of saying it', '--permission-mode bypassPermissions', ''],
+    ['with an equals sign', '--permission-mode=bypassPermissions --verbose', '--verbose'],
+    ['the allow form', '--allow-dangerously-skip-permissions', '']
+  ])('Wake, with %s in its own arguments: stripped, the rest stays', async (_what, args, rest) => {
+    const win = await ready(agent, { agentPrefs: { claude: { args } } })
+    await win.api.restartInPlaceNow('pane-a', { resume: true })
+    expect(win.writes[0].data).not.toMatch(YOLO)
+    if (rest) expect(win.writes[0].data).toContain(rest)
+  })
+
+  it('Wake, with the flag in its own command: stripped too', async () => {
+    const win = await ready(agent, { agentPrefs: { claude: { command: 'claude --dangerously-skip-permissions' } } })
+    await win.api.restartInPlaceNow('pane-a', { resume: true })
+    expect(win.writes[0].data).not.toMatch(YOLO)
+    expect(win.writes[0].data).toMatch(/^claude /)
+  })
+
+  it('the person\u2019s own choice from the menu: Restart in Yolo is Yolo, own arguments included', async () => {
+    const win = await ready(agent, { agentPrefs: { claude: { args: '--dangerously-skip-permissions' } } })
+    await win.api.restartWithPermissions('pane-a', 'yolo')
+    expect(win.writes[0].data).toMatch(YOLO)
+  })
+
+  it('a pane that is not held keeps what your own arguments say: this changes nothing else', async () => {
+    const win = await ready(agent, { agentPrefs: { claude: { args: '--dangerously-skip-permissions' } } })
+    win.current.value.tree.sleeping = { at: 1 }
+    await win.api.restartInPlaceNow('pane-a', { resume: true })
+    expect(win.writes[0].data).toMatch(YOLO)
   })
 })
 

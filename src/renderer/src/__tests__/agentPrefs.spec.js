@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { parseEnvText, effectiveAgent, agentEnabled, inYoloFolder, sameFolder, launchPermissions, launchIsYolo } from '../../../shared/agentPrefs'
+import { withoutYolo, YOLO_ARGS, parseEnvText, effectiveAgent, agentEnabled, inYoloFolder, sameFolder, launchPermissions, launchIsYolo } from '../../../shared/agentPrefs'
 
 const claude = { id: 'claude', command: 'claude' }
 const goose = { id: 'goose', command: 'goose' }
@@ -70,6 +70,66 @@ describe('Yolo folders and a pane\'s own permission mode', () => {
     expect(launchIsYolo('claude', { args: cmd })).toBe(true)
     expect(launchIsYolo('claude', { args: '"claude.exe" --resume abc' })).toBe(false)
   })
+
+  it('N3: on a first start nothing skips approvals: every agent, its flag alone or among others', () => {
+    for (const [id, flag] of Object.entries(YOLO_ARGS)) {
+      const agent = { id, command: id }
+      expect(effectiveAgent(agent, { [id]: { args: flag } }, 'manual', null, null, { firstStart: true }).args).toBe('')
+      expect(effectiveAgent(agent, { [id]: { args: '--keep ' + flag + ' --also' } }, 'manual', null, null, { firstStart: true }).args).toBe('--keep --also')
+      expect(effectiveAgent(agent, {}, 'manual', null, null, { firstStart: true }).args).toBe('')
+    }
+  })
+
+  it('N3: and it is only on a first start: your own arguments stay what they are otherwise', () => {
+    expect(effectiveAgent(claude, { claude: { args: '--dangerously-skip-permissions' } }, 'manual').args).toBe('--dangerously-skip-permissions')
+  })
+
+  it('N3: a variable that does what the flag does goes too; what is not about it stays', () => {
+    const prefs = { goose: { env: 'GOOSE_MODE=auto\nOTHER=x' } }
+    expect(effectiveAgent(goose, prefs, 'manual', null, null, { firstStart: true }).env).toEqual({ OTHER: 'x' })
+    expect(effectiveAgent(goose, prefs, 'manual').env).toEqual({ GOOSE_MODE: 'auto', OTHER: 'x' })
+  })
+
+  it('N3: the other ways of saying it', () => {
+    for (const text of ['--permission-mode bypassPermissions', '--permission-mode=bypassPermissions', '--allow-dangerously-skip-permissions', '--approval-mode=yolo', '--yolo', '--full-auto', '--sandbox danger-full-access', '-s danger-full-access', '--ask-for-approval never', '-a never']) {
+      expect(withoutYolo('codex', '--keep ' + text)).toBe('--keep')
+    }
+    expect(withoutYolo('gemini', '-y --keep')).toBe('--keep')
+    expect(withoutYolo('claude', '-y --keep')).toBe('-y --keep')
+    expect(withoutYolo('claude', '--permission-mode plan --model opus')).toBe('--permission-mode plan --model opus')
+  })
+
+  it('N3: a whole flag, never the start of a longer one of yours', () => {
+    expect(withoutYolo('cline', '--auto-approve true --keep')).toBe('--keep')
+    expect(withoutYolo('cline', '--auto-approve false --keep')).toBe('--auto-approve false --keep')
+    expect(withoutYolo('opencode', '--auto --keep')).toBe('--keep')
+    expect(withoutYolo('opencode', '--autoupdate --keep')).toBe('--autoupdate --keep')
+    expect(withoutYolo('droid', '--auto high --keep')).toBe('--keep')
+    expect(withoutYolo('droid', '--auto medium --keep')).toBe('--keep')
+    expect(withoutYolo('claude', '--yolo-not --keep')).toBe('--yolo-not --keep')
+    expect(withoutYolo('claude', 'some--yolo --keep')).toBe('some--yolo --keep')
+  })
+
+  it('N3: quoted, with others right beside it, it goes as well', () => {
+    expect(withoutYolo('claude', '"--dangerously-skip-permissions" --keep')).toBe('--keep')
+    expect(withoutYolo('claude', "'--dangerously-skip-permissions' --keep")).toBe('--keep')
+    expect(withoutYolo('claude', '--yolo --dangerously-skip-permissions --keep --full-auto --yolo')).toBe('--keep')
+    expect(withoutYolo('qwen', '--approval-mode   yolo --keep')).toBe('--keep')
+    expect(withoutYolo('codex', '--sandbox --yolo danger-full-access --keep')).toBe('--keep')
+  })
+
+  it('N3: the same thing, said through what the agent reads as settings', () => {
+    expect(withoutYolo('codex', '-c approval_policy=never --keep')).toBe('--keep')
+    expect(withoutYolo('codex', '--config "approval_policy=never" --keep')).toBe('--keep')
+    expect(withoutYolo('codex', '-c sandbox_mode="danger-full-access" --keep')).toBe('--keep')
+    expect(withoutYolo('codex', '-c model=x --keep')).toBe('-c model=x --keep')
+    expect(withoutYolo('devin', '--respect-workspace-trust false --keep')).toBe('--keep')
+    expect(withoutYolo('continue', '--allow * --keep')).toBe('--keep')
+    expect(withoutYolo('continue', "--allow '*' --keep")).toBe('--keep')
+    expect(withoutYolo('continue', '--allow Read --keep')).toBe('--allow Read --keep')
+    expect(withoutYolo('aider', '--yes --keep')).toBe('--keep')
+  })
+
   it('a Yolo pane of Claude Code starts with --dangerously-skip-permissions', () => {
     const agent = { id: 'claude', command: 'claude' }
     const mode = launchPermissions('yolo', [], [], 'manual')

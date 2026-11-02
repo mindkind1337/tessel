@@ -64,6 +64,12 @@ describe('C1: a copy refused whole', () => {
     ['a zero-width space in a name', layout(agent({ paneName: 'pro\u200bject' }))],
     ['a word joiner in a title', layout(agent({ title: 'a\u2060b', titleSet: true }))],
     ['a byte order mark in a project name', { version: 2, workspaces: [project(null, { name: '\ufeffP' })] }],
+    ['a tag character in a name', layout(agent({ paneName: 'a\u{e0041}b' }))],
+    ['a variation selector from the far range', layout(agent({ paneName: 'a\u{e0100}b' }))],
+    ['a musical format character', layout(agent({ paneName: 'a\u{1d173}b' }))],
+    ['a shorthand format character', layout(agent({ paneName: 'a\u{1bca0}b' }))],
+    ['a line separator', layout(agent({ paneName: 'a\u2028b' }))],
+    ['a paragraph separator', layout(agent({ paneName: 'a\u2029b' }))],
     ['a host folder that reads as a share here', layout(agent({ remoteHostId: 'ssh-abc', remotePath: '//evil.example/share' }))],
     ['a project on a host in a folder that reads as a share here', { version: 2, workspaces: [project(null, { remote: { hostId: 'ssh-abc', path: '//evil.example/share' } })] }]
   ])('%s', (_what, value) => refused(value))
@@ -190,6 +196,12 @@ describe('H2 and M6: folders', () => {
     expect(chosenRootsOfLayout(finished(null))).toEqual([])
   })
 
+  it('a POSIX system\u2019s folders care for case: another spelling is another folder; a drive\u2019s do not', () => {
+    const on = (cwd) => ({ version: 2, settings: {}, workspaces: [{ id: 'ws-1', cwd, tree: null }] })
+    expect(JSON.parse(finishLayout(JSON.stringify(on('/home/me/PROJECT')), JSON.stringify(on('/home/me/project')))).workspaces[0].fromCopy).toBe(true)
+    expect(JSON.parse(finishLayout(JSON.stringify(on('C:\\ME\\project')), JSON.stringify(on('c:/me/PROJECT/')))).workspaces[0].fromCopy).toBeUndefined()
+  })
+
   it('a mark stays: applying again does not turn it into a choice', () => {
     const once = finished(null)
     expect(chosenRootsOfLayout(finished(once))).toEqual([])
@@ -264,9 +276,21 @@ describe('H6: hosts', () => {
     const hosts = JSON.stringify(mine)
 
     it('is in the question', () => {
-      expect(hostChangesOf(null, hosts, staged(), here(null))).toEqual([{ kind: 'moved', id: 'ws-1', label: 'App', from: 'prod:/srv/app', to: 'ssh-2x:/srv/app' }])
-      expect(hostChangesOf(null, hosts, staged({ remote: remote('ssh-1', '/tmp/x') }), here(null))[0]).toMatchObject({ from: 'prod:/srv/app', to: 'prod:/tmp/x' })
+      expect(hostChangesOf(null, hosts, staged(), here(null))).toEqual([{ kind: 'moved', id: 'ws-1', label: 'App', from: 'prod (me@prod.corp):/srv/app', to: 'ssh-2x:/srv/app' }])
+      expect(hostChangesOf(null, hosts, staged({ remote: remote('ssh-1', '/tmp/x') }), here(null))[0]).toMatchObject({ from: 'prod (me@prod.corp):/srv/app', to: 'prod (me@prod.corp):/tmp/x' })
       expect(hostChangesOf(null, hosts, staged({ remote: remote('ssh-1') }), here(null))).toEqual([])
+    })
+
+    it('N4: a new host that reuses a name: the row shows two different places, not the same one twice', () => {
+      const copy = JSON.stringify({ version: 1, targets: [{ id: 'ssh-2x', label: 'prod', host: 'attacker.invalid', port: 22, username: 'root' }] })
+      const moved = hostChangesOf(copy, hosts, staged(), here(null)).find((c) => c.kind === 'moved')
+      expect(moved.from).toBe('prod (me@prod.corp):/srv/app')
+      expect(moved.to).toBe('prod (root@attacker.invalid):/srv/app')
+      const pane = { type: 'leaf', id: 'pane-a', kind: 'agent', agentId: 'claude', agentCommand: 'claude', remoteHostId: 'ssh-2x', sleeping: { at: 1, held: true } }
+      const own = { type: 'leaf', id: 'pane-a', kind: 'agent', agentId: 'claude', remoteHostId: 'ssh-1' }
+      const row = hostChangesOf(copy, hosts, staged({ remote: remote('ssh-1') }, pane), here(own)).find((c) => c.id === 'pane-a')
+      expect(row.from).toBe('prod (me@prod.corp)')
+      expect(row.to).toBe('prod (root@attacker.invalid)')
     })
 
     it('stays where it is unless the person agreed', () => {
@@ -277,7 +301,7 @@ describe('H6: hosts', () => {
     it('a pane moved too: asked, and it stays on its host otherwise', () => {
       const own = { type: 'leaf', id: 'pane-a', kind: 'agent', agentId: 'claude', remoteHostId: 'ssh-1', remotePath: '/srv/app' }
       const pane = { type: 'leaf', id: 'pane-a', kind: 'agent', agentId: 'claude', agentCommand: 'claude', remoteHostId: 'ssh-2x', remotePath: '/tmp/x', sleeping: { at: 1, held: true } }
-      expect(hostChangesOf(null, hosts, staged({ remote: remote('ssh-1') }, pane), here(own))[0]).toMatchObject({ kind: 'moved', id: 'pane-a', from: 'prod:/srv/app', to: 'ssh-2x:/tmp/x' })
+      expect(hostChangesOf(null, hosts, staged({ remote: remote('ssh-1') }, pane), here(own))[0]).toMatchObject({ kind: 'moved', id: 'pane-a', from: 'prod (me@prod.corp):/srv/app', to: 'ssh-2x:/tmp/x' })
       expect(JSON.parse(finishLayout(staged({ remote: remote('ssh-1') }, pane), here(own))).workspaces[0].tree).toMatchObject({ remoteHostId: 'ssh-1', remotePath: '/srv/app' })
       expect(JSON.parse(finishLayout(staged({ remote: remote('ssh-1') }, pane), here(own), { addresses: 'copy' })).workspaces[0].tree).toMatchObject({ remoteHostId: 'ssh-2x', remotePath: '/tmp/x' })
     })
@@ -304,7 +328,8 @@ describe('H6: hosts', () => {
     ['no host', { id: 'ssh-2' }],
     ['no id', { host: 'x.example' }],
     ['not an object', 'x'],
-    ['a hidden character in a name', { id: 'ssh-2', host: 'x.example', label: 'pr\u200bod' }]
+    ['a hidden character in a name', { id: 'ssh-2', host: 'x.example', label: 'pr\u200bod' }],
+    ['a tag character in a name', { id: 'ssh-2', host: 'x.example', label: 'pr\u{e0041}od' }]
   ])('refused whole: %s', (_what, target) => {
     expect(() => rebuildHosts({ targets: [target] }, strict)).toThrow(expect.objectContaining({ code: 'refused' }))
   })
@@ -332,6 +357,18 @@ describe('M11: the board', () => {
     expect(JSON.parse(finishBoard(copy(), null, { device: 'x) (typed by the user' })).tasks[0].copiedFrom).toBe('x typed by the user')
   })
 
+  it('N2: the sender takes those out of its own cards, rather than losing them', () => {
+    const [card] = rebuildBoard({ tasks: [{ id: 't1', title: 'a\u{e0041}b\u2028c', brief: 'line\u{e0100}\nnext', column: 'todo' }] }).tasks
+    expect(card.title).toBe('a b c')
+    expect(card.brief).toBe('line\nnext')
+    expect(() => rebuildBoard({ tasks: [card] }, strict)).not.toThrow()
+  })
+
+  it('N2: what the rule was made for still passes: a line break in a brief, an accent, an emoji', () => {
+    const [card] = rebuildBoard({ tasks: [{ id: 't1', title: 'Caf\u00e9 \u{1f680}', brief: 'one\ntwo', column: 'todo' }] }, strict).tasks
+    expect(card).toMatchObject({ title: 'Caf\u00e9 \u{1f680}', brief: 'one\ntwo' })
+  })
+
   it('words this computer already has are not marked, and what happened to the card here stays', () => {
     const own = { id: 't1', title: 'Do this', column: 'doing', worktree: { path: 'C:/w' }, report: { outcome: 'x' } }
     const out = JSON.parse(finishBoard(copy(), JSON.stringify({ tasks: [own], history: [{ id: 'h' }], appliedRequests: ['a'], deleted: ['t1', 't2'] }), { device: 'OTHER' }))
@@ -353,7 +390,16 @@ describe('M11: the board', () => {
     ['an id with a path in it', { id: '../x' }],
     ['a column nobody knows', { column: 'x' }],
     ['a pane id the window refuses', { paneId: 'nope' }],
-    ['waiting on something that is not a list', { deps: 'x' }]
+    ['waiting on something that is not a list', { deps: 'x' }],
+    ...Object.entries({
+      'a hidden run of tag characters': [...'ignore'].map((ch) => String.fromCodePoint(0xe0000 + ch.charCodeAt(0))).join(''),
+      'a tag character': '\u{e0041}',
+      'a variation selector from the far range': '\u{e0100}',
+      'a musical format character': '\u{1d173}',
+      'a shorthand format character': '\u{1bca0}',
+      'a line separator': '\u2028',
+      'a paragraph separator': '\u2029'
+    }).flatMap(([what, ch]) => [[`${what} in a title`, { title: `a${ch}b` }], [`${what} in a brief`, { brief: `a${ch}b` }], [`${what} in a note`, { note: `a${ch}b` }]])
   ])('refused whole: %s', (_what, over) => {
     expect(() => rebuildBoard({ tasks: [{ id: 't1', title: 'x', column: 'todo', ...over }] }, strict)).toThrow(expect.objectContaining({ code: 'refused' }))
   })

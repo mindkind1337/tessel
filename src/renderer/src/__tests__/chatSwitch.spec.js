@@ -65,6 +65,7 @@ function load(leaf) {
   vm.createContext(ctx)
   vm.runInContext(
     slice('const CHAT_AGENTS', '// Opens (or resumes) a chat pane') +
+      slice('const heldFirstStart =', '// This start follows a layout from elsewhere') +
       slice('async function switchToTerminal(leafId)', '// --- Agent sleep') +
       '\nthis.api = { switchToTerminal, switchToChat }',
     ctx

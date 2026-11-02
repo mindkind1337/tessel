@@ -64,21 +64,62 @@ export function parseEnvText(text) {
   return { env }
 }
 
+// The other ways of saying the same, in your own arguments: each agent's flag above, any agent's,
+// and these. On the first start of a pane from elsewhere none of them applies (withoutYolo).
+const YOLO_ALSO = [
+  '--allow-dangerously-skip-permissions',
+  '--permission-mode (?:bypass|bypassPermissions|auto)',
+  '--respect-workspace-trust false',
+  '--auto (?:low|medium|high)',
+  '--allow ["\']?\\*["\']?',
+  '--yes',
+  '--full-auto',
+  '--sandbox danger-full-access',
+  '-s danger-full-access',
+  '--ask-for-approval never',
+  '-a never',
+  '(?:-c|--config) ["\']?(?:approval_policy=["\']?never|sandbox_mode=["\']?danger-full-access)["\']?'
+]
+const YOLO_SHORT = { gemini: '-y', qwen: '-y', copilot: '-y' }
+// One whole flag: never the start of a longer one (--auto is not --auto-approve), quoted or not,
+// its value after spaces or an equals sign.
+const flagPattern = (flag) => new RegExp(`(?:^|\\s)["']?${flag.replace(/ /g, '(?:\\s+|=)')}["']?(?=\\s|$)`, 'g')
+const escaped = (flag) => flag.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+// The longest first: --auto high goes whole, its value with it.
+const YOLO_PATTERNS = [...new Set(Object.values(YOLO_ARGS))].map(escaped).concat(YOLO_ALSO).sort((a, b) => b.length - a.length).map(flagPattern)
+export function withoutYolo(agentId, text) {
+  let out = String(text || '')
+  const patterns = YOLO_SHORT[agentId] ? [...YOLO_PATTERNS, flagPattern(YOLO_SHORT[agentId])] : YOLO_PATTERNS
+  // Until nothing is left: taking one out can bring the two halves of another together.
+  for (let before = null; before !== out; ) {
+    before = out
+    for (const pattern of patterns) out = out.replace(pattern, ' ')
+  }
+  return out.replace(/\s+/g, ' ').trim()
+}
+
 // What a pane runs for this agent: { command, args, env } (args: text added
 // after the command; env: variables for the pane's shell).
 // sessionValues: the model (and effort) chosen for it ({ model, effort }, see
 // launchSessionValues), added as the agent's own flags before your
 // arguments; a flag your arguments set wins (agentSessionOptions.js).
 // models: the model list the choice was made from (the CLI's own listing).
-export function effectiveAgent(agent, prefs = {}, permissions = 'manual', sessionValues = null, models = null) {
+// firstStart: a pane from elsewhere, started for the first time: nothing skips approvals, not even
+// what your own settings for this agent say.
+export function effectiveAgent(agent, prefs = {}, permissions = 'manual', sessionValues = null, models = null, { firstStart = false } = {}) {
   const p = (prefs && prefs[agent.id]) || {}
-  const command = typeof p.command === 'string' && p.command.trim() ? p.command.trim() : agent.command
-  const own = typeof p.args === 'string' ? p.args.trim() : ''
+  const given = typeof p.command === 'string' && p.command.trim() ? p.command.trim() : agent.command
+  const command = firstStart ? withoutYolo(agent.id, given) || agent.command : given
+  const written = typeof p.args === 'string' ? p.args.trim() : ''
+  const own = firstStart ? withoutYolo(agent.id, written) : written
   const base = own || (permissions === 'yolo' ? YOLO_ARGS[agent.id] || '' : '')
   const chosen = sessionValues ? sessionOptionLaunchText(agent.id, sessionValues, own, models) : ''
   const args = [chosen, base].filter(Boolean).join(' ')
   const parsed = parseEnvText(p.env)
   const env = { ...(permissions === 'yolo' && !own ? YOLO_ENV[agent.id] || {} : {}), ...(parsed.env || {}) }
+  if (firstStart) {
+    for (const [name, value] of Object.entries(YOLO_ENV[agent.id] || {})) if (env[name] === value) delete env[name]
+  }
   return { command, args, env }
 }
 
