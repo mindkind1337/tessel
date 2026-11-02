@@ -29,7 +29,7 @@ const cleanUser = (user) => ({
 // The way back from the web page in a command line (a second launch of Tessel), if any.
 export const findAppLink = (argv, scheme) => (Array.isArray(argv) ? argv.find((arg) => typeof arg === 'string' && arg.toLowerCase().startsWith(`${scheme}://`)) : undefined)
 
-export function createTesselAccount({ dir, safeStorage, openExternal, onSignedIn = () => {}, scheme = 'tessel', fetchFn = fetch, apiUrl = API_URL, accountUrl = ACCOUNT_URL, signInMs = SIGN_IN_MS, requestMs = REQUEST_MS } = {}) {
+export function createTesselAccount({ dir, safeStorage, openExternal, onSignedIn = () => {}, onDeleted = () => {}, scheme = 'tessel', fetchFn = fetch, apiUrl = API_URL, accountUrl = ACCOUNT_URL, signInMs = SIGN_IN_MS, requestMs = REQUEST_MS } = {}) {
   const file = join(dir, 'session.json')
   let session // undefined until read; null when signed out
   let pending = null // the sign-in waiting for the browser
@@ -70,7 +70,7 @@ export function createTesselAccount({ dir, safeStorage, openExternal, onSignedIn
     fs.rmSync(file, { force: true })
   }
 
-  const request = (path, options = {}) => fetchFn(`${apiUrl}${path}`, { ...options, signal: AbortSignal.timeout(requestMs) })
+  const request = (path, { timeoutMs = requestMs, ...options } = {}) => fetchFn(`${apiUrl}${path}`, { ...options, signal: AbortSignal.timeout(timeoutMs) })
   const bearer = (token) => ({ authorization: `Bearer ${token}` })
 
   function view() {
@@ -82,6 +82,24 @@ export function createTesselAccount({ dir, safeStorage, openExternal, onSignedIn
       offline,
       error: lastError
     }
+  }
+
+  // For settingsSync.js, in this process only: the account's id, and a request with its session.
+  // -> the answer, or null when signed out, here or by the server (the session is then
+  // forgotten, as everywhere else). Throws when the server cannot be reached.
+  const userId = () => {
+    const id = readSession()?.user?.id
+    return typeof id === 'string' && id ? id : null
+  }
+  async function authed(path, { headers = {}, ...options } = {}) {
+    const current = readSession()
+    if (!current) return null
+    const res = await request(path, { ...options, headers: { ...headers, ...bearer(current.token) } })
+    if (res.status === 401) {
+      forgetSession()
+      return null
+    }
+    return res
   }
 
   // Who is signed in. With check: asks the server too, so a session that ended
@@ -257,8 +275,9 @@ export function createTesselAccount({ dir, safeStorage, openExternal, onSignedIn
     }
     forgetSession()
     lastError = null
+    onDeleted()
     return { ...view(), deleted: true }
   }
 
-  return { status, signIn, handleLink, passwordLink, cancelSignIn, signOut, deleteAccount, close: () => endPending() }
+  return { status, signIn, handleLink, passwordLink, cancelSignIn, signOut, deleteAccount, userId, authed, close: () => endPending() }
 }

@@ -143,6 +143,7 @@ import {
 } from './agentTools'
 import { startSignIn, signInStatus, activeSignIns, cancelSignIn, cancelAllSignIns, signInState } from './mcpSignIn'
 import { createTesselAccount, findAppLink } from './tesselAccount'
+import { createSettingsSync } from './settingsSync'
 import { listAgyPlugins, setAgyPlugin, removeAgyPlugin } from './agyPlugins'
 import { createMusePlugins } from './musePlugins'
 import {
@@ -3163,7 +3164,9 @@ const tesselAccount = createTesselAccount({
   onSignedIn: () => {
     showMainWindow()
     send('tesselAccount:signedIn')
-  }
+    settingsSync.wake()
+  },
+  onDeleted: () => settingsSync.accountDeleted()
 })
 ipcMain.handle(
   'tesselAccount:status',
@@ -3190,6 +3193,64 @@ ipcMain.handle(
   safe(() => tesselAccount.deleteAccount())
 )
 app.on('will-quit', () => tesselAccount.close())
+
+// Settings > Tessel account > Your settings everywhere (settingsSync.js): encrypted here, before
+// it leaves. The phrase comes from the window once, in the one call that uses it.
+const settingsSync = createSettingsSync({
+  dir: join(app.getPath('userData'), 'tessel-account'),
+  dataDir: app.getPath('userData'),
+  safeStorage,
+  account: tesselAccount,
+  deviceName: os.hostname(),
+  appVersion: app.getVersion(),
+  getBuild: async () => formatBuild(await buildId.get()),
+  // A terminal still running here comes back as it is, whatever the copy says.
+  runningPanes: async () => {
+    const res = await host.request('list', {}, 3000)
+    return res && res.ok && Array.isArray(res.ids) ? res.ids : []
+  },
+  // The agents Tessel knows and this computer has: a pane of one of them comes back as that agent.
+  knownCommands: async () => (await getAgents()).filter((agent) => agent.available && agent.command).map((agent) => agent.command),
+  onChanged: (view) => send('tesselSync:changed', view),
+  onNewer: (info) => send('tesselSync:newer', info),
+  log: { info: (area, text) => log.info(area, text), warn: (area, text) => log.warn(area, text) }
+})
+const syncFromWindow = (run) => async (event, arg) => {
+  if (!fromMainWindow(event)) return { error: 'failed' }
+  try {
+    return await run(arg)
+  } catch (err) {
+    // Never the message: nothing a phrase or a key went through is written down.
+    log.warn('sync', `failed: ${(err && err.code) || (err && err.name) || 'error'}`) // i18n-ignore
+    return { error: 'failed' }
+  }
+}
+ipcMain.handle('tesselSync:status', syncFromWindow((options) => settingsSync.status(options)))
+ipcMain.handle('tesselSync:peek', syncFromWindow(() => settingsSync.peek()))
+ipcMain.handle('tesselSync:turnOn', syncFromWindow((q) => settingsSync.turnOn(q && q.phrase)))
+ipcMain.handle('tesselSync:startOver', syncFromWindow((q) => settingsSync.startOver(q && q.phrase)))
+ipcMain.handle('tesselSync:turnOff', syncFromWindow((q) => settingsSync.turnOff({ erase: !!(q && q.erase === true) })))
+ipcMain.handle('tesselSync:syncNow', syncFromWindow(() => settingsSync.syncNow()))
+ipcMain.handle('tesselSync:apply', syncFromWindow(() => settingsSync.apply()))
+ipcMain.handle('tesselSync:cancelApply', syncFromWindow(() => settingsSync.cancelApply()))
+ipcMain.handle('tesselSync:keepMine', syncFromWindow(() => settingsSync.keepMine()))
+// An installed Tessel has no launcher to start the next one: Electron does, once this one is
+// gone. As with a development restart, the closing steps are skipped, so the terminal host and
+// its terminals keep running and the next window reattaches to them. Only ever on a click.
+ipcMain.handle('tesselSync:restart', (event) => {
+  if (!fromMainWindow(event) || !app.isPackaged) return { ok: false, reason: 'refused' }
+  try {
+    app.releaseSingleInstanceLock()
+    app.relaunch({ args: process.argv.slice(1).filter((arg) => !String(arg).toLowerCase().startsWith(`${APP_LINK_SCHEME}://`)) })
+  } catch (err) {
+    log.warn('sync', `restart failed: ${err.message}`) // i18n-ignore
+    return { ok: false, reason: 'spawn' }
+  }
+  log.info('sync', 'restarting on the user\'s request, to apply settings from another computer') // i18n-ignore
+  setTimeout(() => app.exit(0), 700)
+  return { ok: true }
+})
+app.on('will-quit', () => settingsSync.close())
 
 // Agent skills (the Skills window, skillsManager.js): listed per agent and
 // scope, added from a folder or GitHub after a preview, removed to the
@@ -5229,6 +5290,8 @@ ipcMain.handle('pty:reconcile', async (_evt, liveIds = []) => {
   if (!startupLogged) {
     startupLogged = true
     logStartupMain()
+    // Also what waits for the window: it is the one who hears of a newer copy.
+    settingsSync.start({ applied: !!(importApplied && importApplied.applied && importApplied.applied.length) })
   }
   let hello
   try {
@@ -6228,5 +6291,5 @@ app.on('before-quit', (event) => {
   if (shutdownDone) return
   event.preventDefault()
   shutdownDone = true
-  Promise.allSettled([accounts.close(), usageStats.close(), shutdownTerminals(), chatSessions.closeAll({ kill: true })]).finally(() => app.quit())
+  Promise.allSettled([accounts.close(), usageStats.close(), shutdownTerminals(), chatSessions.closeAll({ kill: true }), settingsSync.flushAtQuit()]).finally(() => app.quit())
 })

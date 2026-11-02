@@ -16,6 +16,10 @@
 // keeps what this computer already has (a file from someone else must not decide it).
 // Agent environment variables (they hold API keys) are never exported.
 //
+// The same packing makes the copy an account keeps (settingsSync.js, encrypted there):
+// only settings, hosts and the board, without what decides what agents may do, and each
+// computer keeps what belongs to it (buildSyncBundle, localizeLayout).
+//
 // Import never writes over files Tessel is using: it stages the chosen files in
 // `import-pending/` and the next start of Tessel puts them in place, before any of
 // them is read (applyPendingImport), keeping each replaced file in
@@ -43,15 +47,26 @@ export const CATEGORIES = [
   { id: 'security', files: { 'ssh-host-keys.json': 'object', 'liveshare-trusted.json': 'object', 'chat-trust.json': 'object', 'git-trust.json': 'object', 'skill-sources.json': 'any' } }
 ]
 export const SECURITY = 'security'
+// What follows a person between computers. Never "security" and never the activity history.
+export const SYNC_CATEGORIES = ['settings', 'hosts', 'board']
 
 // The settings that decide what agents may do (kept as they are here unless "security" is ticked).
 export const SENSITIVE_SETTINGS = [
   'agentPermissions', 'yoloFolders', 'agentTerminal', 'agentTerminalAutoApprove', 'agentTerminalAutoApproveWarned',
   'agentTerminalIgnoreDefaultRules', 'agentTerminalYoloNoAsk', 'agentTerminalRules', 'agentTerminalWorkspaceRules',
   'agentFolderTrust', 'agentRelay', 'agentRelayAsk', 'agentRelayMax', 'orchestrationConfirmWorkers',
-  'teamWakeUnconfirmed', 'customAgents', 'quickCommands', 'agentPrefs', 'cursorStatusHooks'
+  'teamWakeUnconfirmed', 'customAgents', 'quickCommands', 'agentPrefs', 'cursorStatusHooks',
+  'agentBrowser', 'agentAccounts', 'browserAgentSeparateSession', 'orchestrationMaxWorkers', 'orchestrationMaxDepth', 'orchestrationWorkerMode', 'allowOsc52Clipboard'
 ]
+// What a pane records about how it was started here: what it may do, and its account (a folder
+// of this computer). Its start follows Settings where it comes back.
+const PANE_SECURITY = ['permissions', 'permissionMode', 'launchYolo', 'rootNoYolo', 'launchSig']
+const PANE_THIS_RUN = ['accountId', 'lastModel', 'launchedAt', 'teamTools', 'toolsVersion']
+// Settings that describe this computer, not the person: each computer keeps its own.
+const THIS_COMPUTER_SETTINGS = ['workspaceDir', 'gpuAcceleration', 'cookiesImportedOnce', 'contextClaudeSignIn', 'contextGeminiSignIn']
 const isObject = (v) => !!v && typeof v === 'object' && !Array.isArray(v)
+// A conversation id a sleeping pane can come back with (the window's safeSessionId).
+const SESSION_ID_RE = /^[A-Za-z0-9_][A-Za-z0-9_-]{5,79}$/
 
 // The layout file's own shape: what the start-up restore walks. A file that does not look
 // like one is refused before it is staged, not found out at the next start.
@@ -97,9 +112,23 @@ function dropUnknownCommands(node, known, depth = 0) {
   }
 }
 
+// Every pane of a saved tree.
+function forEachPane(node, visit, depth = 0) {
+  if (depth > 60 || !isObject(node)) return
+  if (node.type === 'leaf') visit(node)
+  else if (Array.isArray(node.children)) node.children.forEach((child) => forEachPane(child, visit, depth + 1))
+}
+const forEachSavedPane = (layout, visit) => {
+  if (Array.isArray(layout.workspaces)) for (const w of layout.workspaces) if (isObject(w)) forEachPane(w.tree, (pane) => visit(pane, w))
+}
+const dropKeys = (from, keys) => {
+  for (const key of keys) delete from[key]
+}
+
 // What an import without "security" does to the files it brings: the sensitive settings
-// and the agents' commands stay what this computer has, a host's proxy command is dropped.
-export function withoutSecurity(name, body, currentBody) {
+// and the agents' commands stay what this computer has, a pane's own Yolo is dropped, a
+// host's proxy command is dropped. knownCommands: commands this computer also accepts.
+export function withoutSecurity(name, body, currentBody, knownCommands = []) {
   let parsed
   try {
     parsed = JSON.parse(body)
@@ -119,7 +148,8 @@ export function withoutSecurity(name, body, currentBody) {
         if (current && isObject(current.settings) && Object.prototype.hasOwnProperty.call(current.settings, key)) parsed.settings[key] = current.settings[key]
       }
     }
-    dropUnknownCommands(parsed.workspaces, agentCommands(current && current.workspaces))
+    dropUnknownCommands(parsed.workspaces, new Set([...agentCommands(current && current.workspaces), ...knownCommands]))
+    forEachSavedPane(parsed, (pane) => dropKeys(pane, PANE_SECURITY))
     return JSON.stringify(parsed)
   }
   if (name === 'remote-hosts.json' && isObject(parsed) && Array.isArray(parsed.targets)) {
@@ -182,6 +212,71 @@ export function buildBackup({ dir, categories, appVersion = '', build = '', now 
   return { bundle: { app: APP, format: FORMAT, createdAt: now(), appVersion: String(appVersion).slice(0, 40), build: String(build).slice(0, 40), files }, included, missing }
 }
 
+// What an account's copy holds, from the same packing as a backup. What decides what agents may
+// do never goes in it, nor what only means something on this computer. A pane's agent command
+// stays: the computer that gets it keeps only those it knows (withoutSecurity).
+function forSync(name, body) {
+  const parsed = JSON.parse(body)
+  if (name === 'workspace-layout.json') {
+    if (isObject(parsed.settings)) dropKeys(parsed.settings, [...SENSITIVE_SETTINGS, ...THIS_COMPUTER_SETTINGS])
+    forEachSavedPane(parsed, (pane) => dropKeys(pane, [...PANE_SECURITY, ...PANE_THIS_RUN]))
+    return JSON.stringify(parsed)
+  }
+  if (name === 'remote-hosts.json' && Array.isArray(parsed.targets)) {
+    for (const target of parsed.targets) if (isObject(target)) delete target.proxyCommand
+    return JSON.stringify(parsed)
+  }
+  return body
+}
+
+// -> { bundle, unsettled }. unsettled: a file that is there could not be read right now (being
+// written, or damaged). A copy without it would replace one that has it: not this round.
+export function buildSyncBundle({ dir, appVersion = '', build = '', now = Date.now, fsImpl = fs } = {}) {
+  const { bundle, missing } = buildBackup({ dir, categories: SYNC_CATEGORIES, appVersion, build, now, fsImpl })
+  for (const [name, body] of Object.entries(bundle.files)) bundle.files[name] = forSync(name, body)
+  return { bundle, unsettled: missing.some((name) => fsImpl.existsSync(path.join(dir, name))) }
+}
+
+// A copy from another computer, made ready for this one before it is staged. This computer's own
+// settings come back. An agent never starts by itself or in the wrong place: one whose folder is
+// not here comes back as a plain terminal (its terminal then starts in the home folder), the
+// others come back asleep, unless their terminal still runs here (running: its pane ids).
+// -> { body, missing: [folders not on this computer] }
+export function localizeLayout(body, { currentBody = null, running = new Set(), folderExists = fs.existsSync, now = Date.now } = {}) {
+  const parsed = JSON.parse(body)
+  let current
+  try {
+    current = currentBody ? JSON.parse(currentBody) : null
+  } catch {
+    current = null
+  }
+  if (isObject(parsed.settings) && isObject(current) && isObject(current.settings)) {
+    for (const key of THIS_COMPUTER_SETTINGS) if (Object.prototype.hasOwnProperty.call(current.settings, key)) parsed.settings[key] = current.settings[key]
+  }
+  const missing = new Set()
+  const isHere = (folder) => {
+    if (typeof folder !== 'string' || !folder) return true
+    const exists = folderExists(folder)
+    if (!exists) missing.add(folder)
+    return exists
+  }
+  if (Array.isArray(parsed.workspaces)) {
+    for (const w of parsed.workspaces) if (isObject(w) && !w.remote) isHere(w.cwd)
+  }
+  forEachSavedPane(parsed, (pane, w) => {
+    if (pane.kind !== 'agent' || typeof pane.agentCommand !== 'string' || w.remote || pane.remoteHostId || running.has(pane.id)) return
+    const copy = isObject(pane.worktree) && typeof pane.worktree.path === 'string' ? pane.worktree.path : null
+    if (!isHere(copy || w.cwd)) {
+      pane.agentCommand = null
+      pane.worktree = null
+      delete pane.sleeping
+    } else if (SESSION_ID_RE.test(String(pane.sessionId))) {
+      if (!pane.sleeping) pane.sleeping = { at: now() }
+    } else pane.agentCommand = null
+  })
+  return { body: JSON.stringify(parsed), missing: [...missing] }
+}
+
 // The file the user picked -> what it holds, checked, or a code. Nothing is written.
 export function inspectBackup(text) {
   if (typeof text !== 'string' || text.length > MAX_TOTAL_BYTES * 2) throw fail('too-big')
@@ -227,7 +322,7 @@ export function inspectBackup(text) {
 
 // Chosen categories of an inspected backup -> staged in the data folder, to be put in
 // place at the next start. -> { count, categories }
-export function stageImport({ dir, files, categories, now = Date.now, fsImpl = fs } = {}) {
+export function stageImport({ dir, files, categories, knownCommands = [], now = Date.now, fsImpl = fs } = {}) {
   const wanted = new Set(Array.isArray(categories) ? categories : [])
   const names = []
   for (const cat of CATEGORIES) {
@@ -255,7 +350,7 @@ export function stageImport({ dir, files, categories, now = Date.now, fsImpl = f
       } catch {
         currentBody = null
       }
-      body = withoutSecurity(name, body, currentBody)
+      body = withoutSecurity(name, body, currentBody, knownCommands)
     }
     bodies[name] = body
   }
@@ -285,6 +380,18 @@ function renameWithRetry(fsImpl, from, to) {
 }
 
 export const hasPendingImport = (dir, fsImpl = fs) => fsImpl.existsSync(path.join(dir, PENDING_DIR, 'manifest.json'))
+
+// What was staged and not put in place yet is dropped. A link there is left alone.
+export function dropPendingImport({ dir, fsImpl = fs } = {}) {
+  const pending = path.join(dir, PENDING_DIR)
+  try {
+    if (fsImpl.lstatSync(pending).isSymbolicLink()) return false
+  } catch {
+    return true
+  }
+  fsImpl.rmSync(pending, { recursive: true, force: true })
+  return true
+}
 
 // At start, before anything reads the data folder: put the staged files in place.
 // Each replaced file is kept in import-backups/<time>/. -> { applied: [names], failed: [names] }

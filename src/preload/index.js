@@ -475,6 +475,29 @@ const api = {
   mcpSignInActive: () => ipcRenderer.invoke('mcp:signInActive'),
   mcpSignInCancel: (id) => ipcRenderer.invoke('mcp:signInCancel', id),
   mcpSignInState: (ref) => ipcRenderer.invoke('mcp:signInState', ref),
+  // Your settings everywhere (settingsSync.js): what the page sees is the state, never a key.
+  tesselSync: {
+    status: (options) => ipcRenderer.invoke('tesselSync:status', options),
+    peek: () => ipcRenderer.invoke('tesselSync:peek'),
+    turnOn: (phrase) => ipcRenderer.invoke('tesselSync:turnOn', { phrase }),
+    startOver: (phrase) => ipcRenderer.invoke('tesselSync:startOver', { phrase }),
+    turnOff: (options) => ipcRenderer.invoke('tesselSync:turnOff', options),
+    syncNow: () => ipcRenderer.invoke('tesselSync:syncNow'),
+    apply: () => ipcRenderer.invoke('tesselSync:apply'),
+    cancelApply: () => ipcRenderer.invoke('tesselSync:cancelApply'),
+    keepMine: () => ipcRenderer.invoke('tesselSync:keepMine'),
+    restart: () => ipcRenderer.invoke('tesselSync:restart'),
+    onChanged: (cb) => {
+      const handler = (_evt, view) => cb(view)
+      ipcRenderer.on('tesselSync:changed', handler)
+      return () => ipcRenderer.removeListener('tesselSync:changed', handler)
+    },
+    onNewer: (cb) => {
+      const handler = (_evt, info) => cb(info)
+      ipcRenderer.on('tesselSync:newer', handler)
+      return () => ipcRenderer.removeListener('tesselSync:newer', handler)
+    }
+  },
   tesselAccount: {
     status: (options) => ipcRenderer.invoke('tesselAccount:status', options),
     signIn: () => ipcRenderer.invoke('tesselAccount:signIn'),

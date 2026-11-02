@@ -332,7 +332,15 @@ function openSettingsAt(section, anchor = null) {
 }
 // Back from logging in on the web page: Settings shows who is signed in.
 const stopAccountSignedIn = window.shellApi?.tesselAccount?.onSignedIn?.(() => openSettingsAt('tessel-account'))
+// Newer settings from another computer: said once for each version, and the choice is on the page.
+const stopSyncNewer = window.shellApi?.tesselSync?.onNewer?.((info) => {
+  showToast(t('settings.tesselAccount.sync.newerToast', 'Newer settings from {{device}} are waiting. Nothing changes until you choose.', { device: info.device }), {
+    timeout: 20000,
+    action: { label: t('settings.tesselAccount.sync.newerToastAction', 'See them'), run: () => openSettingsAt('tessel-account') }
+  })
+})
 onBeforeUnmount(() => stopAccountSignedIn?.())
+onBeforeUnmount(() => stopSyncNewer?.())
 // Markdown, diagrams, tables, JSON, images and PDFs open as editor tabs with
 // Orca's view toggle (Preview | Source | Changes, Table, the picture, the PDF's
 // pages). A PDF goes to its own window (Chromium's viewer) only when no
@@ -3715,7 +3723,7 @@ async function restartDevNow(resolve) {
   }
   let r = { ok: false, reason: 'spawn' }
   try {
-    r = await window.shellApi.devUpdate.restart()
+    r = await (isDev ? window.shellApi.devUpdate.restart() : window.shellApi.tesselSync.restart())
   } catch {
     /* said in the dialog */
   }

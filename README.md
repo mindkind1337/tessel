@@ -155,6 +155,24 @@ working on Tessel itself (see [Build from source](#build-from-source)).
   or delete the account; security changes are confirmed by email. Tessel works the
   same without an account. It keeps your email address, name, password as a hash
   and Google or GitHub ID on Tessel's server, never your mail, calendar or files.
+- **Your settings everywhere** (Settings → Tessel account): once you turn it on, your
+  settings, projects and their layout, SSH hosts and task board follow you to every
+  computer you sign in on. They are encrypted on your computer before they leave it,
+  with a key made from a sync phrase you choose (at least 12 characters), so Tessel's
+  server keeps one copy it cannot read, with the name of the computer that sent it and
+  the time. The phrase is asked once per computer and never leaves it; if you lose it,
+  nobody can recover it, and starting over erases the copy on the server. Sign-ins,
+  saved passwords, agents' environment variables and what decides what agents may do
+  (agent commands and rules, Yolo, SSH proxy commands, host keys, trusted guests and
+  folders) never leave the computer, and neither does the activity history. Your setup
+  uploads a few minutes after it changes, and at quit if that is quick. A newer copy
+  from another computer is never applied by itself: you see which computer and when,
+  then use it, which applies at the next start of Tessel and restarts only if you ask,
+  or keep this computer's, which replaces it. On a computer that gets a copy, agents
+  come back asleep, and those whose folder is not there come back as plain terminals in
+  your home folder. Being offline or signed out changes nothing and shows no alert. You
+  can sync now or turn it off, and choose to erase the copy on the server too; deleting
+  your account erases it as well.
 - **Connections** (Settings → Connections): connect your accounts to your agents:
   Gmail, Google Calendar and Drive (the first time, with your own free Google
   Cloud OAuth client), Outlook and OneDrive for personal Microsoft accounts,
@@ -204,9 +222,9 @@ working on Tessel itself (see [Build from source](#build-from-source)).
   Share's settings and the activity history; you choose the parts. Sign-ins (Claude,
   Codex…), saved passwords, cookies, keys and agents' environment variables are never
   in it: you sign in again. What decides what agents may do (agent commands and rules,
-  Yolo, SSH proxy commands and host keys, trusted guests and folders) is a separate
-  part, restored only if you tick it: otherwise those settings stay as they are on
-  this computer. An import is checked, then put in place when Tessel starts again
+  Yolo, including a pane's own, the browser and account tools, workers, SSH proxy
+  commands and host keys, trusted guests and folders) is a separate part, restored only
+  if you tick it: otherwise those settings stay as they are on this computer. An import is checked, then put in place when Tessel starts again
   (the replaced files are kept in `import-backups`), so it can bring back a deleted
   data folder or move your setup to another computer.
 - **A development Tessel no longer restarts by itself** when the code of its background

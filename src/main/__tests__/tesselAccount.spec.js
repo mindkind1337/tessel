@@ -33,7 +33,7 @@ function setup(over = {}) {
     const answer = answers[new URL(url).pathname]
     return typeof answer === 'function' ? answer(options) : answer
   })
-  const account = createTesselAccount({ dir, safeStorage: over.safeStorage || sealing, openExternal: over.openExternal || (async (url) => opened.push(url)), onSignedIn, scheme: 'tessel', fetchFn, apiUrl: API, accountUrl: ACCOUNT, signInMs: over.signInMs })
+  const account = createTesselAccount({ dir, safeStorage: over.safeStorage || sealing, openExternal: over.openExternal || (async (url) => opened.push(url)), onSignedIn, onDeleted: over.onDeleted, scheme: 'tessel', fetchFn, apiUrl: API, accountUrl: ACCOUNT, signInMs: over.signInMs })
   accounts.push(account)
   return { dir, account, opened, calls, answers, onSignedIn }
 }
@@ -52,6 +52,45 @@ async function signedIn(env) {
 afterEach(() => {
   accounts.splice(0).forEach((a) => a.close())
   dirs.splice(0).forEach((d) => rmSync(d, { recursive: true, force: true }))
+})
+
+describe('for the rest of the main process', () => {
+  it('a request with the session, signed out by a 401 like the others, and no request without one', async () => {
+    const env = setup({ answers: { '/api/sync': () => jsonResponse(200, { version: 1 }) } })
+    expect(env.account.userId()).toBeNull()
+    expect(await env.account.authed('/api/sync')).toBeNull()
+    expect(env.calls).toHaveLength(0)
+    await signedIn(env)
+    expect(env.account.userId()).toBe('u1')
+    const res = await env.account.authed('/api/sync', { method: 'PUT', body: 'x', headers: { 'content-type': 'application/json' }, timeoutMs: 1000 })
+    expect(res.status).toBe(200)
+    const sent = env.calls.at(-1)
+    expect(sent.headers).toEqual({ 'content-type': 'application/json', authorization: `Bearer ${TOKEN}` })
+    expect(sent.signal).toBeInstanceOf(AbortSignal)
+    expect(sent.timeoutMs).toBeUndefined()
+    env.answers['/api/sync'] = () => jsonResponse(401, {})
+    expect(await env.account.authed('/api/sync')).toBeNull()
+    expect((await env.account.status()).signedIn).toBe(false)
+    expect(env.account.userId()).toBeNull()
+  })
+
+  it('offline, it throws for the caller to decide, and stays signed in', async () => {
+    const env = setup({ answers: { '/api/sync': () => { throw new TypeError('fetch failed') } } })
+    await signedIn(env)
+    await expect(env.account.authed('/api/sync')).rejects.toThrow('fetch failed')
+    expect((await env.account.status()).signedIn).toBe(true)
+  })
+
+  it('what is deleted is said once it is confirmed', async () => {
+    const onDeleted = vi.fn()
+    const env = setup({ onDeleted, answers: { '/api/me': () => jsonResponse(500, {}) } })
+    await signedIn(env)
+    expect((await env.account.deleteAccount()).deleted).toBe(false)
+    expect(onDeleted).not.toHaveBeenCalled()
+    env.answers['/api/me'] = () => jsonResponse(204, {})
+    expect((await env.account.deleteAccount()).deleted).toBe(true)
+    expect(onDeleted).toHaveBeenCalledTimes(1)
+  })
 })
 
 describe('signing in', () => {

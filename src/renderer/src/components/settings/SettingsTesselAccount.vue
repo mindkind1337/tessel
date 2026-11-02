@@ -8,6 +8,7 @@ import { CircleUser, Laptop, Mail } from 'lucide-vue-next'
 import { t } from '../../i18n'
 import { PAGES } from './settingsPages'
 import { useSettingsShell } from './settingsShell'
+import SettingsTesselSync from './SettingsTesselSync.vue'
 
 const { shown } = useSettingsShell()
 const askConfirm = inject('askConfirm', null)
@@ -94,7 +95,7 @@ async function sendPasswordLink() {
 async function removeAccount() {
   const message = {
     title: t('settings.tesselAccount.deleteConfirm', 'Delete your Tessel account?'),
-    detail: t('settings.tesselAccount.deleteDetail', 'Your email address and name are erased from the server and you are signed out. This cannot be undone. Your settings, projects and Google connections on this computer are not touched.'),
+    detail: t('settings.tesselAccount.deleteDetail', 'Your email address, your name and the encrypted copy of your settings are erased from the server and you are signed out. This cannot be undone. Your settings, projects and Google connections on this computer are not touched.'),
     confirmLabel: t('settings.tesselAccount.delete', 'Delete my account'),
     danger: true
   }
@@ -165,7 +166,7 @@ onBeforeUnmount(() => {
             <li>
               <Laptop :size="16" aria-hidden="true" />
               <div>
-                <span class="tessel-account-item-name">{{ t('settings.tesselAccount.itemSync', 'Your settings everywhere') }} <span class="tag">{{ t('settings.tesselAccount.soon', 'Soon') }}</span></span>
+                <span class="tessel-account-item-name">{{ t('settings.tesselAccount.itemSync', 'Your settings everywhere') }}</span>
                 <span class="set-hint">{{ t('settings.tesselAccount.itemSyncHint', 'Find your settings and projects on every computer you use, encrypted before they leave this one.') }}</span>
               </div>
             </li>
@@ -202,10 +203,12 @@ onBeforeUnmount(() => {
       </div>
     </div>
 
+    <SettingsTesselSync v-if="!missing && state && state.signedIn" />
+
     <div v-if="!missing" class="set-group">
       <h3 class="set-group-title">{{ t('settings.tesselAccount.dataTitle', 'What an account keeps') }}</h3>
       <p class="set-group-desc">
-        {{ t('settings.tesselAccount.data', 'Your email address, your name, your password as a hash if you chose one and, if you use them, your Google or GitHub ID, on Tessel\'s server. Never your mail, calendar or files.') }}
+        {{ t('settings.tesselAccount.data', 'Your email address, your name, your password as a hash if you chose one and, if you use them, your Google or GitHub ID, on Tessel\'s server. Never your mail, calendar or files. If you turn on Your settings everywhere: also a copy of your setup, encrypted on your computer so that the server cannot read it, with the name of the computer that sent it and the time.') }}
         <button type="button" class="sl-link tessel-account-privacy" @click="openPrivacy">{{ t('settings.tesselAccount.privacy', 'Privacy policy') }}</button>
       </p>
       <div v-if="state && state.signedIn" class="set-card">
