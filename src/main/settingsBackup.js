@@ -361,7 +361,7 @@ export function stageImport({ dir, files, categories, knownCommands = [], now = 
   for (const name of names) {
     let body = files[name]
     if (!security) {
-      let currentBody = null
+      let currentBody
       try {
         currentBody = fsImpl.readFileSync(path.join(dir, name), 'utf8')
       } catch {

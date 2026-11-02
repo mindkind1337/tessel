@@ -36,6 +36,14 @@ function tempDir() {
   dirs.push(dir)
   return dir
 }
+const settled = async () => {
+  await new Promise((r) => setTimeout(r, 5))
+  for (let i = 0; i < 400; i++) {
+    const views = await Promise.all(running.map((c) => c.sync.status()))
+    if (!views.some((view) => view.busy)) return
+    await new Promise((r) => setTimeout(r, 5))
+  }
+}
 afterEach(() => {
   running.splice(0).forEach((c) => {
     c.sync.close()
@@ -468,7 +476,7 @@ describe('a second computer', () => {
     b.clock.now += 3600 * 1000
     b.sync.tick()
     await b.sync.status()
-    await new Promise((r) => setTimeout(r, 120))
+    await settled()
     expect(server.puts()).toHaveLength(puts)
     const view = await b.sync.cancelApply()
     expect(view.state).toBe('newer')
@@ -495,11 +503,11 @@ describe('a second computer', () => {
     next.clock.now += 2000
     next.sync.tick()
     await next.sync.status({ check: true })
-    await new Promise((r) => setTimeout(r, 120))
+    await settled()
     next.clock.now += 2000
     next.sync.tick()
     await next.sync.status({ check: true })
-    await new Promise((r) => setTimeout(r, 120))
+    await settled()
     expect(server.puts()).toHaveLength(puts)
     expect(server.row.version).toBe(version)
     // A real change, afterwards, is.
@@ -509,7 +517,7 @@ describe('a second computer', () => {
     next.clock.now += 2000
     next.sync.tick()
     await next.sync.status({ check: true })
-    await new Promise((r) => setTimeout(r, 120))
+    await settled()
     expect(server.row.version).toBe(version + 1)
     expect((await openCopy({ blob: server.row.blob, key: keyOf(next), userId: USER.id })).device).toBe('LAPTOP-2')
   })
@@ -752,7 +760,7 @@ describe('offline', () => {
     a.clock.now += 60000
     a.sync.tick()
     await a.sync.status()
-    await new Promise((r) => setTimeout(r, 120))
+    await settled()
     expect(server.row.version).toBe(2)
     expect((await a.sync.status()).problem).toBeNull()
   })
@@ -929,7 +937,7 @@ describe('turned off', () => {
     a.clock.now += 3600 * 1000
     a.sync.tick()
     await a.sync.status()
-    await new Promise((r) => setTimeout(r, 120))
+    await settled()
     expect(server.puts()).toHaveLength(puts)
     expect(server.row).toBeNull()
     expect(JSON.parse(readFileSync(join(a.dir, 'sync.json'), 'utf8')).sealedKey).toBe(sealedBefore)
@@ -988,7 +996,6 @@ describe('a lost phrase', () => {
 })
 
 describe('when it runs', () => {
-  const settled = () => new Promise((r) => setTimeout(r, 120))
   const timed = async (server, over = {}) => {
     const a = await computer(server, { sync: { debounceMs: 60000, minIntervalMs: 300000, maxWaitMs: 900000, ...over } })
     await on(a)
@@ -1124,14 +1131,14 @@ describe('when it runs', () => {
     a.sync.close()
     const next = await computer(server, { name: 'DESKTOP-1', dataDir: a.dataDir, sync: { firstLookMs: 1 } })
     next.sync.start()
-    await new Promise((r) => setTimeout(r, 160))
+    await settled()
     await next.sync.status()
     expect(next.newer).toEqual([{ device: 'LAPTOP-2', at: 1_800_000_000_000 }])
     expect((await next.sync.status()).state).toBe('newer')
     next.sync.close()
     const again = await computer(server, { name: 'DESKTOP-1', dataDir: a.dataDir, sync: { firstLookMs: 1 } })
     again.sync.start()
-    await new Promise((r) => setTimeout(r, 160))
+    await settled()
     await again.sync.status()
     expect(again.newer).toHaveLength(0)
     expect((await again.sync.status()).state).toBe('newer')
@@ -1439,11 +1446,11 @@ describe('H4: localizing stays out of uploads', () => {
     })
     next.clock.now += 181000
     next.sync.tick()
-    await new Promise((r) => setTimeout(r, 120))
+    await settled()
     // Only what the window wrote: nothing goes up.
     next.clock.now += 1000
     next.sync.tick()
-    await new Promise((r) => setTimeout(r, 120))
+    await settled()
     expect(server.puts()).toHaveLength(1)
     // The person changes something.
     edit(next, (d) => {
@@ -1451,7 +1458,7 @@ describe('H4: localizing stays out of uploads', () => {
     })
     next.clock.now += 1000
     next.sync.tick()
-    await new Promise((r) => setTimeout(r, 120))
+    await settled()
     expect(server.puts()).toHaveLength(2)
     const sent = await openCopy({ blob: server.row.blob, key: keyOf(next), userId: USER.id })
     const tree = JSON.parse(sent.bundle.files['workspace-layout.json']).workspaces[0].tree
@@ -1487,19 +1494,19 @@ describe('H4: localizing stays out of uploads', () => {
     again.clock.now = next.clock.now
     again.sync.start({ applied: false })
     again.sync.tick()
-    await new Promise((r) => setTimeout(r, 120))
+    await settled()
     again.clock.now += 1000
     again.sync.tick()
-    await new Promise((r) => setTimeout(r, 120))
+    await settled()
     expect(await again.sync.flushAtQuit()).toBe(false)
     expect(server.row.version).toBe(version)
     // Once it is over, what is there is what this computer has: still nothing goes up.
     again.clock.now += 180000
     again.sync.tick()
-    await new Promise((r) => setTimeout(r, 120))
+    await settled()
     again.clock.now += 1000
     again.sync.tick()
-    await new Promise((r) => setTimeout(r, 120))
+    await settled()
     expect(server.row.version).toBe(version)
   })
 })
@@ -1507,7 +1514,6 @@ describe('H4: localizing stays out of uploads', () => {
 describe('H5: the copy is protected', () => {
   const projects = (...ids) => layout({ workspaces: ids.map((id) => ({ id, name: id, cwd: null, tree: null })) })
   const timed = (server, over = {}) => computer(server, { setup: { settings: projects('ws-a', 'ws-b', 'ws-c') }, sync: { debounceMs: 0, minIntervalMs: 0, ...over } })
-  const settled = () => new Promise((r) => setTimeout(r, 120))
   const write = (c, value) => {
     writeFileSync(join(c.dataDir, 'workspace-layout.json'), JSON.stringify(value))
     utimesSync(join(c.dataDir, 'workspace-layout.json'), new Date(), new Date(Date.now() + Math.random() * 100000))
@@ -1751,15 +1757,15 @@ describe('M10: what the page says is what happened', () => {
     const a = await computer(server, { sync: { debounceMs: 0, minIntervalMs: 0 } })
     await on(a)
     a.sync.tick()
-    await new Promise((r) => setTimeout(r, 120))
+    await settled()
     writeFileSync(join(a.dataDir, 'task-board.json'), '{ damaged')
     a.clock.now += 60000
     a.sync.tick()
-    await new Promise((r) => setTimeout(r, 120))
+    await settled()
     expect((await a.sync.status()).problem).toBeNull()
     a.clock.now += 11 * 60000
     a.sync.tick()
-    await new Promise((r) => setTimeout(r, 120))
+    await settled()
     expect(await a.sync.status()).toMatchObject({ problem: 'unreadableFile', alert: 'uploadsStopped' })
     expect(a.alerts).toEqual(['uploadsStopped'])
   })
@@ -1933,7 +1939,7 @@ describe('Low', () => {
       return authed(path, options)
     }
     const run = a.sync.syncNow()
-    await new Promise((r) => setTimeout(r, 120))
+    await settled()
     a.sync.accountDeleted()
     expect(existsSync(join(a.dir, 'sync.json'))).toBe(false)
     release()
