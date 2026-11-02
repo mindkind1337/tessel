@@ -11,7 +11,7 @@ import RemoteFolderDialog from '../components/project/RemoteFolderDialog.vue'
 import { resetSettings } from '../settings'
 import { setUiLanguage, t } from '../i18n'
 import { _resetFeedsForTest } from '../agentChildrenFeed'
-import { cleanProjectName, checkRemoteFolder } from '../projectFolder'
+import { cleanProjectName, checkRemoteFolder, automationsToMove } from '../projectFolder'
 import { remoteRootRefusal } from '../addProject'
 import { hostLayoutFromWorkspace, hostChatsFromWorkspace } from '../liveShareLayout'
 
@@ -165,8 +165,28 @@ describe('the checks', () => {
     expect(src).toContain('if (checked.confirmHome) {')
   })
 
-  it('an automation of the project still finds it after the folder changed (by id, host only)', () => {
-    expect(src).toContain('if (a.remote) return ws.remote && ws.remote.hostId === a.remote.hostId ? ws : null')
+  it('an automation runs only in the folder it was made for: a copy of the settings moving the project stops it', () => {
+    expect(src).toContain('if (a.remote) return ws.remote && ws.remote.hostId === a.remote.hostId && ws.remote.path === a.remote.path ? ws : null')
+  })
+
+  it('the person moving the project takes its automations along, still confirmed', () => {
+    const at = src.indexOf('async function chooseRemoteFolder')
+    expect(src.indexOf('moveAutomations({ wsId: ws.id, hostId, from, to: checked.path })', at)).toBeGreaterThan(src.indexOf('if (!applyRemoteFolder(ws, checked.path))', at))
+    const move = { wsId: 'ws1', hostId: 'h1', from: '/srv/old', to: '/srv/new' }
+    const list = [
+      { id: 'on', wsId: 'ws1', remote: { hostId: 'h1', path: '/srv/old' }, confirmedAt: 5, confirmedSig: 'sig' },
+      { id: 'off', wsId: 'ws1', remote: { hostId: 'h1', path: '/srv/old' }, confirmedAt: null, confirmedSig: null },
+      { id: 'otherFolder', wsId: 'ws1', remote: { hostId: 'h1', path: '/srv/else' }, confirmedAt: 5 },
+      { id: 'otherHost', wsId: 'ws1', remote: { hostId: 'h2', path: '/srv/old' }, confirmedAt: 5 },
+      { id: 'otherProject', wsId: 'ws2', remote: { hostId: 'h1', path: '/srv/old' }, confirmedAt: 5 },
+      { id: 'here', wsId: 'ws1', projectCwd: 'C:\\x', confirmedAt: 5 }
+    ]
+    expect(automationsToMove(list, move)).toEqual([
+      { id: 'on', input: { remote: { hostId: 'h1', path: '/srv/new' }, confirmed: true, confirmSig: 'sig' } },
+      // Never confirmed: moving it confirms nothing.
+      { id: 'off', input: { remote: { hostId: 'h1', path: '/srv/new' } } }
+    ])
+    expect(automationsToMove(null, move)).toEqual([])
   })
 
   it('its words are in French', async () => {

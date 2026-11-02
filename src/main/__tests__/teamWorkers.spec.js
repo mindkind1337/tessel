@@ -75,8 +75,8 @@ describe('worker tools', () => {
     expect(tools.team_worker_done.inputSchema.required).toEqual(['summary'])
     expect(tools.team_heartbeat.inputSchema.properties.phase.enum).toEqual(['investigating', 'implementing', 'reviewing', 'waiting'])
     for (const t of mcp.TOOLS) expect(t.description.length).toBeGreaterThan(20)
-    // A new tools API: running agents are told to restart for it.
-    expect(mcp.VERSION).toBe('1.11.14')
+    // A new tools API: running agents are told to restart for it (agentTerminal.spec has the number).
+    expect(mcp.VERSION).toMatch(/^\d+\.\d+\.\d+$/)
   })
 
   it('team_worker_start: sent to Tessel, waits for its answer', async () => {

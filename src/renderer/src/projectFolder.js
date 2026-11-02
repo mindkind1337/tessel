@@ -36,6 +36,19 @@ export function checkRemoteFolder({ ws, picked, browsed, workspaces = [] }) {
   return isBareHome(path) ? { path, confirmHome: true } : { path }
 }
 
+// The person moved a project on its host: its automations go with it, still confirmed, since they
+// chose this folder themselves. A copy of the settings that moves a project does not come through
+// here, so those wait for someone to look (App.vue: automationWorkspace).
+// -> [{ id, input }] for automations.update
+export function automationsToMove(automations, { wsId, hostId, from, to }) {
+  return (Array.isArray(automations) ? automations : [])
+    .filter((a) => a && a.wsId === wsId && a.remote && a.remote.hostId === hostId && a.remote.path === from)
+    .map((a) => ({
+      id: a.id,
+      input: { remote: { hostId, path: to }, ...(a.confirmedAt ? { confirmed: true, confirmSig: a.confirmedSig } : {}) }
+    }))
+}
+
 // The folder picked for a project on this computer, after main looked at it
 // (addProject:checkFolder: it exists and is a folder). Another project on the
 // same folder, or the same folder again, is refused; the roots and system

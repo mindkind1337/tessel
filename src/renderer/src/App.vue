@@ -115,7 +115,7 @@ import { initRemoteHosts, setRemoteHostHandlers, remoteHostsState, hostShared, r
 import { hostAddress } from './remoteHostDisplay'
 import AddProjectDialog from './components/project/AddProjectDialog.vue'
 import RemoteFolderDialog from './components/project/RemoteFolderDialog.vue'
-import { cleanProjectName, checkRemoteFolder, checkLocalFolder } from './projectFolder'
+import { cleanProjectName, checkRemoteFolder, checkLocalFolder, automationsToMove } from './projectFolder'
 import { savedRemote, savedGroup } from './addProject'
 import NotesPanel from './components/NotesPanel.vue'
 import NewTaskDialog from './components/NewTaskDialog.vue'
@@ -6562,12 +6562,28 @@ async function chooseRemoteFolder(picked) {
       return
     }
   }
+  const from = ws.remote.path
   if (!applyRemoteFolder(ws, checked.path)) {
     state.busy = false
     return
   }
   remoteFolder.value = null
   showToast(t('app.folder.set', 'New panes in {{name}} will open in {{folder}}', { name: ws.name, folder: checked.path }))
+  moveAutomations({ wsId: ws.id, hostId, from, to: checked.path })
+}
+// One that cannot follow says so where it is listed, when it next comes due: its project is not found.
+async function moveAutomations(move) {
+  const api = window.shellApi && window.shellApi.automations
+  if (!api || !api.list || !api.update) return
+  try {
+    const snapshot = await api.list()
+    for (const { id, input } of automationsToMove(snapshot && snapshot.automations, move)) {
+      const res = await api.update(id, input)
+      if (res && res.ok === false && window.shellApi.log) window.shellApi.log('warn', `automation not moved with its project: ${id}: ${res.error}`) // i18n-ignore log
+    }
+  } catch (err) {
+    if (window.shellApi.log) window.shellApi.log('warn', `automations not moved with their project: ${err && err.message}`) // i18n-ignore log
+  }
 }
 function applyRemoteFolder(ws, path) {
   if (!ws.remote || liveShare.isGuestWs(ws)) return false
