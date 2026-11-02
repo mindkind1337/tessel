@@ -2303,7 +2303,7 @@ async function deserializeNode(snap, cwd = null, attaching = null, startAsleep =
     }
     // A terminal asleep at launch: its shell starts when you open it (Wake),
     // in the same folder, with what it showed last time.
-    if (!agent && savedId && asleepAtStart) {
+    if (!agent && savedId && (asleepAtStart || restoresHeldTerminal(snap))) {
       const asleep = reactive({
         type: 'leaf',
         id: savedId,
@@ -2318,7 +2318,10 @@ async function deserializeNode(snap, cwd = null, attaching = null, startAsleep =
         backend: 'conpty',
         startDir: typeof snap.startDir === 'string' ? snap.startDir : null,
         restoredText: savedOutput[savedId] || '',
-        sleeping: { at: snap.sleeping && Number.isFinite(snap.sleeping.at) ? snap.sleeping.at : Date.now() },
+        sleeping: { at: snap.sleeping && Number.isFinite(snap.sleeping.at) ? snap.sleeping.at : Date.now(), ...(restoresHeldTerminal(snap) ? { held: true } : {}) },
+        // On its SSH host when it wakes.
+        ...(typeof snap.remoteHostId === 'string' && /^ssh-[\w-]{1,60}$/.test(snap.remoteHostId) ? { remoteHostId: snap.remoteHostId } : {}),
+        ...(typeof snap.remotePath === 'string' && snap.remotePath.length <= 1024 ? { remotePath: snap.remotePath } : {}),
         broadcast: snap.broadcast !== false
       })
       if (snap.paneName) asleep.paneName = snap.paneName
@@ -2418,6 +2421,12 @@ async function deserializeNode(snap, cwd = null, attaching = null, startAsleep =
   return reactive({ type: 'split', id: newId('split'), dir: snap.dir, sizes, children })
 }
 
+// The first start of a pane held since a layout came from elsewhere asks first, whatever its pin,
+// Settings or a Yolo folder say: what it is, and where, may not be what those were decided for. The
+// person chooses Yolo from its menu if they want it (restartWithPermissions).
+function firstStartPermissions(leaf) {
+  return leaf.sleeping && leaf.sleeping.held === true ? 'manual' : leaf.permissions
+}
 // This start follows a layout from elsewhere (restoreOrSeedLayout asks main): see deserializeNode.
 let restoreHeld = false
 function holdRestore(held) {
@@ -2437,6 +2446,20 @@ function restoresAsleep(snap) {
     !!snap.sleeping &&
     Number.isFinite(snap.sleeping.at) &&
     (!!safeSessionId(snap.sessionId) || snap.sleeping.held === true)
+  )
+}
+// A terminal held since a layout came from elsewhere: its shell starts when you click Wake.
+function restoresHeldTerminal(snap) {
+  return (
+    !!snap &&
+    snap.type === 'leaf' &&
+    !['editor', 'chat', 'browser'].includes(snap.kind) &&
+    !(snap.kind === 'agent' && typeof snap.agentCommand === 'string' && snap.agentCommand) &&
+    typeof snap.id === 'string' &&
+    /^pane-[\w-]+$/.test(snap.id) &&
+    !!snap.sleeping &&
+    Number.isFinite(snap.sleeping.at) &&
+    snap.sleeping.held === true
   )
 }
 // Its terminal still runs in the terminal host (the answer asked ahead at
@@ -2460,7 +2483,8 @@ function restoresTerminal(snap) {
     !['editor', 'chat', 'browser'].includes(snap.kind) &&
     typeof snap.id === 'string' &&
     /^pane-[\w-]+$/.test(snap.id) &&
-    !restoresAsleep(snap)
+    !restoresAsleep(snap) &&
+    !restoresHeldTerminal(snap)
   )
 }
 
@@ -5655,6 +5679,8 @@ async function restartWithPermissions(leafId, mode) {
   if (!leaf || leaf.kind !== 'agent' || !leaf.agentCommand || !['manual', 'yolo'].includes(mode)) return
   if (restartingLeaves.has(leafId)) return
   leaf.permissions = mode
+  // The person just chose: that is what it starts with.
+  if (leaf.sleeping && leaf.sleeping.held === true) leaf.sleeping = { at: leaf.sleeping.at }
   // Always resumed (whatever Settings > Agents > Resume says): the point is
   // to carry on the same conversation with the other mode.
   const ok = await restartInPlace(leafId, { resume: true })
@@ -10136,8 +10162,8 @@ async function restartInPlaceNow(leafId, opts) {
     // the host's own sign-in).
     hostAccount: 'hostAccount' in opts ? opts.hostAccount : old.hostAccount,
     sessionOptions: old.sessionOptions,
-    permissions: old.permissions,
-    permissionMode: old.permissionMode,
+    permissions: firstStartPermissions(old),
+    permissionMode: old.sleeping && old.sleeping.held === true ? undefined : old.permissionMode,
     resume: !!old.sessionId && opts.resume !== false,
     // On its SSH host again (its conversation is there), in its folder.
     ...(old.remoteHostId ? { remoteHostId: old.remoteHostId } : {}),
@@ -10533,7 +10559,9 @@ async function wakeShell(leafId) {
       id: leafId,
       savedOutput: old.restoredText || '',
       startDir: old.startDir,
-      keepOnFailure: true
+      keepOnFailure: true,
+      ...(old.remoteHostId ? { remoteHostId: old.remoteHostId } : {}),
+      ...(old.remoteHostId && old.remotePath ? { remotePath: old.remotePath } : {})
     })
     if (!fresh) return false
     if (findLeaf(leafId) !== old) {
@@ -11836,8 +11864,9 @@ const orchestrator = createOrchestrator({
 function automationWorkspace(a) {
   const ws = wsById(a.wsId)
   if (!ws) return null
-  // By id first: the project's folder on the host may have been changed since.
-  if (a.remote) return ws.remote && ws.remote.hostId === a.remote.hostId ? ws : null
+  // The host and the folder it was made for: a project moved since (a copy of the settings can do
+  // that) is not where the person asked it to run by itself.
+  if (a.remote) return ws.remote && ws.remote.hostId === a.remote.hostId && ws.remote.path === a.remote.path ? ws : null
   return !ws.remote && ws.cwd && samePath(ws.cwd, a.projectCwd) ? ws : null
 }
 function automationAgent(id) {
@@ -14348,7 +14377,10 @@ async function restoreOrSeedLayout() {
       // Saved with no pane (its launcher was shown): it comes back so. One
       // whose panes could not come back gets a shell, as before.
       if (!ws.tree && snap.tree != null) {
-        const leaf = await createLeaf(selectedShell.value, null, ws.cwd, null, wsLeafOpts(ws))
+        // Held like the rest, in a layout from elsewhere: it is that layout's folder.
+        const leaf = restoreHeld
+          ? await deserializeNode({ type: 'leaf', kind: 'shell', id: newId('pane'), shellId: selectedShell.value, ...(ws.remote ? { remoteHostId: ws.remote.hostId, remotePath: ws.remote.path } : {}) }, ws.cwd, null)
+          : await createLeaf(selectedShell.value, null, ws.cwd, null, wsLeafOpts(ws))
         if (!leaf) continue
         ws.tree = leaf
       }

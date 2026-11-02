@@ -180,8 +180,9 @@ working on Tessel itself (see [Build from source](#build-from-source)).
 - **Your settings everywhere** (Settings → Tessel account): once you turn it on, how
   Tessel looks, your projects and their layout, SSH hosts and task cards follow you to
   every computer you sign in on. They are encrypted on your computer before they leave
-  it, with a key made from a sync phrase you choose (at least 12 characters, and not one
-  that is easy to guess). Tessel's server keeps the last 5 versions of a copy it cannot
+  it, with a key made from a sync phrase you choose, or one Tessel suggests (at least 12
+  characters; it refuses the most common patterns, which proves little, so several
+  unrelated words or the suggested one are best). Tessel's server keeps the last 5 versions of a copy it cannot
   read. What it can see is when a version was sent, how often that happens, and a rough
   size: each copy is padded to one of a few large sizes. The name of the computer that
   sent it and the time it says are inside the encryption. The phrase is asked once per
@@ -210,15 +211,18 @@ working on Tessel itself (see [Build from source](#build-from-source)).
   replaces it. A copy older than the one this computer last saw says so; a computer new
   to the account has nothing to compare with, and shows you when it was made. A copy
   that is out of shape in any way is refused whole. Nothing starts by itself on the
-  computer that gets a copy: an agent waits until you click Wake it and a chat until you
-  write to it, while a terminal that was already running here carries on as it is. An
-  agent whose folder or program is not on this computer comes back as a plain terminal in
-  your home folder, and that stays between you and this computer: the other computers
-  keep their agent. Agents ask before trusting a folder that came with a copy, and a
-  folder on a network share is refused without ever being looked at. SSH hosts keep this
-  computer's proxy command, jump host and key file, hosts only on this computer stay, and
-  if a copy changes the address of a host you have, you are asked, and it stays as it is
-  unless you agree. Task cards from a copy tell agents that their words came from a copy.
+  computer that gets a copy: an agent or a terminal waits until you click Wake it and a
+  chat until you write to it, and that first start asks before acting, whatever a Yolo
+  setting says, so you choose Yolo from its menu if you want it. Only a terminal that was
+  already running here carries on as it is. An agent whose folder or program is not on
+  this computer comes back as a plain terminal in your home folder, and that stays
+  between you and this computer: the other computers keep their agent. Agents ask before
+  trusting a folder that came with a copy, and a folder on a network share is refused
+  without ever being looked at. SSH hosts keep this computer's name, proxy command, jump
+  host, key file and `~/.ssh/config` alias, and hosts only on this computer stay. If a copy
+  adds a host, changes where one you have connects, or moves a project or a pane to
+  another host, you see it all in one question, and none of it happens unless you agree.
+  Task cards from a copy tell agents that their words came from a copy.
 
   Being offline or signed out changes nothing and shows no alert. What needs you stays on
   screen until it is dealt with: the copy is gone from the server, it was replaced under
@@ -226,6 +230,11 @@ working on Tessel itself (see [Build from source](#build-from-source)).
   turns anything off here or drops your key: you choose. You can sync now or turn it off,
   and choose to erase the copies on the server too; deleting your account erases them as
   well.
+
+  What this cannot do: a server can hold back newer copies, which no computer can notice.
+  Someone with a stolen session cannot read a copy, but can erase the kept versions with
+  one request, or push them out with five writes; your setup on each computer survives,
+  what they wrote is refused or asked about, and a lasting alert shows.
 - **Connections** (Settings → Connections): connect your accounts to your agents:
   Gmail, Google Calendar and Drive (nothing to set up with a Tessel account; without
   one, or if you prefer, with your own free Google Cloud OAuth client; Google warns
@@ -327,7 +336,8 @@ working on Tessel itself (see [Build from source](#build-from-source)).
   if you tick it: otherwise those settings stay as they are on this computer. An import is checked, then put in place when Tessel starts again
   (the replaced files are kept in `import-backups`), so it can bring back a deleted
   data folder or move your setup to another computer. Nothing starts by itself at that
-  start: its agents wait until you click Wake it.
+  start: its agents and terminals wait until you click Wake it, and an agent's first start
+  asks before acting.
 - **A development Tessel no longer restarts by itself** when the code of its background
   part changes (`src/main`, `src/preload`, `launch.mjs`): that cut sessions every time an
   agent merged into the folder. The window still reloads by itself for the

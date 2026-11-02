@@ -3349,14 +3349,14 @@ ipcMain.handle('tesselSync:turnOn', syncFromWindow((q) => settingsSync.turnOn(q 
 ipcMain.handle('tesselSync:startOver', syncFromWindow((q) => settingsSync.startOver(q && q.phrase)))
 ipcMain.handle('tesselSync:turnOff', syncFromWindow((q) => settingsSync.turnOff({ erase: !!(q && q.erase === true) })))
 ipcMain.handle('tesselSync:syncNow', syncFromWindow(() => settingsSync.syncNow()))
-ipcMain.handle('tesselSync:apply', syncFromWindow((q) => settingsSync.apply({ hostAddresses: q && q.hostAddresses === 'copy' ? 'copy' : 'keep' })))
+ipcMain.handle('tesselSync:apply', syncFromWindow((q) => settingsSync.apply({ hostAddresses: q && q.hostAddresses === 'copy' ? 'copy' : 'keep', token: q && typeof q.token === 'string' ? q.token : null })))
 ipcMain.handle('tesselSync:cancelApply', syncFromWindow(() => settingsSync.cancelApply()))
 ipcMain.handle('tesselSync:keepMine', syncFromWindow(() => settingsSync.keepMine()))
 ipcMain.handle('tesselSync:sendAgain', syncFromWindow(() => settingsSync.sendAgain()))
 ipcMain.handle('tesselSync:sendSmaller', syncFromWindow(() => settingsSync.sendSmaller()))
 ipcMain.handle('tesselSync:useCopyInstead', syncFromWindow(() => settingsSync.useCopyInstead()))
 ipcMain.handle('tesselSync:earlier', syncFromWindow(() => settingsSync.earlier()))
-ipcMain.handle('tesselSync:applyEarlier', syncFromWindow((q) => settingsSync.applyEarlier(q && q.version, { hostAddresses: q && q.hostAddresses === 'copy' ? 'copy' : 'keep' })))
+ipcMain.handle('tesselSync:applyEarlier', syncFromWindow((q) => settingsSync.applyEarlier(q && q.version, { hostAddresses: q && q.hostAddresses === 'copy' ? 'copy' : 'keep', token: q && typeof q.token === 'string' ? q.token : null })))
 // An installed Tessel has no launcher to start the next one: Electron does, once this one is
 // gone. As with a development restart, the closing steps are skipped, so the terminal host and
 // its terminals keep running and the next window reattaches to them. Only ever on a click.

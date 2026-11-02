@@ -354,7 +354,7 @@ describe('Your settings everywhere', () => {
       expect(asked.text).toContain('What decides what agents may do stays as it is here')
       expect(asked.text).toContain('import-backups')
       // H1 and H5: what starts, and what it holds.
-      expect(asked.text).toContain('No agent starts')
+      expect(asked.text).toContain('Nothing starts')
       expect(asked.text).toContain('Projects: 6. Panes: 14, of which agents: 8. SSH hosts: 3. Task cards: 40.')
       expect(asked.text).toContain('On this computer now: Projects: 1.')
       expect(a.apply).toHaveBeenCalled()
@@ -515,24 +515,25 @@ describe('Your settings everywhere', () => {
 
     it('H6: a changed host address asks by itself; no means it stays as it is here', async () => {
       const changes = [{ id: 'ssh-1', label: 'prod', from: 'me@prod.example', to: 'root@attacker.example' }]
-      const askConfirm = vi.fn(async (message) => !message.title.includes('somewhere else'))
-      const a = api({ status: vi.fn(async () => ({ ...NEWER, remote: { ...NEWER.remote, hostChanges: changes } })) })
+      const askConfirm = vi.fn(async (message) => !message.title.includes('where SSH connects'))
+      const a = api({ status: vi.fn(async () => ({ ...NEWER, remote: { ...NEWER.remote, hostChanges: changes, token: 'for-this-copy' } })) })
       await mountPage(a, { askConfirm })
       await w.get('.tessel-sync-apply').trigger('click')
       await flushPromises()
       expect(askConfirm).toHaveBeenCalledTimes(2)
       expect(askConfirm.mock.calls[1][0].text).toContain('prod: me@prod.example \u2192 root@attacker.example')
       expect(askConfirm.mock.calls[1][0].danger).toBe(true)
-      expect(a.apply).toHaveBeenCalledWith({ hostAddresses: 'keep' })
+      // For the copy it was asked about: main checks.
+      expect(a.apply).toHaveBeenCalledWith({ hostAddresses: 'keep', token: 'for-this-copy' })
     })
 
     it('H6: yes takes the new addresses; with no change there is no second question', async () => {
       const askConfirm = vi.fn(async () => true)
-      const a = api({ status: vi.fn(async () => ({ ...NEWER, remote: { ...NEWER.remote, hostChanges: [{ id: 'ssh-1', label: 'x', from: 'a', to: 'b' }] } })) })
+      const a = api({ status: vi.fn(async () => ({ ...NEWER, remote: { ...NEWER.remote, token: 't', hostChanges: [{ kind: 'changed', id: 'ssh-1', label: 'x', from: 'a', to: 'b' }] } })) })
       await mountPage(a, { askConfirm })
       await w.get('.tessel-sync-apply').trigger('click')
       await flushPromises()
-      expect(a.apply).toHaveBeenCalledWith({ hostAddresses: 'copy' })
+      expect(a.apply).toHaveBeenCalledWith({ hostAddresses: 'copy', token: 't' })
       w.unmount()
       const ask = vi.fn(async () => true)
       const b = api({ status: vi.fn(async () => NEWER) })
@@ -540,7 +541,46 @@ describe('Your settings everywhere', () => {
       await w.get('.tessel-sync-apply').trigger('click')
       await flushPromises()
       expect(ask).toHaveBeenCalledTimes(1)
-      expect(b.apply).toHaveBeenCalledWith({ hostAddresses: 'keep' })
+      expect(b.apply).toHaveBeenCalledWith({ hostAddresses: 'keep', token: undefined })
+    })
+
+    it('H6: new hosts and moved projects are in the one question, with where they go', async () => {
+      const askConfirm = vi.fn(async () => false)
+      const changes = [
+        { kind: 'added', id: 'ssh-2x', label: 'prod', from: null, to: 'me@prod.example' },
+        { kind: 'moved', id: 'ws-1', label: 'Alpha', from: 'prod:/srv/app', to: 'prod:/tmp/other' }
+      ]
+      const a = api({ status: vi.fn(async () => ({ ...NEWER, remote: { ...NEWER.remote, hostChanges: changes } })) })
+      await mountPage(a, { askConfirm: vi.fn(async (m) => (askConfirm(m), !m.title.includes('SSH'))) })
+      await w.get('.tessel-sync-apply').trigger('click')
+      await flushPromises()
+      const text = askConfirm.mock.calls[1][0].text
+      expect(text).toContain('new host prod: me@prod.example')
+      expect(text).toContain('Alpha moves: prod:/srv/app \u2192 prod:/tmp/other')
+      expect(text).toContain('new hosts are not added')
+    })
+
+    it('M5: suggests a phrase, shows it to be written down, and it goes where a typed one goes', async () => {
+      const a = api()
+      await mountPage(a)
+      await w.get('.tessel-sync-on').trigger('click')
+      await flushPromises()
+      expect(w.get('.tessel-sync-phrase').attributes('type')).toBe('password')
+      await w.get('.tessel-sync-suggest').trigger('click')
+      const made = w.get('.tessel-sync-phrase').element.value
+      expect(made).toMatch(/^[a-z2-9]{5}(-[a-z2-9]{5}){4}$/)
+      expect(w.get('.tessel-sync-again').element.value).toBe(made)
+      expect(w.get('.tessel-sync-phrase').attributes('type')).toBe('text')
+      expect(w.get('[data-sync-suggested]').text()).toContain('Write this phrase down')
+      await submit()
+      expect(a.turnOn).toHaveBeenCalledWith(made)
+    })
+
+    it('M5: no suggestion when entering the phrase of a copy that exists', async () => {
+      await mountPage(api({ peek: vi.fn(async () => ({ ...OFF, copy: {} })) }))
+      await w.get('.tessel-sync-on').trigger('click')
+      await flushPromises()
+      expect(w.find('.tessel-sync-suggest').exists()).toBe(false)
     })
 
     it('M2: an older copy is said to be older; one with no known computer says so', async () => {
@@ -591,7 +631,7 @@ describe('Your settings everywhere', () => {
     it('the kept versions: opened here, with what each holds, and asked again before use', async () => {
       const askConfirm = vi.fn(async () => true)
       const versions = [
-        { version: 9, device: 'LAPTOP-2', at: 1_800_000_000_000, seq: 4, summary: SUMMARY },
+        { version: 9, device: 'LAPTOP-2', at: 1_800_000_000_000, seq: 4, summary: SUMMARY, token: 'as-listed' },
         { version: 8, unreadable: true }
       ]
       const a = api({ status: vi.fn(async () => ON), earlier: vi.fn(async () => ({ ...ON, versions })) })
@@ -606,7 +646,7 @@ describe('Your settings everywhere', () => {
       await rows[0].get('[data-sync-earlier-use]').trigger('click')
       await flushPromises()
       expect(askConfirm.mock.calls[0][0].text).toContain('Nothing starts by itself')
-      expect(a.applyEarlier).toHaveBeenCalledWith({ version: 9 })
+      expect(a.applyEarlier).toHaveBeenCalledWith({ version: 9, token: 'as-listed' })
       expect(w.find('[data-sync-staged]').exists()).toBe(true)
     })
 

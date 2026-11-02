@@ -78,6 +78,7 @@ function load({ held = false, running = {} } = {}) {
     watchFoundSession: () => {},
     hostCodexNoDaemon: () => null,
     remoteAgentTools: {},
+    sleepsAtStart: () => false,
     makeChatLeaf: (o) => reactive({ type: 'leaf', kind: 'chat', ...o }),
     CHAT_AGENTS: ['claude'],
     OLD_CHAT_TITLE: /^$/,
@@ -91,7 +92,7 @@ function load({ held = false, running = {} } = {}) {
   }
   vm.createContext(ctx)
   vm.runInContext(
-    slice('async function deserializeNode(snap, cwd = null, attaching = null)', 'let persistReady') +
+    slice('async function deserializeNode(snap, cwd = null, attaching = null, startAsleep = false)', 'let persistReady') +
       slice('async function createLeaf(shellId, agent = null', 'function replaceNode(') +
       slice('const wakesWhenOpened = ', 'watch(\n') +
       '\nthis.api = { deserializeNode, createLeaf, restoresAsleep, restoresTerminal, holdRestore, wakesWhenOpened, serializeLeafOnly: (leaf) => leaf }',
@@ -133,11 +134,11 @@ describe('H1: a layout from elsewhere: nothing is typed, whatever the pane says'
     expect((await api.deserializeNode({ ...base, sessionId: 'x; calc.exe #' })).sessionId).toBeNull()
   })
 
-  it('a shell starts, and nothing is typed in it', async () => {
+  it('a terminal waits for its click too: nothing starts, in the folder or the shell a copy names', async () => {
     const { api, shellApi } = load({ held: true })
-    const leaf = await api.deserializeNode({ type: 'leaf', id: 'pane-s', kind: 'shell', shellId: 'powershell', agentCommand: 'calc.exe' })
-    expect(leaf.kind).toBe('shell')
-    expect(shellApi.createPty).toHaveBeenCalledTimes(1)
+    const leaf = await api.deserializeNode({ type: 'leaf', id: 'pane-s', kind: 'shell', shellId: 'cmd', agentCommand: 'calc.exe' })
+    expect(leaf).toMatchObject({ kind: 'shell', sleeping: { held: true } })
+    expect(shellApi.createPty).not.toHaveBeenCalled()
     expect(shellApi.writePty).not.toHaveBeenCalled()
   })
 
@@ -145,6 +146,8 @@ describe('H1: a layout from elsewhere: nothing is typed, whatever the pane says'
     const { api, shellApi } = load({ held: true })
     const leaf = await api.deserializeNode({ ...base, agentCommand: ['calc.exe'] })
     expect(leaf.kind).toBe('shell')
+    expect(leaf.sleeping.held).toBe(true)
+    expect(shellApi.createPty).not.toHaveBeenCalled()
     expect(shellApi.writePty).not.toHaveBeenCalled()
   })
 
@@ -222,7 +225,9 @@ describe('H1: a click is what wakes it', () => {
 
   it('its button says why it waits, and shows even in a chat view', () => {
     expect(terminalPane).toContain('node.sleeping && (!chatShown || node.sleeping.held === true)')
-    expect(terminalPane).toContain("if (props.node.sleeping && props.node.sleeping.held === true) return t('pane.sleep.held'")
+    expect(terminalPane).toContain("if (props.node.sleeping && props.node.sleeping.held === true) {")
+    expect(terminalPane).toContain("t('pane.sleep.held'")
+    expect(terminalPane).toContain("t('pane.sleep.heldShell'")
     expect(terminalPane).toContain('ctx.wakeLeaf && ctx.wakeLeaf(node.id)')
   })
 

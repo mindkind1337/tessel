@@ -26,7 +26,7 @@ import { createCipheriv, createDecipheriv, createHash, randomBytes, randomUUID, 
 import { gzip, gunzip } from 'zlib'
 import { secureStorageAvailable } from './credentialProtection'
 import { SYNC_CATEGORIES, buildSyncBundle, dropPendingImport, hasPendingImport, inspectBackup, localizeLayout, stageImport } from './settingsBackup'
-import { SYNCED_FILE_NAMES, hostChangesOf, rebuildReceived, shapeOf, shrunkFrom, summaryOf } from './syncSchema'
+import { SYNCED_FILE_NAMES, finishHosts, hostChangesOf, rebuildReceived, safeDeviceName, shapeOf, shrunkFrom, summaryOf } from './syncSchema'
 
 export const SYNC_FORMAT = 1
 export const MIN_PHRASE = 12
@@ -38,6 +38,12 @@ export const PAD_BUCKETS = [64 * 1024, 256 * 1024, 1024 * 1024, 1_400_000]
 // Far beyond any setup that fits once compressed: such files are not even read.
 const MAX_PLAIN_BYTES = 64 * 1024 * 1024
 const MAX_STATE = 2 * 1024 * 1024
+// What this computer keeps of what it changed to fit a copy. More than a real setup makes: such a
+// copy is refused, not kept until its state no longer fits.
+const MAX_SHADOW = 512 * 1024
+// The sealed number goes up by one per upload, and the server takes 500 a day: this lasts thousands
+// of years. A copy above it is refused, and nothing is ever sealed above it.
+export const MAX_SEQ = 1_000_000_000
 const MAX_DEVICE = 80
 const KEY_BYTES = 32
 const SALT_BYTES = 16
@@ -79,10 +85,17 @@ export function cleanPhrase(phrase) {
 
 // What guessing would start with. Only asked of a phrase being chosen: an existing copy's phrase
 // is whatever it is.
-const COMMON_IN_PHRASES = ['password', 'passw0rd', 'motdepasse', 'qwerty', 'azerty', 'letmein', 'iloveyou', 'jetaime', 'welcome', 'bienvenue', 'admin', 'tessel', 'secret', 'dragon', 'monkey', 'sunshine', 'football', 'changeme']
-const KEY_ROWS = ['qwertyuiop', 'asdfghjkl', 'zxcvbnm', 'azertyuiop', 'qsdfghjklm', 'wxcvbn', '1234567890', 'abcdefghijklmnopqrstuvwxyz']
+const COMMON_IN_PHRASES = ['password', 'passw0rd', 'motdepasse', 'qwerty', 'azerty', 'letmein', 'iloveyou', 'jetaime', 'welcome', 'bienvenue', 'admin', 'tessel', 'secret', 'dragon', 'monkey', 'sunshine', 'football', 'changeme', 'hello', 'world', 'bonjour', 'summer', 'winter', 'spring', 'autumn', 'montreal', 'quebec', 'canada', 'france', 'paris']
+const KEY_ROWS = ['qwertyuiop', 'asdfghjkl', 'zxcvbnm', 'azertyuiop', 'qsdfghjklm', 'wxcvbn', '1234567890', 'abcdefghijklmnopqrstuvwxyz', '1q2w3e4r5t6y7u8i9o0p', 'q1w2e3r4t5y6u7i8o9p0', '1qaz2wsx3edc4rfv5tgb6yhn7ujm8ik9ol0p', 'zaq12wsxcde34rfvbgt56yhnmju78ik9ol0p']
+// The usual disguises: P@ssw0rd is password.
+const undisguised = (text) => text.replace(/[@4]/g, 'a').replace(/[$5]/g, 's').replace(/0/g, 'o').replace(/3/g, 'e').replace(/[1!]/g, 'i').replace(/7/g, 't')
 export function phraseIsWeak(clean) {
-  let rest = String(clean).toLowerCase()
+  const given = String(clean).toLowerCase()
+  // One word with digits or signs around it is the first thing tried: a phrase is several.
+  const words = (text) => (text.match(/\p{L}+/gu) || []).length
+  if (Math.min(words(given), words(undisguised(given))) <= 1 && (given.match(/\p{L}/gu) || []).length <= 16) return true
+  if (COMMON_IN_PHRASES.some((word) => undisguised(given).includes(word) && undisguised(given).replace(word, '').replace(/[^\p{L}]/gu, '').length < 6)) return true
+  let rest = given
   for (const word of COMMON_IN_PHRASES) rest = rest.split(word).join(' ')
   // Keyboard rows and sequences, either way, from four keys on.
   for (const row of KEY_ROWS) {
@@ -98,11 +111,7 @@ export function phraseIsWeak(clean) {
   return letters.length < 8 || new Set(letters).size < 5 || /^[\p{N}\s\p{P}]*$/u.test(rest)
 }
 
-export const deviceLabel = (name) => {
-  // eslint-disable-next-line no-control-regex -- control characters are what is dropped
-  const clean = String(name || '').replace(/[\u0000-\u001f\u007f-\u009f]+/g, ' ').trim().slice(0, MAX_DEVICE)
-  return clean || 'Computer'
-}
+export const deviceLabel = (name) => safeDeviceName(name).slice(0, MAX_DEVICE).trim() || 'Computer'
 
 export function deriveKey(phrase, salt, cost = SCRYPT_COST) {
   return new Promise((resolve, reject) => {
@@ -165,7 +174,7 @@ export async function openCopy({ blob, key, userId }) {
   } catch {
     throw fail('unreadable')
   }
-  if (!sealed || !Number.isSafeInteger(sealed.seq) || sealed.seq < 1 || !sealed.bundle || typeof sealed.bundle !== 'object') throw fail('unreadable')
+  if (!sealed || !Number.isSafeInteger(sealed.seq) || sealed.seq < 1 || sealed.seq > MAX_SEQ || !sealed.bundle || typeof sealed.bundle !== 'object') throw fail('unreadable')
   return { seq: sealed.seq, device: deviceLabel(sealed.device), at: Number.isFinite(sealed.at) ? sealed.at : null, bundle: sealed.bundle }
 }
 
@@ -239,6 +248,8 @@ export function createSettingsSync({
   quitMs = QUIT_MS
 } = {}) {
   const file = join(dir, 'sync.json')
+  // The highest number this computer saw, once the rest of the state is gone (turned off).
+  const floorFile = join(dir, 'sync-floor.json')
   const device = deviceLabel(deviceName)
   // { userId, on, salt, sealedKey, base, baseSeq, highWater, hash, shape, at, settleUntil, restored,
   // shadow, staged, asked, erased, shrunk, alert }, or null. Never the key in clear.
@@ -263,6 +274,8 @@ export function createSettingsSync({
   let lastPushAt = 0
   let backoffUntil = 0
   let tooBigHash = null
+  // What Earlier copies last showed: version -> { seq, hash }.
+  const earlierListed = new Map()
 
   function readSaved() {
     try {
@@ -275,11 +288,29 @@ export function createSettingsSync({
     }
   }
 
+  function readFloor(userId) {
+    try {
+      const data = JSON.parse(fs.readFileSync(floorFile, 'utf8'))
+      return data && data.userId === userId && Number.isSafeInteger(data.highWater) && data.highWater <= MAX_SEQ ? data.highWater : 0
+    } catch {
+      return 0
+    }
+  }
+
+  // What this account's highest number is, on this computer, whatever the phrase or the salt.
+  function highestOf(userId) {
+    const here = saved && saved.userId === userId ? saved.highWater || 0 : 0
+    return Math.max(here, readFloor(userId))
+  }
+
   function persist() {
+    const text = JSON.stringify({ ...saved, v: 1 })
+    // Never more than can be read back: at the next start it would look like nothing at all.
+    if (text.length > MAX_STATE) throw fail('too-big')
     fs.mkdirSync(dir, { recursive: true, mode: 0o700 })
     const temporary = join(dir, `sync-${randomUUID()}.tmp`)
     try {
-      fs.writeFileSync(temporary, JSON.stringify({ ...saved, v: 1 }), { flag: 'wx', mode: 0o600 })
+      fs.writeFileSync(temporary, text, { flag: 'wx', mode: 0o600 })
       fs.renameSync(temporary, file)
     } finally {
       fs.rmSync(temporary, { force: true })
@@ -329,6 +360,13 @@ export function createSettingsSync({
         dropPendingImport({ dir: dataDir })
       } catch (err) {
         log.warn('sync', `could not drop what was staged: ${(err && err.code) || 'error'}`) // i18n-ignore
+      }
+    }
+    if (saved && saved.highWater) {
+      try {
+        fs.writeFileSync(floorFile, JSON.stringify({ userId: saved.userId, highWater: saved.highWater }), { mode: 0o600 })
+      } catch (err) {
+        log.warn('sync', `could not keep its number: ${(err && err.code) || 'error'}`) // i18n-ignore
       }
     }
     saved = null
@@ -395,7 +433,9 @@ export function createSettingsSync({
               first: !state.base,
               summary: remote.summary || null,
               hostChanges: remote.hostChanges || [],
-              local: remote.local || null
+              local: remote.local || null,
+              // Says which copy an answer was given for (apply).
+              token: remote.hash || null
             }
           : null,
       staged: on && state.staged ? { device: state.staged.device, at: state.staged.at, missing: state.staged.missing || [], missingAgents: state.staged.missingAgents || [] } : null,
@@ -484,7 +524,14 @@ export function createSettingsSync({
 
   // What the question "Use them?" says of a copy that opened.
   async function describe(opened) {
-    const out = { device: opened.device, at: opened.at, seq: opened.seq, summary: summaryOf(opened.files), hostChanges: hostChangesOf(opened.files['remote-hosts.json'] || null, readLocal('remote-hosts.json')) }
+    const out = {
+      device: opened.device,
+      at: opened.at,
+      seq: opened.seq,
+      hash: hashOf(opened.files),
+      summary: summaryOf(opened.files),
+      hostChanges: hostChangesOf(opened.files['remote-hosts.json'] || null, readLocal('remote-hosts.json'), opened.files['workspace-layout.json'] || null, readLocal('workspace-layout.json'))
+    }
     try {
       const { bundle } = await currentBundle()
       out.local = summaryOf(bundle.files)
@@ -535,8 +582,9 @@ export function createSettingsSync({
       return 'same'
     }
     // What the window writes back after a copy was put in place is not the person's change.
+    // Not its shape: what it holds is compared with the copy when the settling ends.
     if (settling() && !evenIfSame) {
-      update({ hash: built.hash, shape: built.shape })
+      update({ hash: built.hash })
       return 'same'
     }
     if (!evenIfSame && !allowShrink) {
@@ -550,6 +598,10 @@ export function createSettingsSync({
     }
     if (!evenIfSame && built.hash === tooBigHash) return 'failed'
     const seq = (state.highWater || 0) + 1
+    if (seq > MAX_SEQ) {
+      problem = 'failed'
+      return 'failed'
+    }
     const at = now()
     let blob
     try {
@@ -781,6 +833,14 @@ export function createSettingsSync({
       exclusive(async () => {
         const { hash, shape, unsettled } = await currentBundle()
         if (unsettled || !mine()) return
+        // Much less than the copy it applied (a default grid, here): asked, like any upload.
+        const lost = shrunkFrom(mine().shape, shape)
+        if (lost) {
+          update({ settleUntil: null, restored: false, shrunk: lost })
+          raiseAlert('shrunk')
+          firstChangeAt = null
+          return
+        }
         // An earlier copy the person went back to goes up as the copy; any other is what is there.
         if (mine().restored) {
           update({ settleUntil: null, restored: false, shape })
@@ -871,6 +931,15 @@ export function createSettingsSync({
     key = null
     remote = null
     stopTimers()
+    // A copy staged for this account does not apply to whoever is here next.
+    if (saved && saved.staged) {
+      try {
+        dropPendingImport({ dir: dataDir })
+        update({ staged: null })
+      } catch (err) {
+        log.warn('sync', `sign-out: ${(err && err.code) || 'error'}`) // i18n-ignore
+      }
+    }
     if (saved && saved.sealedKey) {
       try {
         update({ sealedKey: null })
@@ -902,6 +971,9 @@ export function createSettingsSync({
   // The key goes in the state. Under the salt this computer already had, what it knows stays.
   function adopt({ userId, salt, raw }) {
     const same = saved && saved.userId === userId && saved.salt === salt ? saved : null
+    // The number never drops, whatever phrase or salt comes: an old copy under a salt it had before
+    // is still old. Only a number at the very top starts over (nothing could be sealed above it).
+    const highest = highestOf(userId)
     // Staged from another account's copy, or under another phrase: it does not follow.
     if (saved && saved.staged && !same) dropPendingImport({ dir: dataDir })
     saved = {
@@ -911,7 +983,7 @@ export function createSettingsSync({
       sealedKey: sealKey(raw),
       base: same ? same.base || 0 : 0,
       baseSeq: same ? same.baseSeq || 0 : 0,
-      highWater: same ? same.highWater || 0 : 0,
+      highWater: highest < MAX_SEQ ? highest : 0,
       hash: same ? same.hash || null : null,
       shape: same ? same.shape || null : null,
       shadow: same ? same.shadow || null : null,
@@ -972,7 +1044,7 @@ export function createSettingsSync({
       unfit = true
     }
     if (era !== epoch) return view()
-    const before = saved && saved.userId === userId && saved.salt === copy.salt ? saved.highWater || 0 : 0
+    const before = highestOf(userId)
     adopt({ userId, salt: copy.salt, raw })
     if (opened && opened.seq > before) update({ highWater: opened.seq })
     if (opened && opened.seq === saved.baseSeq) {
@@ -1081,6 +1153,11 @@ export function createSettingsSync({
       missing = made.missing
       missingAgents = made.missingAgents
       shadow = made.shadow
+      if (JSON.stringify(shadow).length > MAX_SHADOW) {
+        problem = 'refusedCopy'
+        log.warn('sync', 'a copy refused: too much of it does not fit this computer') // i18n-ignore
+        return refusal('refusedCopy')
+      }
     }
     if (era !== epoch) return view()
     stageImport({ dir: dataDir, files, categories: SYNC_CATEGORIES, prepared: true, now, extra: { source: 'sync', running, hostAddresses: hostAddresses === 'copy' ? 'copy' : 'keep', device: opened.device } })
@@ -1093,7 +1170,8 @@ export function createSettingsSync({
         missing: missing.slice(0, 20),
         missingAgents: missingAgents.slice(0, 20),
         shadow,
-        shape: shapeOf(opened.files),
+        // What this computer will have: hosts the person did not take are not hosts it lost.
+        shape: shapeOf(opened.files['remote-hosts.json'] ? { ...opened.files, 'remote-hosts.json': finishHosts(opened.files['remote-hosts.json'], readLocal('remote-hosts.json'), { addresses: hostAddresses }) } : opened.files),
         earlier
       },
       shrunk: null
@@ -1106,13 +1184,15 @@ export function createSettingsSync({
 
   // The newer copy, decrypted and checked, staged for the next start. A changed address on a host
   // of this computer is taken only on the person's word (hostAddresses: 'copy').
-  function apply({ hostAddresses = 'keep' } = {}) {
+  // token: the copy the person answered about. An answer never goes to another copy.
+  function apply({ hostAddresses = 'keep', token = null } = {}) {
     return exclusive(async () => {
       const era = epoch
       const state = mine()
       const usable = theKey()
       if (!state || !usable || !remote) return refusal('failed')
       if (remote.saltChanged) return refusal('wrongPhrase')
+      if (token !== null && token !== remote.hash) return refusal('changedAgain')
       const { copy, none, failed } = await readCopy()
       if (failed) return refusal(failed)
       if (none) {
@@ -1131,7 +1211,12 @@ export function createSettingsSync({
         problem = err && err.code === 'newer' ? 'newerApp' : err && err.code === 'refused' ? 'refusedCopy' : 'tampered'
         return refusal(problem)
       }
-      return stage(copy, opened, { hostAddresses, era })
+      // The server said the same number and gave something else than what the person was shown.
+      if (opened.seq !== remote.seq || hashOf(opened.files) !== remote.hash) {
+        await reconcile(metaOf(copy))
+        return refusal('changedAgain')
+      }
+      return stage(copy, opened, { hostAddresses: token !== null ? hostAddresses : 'keep', era })
     })
   }
 
@@ -1175,7 +1260,7 @@ export function createSettingsSync({
     return exclusive(async () => {
       const state = mine()
       if (!state || !state.shrunk || !theKey()) return view()
-      const result = await push({ expected: state.base, allowShrink: true })
+      const result = await push({ expected: state.base, evenIfSame: true })
       if (result === 'sent' || result === 'same') {
         update({ shrunk: null })
         clearAlert('shrunk')
@@ -1204,9 +1289,10 @@ export function createSettingsSync({
         problem = err && err.code === 'newer' ? 'newerApp' : err && err.code === 'refused' ? 'refusedCopy' : 'tampered'
         return refusal(problem)
       }
-      update({ shrunk: null })
+      const highest = state.highWater || 0
+      update({ shrunk: null, highWater: Math.max(highest, opened.seq) })
       clearAlert('shrunk')
-      remote = { ...metaOf(copy), older: false, ...(await describe(opened)) }
+      remote = { ...metaOf(copy), older: opened.seq < highest, ...(await describe(opened)) }
       return view()
     })
   }
@@ -1224,6 +1310,7 @@ export function createSettingsSync({
       const body = await readLimited(res, MAX_META_RESPONSE)
       const listed = body && Array.isArray(body.versions) ? body.versions.filter((v) => v && Number.isSafeInteger(v.version) && v.version >= 1).slice(0, KEPT_VERSIONS) : []
       const versions = []
+      earlierListed.clear()
       for (const { version } of listed) {
         const { copy } = await readCopy({ version })
         if (!copy || copy.salt !== state.salt) {
@@ -1232,7 +1319,9 @@ export function createSettingsSync({
         }
         try {
           const opened = await openChecked(copy.blob, usable, state.userId)
-          versions.push({ version, device: opened.device, at: opened.at, seq: opened.seq, summary: summaryOf(opened.files) })
+          const hash = hashOf(opened.files)
+          earlierListed.set(version, { seq: opened.seq, hash })
+          versions.push({ version, device: opened.device, at: opened.at, seq: opened.seq, summary: summaryOf(opened.files), token: hash })
         } catch {
           versions.push({ version, unreadable: true })
         }
@@ -1242,12 +1331,15 @@ export function createSettingsSync({
   }
 
   // One of those, staged for the next start. Once this computer runs on it, it goes up as the copy.
-  function applyEarlier(version, { hostAddresses = 'keep' } = {}) {
+  function applyEarlier(version, { hostAddresses = 'keep', token = null } = {}) {
     return exclusive(async () => {
       const era = epoch
       const state = mine()
       const usable = theKey()
       if (!state || !usable || !Number.isSafeInteger(version) || version < 1) return refusal('failed')
+      // Only what was listed, as it was listed.
+      const shown = earlierListed.get(version)
+      if (!shown || (token !== null && token !== shown.hash)) return refusal('changedAgain')
       const [{ copy, failed }, head] = await Promise.all([readCopy({ version }), readCopy({ meta: true })])
       if (failed || head.failed) return refusal(failed || head.failed)
       if (!copy || !head.copy || copy.salt !== state.salt) return refusal('failed')
@@ -1257,7 +1349,11 @@ export function createSettingsSync({
       } catch (err) {
         return refusal(err && err.code === 'refused' ? 'refusedCopy' : 'tampered')
       }
-      return stage(copy, opened, { hostAddresses, serverVersion: head.copy.version, earlier: true, era })
+      if (opened.seq !== shown.seq || hashOf(opened.files) !== shown.hash) {
+        earlierListed.delete(version)
+        return refusal('changedAgain')
+      }
+      return stage(copy, opened, { hostAddresses: token !== null ? hostAddresses : 'keep', serverVersion: head.copy.version, earlier: true, era })
     })
   }
 
@@ -1280,6 +1376,11 @@ export function createSettingsSync({
   // does not bring this back (forget).
   function accountDeleted() {
     forget()
+    try {
+      fs.rmSync(floorFile, { force: true })
+    } catch (err) {
+      log.warn('sync', `could not remove its number: ${(err && err.code) || 'error'}`) // i18n-ignore
+    }
     told()
   }
 

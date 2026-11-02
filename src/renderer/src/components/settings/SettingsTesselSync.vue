@@ -5,6 +5,7 @@
 import { computed, inject, onBeforeUnmount, ref, watch } from 'vue'
 import { t } from '../../i18n'
 import { useSettingsShell } from './settingsShell'
+import { suggestPhrase } from '../../../../shared/syncPhrase'
 
 const { shown } = useSettingsShell()
 const askConfirm = inject('askConfirm', null)
@@ -24,6 +25,7 @@ const turningOff = ref(false)
 const eraseToo = ref(false)
 const restarting = ref(false)
 const earlierList = ref(null) // the versions the server keeps, once asked for
+const phraseShown = ref(false) // a suggested phrase is shown, to be written down
 
 const when = (at) => (at ? new Date(at).toLocaleString() : t('settings.tesselAccount.sync.unknownTime', 'at an unknown time'))
 const busy = computed(() => working.value || !!state.value?.busy)
@@ -32,7 +34,7 @@ const choosing = computed(() => !!form.value && (!form.value.copy || form.value.
 const errorText = (code) =>
   ({
     shortPhrase: () => t('settings.tesselAccount.sync.error.shortPhrase', 'Choose a phrase of at least {{count}} characters.', { count: MIN_PHRASE }),
-    weakPhrase: () => t('settings.tesselAccount.sync.error.weakPhrase', 'This phrase is too easy to guess: the server holds what a guess can be tried on. Use several unrelated words.'),
+    weakPhrase: () => t('settings.tesselAccount.sync.error.weakPhrase', 'This phrase is too easy to guess: the server holds what a guess can be tried on. Use several unrelated words, or let Tessel suggest one.'),
     refusedCopy: () => t('settings.tesselAccount.sync.error.refusedCopy', 'This copy holds things Tessel does not accept in a copy, so it was refused whole. Nothing changed here.'),
     unreadableFile: () => t('settings.tesselAccount.sync.error.unreadableFile', 'A file of your setup cannot be read, so nothing was sent: {{files}}.', { files: (state.value?.unreadable || []).join(', ') }),
     tooManyPanes: () => t('settings.tesselAccount.sync.error.tooManyPanes', 'Your setup has more panes, projects or cards than a copy can hold. Nothing was sent.'),
@@ -110,7 +112,7 @@ const shrunkText = computed(() => {
 const earlierRowText = (v) => (v.unreadable ? t('settings.tesselAccount.sync.earlierUnreadable', 'This one could not be opened.') : t('settings.tesselAccount.sync.earlierRow', 'From {{device}}, saved {{date}}.', { device: v.device, date: when(v.at) }))
 const earlierNumbers = (v) => inNumbers(v.summary)
 const deviceText = computed(() => t('settings.tesselAccount.sync.thisComputer', 'This computer: {{device}}', { device: state.value?.device || '' }))
-const stagedText = computed(() => t('settings.tesselAccount.sync.staged', 'The settings from {{device}} are ready. They apply when Tessel next starts, and Tessel does not restart by itself. At that start nothing is started: each agent waits until you wake it.', { device: state.value?.staged?.device || '' }))
+const stagedText = computed(() => t('settings.tesselAccount.sync.staged', 'The settings from {{device}} are ready. They apply when Tessel next starts, and Tessel does not restart by itself. At that start nothing is started: each agent and terminal waits until you wake it.', { device: state.value?.staged?.device || '' }))
 const missingAgentsText = computed(() => t('settings.tesselAccount.sync.missingAgents', 'Not on this computer: {{agents}}. Their panes come back as plain terminals.', { agents: (state.value?.staged?.missingAgents || []).join(', ') }))
 const missingText = computed(() => t('settings.tesselAccount.sync.missingFolders', 'Not on this computer: {{folders}}. Those projects stay in the list and their terminals start in your home folder.', { folders: (state.value?.staged?.missing || []).join(', ') }))
 const enterHint = computed(() => t('settings.tesselAccount.sync.enterHint', 'A copy is on the server. Enter the phrase you chose for it: only then can Tessel say which computer it comes from and what it holds. Nothing changes on this computer until you say so.'))
@@ -119,6 +121,15 @@ const chooseHint = computed(() => t('settings.tesselAccount.sync.chooseHint', 'A
 const clearPhrase = () => {
   phrase.value = ''
   again.value = ''
+  phraseShown.value = false
+}
+// A phrase made here, from the computer's own randomness: it stays on this page until it is used.
+function suggest() {
+  const made = suggestPhrase()
+  phrase.value = made
+  again.value = made
+  phraseShown.value = true
+  error.value = ''
 }
 
 async function refresh(check = false) {
@@ -215,7 +226,7 @@ async function applyRemote() {
       remote.older ? t('settings.tesselAccount.sync.olderWarning', 'This copy is older than the one this computer last saw. Use it only if you are going back on purpose.') : '',
       summaryText.value,
       localText.value,
-      t('settings.tesselAccount.sync.applyDetail', 'They replace this computer\'s look and feel, projects, SSH hosts and task cards when Tessel next starts. Tessel does not restart by itself. At that start, terminals and agents running here that are not in that layout are closed. What decides what agents may do stays as it is here, and hosts only on this computer stay. No agent starts: each waits until you wake it, and those whose folder or agent is not on this computer come back as plain terminals. Agents ask before trusting a folder that came with the copy. The files they replace are kept in the import-backups folder of Tessel\'s data folder.')
+      t('settings.tesselAccount.sync.applyDetail', 'They replace this computer\'s look and feel, projects, SSH hosts and task cards when Tessel next starts. Tessel does not restart by itself. At that start, terminals and agents running here that are not in that layout are closed. What decides what agents may do stays as it is here, and hosts only on this computer stay. Nothing starts: each agent and terminal waits until you wake it, an agent\'s first start asks before acting, and those whose folder or agent is not on this computer come back as plain terminals. Agents ask before trusting a folder that came with the copy. The files they replace are kept in the import-backups folder of Tessel\'s data folder.')
     ]
       .filter(Boolean)
       .join('\n\n'),
@@ -224,15 +235,22 @@ async function applyRemote() {
   })
   if (!ok) return
   const hostAddresses = await askHostAddresses(remote.hostChanges)
-  await act(() => api().apply({ hostAddresses }))
+  // For this copy: if the server has another by now, main says so and nothing is applied.
+  await act(() => api().apply({ hostAddresses, token: remote.token }))
 }
 
 // A host this computer has, going somewhere else: the person says so, or it stays where it is.
 async function askHostAddresses(changes) {
   if (!changes || !changes.length) return 'keep'
+  const line = (c) =>
+    c.kind === 'added'
+      ? t('settings.tesselAccount.sync.hostAdded', 'new host {{label}}: {{to}}', c)
+      : c.kind === 'moved'
+        ? t('settings.tesselAccount.sync.hostMoved', '{{label}} moves: {{from}} → {{to}}', c)
+        : `${c.label}: ${c.from} → ${c.to}`
   const ok = await confirm({
-    title: t('settings.tesselAccount.sync.hostsConfirm', 'Connect these SSH hosts somewhere else?'),
-    text: t('settings.tesselAccount.sync.hostsDetail', 'The copy changes the address of hosts you have here. Accept only if you changed them yourself: {{list}}. Otherwise they keep this computer\'s address.', { list: changes.map((c) => `${c.label}: ${c.from} → ${c.to}`).join('; ') }),
+    title: t('settings.tesselAccount.sync.hostsConfirm', 'Let this copy decide where SSH connects?'),
+    text: t('settings.tesselAccount.sync.hostsDetail', 'The copy adds SSH hosts, or changes where hosts and projects you have here connect. Accept only if you did this yourself: {{list}}. Otherwise what you have here stays as it is, and new hosts are not added.', { list: changes.map(line).join('; ') }),
     confirmLabel: t('settings.tesselAccount.sync.hostsButton', 'Use the new addresses'),
     danger: true
   })
@@ -297,7 +315,7 @@ async function useEarlier(entry) {
     confirmLabel: t('settings.tesselAccount.sync.earlierButton', 'Use this one')
   })
   if (!ok) return
-  const res = await act(() => api().applyEarlier({ version: entry.version }))
+  const res = await act(() => api().applyEarlier({ version: entry.version, token: entry.token }))
   if (res && !res.error) earlierList.value = null
 }
 
@@ -496,7 +514,7 @@ onBeforeUnmount(() => {
           <input
             v-model="phrase"
             class="set-number tessel-sync-phrase"
-            type="password"
+            :type="phraseShown ? 'text' : 'password'"
             autocomplete="off"
             spellcheck="false"
             :placeholder="t('settings.tesselAccount.sync.phrase', 'Sync phrase')"
@@ -506,14 +524,16 @@ onBeforeUnmount(() => {
             v-if="choosing"
             v-model="again"
             class="set-number tessel-sync-again"
-            type="password"
+            :type="phraseShown ? 'text' : 'password'"
             autocomplete="off"
             spellcheck="false"
             :placeholder="t('settings.tesselAccount.sync.again', 'The same phrase again')"
             :aria-label="t('settings.tesselAccount.sync.again', 'The same phrase again')"
           />
         </div>
+        <p v-if="phraseShown" class="set-hint" data-sync-suggested>{{ t('settings.tesselAccount.sync.suggestedHint', 'Write this phrase down somewhere safe before going on: nobody can recover it, not even Tessel.') }}</p>
         <div class="tessel-sync-buttons">
+          <button v-if="choosing" type="button" class="exit-btn tessel-sync-suggest" :disabled="busy" @click="suggest">{{ t('settings.tesselAccount.sync.suggest', 'Suggest a phrase') }}</button>
           <button type="submit" class="exit-btn tessel-sync-submit" :class="form.startOver ? 'danger' : 'primary'" :disabled="busy || !phrase">
             {{ form.startOver ? t('settings.tesselAccount.sync.startOverButton', 'Erase and start over') : t('settings.tesselAccount.sync.turnOn', 'Turn on') }}
           </button>

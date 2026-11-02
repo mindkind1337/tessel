@@ -1117,7 +1117,7 @@
         "again": "La même phrase encore une fois",
         "applyButton": "Les utiliser",
         "applyConfirm": "Utiliser les réglages de {{device}} ?",
-        "applyDetail": "Ils remplacent l'apparence, les projets, les hôtes SSH et les cartes de tâches de cet ordinateur au prochain démarrage de Tessel. Tessel ne redémarre pas de lui-même. À ce démarrage, les terminaux et les agents qui tournent ici et qui ne sont pas dans cette disposition sont fermés. Ce qui décide de ce que les agents peuvent faire reste tel quel ici, et les hôtes présents seulement sur cet ordinateur restent. Aucun agent ne démarre : chacun attend que vous le réveilliez, et ceux dont le dossier ou l'agent n'est pas sur cet ordinateur reviennent comme de simples terminaux. Les agents demandent avant de faire confiance à un dossier venu avec la copie. Les fichiers remplacés sont conservés dans le dossier import-backups du dossier de données de Tessel.",
+        "applyDetail": "Ils remplacent l'apparence, les projets, les hôtes SSH et les cartes de tâches de cet ordinateur au prochain démarrage de Tessel. Tessel ne redémarre pas de lui-même. À ce démarrage, les terminaux et les agents qui tournent ici et qui ne sont pas dans cette disposition sont fermés. Ce qui décide de ce que les agents peuvent faire reste tel quel ici, et les hôtes présents seulement sur cet ordinateur restent. Rien ne démarre : chaque agent et chaque terminal attend que vous le réveilliez, le premier démarrage d'un agent demande avant d'agir, et ceux dont le dossier ou l'agent n'est pas sur cet ordinateur reviennent comme de simples terminaux. Les agents demandent avant de faire confiance à un dossier venu avec la copie. Les fichiers remplacés sont conservés dans le dossier import-backups du dossier de données de Tessel.",
         "chooseHint": "Au moins {{count}} caractères. Elle ne quitte jamais cet ordinateur, et elle est demandée une fois sur chacun de vos ordinateurs. Notez-la : si vous la perdez, personne ne peut la récupérer, pas même Tessel, et recommencer efface la copie sur le serveur.",
         "chooseTitle": "Choisissez une phrase de synchronisation",
         "choiceHint": "Rien ne change et rien n'est envoyé tant que vous n'avez pas choisi.",
@@ -1142,7 +1142,7 @@
           "tampered": "La copie sur le serveur n'a pas pu être ouverte : elle a été modifiée ou endommagée. Rien n'a changé ici.",
           "tooBig": "Votre configuration est trop volumineuse pour être synchronisée, même compressée. Rien n'a été envoyé. Ça reprend quand elle est plus petite : c'est habituellement le tableau des tâches qui grossit.",
           "wrongPhrase": "Cette phrase n'ouvre pas votre copie sur le serveur, ou la copie a été endommagée. Rien n'a changé.",
-          "weakPhrase": "Cette phrase est trop facile à deviner : le serveur détient de quoi essayer des suppositions. Utilisez plusieurs mots sans lien entre eux.",
+          "weakPhrase": "Cette phrase est trop facile à deviner : le serveur détient de quoi essayer des suppositions. Utilisez plusieurs mots sans lien entre eux, ou laissez Tessel en suggérer une.",
           "refusedCopy": "Cette copie contient des éléments que Tessel n'accepte pas dans une copie : elle a été refusée en entier. Rien n'a changé ici.",
           "unreadableFile": "Un fichier de votre configuration ne peut pas être lu, donc rien n'a été envoyé : {{files}}.",
           "tooManyPanes": "Votre configuration a plus de panneaux, de projets ou de cartes qu'une copie ne peut en contenir. Rien n'a été envoyé."
@@ -1175,7 +1175,7 @@
         "restartConfirm": "Redémarrer Tessel maintenant ?",
         "restartDetail": "Tessel se ferme et se rouvre avec ces réglages. Les terminaux et les agents qui tournent ici et qui ne sont pas dans cette disposition sont fermés. Ceux qui y sont continuent de tourner.",
         "restarting": "Redémarrage…",
-        "staged": "Les réglages de {{device}} sont prêts. Ils s'appliquent au prochain démarrage de Tessel, et Tessel ne redémarre pas de lui-même. À ce démarrage, rien n'est lancé : chaque agent attend que vous le réveilliez.",
+        "staged": "Les réglages de {{device}} sont prêts. Ils s'appliquent au prochain démarrage de Tessel, et Tessel ne redémarre pas de lui-même. À ce démarrage, rien n'est lancé : chaque agent et chaque terminal attend que vous le réveilliez.",
         "startOverButton": "Effacer et recommencer",
         "startOverConfirm": "Effacer la copie sur le serveur et recommencer ?",
         "startOverDetail": "La copie sur le serveur est effacée pour de bon : personne ne peut récupérer ce que votre ancienne phrase protégeait. Une nouvelle copie est faite à partir de cet ordinateur, et vos autres ordinateurs demandent la nouvelle phrase.",
@@ -1204,8 +1204,8 @@
         "earlierTitle": "Les dernières copies gardées sur le serveur",
         "earlierUnreadable": "Celle-ci n'a pas pu être ouverte.",
         "hostsButton": "Utiliser les nouvelles adresses",
-        "hostsConfirm": "Connecter ces hôtes SSH ailleurs ?",
-        "hostsDetail": "La copie change l'adresse d'hôtes que vous avez ici. N'acceptez que si vous les avez changées vous-même : {{list}}. Sinon, ils gardent l'adresse de cet ordinateur.",
+        "hostsConfirm": "Laisser cette copie décider où SSH se connecte ?",
+        "hostsDetail": "La copie ajoute des hôtes SSH, ou change l'endroit où se connectent des hôtes et des projets que vous avez ici. N'acceptez que si vous l'avez fait vous-même : {{list}}. Sinon, ce que vous avez ici reste tel quel, et les nouveaux hôtes ne sont pas ajoutés.",
         "keepReplaces": "La copie remplacée : {{numbers}}",
         "missingAgents": "Absents de cet ordinateur : {{agents}}. Leurs panneaux reviennent comme de simples terminaux.",
         "newerToastUnknown": "Des réglages plus récents attendent. Rien ne change tant que vous n'avez pas choisi.",
@@ -1236,7 +1236,11 @@
           "hosts": "hôtes SSH : {{from}} avant, {{to}} maintenant",
           "cards": "cartes de tâches : {{from}} avant, {{to}} maintenant"
         },
-        "olderWarning": "Cette copie est plus ancienne que celle que cet ordinateur a vue en dernier. Utilisez-la seulement si vous revenez en arrière exprès."
+        "olderWarning": "Cette copie est plus ancienne que celle que cet ordinateur a vue en dernier. Utilisez-la seulement si vous revenez en arrière exprès.",
+        "hostAdded": "nouvel hôte {{label}} : {{to}}",
+        "hostMoved": "{{label}} se déplace : {{from}} → {{to}}",
+        "suggest": "Suggérer une phrase",
+        "suggestedHint": "Notez cette phrase en lieu sûr avant de continuer : personne ne peut la récupérer, pas même Tessel."
       },
       "waiting": "Terminez la connexion dans votre navigateur",
       "waitingHint": "Une page s'est ouverte dans votre navigateur. Cette page se met à jour toute seule."

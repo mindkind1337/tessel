@@ -261,6 +261,11 @@ describe('what decides what agents may do', () => {
       expect(out.workspaces.map((w) => w.fromCopy)).toEqual([true, undefined])
     })
 
+    it.each(['viewPath', 'projectDir', 'activePath'])('M6: a share as %s goes too, in a backup', (key) => {
+      const out = JSON.parse(withoutSecurity('workspace-layout.json', JSON.stringify({ workspaces: [{ name: 'p', tree: { type: 'leaf', kind: 'editor', id: 'pane-1', [key]: '\\\\evil.invalid\\s' } }] }), known))
+      expect(out.workspaces[0].tree[key]).toBeNull()
+    })
+
     it('M6: the native form of a share is a share too', () => {
       const out = JSON.parse(withoutSecurity('workspace-layout.json', JSON.stringify({ workspaces: [{ name: 'p', cwd: '\\??\\UNC\\evil\\s' }] }), known))
       expect(out.workspaces[0].cwd).toBeNull()
@@ -498,7 +503,8 @@ describe('what an account\u2019s copy holds', () => {
     it('an agent whose folder is not here never runs elsewhere: a plain terminal, and the folder is named', () => {
       const { layout, missing } = local([ws({ cwd: 'C:/gone', tree: { type: 'split', dir: 'row', sizes: [50, 50], children: [agent(), agent({ id: 'pane-b', sleeping: { at: 1 } })] } })], { folderExists: exists() })
       expect(layout.workspaces[0].tree.children.map((p) => p.kind)).toEqual(['shell', 'shell'])
-      expect(layout.workspaces[0].tree.children[1].sleeping).toBeUndefined()
+      // A terminal waits for its click as an agent does.
+      expect(layout.workspaces[0].tree.children[1].sleeping).toEqual({ at: 7, held: true })
       expect(layout.workspaces[0].cwd).toBe('C:/gone')
       expect(missing).toEqual(['C:/gone'])
     })
@@ -517,10 +523,46 @@ describe('what an account\u2019s copy holds', () => {
       expect(layout.workspaces[0].tree.sessionId).toBeUndefined()
     })
 
-    it('a pane that still runs here is left to this computer\u2019s own pane', () => {
-      const { layout } = local([ws({ cwd: 'C:/gone', tree: agent() })], { folderExists: exists(), running: new Set(['pane-a']) })
-      expect(layout.workspaces[0].tree.sleeping).toBeUndefined()
-      expect(layout.workspaces[0].tree.kind).toBe('agent')
+    it('a plain terminal comes back held too: it names a folder and a shell', () => {
+      const { layout } = local([ws({ tree: { type: 'leaf', id: 'pane-s', kind: 'shell', shellId: 'cmd' } })], { folderExists: exists('C:/p') })
+      expect(layout.workspaces[0].tree).toEqual({ type: 'leaf', id: 'pane-s', kind: 'shell', shellId: 'cmd', sleeping: { at: 7, held: true } })
+    })
+
+    it.each([
+      ['a browser pane', { type: 'leaf', kind: 'browser', id: 'pane-b', viewPath: '\\\\evil.invalid\\s' }],
+      ['an editor pane', { type: 'leaf', kind: 'editor', id: 'pane-e', files: [{ path: 'C:/p/a.txt' }], viewPath: '\\\\evil.invalid\\s' }],
+      ['a terminal', { type: 'leaf', kind: 'shell', id: 'pane-s', viewPath: '//evil.invalid/s' }]
+    ])('the grid %s was in, on a share, is refused: it would become the Files and Changes root', (_what, pane) => {
+      const looked = []
+      const { layout, missing, shadow } = local([ws({ tree: pane })], { folderExists: (f) => (looked.push(f), true) })
+      expect(JSON.stringify(layout)).not.toContain('evil.invalid')
+      expect(looked.join()).not.toContain('evil.invalid')
+      expect(missing.join()).toContain('evil.invalid')
+      expect(shadow.panes[pane.id].pane.viewPath).toBe(pane.viewPath)
+    })
+
+    it('a local grid stays', () => {
+      const pane = { type: 'leaf', kind: 'browser', id: 'pane-b', viewPath: 'C:/p/wt' }
+      expect(local([ws({ tree: pane })], { folderExists: exists('C:/p') }).layout.workspaces[0].tree.viewPath).toBe('C:/p/wt')
+    })
+
+    it.each([
+      ['its folder on a share, a copy of it here', { cwd: '\\\\evil.invalid\\s', worktree: { path: 'C:/p' } }],
+      ['on a host, a copy of it on a share', { cwd: 'ssh://ssh-1/home/me', worktree: { path: '\\\\evil.invalid\\s' } }],
+      ['its folder an address that is not one', { cwd: 'ssh://evil.invalid/home/me' }],
+      ['its folder here, a copy of it on a share', { cwd: 'C:/p', worktree: { path: '//evil.invalid/s' } }]
+    ])('a chat with %s is a plain terminal: each folder is checked by itself', (_what, over) => {
+      const looked = []
+      const chat = { type: 'leaf', kind: 'chat', id: 'pane-c', agentId: 'claude', ...over }
+      const { layout } = local([ws({ tree: chat })], { folderExists: (f) => (looked.push(f), f === 'C:/p') })
+      expect(layout.workspaces[0].tree).toMatchObject({ kind: 'shell', sleeping: { held: true } })
+      expect(JSON.stringify(layout)).not.toContain('evil.invalid')
+      expect(looked.join()).not.toContain('evil.invalid')
+    })
+
+    it('a chat on a host, in a copy on that host, stays a chat, and is held', () => {
+      const chat = { type: 'leaf', kind: 'chat', id: 'pane-c', agentId: 'claude', cwd: 'ssh://ssh-1/home/me', worktree: { path: 'ssh://ssh-1/home/me/wt' } }
+      expect(local([ws({ tree: chat })], { folderExists: exists() }).layout.workspaces[0].tree).toMatchObject({ kind: 'chat', held: true })
     })
 
     it('an SSH project and an SSH pane are not about this computer\u2019s folders, and come back asleep too', () => {

@@ -141,7 +141,7 @@ function cleanPanes(node, known, depth = 0) {
     if (node.agentCommand !== undefined && node.agentCommand !== null && !(typeof node.agentCommand === 'string' && known.has(node.agentCommand))) node.agentCommand = null
     if (node.sessionId !== undefined && node.sessionId !== null && !(typeof node.sessionId === 'string' && SAFE_SESSION_ID.test(node.sessionId))) node.sessionId = null
     for (const key of PANE_POWERS) delete node[key]
-    for (const key of ['cwd', 'startDir', 'path']) if (onShare(node[key])) node[key] = null
+    for (const key of ['cwd', 'startDir', 'path', 'viewPath', 'projectDir', 'activePath']) if (onShare(node[key])) node[key] = null
     for (const v of Object.values(node)) if (v && typeof v === 'object') cleanPanes(v, known, depth + 1)
   }
 }
@@ -287,8 +287,8 @@ export function buildSyncBundle({ dir, appVersion = '', build = '', now = Date.n
 // A copy from another computer, rebuilt strictly, made ready for this one before it is staged:
 // see syncSchema.js localizeRebuilt. Throws { code: 'refused' } for anything out of shape.
 // -> { body, missing: [folders not on this computer], missingAgents, shadow }
-export function localizeLayout(body, { agents = new Map(), running = new Set(), folderExists = fs.existsSync, now = Date.now } = {}) {
-  const { layout, missing, missingAgents, shadow } = localizeRebuilt(rebuildLayout(JSON.parse(body), { strict: true }), { agents, running, folderExists, now })
+export function localizeLayout(body, { agents = new Map(), folderExists = fs.existsSync, now = Date.now } = {}) {
+  const { layout, missing, missingAgents, shadow } = localizeRebuilt(rebuildLayout(JSON.parse(body), { strict: true }), { agents, folderExists, now })
   return { body: JSON.stringify(layout), missing, missingAgents, shadow }
 }
 

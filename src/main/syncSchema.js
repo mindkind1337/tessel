@@ -12,10 +12,13 @@
 // finishLayout, finishHosts and finishBoard lay it over this computer's files at the start that
 // applies it, so a change made here after "Use them" still counts.
 import { sanitizeTarget } from './remoteHosts'
+import { isRemotePath, parseRemotePath } from '../shared/remotePath'
 
 export const MAX_SYNC_PANES = 200
 export const MAX_SYNC_PROJECTS = 500
 export const MAX_SYNC_DEPTH = 16
+// A split's sizes are shares of 100: far above that is no size.
+const MAX_SIZE = 1000
 const MAX_CARDS = 5000
 const MAX_TARGETS = 500
 const MAX_PATH = 1024
@@ -26,10 +29,21 @@ const HOSTS = 'remote-hosts.json'
 const BOARD = 'task-board.json'
 export const SYNCED_FILE_NAMES = [LAYOUT, HOSTS, BOARD]
 
-// eslint-disable-next-line no-control-regex -- control characters are what is refused
-const CONTROL = /[\u0000-\u001f\u007f-\u009f]/
-// eslint-disable-next-line no-control-regex -- the same, for text that may run over several lines
-const CONTROL_BUT_LINES = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/
+// Control characters, and those that show nothing or turn what follows around: a name must read as
+// what it is. What a sender has of them is taken out; a copy that holds them is refused.
+const HIDDEN = '\\u00ad\\u034f\\u061c\\u115f\\u1160\\u17b4\\u17b5\\u180b-\\u180f\\u200b-\\u200f\\u202a-\\u202e\\u2060-\\u206f\\u3164\\ufe00-\\ufe0f\\ufeff\\uffa0\\ufff9-\\ufffb'
+// eslint-disable-next-line no-misleading-character-class -- hidden characters, one by one, are what is looked for
+const CONTROL = new RegExp(`[\\u0000-\\u001f\\u007f-\\u009f${HIDDEN}]`, 'u')
+// eslint-disable-next-line no-misleading-character-class -- hidden characters, one by one, are what is looked for
+const CONTROL_BUT_LINES = new RegExp(`[\\u0000-\\u0008\\u000b\\u000c\\u000e-\\u001f\\u007f-\\u009f${HIDDEN}]`, 'u')
+// eslint-disable-next-line no-misleading-character-class -- hidden characters, one by one, are what is looked for
+const HIDDEN_ALL = new RegExp(`[${HIDDEN}]`, 'gu')
+// A computer's name, wherever it is shown or told to an agent: it can say who, and nothing else.
+export const safeDeviceName = (name) =>
+  String(name || '')
+    .replace(/[^\p{L}\p{M}\p{N} ._-]+/gu, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
 const PANE_ID = /^pane-[\w-]{1,100}$/
 const WS_ID = /^ws-[\w-]{1,100}$/
 const AGENT_ID = /^[\w.-]{1,60}$/
@@ -164,8 +178,9 @@ function checker(strict) {
     if (strict) throw refused()
     return undefined
   }
-  const text = (value, max, shape = null, control = CONTROL) => {
-    if (value === undefined || value === null) return undefined
+  const text = (given, max, shape = null, control = CONTROL) => {
+    if (given === undefined || given === null) return undefined
+    const value = strict || typeof given !== 'string' ? given : given.replace(HIDDEN_ALL, '')
     if (typeof value !== 'string' || value.length > max || control.test(value) || (shape && !shape.test(value))) return bad()
     return value
   }
@@ -287,7 +302,7 @@ function rebuildNode(src, c, count, depth) {
     c.bad()
     dir = 'row'
   }
-  const given = Array.isArray(src.sizes) && src.sizes.length === src.children.length && src.sizes.every((n) => Number.isFinite(n) && n >= 0)
+  const given = Array.isArray(src.sizes) && src.sizes.length === src.children.length && src.sizes.every((n) => Number.isFinite(n) && n >= 0 && n <= MAX_SIZE)
   if (!given && src.sizes !== undefined && src.sizes !== null) c.bad()
   const sizes = given ? kept.map((i) => src.sizes[i]) : children.map(() => 100 / children.length)
   return { type: 'split', dir, sizes, children }
@@ -377,7 +392,8 @@ export function rebuildLayout(layout, { strict = false } = {}) {
   return { version: 2, settings: pickSettings(layout.settings), workspaces }
 }
 
-// The hosts, without what is this computer's: a proxy command, a jump host, a key file.
+// The hosts, without what is this computer's: a proxy command, a jump host, a key file, and what
+// makes it connect somewhere other than the address shown (an alias of its ~/.ssh/config).
 export function rebuildHosts(hosts, { strict = false } = {}) {
   const c = checker(strict)
   if (!isObject(hosts)) throw refused()
@@ -393,12 +409,13 @@ export function rebuildHosts(hosts, { strict = false } = {}) {
       c.bad()
       continue
     }
-    const { target, error } = sanitizeTarget({ id, label: raw.label, host: raw.host, configHost: raw.configHost, port: raw.port, username: raw.username, source: raw.source }, { id })
+    const { target, error } = sanitizeTarget({ id, label: c.text(raw.label, 200), host: raw.host, port: raw.port, username: raw.username }, { id })
     if (error || !target) {
       c.bad()
       continue
     }
-    targets.push(target)
+    const { configHost, source, ...travels } = target // eslint-disable-line no-unused-vars -- what stays on each computer
+    targets.push(travels)
   }
   return { version: 1, targets }
 }
@@ -422,6 +439,7 @@ export function rebuildBoard(board, { strict = false } = {}) {
       continue
     }
     const id = c.text(src.id, 80, CARD_ID)
+    // eslint-disable-next-line no-misleading-character-class -- hidden characters, one by one, are what is looked for
     const title = strict ? c.text(src.title, 2000) : typeof src.title === 'string' ? src.title.replace(new RegExp(CONTROL.source, 'g'), ' ').slice(0, 2000) : undefined
     if (!id || !title) {
       c.bad()
@@ -484,13 +502,17 @@ function mapPanes(node, change) {
 }
 
 // --- made ready for this computer ---------------------------------------------------------------
-// A rebuilt layout -> what this computer can use. An agent never starts by itself: it comes back
-// asleep and held until a click, with this computer's own command for its agent. One whose agent or
-// folder is not here comes back as a plain terminal (it starts in the home folder), and a share is
-// never looked at. What had to change is kept apart (shadow), so that this computer's uploads still
-// carry the copy as it was: what fits this computer never degrades another one.
+// A rebuilt layout -> what this computer can use. Nothing starts by itself: an agent and a terminal
+// both come back asleep and held until a click, an agent with this computer's own command for its
+// agent, a chat waits for its first message. A pane whose agent or folder is not here comes back as a
+// plain terminal (it starts in the home folder), and a share is never looked at, wherever it is
+// named. What had to change is kept apart (shadow), so that this computer's uploads still carry the
+// copy as it was: what fits this computer never degrades another one.
+//
+// Every pane goes through this, even one said to run here: the pane may be closed, or its terminal
+// gone, by the next start. finishLayout is what gives a pane that still runs here back as it is.
 // agents: Map of id -> { command, name, available }. -> { layout, missing, missingAgents, shadow }
-export function localizeRebuilt(layout, { agents = new Map(), running = new Set(), folderExists = () => false, now = Date.now } = {}) {
+export function localizeRebuilt(layout, { agents = new Map(), folderExists = () => false, now = Date.now } = {}) {
   const missing = new Set()
   const missingAgents = new Set()
   const shadow = { panes: {}, projects: {} }
@@ -503,7 +525,16 @@ export function localizeRebuilt(layout, { agents = new Map(), running = new Set(
     if (!here) missing.add(folder)
     return here
   }
+  // A chat's folder: on this computer, or a real address on an SSH host. Each is checked by itself.
+  const remoteOk = (p) => isRemotePath(p) && !!parseRemotePath(p)
+  const chatFolderOk = (p) => {
+    if (!p) return true
+    if (remoteOk(p)) return true
+    return isHere(p)
+  }
   const at = now()
+  const held = () => ({ at, held: true })
+  const plain = (pane) => ({ type: 'leaf', id: pane.id, kind: 'shell', ...(pane.paneName ? { paneName: pane.paneName } : {}), ...(pane.num ? { num: pane.num } : {}), ...(pane.shellId ? { shellId: pane.shellId } : {}), sleeping: held() })
   const workspaces = layout.workspaces.map((src) => {
     const project = { ...src }
     if (project.cwd && !project.remote) {
@@ -523,39 +554,46 @@ export function localizeRebuilt(layout, { agents = new Map(), running = new Set(
       }
     }
     const onHost = (pane) => !!(src.remote || pane.remoteHostId)
-    project.tree = mapPanes(project.tree, (pane) => {
-      if (running.has(pane.id)) return pane
+    project.tree = mapPanes(project.tree, (given) => {
+      const keep = (localKind) => {
+        shadow.panes[given.id] = { localKind, pane: given }
+      }
+      // The grid a pane was in becomes the Files and Changes root when it is on screen.
+      let pane = given
+      if (pane.viewPath && !localFolderOk(pane.viewPath)) {
+        const { viewPath, ...rest } = pane
+        pane = rest
+        missing.add(viewPath)
+        keep(pane.kind)
+      }
+      if (pane.kind === 'browser') return pane
       if (pane.kind === 'editor') {
         const files = pane.files.filter((file) => localFolderOk(file.path))
         if (files.length === pane.files.length) return pane
         // A pane with no file left comes back as nothing: a terminal keeps its place.
-        shadow.panes[pane.id] = { localKind: files.length ? 'editor' : 'shell', pane }
-        return files.length
-          ? { ...pane, files, ...(files.some((f) => f.path === pane.activePath) ? {} : { activePath: files[0].path }) }
-          : { type: 'leaf', id: pane.id, kind: 'shell', ...(pane.paneName ? { paneName: pane.paneName } : {}), ...(pane.num ? { num: pane.num } : {}) }
+        keep(files.length ? 'editor' : 'shell')
+        return files.length ? { ...pane, files, ...(files.some((f) => f.path === pane.activePath) ? {} : { activePath: files[0].path }) } : plain(pane)
       }
       if (pane.kind === 'chat') {
-        const remote = /^ssh:\/\//.test(pane.cwd)
-        const folder = pane.worktree ? pane.worktree.path : pane.cwd
-        if (remote || isHere(folder)) {
-          // Never looked at, or worse: a chat's own folder goes through the same door as its project's.
-          const { projectDir, ...rest } = pane
-          return { ...rest, ...(projectDir && (/^ssh:\/\//.test(projectDir) || localFolderOk(projectDir)) ? { projectDir } : {}), held: true }
+        const copy = pane.worktree ? pane.worktree.path : null
+        if (!chatFolderOk(pane.cwd) || !chatFolderOk(copy)) {
+          keep('shell')
+          return plain(pane)
         }
-        shadow.panes[pane.id] = { localKind: 'shell', pane }
-        return { type: 'leaf', id: pane.id, kind: 'shell', ...(pane.paneName ? { paneName: pane.paneName } : {}), ...(pane.num ? { num: pane.num } : {}) }
+        // Never looked at, or worse: a chat's project folder goes through the same door.
+        const { projectDir, ...rest } = pane
+        return { ...rest, ...(projectDir && (remoteOk(projectDir) || localFolderOk(projectDir)) ? { projectDir } : {}), held: true }
       }
-      if (pane.kind !== 'agent' && pane.kind !== 'shell') return pane
       const copy = pane.worktree ? pane.worktree.path : null
       // Main asks the system about a pane's folder even on a host: a share is refused there too.
       const refusedCopy = !!copy && !localFolderOk(copy)
       if (refusedCopy) missing.add(copy)
       const folderHere = !refusedCopy && (onHost(pane) || isHere(copy || (project.remote ? null : src.cwd)))
       if (pane.kind === 'shell') {
-        if (!copy || folderHere) return pane
+        if (!copy || folderHere) return { ...pane, sleeping: held() }
         const { worktree, ...rest } = pane // eslint-disable-line no-unused-vars -- what is not on this computer
-        shadow.panes[pane.id] = { localKind: 'shell', pane }
-        return rest
+        keep('shell')
+        return { ...rest, sleeping: held() }
       }
       // On an SSH host, its agent is looked for there when it wakes.
       const known = agents.get(pane.agentId)
@@ -563,10 +601,10 @@ export function localizeRebuilt(layout, { agents = new Map(), running = new Set(
       if (!here) missingAgents.add(pane.agentId)
       if (!here || !folderHere) {
         const { agentId, sessionId, worktree, ...rest } = pane // eslint-disable-line no-unused-vars -- what makes it an agent here
-        shadow.panes[pane.id] = { localKind: 'shell', pane }
-        return { ...rest, kind: 'shell' }
+        keep('shell')
+        return { ...rest, kind: 'shell', sleeping: held() }
       }
-      return { ...pane, agentCommand: here.command, ...(pane.titleSet || !here.name ? {} : { title: here.name }), sleeping: { at, held: true } }
+      return { ...pane, agentCommand: here.command, ...(pane.titleSet || !here.name ? {} : { title: here.name }), sleeping: held() }
     })
     return project
   })
@@ -610,6 +648,12 @@ const PANE_SYNCED = {
 }
 const PANE_COMMON = ['type', 'id', 'kind', 'num', 'paneName', 'viewPath']
 const folderKey = (p) => String(p).replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase()
+// What a pane may do, here. It was decided for what that pane was: not for what a copy makes of it.
+const PANE_PINS = ['permissions', 'permissionMode', 'launchYolo', 'launchSig', 'launchedAt', 'rootNoYolo']
+const sameFolder = (a, b) => (a ? folderKey(a) : '') === (b ? folderKey(b) : '')
+// Nothing and null are the same: the window writes one, a copy the other.
+const same = (a, b) => (a ?? null) === (b ?? null)
+const sameRemote = (a, b) => (!a && !b) || (!!a && !!b && a.hostId === b.hostId && a.path === b.path)
 
 // Only a folder the person chose on this computer is theirs to trust. A project from elsewhere is
 // marked, whatever it says of itself, and the agents started there ask (worktreeList.js).
@@ -628,29 +672,62 @@ export function markFolders(workspaces, current) {
   })
 }
 
-export function finishLayout(stagedBody, currentBody, { running = [] } = {}) {
+// addresses: 'copy' only on the person's word: a project or a pane this computer has moves to
+// another host then, and not otherwise (hostChangesOf says which).
+export function finishLayout(stagedBody, currentBody, { running = [], addresses = 'keep' } = {}) {
   const staged = JSON.parse(stagedBody)
   const current = parse(currentBody)
   const here = isObject(current) ? current : {}
   const panes = new Map()
+  const ownerOf = new Map()
+  const projects = new Map()
   if (Array.isArray(here.workspaces)) {
     for (const w of here.workspaces) {
       if (!isObject(w)) continue
+      if (typeof w.id === 'string') projects.set(w.id, w)
       forEachPane(w.tree, (pane) => {
-        if (typeof pane.id === 'string') panes.set(pane.id, pane)
+        if (typeof pane.id === 'string') {
+          panes.set(pane.id, pane)
+          ownerOf.set(pane.id, w)
+        }
       })
     }
   }
   const stillRunning = new Set(Array.isArray(running) ? running : [])
-  const workspaces = markFolders(staged.workspaces, here).map((project) => {
-    const tree = mapPanes(project.tree, (pane) => {
-      const own = panes.get(pane.id)
-      if (!own) return pane
+  const agreed = addresses === 'copy'
+  // A project that moves to another host without the person's word stays where it is here.
+  const stayed = staged.workspaces.map((project) => {
+    const own = projects.get(project.id)
+    if (agreed || !own || sameRemote(own.remote, project.remote)) return project
+    const { remote, ...rest } = project // eslint-disable-line no-unused-vars -- what it said
+    return { ...rest, cwd: own.remote || typeof own.cwd !== 'string' ? null : own.cwd, ...(own.remote ? { remote: own.remote } : {}) }
+  })
+  const workspaces = markFolders(stayed, here).map((project) => {
+    const tree = mapPanes(project.tree, (given) => {
+      const own = panes.get(given.id)
+      if (!own) return given
       // Its terminal runs here: it comes back as it is, what it may do and how it started included.
-      if (stillRunning.has(pane.id)) return own
+      if (stillRunning.has(given.id) && ['shell', 'agent'].includes(own.kind || 'shell')) return own
+      // On the host it is on here, unless the person agreed.
+      let pane = given
+      if (!agreed && (!same(pane.remoteHostId, own.remoteHostId) || !same(pane.remotePath, own.remotePath))) {
+        const { remoteHostId, remotePath, ...rest } = pane // eslint-disable-line no-unused-vars -- what it said
+        pane = { ...rest, ...(own.remoteHostId ? { remoteHostId: own.remoteHostId } : {}), ...(own.remotePath ? { remotePath: own.remotePath } : {}) }
+      }
       if ((own.kind || 'shell') !== pane.kind) return pane
       const synced = new Set([...PANE_COMMON, ...(PANE_SYNCED[pane.kind] || [])])
       const mine = Object.fromEntries(Object.entries(own).filter(([key]) => !synced.has(key)))
+      // A pin was given to that agent, in that folder, on that host. A copy that changes any of them
+      // does not keep what it was allowed to do.
+      const was = ownerOf.get(given.id) || {}
+      const aimedElsewhere =
+        !same(pane.agentId, own.agentId) ||
+        !same(pane.remoteHostId, own.remoteHostId) ||
+        !same(pane.remotePath, own.remotePath) ||
+        !sameFolder(pane.worktree && pane.worktree.path, own.worktree && own.worktree.path) ||
+        !sameFolder(project.cwd, was.cwd) ||
+        !sameRemote(project.remote, was.remote)
+      if (aimedElsewhere) for (const key of PANE_PINS) delete mine[key]
       return { ...mine, ...pane }
     })
     return { ...project, tree }
@@ -668,35 +745,64 @@ export function finishLayout(stagedBody, currentBody, { running = [] } = {}) {
 }
 
 const address = (t) => `${t.username ? `${t.username}@` : ''}${t.host}${t.port && t.port !== 22 ? `:${t.port}` : ''}`
-const sameAddress = (a, b) => a.host === b.host && (a.port || 22) === (b.port || 22) && (a.username || '') === (b.username || '') && (a.configHost || a.host) === (b.configHost || b.host)
+const sameAddress = (a, b) => a.host === b.host && (a.port || 22) === (b.port || 22) && (a.username || '') === (b.username || '')
 
-// Hosts this computer has whose address the copy changes: the person decides.
-export function hostChangesOf(copyBody, currentBody) {
+// Where SSH would go because of this copy, that this computer does not already go: a host of this
+// computer with another address, a new host, a project or a pane moved to another host. The person
+// decides, in one question. -> [{ kind: 'changed' | 'added' | 'moved', id, label, from, to }]
+export function hostChangesOf(copyBody, currentBody, copyLayoutBody = null, currentLayoutBody = null) {
+  const out = []
   const copy = parse(copyBody)
   const current = parse(currentBody)
-  if (!isObject(copy) || !Array.isArray(copy.targets) || !isObject(current) || !Array.isArray(current.targets)) return []
-  const out = []
-  for (const target of copy.targets) {
-    const own = current.targets.find((t) => isObject(t) && t.id === target.id)
-    if (own && !sameAddress(own, target)) out.push({ id: target.id, label: String(own.label || target.label || '').slice(0, 120), from: address(own), to: address(target) })
+  const own = isObject(current) && Array.isArray(current.targets) ? current.targets.filter(isObject) : []
+  const copied = isObject(copy) && Array.isArray(copy.targets) ? copy.targets.filter(isObject) : []
+  const labelOf = (id) => {
+    const host = own.find((t) => t.id === id) || copied.find((t) => t.id === id)
+    return String((host && host.label) || id)
   }
-  return out
+  for (const target of copied) {
+    const mine = own.find((t) => t.id === target.id)
+    if (!mine) out.push({ kind: 'added', id: target.id, label: String(target.label || '').slice(0, 120), from: null, to: address(target) })
+    else if (!sameAddress(mine, target)) out.push({ kind: 'changed', id: target.id, label: String(mine.label || target.label || '').slice(0, 120), from: address(mine), to: address(target) })
+  }
+  const layout = parse(copyLayoutBody)
+  const here = parse(currentLayoutBody)
+  if (isObject(layout) && Array.isArray(layout.workspaces) && isObject(here) && Array.isArray(here.workspaces)) {
+    const where = (w) => (w.remote ? `${labelOf(w.remote.hostId)}:${w.remote.path}` : String(w.cwd || ''))
+    const onHost = (pane) => (pane.remoteHostId ? `${labelOf(pane.remoteHostId)}${pane.remotePath ? `:${pane.remotePath}` : ''}` : '')
+    const panes = new Map()
+    for (const w of here.workspaces) if (isObject(w)) forEachPane(w.tree, (pane) => panes.set(pane.id, pane))
+    for (const w of layout.workspaces) {
+      if (!isObject(w)) continue
+      const mine = here.workspaces.find((p) => isObject(p) && p.id === w.id)
+      if (mine && !sameRemote(mine.remote, w.remote)) out.push({ kind: 'moved', id: w.id, label: String(mine.name || w.name || '').slice(0, 120), from: where(mine), to: where(w) })
+      forEachPane(w.tree, (pane) => {
+        const was = panes.get(pane.id)
+        if (was && (!same(pane.remoteHostId, was.remoteHostId) || !same(pane.remotePath, was.remotePath))) out.push({ kind: 'moved', id: pane.id, label: String(was.paneName || was.title || pane.paneName || pane.id).slice(0, 120), from: onHost(was), to: onHost(pane) })
+      })
+    }
+  }
+  return out.slice(0, 50)
 }
 
-// A host this computer has keeps its proxy command, jump host and key file, and its address unless
-// the person agreed to the new one (addresses: 'copy'). A host only here stays.
+// A host this computer has stays as it is, its name too, unless the person agreed to what the copy
+// says of it (addresses: 'copy'); its proxy command, jump host and key file stay either way, and a
+// new host comes only then. A host only here stays.
 export function finishHosts(stagedBody, currentBody, { addresses = 'keep' } = {}) {
   const staged = JSON.parse(stagedBody)
   const current = parse(currentBody)
   const here = isObject(current) ? current : {}
   const own = new Map((Array.isArray(here.targets) ? here.targets : []).filter((t) => isObject(t) && typeof t.id === 'string').map((t) => [t.id, t]))
   const seen = new Set()
-  const targets = staged.targets.map((target) => {
+  const targets = []
+  for (const target of staged.targets) {
     seen.add(target.id)
     const mine = own.get(target.id)
-    if (!mine) return target
-    return addresses === 'copy' ? { ...mine, ...target } : { ...mine, label: target.label }
-  })
+    if (addresses === 'copy') {
+      // Its alias in ~/.ssh/config was for the address it had.
+      targets.push(!mine ? target : sameAddress(mine, target) ? { ...mine, label: target.label } : { ...mine, ...target, configHost: target.host, source: 'manual' })
+    } else if (mine) targets.push(mine)
+  }
   for (const [id, target] of own) if (!seen.has(id)) targets.push(target)
   return JSON.stringify({ ...here, version: 1, targets })
 }
@@ -709,7 +815,7 @@ export function finishBoard(stagedBody, currentBody, { device = '' } = {}) {
   const here = isObject(current) ? current : {}
   const list = Array.isArray(current) ? current : Array.isArray(here.tasks) ? here.tasks : []
   const own = new Map(list.filter((t) => isObject(t) && typeof t.id === 'string').map((t) => [t.id, t]))
-  const from = String(device || '').replace(new RegExp(CONTROL.source, 'g'), ' ').trim().slice(0, MAX_DEVICE) || 'another computer'
+  const from = safeDeviceName(device).slice(0, MAX_DEVICE).trim() || 'another computer'
   const tasks = staged.tasks.map((card) => {
     const mine = own.get(card.id)
     const sameWords = !!mine && mine.title === card.title && (mine.brief || '') === (card.brief || '') && (mine.note || '') === (card.note || '')
@@ -724,7 +830,7 @@ export function finishBoard(stagedBody, currentBody, { device = '' } = {}) {
 }
 
 export function finishFile(name, stagedBody, currentBody, manifest = {}) {
-  if (name === LAYOUT) return finishLayout(stagedBody, currentBody, { running: manifest.running })
+  if (name === LAYOUT) return finishLayout(stagedBody, currentBody, { running: manifest.running, addresses: manifest.hostAddresses })
   if (name === HOSTS) return finishHosts(stagedBody, currentBody, { addresses: manifest.hostAddresses })
   if (name === BOARD) return finishBoard(stagedBody, currentBody, { device: manifest.device })
   return stagedBody

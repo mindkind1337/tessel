@@ -469,6 +469,8 @@ async function send(text, opts = {}) {
   // Came with a layout from elsewhere: this message is the click that starts it.
   if (props.node.held === true) {
     delete props.node.held
+    // ...and it asks first, whatever Settings or a Yolo folder say: as a held agent's first Wake.
+    props.node.maxPermissions = 'manual'
     await start({ askTrust: true })
     if (!sendable()) return { ok: false, error: disabledReason.value || sendBlockedReason.value || undefined }
   }

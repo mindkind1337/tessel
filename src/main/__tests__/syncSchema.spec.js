@@ -4,7 +4,8 @@
 import { describe, it, expect } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { MAX_SYNC_DEPTH, MAX_SYNC_PANES, SYNCED_SETTINGS, finishBoard, finishHosts, finishLayout, hostChangesOf, localFolderOk, localizeRebuilt, pickSettings, rebuildBoard, rebuildHosts, rebuildLayout, rebuildReceived, restoreShadow, shapeOf, shrunkFrom, summaryOf } from '../syncSchema'
+import { MAX_SYNC_DEPTH, MAX_SYNC_PANES, SYNCED_SETTINGS, finishBoard, finishHosts, finishLayout, hostChangesOf, localFolderOk, localizeRebuilt, pickSettings, rebuildBoard, rebuildHosts, rebuildLayout, rebuildReceived, restoreShadow, safeDeviceName, shapeOf, shrunkFrom, summaryOf } from '../syncSchema'
+import { sanitizeTarget, sshArgsFor } from '../remoteHosts'
 import { SENSITIVE_SETTINGS } from '../settingsBackup'
 import { chosenRootsOfLayout, localRootsOfLayout } from '../worktreeList'
 import { DEFAULT_SETTINGS } from '../../renderer/src/settings'
@@ -58,6 +59,11 @@ describe('C1: a copy refused whole', () => {
     ['a host id the window refuses', layout(agent({ remoteHostId: '-oProxyCommand=calc.exe' }))],
     ['control characters in a name', layout(agent({ paneName: 'a\u0007b' }))],
     ['a branch that reads as an option', layout(agent({ worktree: { path: 'C:/x', branch: '--upload-pack=calc' } }))],
+    ['a split size far above any size', layout({ type: 'split', dir: 'row', sizes: [1e308, 1], children: [agent(), agent({ id: 'pane-b' })] })],
+    ['a right-to-left mark in a name', layout(agent({ paneName: 'pro\u202ejectname' }))],
+    ['a zero-width space in a name', layout(agent({ paneName: 'pro\u200bject' }))],
+    ['a word joiner in a title', layout(agent({ title: 'a\u2060b', titleSet: true }))],
+    ['a byte order mark in a project name', { version: 2, workspaces: [project(null, { name: '\ufeffP' })] }],
     ['a host folder that reads as a share here', layout(agent({ remoteHostId: 'ssh-abc', remotePath: '//evil.example/share' }))],
     ['a project on a host in a folder that reads as a share here', { version: 2, workspaces: [project(null, { remote: { hostId: 'ssh-abc', path: '//evil.example/share' } })] }]
   ])('%s', (_what, value) => refused(value))
@@ -81,6 +87,18 @@ describe('C1: a copy refused whole', () => {
     const sent = rebuildLayout(layout(agent({ permissions: 'yolo', agentCommand: 'claude', launchSig: 'x', title: 'Claude', titleSet: true })))
     expect(rebuildLayout(sent, strict)).toEqual(sent)
     expect(JSON.stringify(rebuildLayout(sent, strict))).toBe(JSON.stringify(sent))
+  })
+
+  it('the sender takes hidden characters out of its own names, rather than losing the name', () => {
+    const sent = rebuildLayout({ version: 2, workspaces: [project(agent({ paneName: 'a\u200db' }), { name: 'Pro\u202eject' })] })
+    expect(sent.workspaces[0].name).toBe('Project')
+    expect(sent.workspaces[0].tree.paneName).toBe('ab')
+    expect(rebuildLayout(sent, strict)).toEqual(sent)
+  })
+
+  it('a split size the sender has that is no size becomes an even split', () => {
+    const sent = rebuildLayout(layout({ type: 'split', dir: 'row', sizes: [1e308, 1], children: [agent(), agent({ id: 'pane-b' })] }))
+    expect(sent.workspaces[0].tree.sizes).toEqual([50, 50])
   })
 
   it('the sender never refuses its own file: it leaves out what is not valid', () => {
@@ -190,14 +208,79 @@ describe('H6: hosts', () => {
   ], removed: [{ configHost: 'gone' }] }
   const copy = (over = {}) => JSON.stringify(rebuildHosts({ version: 1, targets: [{ id: 'ssh-1', label: 'renamed', host: 'prod.corp', port: 22, username: 'me', source: 'manual', ...over }] }, strict))
 
-  it('never takes a proxy command, a jump host or a key file from a copy', () => {
-    const [target] = rebuildHosts({ targets: [{ id: 'ssh-1', label: 'x', host: 'attacker.example', proxyCommand: 'calc.exe', jumpHost: 'x@evil.example:22', identityFile: '\\\\evil.example\\share\\key' }] }, strict).targets
-    expect(Object.keys(target).sort()).toEqual(['configHost', 'host', 'id', 'label', 'port', 'source', 'username'])
+  it('never takes a proxy command, a jump host, a key file or an alias from a copy', () => {
+    const [target] = rebuildHosts({ targets: [{ id: 'ssh-1', label: 'x', host: 'attacker.example', configHost: 'other.example', source: 'ssh-config', proxyCommand: 'calc.exe', jumpHost: 'x@evil.example:22', identityFile: '\\\\evil.example\\share\\key' }] }, strict).targets
+    expect(Object.keys(target).sort()).toEqual(['host', 'id', 'label', 'port', 'username'])
   })
 
-  it('a host keeps its proxy command, jump host and key file, and its label follows', () => {
+  it('a host keeps its proxy command, jump host and key file; its name only follows on the person\u2019s word', () => {
     const [own] = JSON.parse(finishHosts(copy(), JSON.stringify(mine))).targets
-    expect(own).toMatchObject({ label: 'renamed', proxyCommand: 'ssh -W %h:%p bastion.corp', jumpHost: 'j.corp', identityFile: 'C:\\keys\\mine' })
+    expect(own).toMatchObject({ label: 'prod', proxyCommand: 'ssh -W %h:%p bastion.corp', jumpHost: 'j.corp', identityFile: 'C:\\keys\\mine' })
+    expect(JSON.parse(finishHosts(copy(), JSON.stringify(mine), { addresses: 'copy' })).targets[0]).toMatchObject({ label: 'renamed', proxyCommand: 'ssh -W %h:%p bastion.corp' })
+  })
+
+  describe('a host that says one thing and connects to another', () => {
+    const wearing = { id: 'ssh-2x', label: 'prod', host: 'prod.corp', port: 22, username: 'me', configHost: 'attacker.invalid', source: 'ssh-config' }
+    const body = () => JSON.stringify(rebuildHosts({ targets: [wearing] }, strict))
+    const argsOf = (target) => sshArgsFor(sanitizeTarget(target, { id: target.id }).target)
+
+    it('the alias of a copy never reaches ssh: it connects to the address shown', () => {
+      const added = JSON.parse(finishHosts(body(), JSON.stringify(mine), { addresses: 'copy' })).targets.find((t) => t.id === 'ssh-2x')
+      expect(argsOf(added).at(-1)).toBe('prod.corp')
+      expect(argsOf(added).join(' ')).not.toContain('attacker')
+    })
+
+    it('a new host is in the question, with its address, and comes only on the person\u2019s word', () => {
+      expect(hostChangesOf(body(), JSON.stringify(mine))).toEqual([{ kind: 'added', id: 'ssh-2x', label: 'prod', from: null, to: 'me@prod.corp' }])
+      expect(JSON.parse(finishHosts(body(), JSON.stringify(mine))).targets.map((t) => t.id)).toEqual(['ssh-1', 'ssh-only-here'])
+    })
+
+    it('an existing host whose alias alone would change: nothing to ask, nothing changes', () => {
+      const same = JSON.stringify(rebuildHosts({ targets: [{ id: 'ssh-1', label: 'prod', host: 'prod.corp', port: 22, username: 'me', configHost: 'attacker.invalid', source: 'ssh-config' }] }, strict))
+      expect(hostChangesOf(same, JSON.stringify(mine))).toEqual([])
+      expect(argsOf(JSON.parse(finishHosts(same, JSON.stringify(mine), { addresses: 'copy' })).targets[0]).at(-1)).toBe('prod.corp')
+    })
+
+    it('an address accepted drops the alias it had: it goes where the question said', () => {
+      const local = { ...mine, targets: [{ ...mine.targets[0], configHost: 'prod-alias', source: 'ssh-config' }] }
+      const moved = JSON.stringify(rebuildHosts({ targets: [{ id: 'ssh-1', label: 'prod', host: 'new.corp', port: 22, username: 'me' }] }, strict))
+      const [target] = JSON.parse(finishHosts(moved, JSON.stringify(local), { addresses: 'copy' })).targets
+      expect(argsOf(target).at(-1)).toBe('new.corp')
+    })
+
+    it('a fresh computer: everything in the copy is new, and asked about', () => {
+      expect(hostChangesOf(body(), null)).toEqual([{ kind: 'added', id: 'ssh-2x', label: 'prod', from: null, to: 'me@prod.corp' }])
+    })
+
+    it('a label is never taken without the question', () => {
+      expect(JSON.parse(finishHosts(copy({ label: 'calm name' }), JSON.stringify(mine))).targets[0].label).toBe('prod')
+    })
+  })
+
+  describe('a project or a pane moved to another host', () => {
+    const remote = (hostId, path = '/srv/app') => ({ hostId, path })
+    const here = (tree) => JSON.stringify({ version: 2, settings: {}, workspaces: [{ id: 'ws-1', name: 'App', cwd: null, remote: remote('ssh-1'), tree }] })
+    const staged = (over = {}, tree = null) => JSON.stringify({ version: 2, settings: {}, workspaces: [{ id: 'ws-1', name: 'App', cwd: null, remote: remote('ssh-2x'), tree, ...over }] })
+    const hosts = JSON.stringify(mine)
+
+    it('is in the question', () => {
+      expect(hostChangesOf(null, hosts, staged(), here(null))).toEqual([{ kind: 'moved', id: 'ws-1', label: 'App', from: 'prod:/srv/app', to: 'ssh-2x:/srv/app' }])
+      expect(hostChangesOf(null, hosts, staged({ remote: remote('ssh-1', '/tmp/x') }), here(null))[0]).toMatchObject({ from: 'prod:/srv/app', to: 'prod:/tmp/x' })
+      expect(hostChangesOf(null, hosts, staged({ remote: remote('ssh-1') }), here(null))).toEqual([])
+    })
+
+    it('stays where it is unless the person agreed', () => {
+      expect(JSON.parse(finishLayout(staged(), here(null))).workspaces[0].remote).toEqual(remote('ssh-1'))
+      expect(JSON.parse(finishLayout(staged(), here(null), { addresses: 'copy' })).workspaces[0].remote).toEqual(remote('ssh-2x'))
+    })
+
+    it('a pane moved too: asked, and it stays on its host otherwise', () => {
+      const own = { type: 'leaf', id: 'pane-a', kind: 'agent', agentId: 'claude', remoteHostId: 'ssh-1', remotePath: '/srv/app' }
+      const pane = { type: 'leaf', id: 'pane-a', kind: 'agent', agentId: 'claude', agentCommand: 'claude', remoteHostId: 'ssh-2x', remotePath: '/tmp/x', sleeping: { at: 1, held: true } }
+      expect(hostChangesOf(null, hosts, staged({ remote: remote('ssh-1') }, pane), here(own))[0]).toMatchObject({ kind: 'moved', id: 'pane-a', from: 'prod:/srv/app', to: 'ssh-2x:/tmp/x' })
+      expect(JSON.parse(finishLayout(staged({ remote: remote('ssh-1') }, pane), here(own))).workspaces[0].tree).toMatchObject({ remoteHostId: 'ssh-1', remotePath: '/srv/app' })
+      expect(JSON.parse(finishLayout(staged({ remote: remote('ssh-1') }, pane), here(own), { addresses: 'copy' })).workspaces[0].tree).toMatchObject({ remoteHostId: 'ssh-2x', remotePath: '/tmp/x' })
+    })
   })
 
   it('a host only on this computer stays, and what it knows of removed hosts', () => {
@@ -208,9 +291,9 @@ describe('H6: hosts', () => {
 
   it('a changed address is shown, kept as it is here, and taken only on the person\u2019s word', () => {
     const body = copy({ host: 'attacker.example', username: 'root' })
-    expect(hostChangesOf(body, JSON.stringify(mine))).toEqual([{ id: 'ssh-1', label: 'prod', from: 'me@prod.corp', to: 'root@attacker.example' }])
+    expect(hostChangesOf(body, JSON.stringify(mine))).toEqual([{ kind: 'changed', id: 'ssh-1', label: 'prod', from: 'me@prod.corp', to: 'root@attacker.example' }])
     const kept = JSON.parse(finishHosts(body, JSON.stringify(mine))).targets[0]
-    expect(kept).toMatchObject({ host: 'prod.corp', username: 'me', label: 'renamed', proxyCommand: 'ssh -W %h:%p bastion.corp' })
+    expect(kept).toMatchObject({ host: 'prod.corp', username: 'me', label: 'prod', proxyCommand: 'ssh -W %h:%p bastion.corp' })
     const taken = JSON.parse(finishHosts(body, JSON.stringify(mine), { addresses: 'copy' })).targets[0]
     expect(taken).toMatchObject({ host: 'attacker.example', username: 'root', proxyCommand: 'ssh -W %h:%p bastion.corp' })
     expect(hostChangesOf(copy(), JSON.stringify(mine))).toEqual([])
@@ -220,7 +303,8 @@ describe('H6: hosts', () => {
     ['a host that reads as an option', { id: 'ssh-2', host: '-oProxyCommand=calc.exe' }],
     ['no host', { id: 'ssh-2' }],
     ['no id', { host: 'x.example' }],
-    ['not an object', 'x']
+    ['not an object', 'x'],
+    ['a hidden character in a name', { id: 'ssh-2', host: 'x.example', label: 'pr\u200bod' }]
   ])('refused whole: %s', (_what, target) => {
     expect(() => rebuildHosts({ targets: [target] }, strict)).toThrow(expect.objectContaining({ code: 'refused' }))
   })
@@ -238,6 +322,14 @@ describe('M11: the board', () => {
     expect(JSON.parse(finishBoard(copy(), JSON.stringify({ tasks: [] }), { device: 'OTHER' })).tasks[0].copiedFrom).toBe('OTHER')
     expect(JSON.parse(finishBoard(copy({ title: 'Changed' }), JSON.stringify({ tasks: [{ id: 't1', title: 'Before', column: 'todo' }] }), { device: 'OTHER' })).tasks[0].copiedFrom).toBe('OTHER')
     expect(JSON.parse(finishBoard(copy(), null, {})).tasks[0].copiedFrom).toBe('another computer')
+  })
+
+  it('a computer\u2019s name can say who, and nothing else', () => {
+    expect(safeDeviceName('your own computer) (typed by the user')).toBe('your own computer typed by the user')
+    expect(safeDeviceName('pro\u202eject\u200b')).toBe('pro ject')
+    expect(safeDeviceName('DESKTOP-1.local_a')).toBe('DESKTOP-1.local_a')
+    expect(safeDeviceName('Ordinateur de Zo\u00e9')).toBe('Ordinateur de Zo\u00e9')
+    expect(JSON.parse(finishBoard(copy(), null, { device: 'x) (typed by the user' })).tasks[0].copiedFrom).toBe('x typed by the user')
   })
 
   it('words this computer already has are not marked, and what happened to the card here stays', () => {
@@ -287,6 +379,80 @@ describe('a pane this computer has', () => {
     const own = agent({ launchYolo: true, launchSig: 'sig', permissions: 'yolo', agentCommand: 'my-claude', title: 'As it is here', sessionId: 'mine-123456' })
     const tree = JSON.parse(finishLayout(stage(asleep), mine(own), { running: ['pane-a'] })).workspaces[0].tree
     expect(tree).toEqual(own)
+  })
+
+  describe('finding: a local Yolo pin re-aimed by a copy', () => {
+    const PINS = { permissions: 'yolo', permissionMode: 'bypassPermissions', launchYolo: true, launchSig: 'sig', rootNoYolo: true, launchedAt: 5 }
+    const own = (over = {}) => agent({ agentCommand: 'claude', accountId: 'acc', ...PINS, ...over })
+    const finished = (stagedPane, ownPane, ownProject = {}, stagedProject = {}, options = {}) =>
+      JSON.parse(finishLayout(JSON.stringify({ version: 2, settings: {}, workspaces: [{ id: 'ws-1', cwd: 'C:/p', tree: stagedPane, ...stagedProject }] }), JSON.stringify({ version: 2, settings: {}, workspaces: [{ id: 'ws-1', cwd: 'C:/p', tree: ownPane, ...ownProject }] }), options)).workspaces[0].tree
+    const asleepPane = (over = {}) => ({ ...agent(), agentCommand: 'claude', sleeping: { at: 5, held: true }, ...over })
+
+    it('nothing changed: it keeps what it may do', () => {
+      expect(finished(asleepPane(), own())).toMatchObject(PINS)
+    })
+
+    it.each([
+      ['its folder (a copy of the project)', asleepPane({ worktree: { path: 'C:/p/planted', branch: 'x' } }), {}, {}],
+      ['its agent', asleepPane({ agentId: 'codex', agentCommand: 'codex' }), {}, {}],
+      ['its project\u2019s folder', asleepPane(), {}, { cwd: 'C:/planted' }]
+    ])('the copy changes %s: it loses them, and keeps what is not about that', (_what, pane, ownProject, stagedProject) => {
+      const tree = finished(pane, own(), ownProject, stagedProject)
+      for (const key of Object.keys(PINS)) expect(tree).not.toHaveProperty(key)
+      expect(tree.accountId).toBe('acc')
+    })
+
+    it.each([
+      ['its host', asleepPane({ remoteHostId: 'ssh-2x' })],
+      ['its folder on a host', asleepPane({ remoteHostId: 'ssh-1', remotePath: '/tmp/x' })]
+    ])('the copy changes %s, and the person agrees: it loses them too', (_what, pane) => {
+      const tree = finished(pane, own({ remoteHostId: 'ssh-1', remotePath: '/srv/app' }), {}, {}, { addresses: 'copy' })
+      for (const key of Object.keys(PINS)) expect(tree).not.toHaveProperty(key)
+    })
+
+    it('moved to another project: the same', () => {
+      const out = JSON.parse(
+        finishLayout(
+          JSON.stringify({ version: 2, settings: {}, workspaces: [{ id: 'ws-2', cwd: 'C:/planted', tree: asleepPane() }] }),
+          JSON.stringify({ version: 2, settings: {}, workspaces: [{ id: 'ws-1', cwd: 'C:/p', tree: own() }] })
+        )
+      )
+      for (const key of Object.keys(PINS)) expect(out.workspaces[0].tree).not.toHaveProperty(key)
+    })
+
+    it('one still running keeps all of it: nothing about it changes', () => {
+      expect(finished(asleepPane({ agentId: 'codex' }), own(), {}, {}, { running: ['pane-a'] })).toMatchObject(PINS)
+    })
+  })
+
+  describe('finding: a pane said to run here', () => {
+    const SHARE = '\\\\evil.invalid\\share'
+    const made = (tree) => localizeRebuilt(rebuildLayout({ version: 2, settings: {}, workspaces: [project(tree)] }, strict), { agents: new Map([['claude', { command: 'claude', name: 'Claude', available: true }]]), folderExists: () => true, now: () => 1 }).layout
+
+    it.each([
+      ['an editor on a share', { type: 'leaf', id: 'pane-a', kind: 'editor', files: [{ path: `${SHARE}\\f.txt` }] }],
+      ['a chat in a share', { type: 'leaf', id: 'pane-a', kind: 'chat', agentId: 'claude', cwd: SHARE, projectDir: SHARE }],
+      ['a terminal in a share', { type: 'leaf', id: 'pane-a', kind: 'shell', worktree: { path: SHARE, branch: 'b' } }],
+      ['an agent in a share', agent({ worktree: { path: SHARE, branch: 'b' } })]
+    ])('%s goes through the localizer like any other, whatever is said to run', (_what, pane) => {
+      expect(JSON.stringify(made(pane))).not.toContain('evil.invalid')
+    })
+
+    it('the person closed it before the restart: what comes back is what was made ready, not what was said', () => {
+      const body = JSON.stringify(made({ type: 'leaf', id: 'pane-a', kind: 'editor', files: [{ path: `${SHARE}\\f.txt` }] }))
+      const tree = JSON.parse(finishLayout(body, JSON.stringify({ version: 2, workspaces: [] }), { running: ['pane-a'] })).workspaces[0].tree
+      expect(JSON.stringify(tree)).not.toContain('evil.invalid')
+      expect(tree.sleeping).toEqual({ at: 1, held: true })
+    })
+
+    it('still there: its own pane, as it is; only a terminal or an agent can be that', () => {
+      const own = { type: 'leaf', id: 'pane-a', kind: 'shell', title: 'Mine' }
+      const body = JSON.stringify(made({ type: 'leaf', id: 'pane-a', kind: 'shell' }))
+      expect(JSON.parse(finishLayout(body, JSON.stringify({ workspaces: [{ id: 'ws-9', tree: own }] }), { running: ['pane-a'] })).workspaces[0].tree).toEqual(own)
+      const page = { type: 'leaf', id: 'pane-a', kind: 'browser', url: 'https://mine.example/' }
+      const browser = JSON.stringify(made({ type: 'leaf', id: 'pane-a', kind: 'shell' }))
+      expect(JSON.parse(finishLayout(browser, JSON.stringify({ workspaces: [{ id: 'ws-9', tree: page }] }), { running: ['pane-a'] })).workspaces[0].tree.kind).toBe('shell')
+    })
   })
 
   it('a browser pane keeps its own page here', () => {

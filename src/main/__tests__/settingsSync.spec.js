@@ -7,7 +7,8 @@ import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync, existsSync
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createTesselAccount } from '../tesselAccount'
-import { MAX_BLOB, MIN_PHRASE, PAD_BUCKETS, cleanPhrase, createSettingsSync, deriveKey, deviceLabel, openCopy, phraseIsWeak, sealCopy } from '../settingsSync'
+import { MAX_BLOB, MAX_SEQ, MIN_PHRASE, PAD_BUCKETS, cleanPhrase, createSettingsSync, deriveKey, deviceLabel, openCopy, phraseIsWeak, sealCopy } from '../settingsSync'
+import { suggestPhrase } from '../../shared/syncPhrase'
 import { PENDING_DIR, hasPendingImport, applyPendingImport, inspectBackup, layoutHeld, localizeLayout, SENSITIVE_SETTINGS } from '../settingsBackup'
 import { safeSessionId } from '../../renderer/src/agentResumeLine'
 
@@ -214,6 +215,8 @@ describe('the phrase and the key', () => {
 
   it('a computer name is cleaned and kept short', () => {
     expect(deviceLabel('a\u0007b')).toBe('a b')
+    expect(deviceLabel('a\u202eb')).toBe('a b')
+    expect(deviceLabel('x) (typed by the user')).toBe('x typed by the user')
     expect(deviceLabel('x'.repeat(200))).toHaveLength(80)
     expect(deviceLabel('')).toBe('Computer')
   })
@@ -1627,6 +1630,7 @@ describe('H5: the copy is protected', () => {
       const oldest = server.kept[0].version
       const head = server.row.version
       const highWater = JSON.parse(readFileSync(join(a.dir, 'sync.json'), 'utf8')).highWater
+      await a.sync.earlier()
       expect((await a.sync.applyEarlier(oldest)).state).toBe('staged')
       applyPendingImport({ dir: a.dataDir })
       a.sync.close()
@@ -1698,6 +1702,17 @@ describe('M4: a staged copy goes with what it came from', () => {
 describe('M5: a phrase being chosen is checked', () => {
   it.each(['aaaaaaaaaaaa', 'password1234', '123456789012', 'qwertyuiopas', '            x           y', 'abcabcabcabc', 'azertyuiopqs', 'motdepasse12', 'tessel-tessel-tessel', '111122223333', 'abcdefghijkl'])('%s is too weak', (phrase) => {
     expect(phraseIsWeak(cleanPhrase(phrase))).toBe(true)
+  })
+  it.each(['P@ssw0rd2026!', 'Summer2024!!!', '1q2w3e4r5t6y', 'montreal2026', 'jeanclaude123', 'correcthorse1', 'ilovemydog12', 'hello world!', 'zaq12wsxcde3', 'Passw0rd-2026'])('second review: %s is too weak', (phrase) => {
+    expect(phraseIsWeak(cleanPhrase(phrase))).toBe(true)
+  })
+  it('a phrase Tessel suggests always passes, and is never the same', () => {
+    const made = Array.from({ length: 300 }, () => suggestPhrase())
+    expect(new Set(made).size).toBe(300)
+    for (const phrase of made) {
+      expect(phrase).toMatch(/^[a-z2-9]{5}(-[a-z2-9]{5}){4}$/)
+      expect(phraseIsWeak(cleanPhrase(phrase))).toBe(false)
+    }
   })
   it.each(['correct horse battery staple', 'a long enough phrase', 'another long phrase here', 'x7#Kp2!mQz9L', 'cafe du matin sous la neige'])('%s is fine', (phrase) => {
     expect(phraseIsWeak(cleanPhrase(phrase))).toBe(false)
@@ -1858,8 +1873,8 @@ describe('C1 and friends: the whole path, with a copy someone sealed by hand', (
       await plant(server, { 'remote-hosts.json': hostsCopy })
       const a = await computer(server, { setup: { hosts: hostsMine } })
       const view = await on(a)
-      expect(view.remote.hostChanges).toEqual([{ id: 'ssh-1', label: 'prod', from: 'me@prod.example', to: 'root@attacker.example' }])
-      await a.sync.apply({ hostAddresses: accept })
+      expect(view.remote.hostChanges).toEqual([{ kind: 'changed', id: 'ssh-1', label: 'prod', from: 'me@prod.example', to: 'root@attacker.example' }])
+      await a.sync.apply({ hostAddresses: accept, token: view.remote.token })
       applyPendingImport({ dir: a.dataDir })
       const targets = JSON.parse(readFileSync(join(a.dataDir, 'remote-hosts.json'), 'utf8')).targets
       expect(targets.find((t) => t.id === 'ssh-1')).toMatchObject({ host, proxyCommand: 'ssh -W %h:%p bastion.example' })
@@ -1955,5 +1970,369 @@ describe('Low', () => {
     await a.signIn(OTHER_USER)
     const view = await a.sync.status()
     expect(view).toMatchObject({ on: false, hasKey: false })
+  })
+})
+
+describe('second review', () => {
+  const SALT = Buffer.alloc(16, 9).toString('base64url')
+  const OTHER_SALT = Buffer.alloc(16, 5).toString('base64url')
+  const bundleOf = (name) => ({ app: 'tessel', format: 1, createdAt: 1, files: { 'workspace-layout.json': JSON.stringify({ version: 2, settings: {}, workspaces: [{ id: 'ws-a', name, cwd: null, tree: null }] }) } })
+  const sealed = async ({ name = 'From the copy', seq = 3, salt = SALT, version = seq, phrase = PHRASE, device = 'OTHER', files = null }) => {
+    const key = await deriveKey(phrase, salt, 1024)
+    return { version, salt, updated_at: 1, blob: await sealCopy({ bundle: files ? { app: 'tessel', format: 1, createdAt: 1, files } : bundleOf(name), key, userId: USER.id, seq, device, at: 5 }) }
+  }
+  const put = (server, row) => {
+    server.row = row
+    server.kept = [...server.kept.filter((r) => r.version !== row.version), row]
+    server.head = Math.max(server.head, row.version)
+  }
+  const stateOf = (c) => JSON.parse(readFileSync(join(c.dir, 'sync.json'), 'utf8'))
+
+  describe('finding 2: what was asked about is what is applied', () => {
+    it('the question is about one copy, Use them fetches another under the same number: refused, and asked again', async () => {
+      const server = fakeServer()
+      put(server, await sealed({ name: 'What the person is shown', seq: 11, version: 7 }))
+      const a = await computer(server)
+      expect(await on(a)).toMatchObject({ state: 'newer', remote: { summary: { names: ['What the person is shown'] } } })
+      put(server, await sealed({ name: 'Old, authentic', seq: 3, version: 7 }))
+      const view = await a.sync.apply()
+      expect(view.error).toBe('changedAgain')
+      expect(hasPendingImport(a.dataDir)).toBe(false)
+      expect(view.remote).toMatchObject({ older: true, summary: { names: ['Old, authentic'] } })
+    })
+
+    it('the same number, the same sealed number, other files: refused too', async () => {
+      const server = fakeServer()
+      put(server, await sealed({ name: 'One', seq: 11 }))
+      const a = await computer(server)
+      await on(a)
+      put(server, await sealed({ name: 'Another', seq: 11 }))
+      expect((await a.sync.apply()).error).toBe('changedAgain')
+      expect(hasPendingImport(a.dataDir)).toBe(false)
+    })
+
+    it('a host answer goes with the copy it was given for', async () => {
+      const server = fakeServer()
+      const hosts = (host) => ({ 'remote-hosts.json': JSON.stringify({ version: 1, targets: [{ id: 'ssh-1', label: 'prod', host, port: 22, username: 'me' }] }) })
+      put(server, await sealed({ seq: 11, files: hosts('first.example') }))
+      const a = await computer(server, { setup: { hosts: { version: 1, targets: [{ id: 'ssh-1', label: 'prod', host: 'prod.example', port: 22, username: 'me' }] } } })
+      const asked = await on(a)
+      expect(asked.remote.hostChanges[0].to).toBe('me@first.example')
+      const token = asked.remote.token
+      put(server, await sealed({ seq: 12, version: 12, files: hosts('second.example') }))
+      await a.sync.status({ check: true })
+      expect((await a.sync.status()).remote.hostChanges[0].to).toBe('me@second.example')
+      // The person answered the first question.
+      expect((await a.sync.apply({ hostAddresses: 'copy', token })).error).toBe('changedAgain')
+      expect(hasPendingImport(a.dataDir)).toBe(false)
+    })
+
+    it('hosts the person did not take are not hosts this computer lost: nothing to ask at the end of the settling', async () => {
+      const server = fakeServer()
+      const targets = ['ssh-1', 'ssh-2', 'ssh-3'].map((id) => ({ id, label: id, host: id + '.example', port: 22 }))
+      put(server, await sealed({ seq: 11, files: { 'remote-hosts.json': JSON.stringify({ version: 1, targets }) } }))
+      const a = await computer(server, { setup: { hosts: { version: 1, targets: [] } } })
+      const asked = await on(a)
+      expect(asked.remote.hostChanges.map((c) => c.kind)).toEqual(['added', 'added', 'added'])
+      await a.sync.apply({ hostAddresses: 'keep', token: asked.remote.token })
+      applyPendingImport({ dir: a.dataDir })
+      a.sync.close()
+      const next = await computer(server, { dataDir: a.dataDir, sync: { settleMs: 1000, minIntervalMs: 0, debounceMs: 0 } })
+      next.sync.start({ applied: true })
+      next.clock.now += 2000
+      next.sync.tick()
+      await settled()
+      next.sync.tick()
+      await settled()
+      expect((await next.sync.status()).state).toBe('on')
+    })
+
+    it('with no token, no consent: it is staged keeping this computer\'s addresses', async () => {
+      const server = fakeServer()
+      put(server, await sealed({ seq: 11, files: { 'remote-hosts.json': JSON.stringify({ version: 1, targets: [{ id: 'ssh-1', label: 'prod', host: 'first.example', port: 22 }] }) } }))
+      const a = await computer(server, { setup: { hosts: { version: 1, targets: [{ id: 'ssh-1', label: 'prod', host: 'prod.example', port: 22 }] } } })
+      await on(a)
+      await a.sync.apply({ hostAddresses: 'copy' })
+      applyPendingImport({ dir: a.dataDir })
+      expect(JSON.parse(readFileSync(join(a.dataDir, 'remote-hosts.json'), 'utf8')).targets[0].host).toBe('prod.example')
+    })
+
+    it('the number stays per account across salts: an old era under another salt, with the right phrase, is older', async () => {
+      const server = fakeServer()
+      put(server, await sealed({ seq: 50, version: 50 }))
+      const a = await computer(server)
+      await on(a)
+      await a.sync.apply()
+      applyPendingImport({ dir: a.dataDir })
+      a.sync.start({ applied: true })
+      expect(stateOf(a).highWater).toBe(50)
+      put(server, await sealed({ name: 'Old era', seq: 3, version: 51, salt: OTHER_SALT }))
+      expect((await a.sync.status({ check: true })).remote.saltChanged).toBe(true)
+      const view = await on(a)
+      expect(view).toMatchObject({ state: 'newer', remote: { older: true } })
+      expect(stateOf(a).highWater).toBe(50)
+      // What this computer seals next is above all of it.
+      await a.sync.keepMine()
+      expect((await openCopy({ blob: server.row.blob, key: await deriveKey(PHRASE, OTHER_SALT, 1024), userId: USER.id })).seq).toBe(51)
+    })
+
+    it('and across turning off and on again', async () => {
+      const server = fakeServer()
+      put(server, await sealed({ seq: 50, version: 50 }))
+      const a = await computer(server)
+      await on(a)
+      await a.sync.apply()
+      applyPendingImport({ dir: a.dataDir })
+      a.sync.start({ applied: true })
+      await a.sync.turnOff()
+      expect(existsSync(join(a.dir, 'sync.json'))).toBe(false)
+      put(server, await sealed({ name: 'Old', seq: 3, version: 51 }))
+      expect((await on(a)).remote.older).toBe(true)
+    })
+
+    it('another account starts from nothing; deleting the account forgets it', async () => {
+      const server = fakeServer()
+      put(server, await sealed({ seq: 50, version: 50 }))
+      const a = await computer(server)
+      await on(a)
+      await a.sync.turnOff()
+      expect(existsSync(join(a.dir, 'sync-floor.json'))).toBe(true)
+      await on(a)
+      await a.account.deleteAccount()
+      expect(existsSync(join(a.dir, 'sync-floor.json'))).toBe(false)
+    })
+
+    it('Look at the copy says older, as any other question does, and remembers the highest', async () => {
+      const server = fakeServer()
+      const a = await computer(server, { setup: { settings: layout({ workspaces: [{ id: 'ws-a', name: 'A', cwd: null, tree: null }] }) } })
+      await on(a)
+      for (const size of [31, 32, 33]) {
+        edit(a, (d) => {
+          d.settings.fontSize = size
+        })
+        await a.sync.syncNow()
+      }
+      const first = server.kept[0]
+      edit(a, (d) => {
+        d.workspaces = [{ id: 'ws-default', name: 'Default', cwd: null, tree: null }]
+      })
+      expect((await a.sync.syncNow()).state).toBe('shrunk')
+      server.row = first
+      server.row = { ...first, version: server.row.version }
+      const view = await a.sync.useCopyInstead()
+      expect(view.remote.older).toBe(true)
+      expect(stateOf(a).highWater).toBe(4)
+    })
+
+    it('Look at the copy remembers a number higher than any seen', async () => {
+      const server = fakeServer()
+      const a = await computer(server, { setup: { settings: layout({ workspaces: [{ id: 'ws-a', name: 'A', cwd: null, tree: null }] }) } })
+      await on(a)
+      edit(a, (d) => {
+        d.workspaces = [{ id: 'ws-default', name: 'Default', cwd: null, tree: null }]
+      })
+      expect((await a.sync.syncNow()).state).toBe('shrunk')
+      server.row = { ...server.row, version: 99, blob: await sealCopy({ bundle: bundleOf('Higher'), key: keyOf(a), userId: USER.id, seq: 99, device: 'OTHER', at: 5 }) }
+      expect((await a.sync.useCopyInstead()).remote.older).toBe(false)
+      expect(stateOf(a).highWater).toBe(99)
+    })
+
+    it('Earlier copies: only what was listed, as it was listed', async () => {
+      const server = fakeServer()
+      const a = await computer(server)
+      await on(a)
+      edit(a, (d) => {
+        d.settings.fontSize = 41
+      })
+      await a.sync.syncNow()
+      const first = server.kept[0].version
+      // Nothing was listed yet.
+      expect((await a.sync.applyEarlier(first)).error).toBe('changedAgain')
+      const { versions } = await a.sync.earlier()
+      expect(versions.find((v) => v.version === first).seq).toBe(1)
+      // The server gives something else for the same version now.
+      const key = keyOf(a)
+      server.kept[0] = { ...server.kept[0], blob: await sealCopy({ bundle: bundleOf('What really comes'), key, userId: USER.id, seq: 2, device: 'OTHER', at: 5 }) }
+      expect((await a.sync.applyEarlier(first)).error).toBe('changedAgain')
+      expect(hasPendingImport(a.dataDir)).toBe(false)
+    })
+
+    it('Earlier copies: an answer about one listing does not go to another', async () => {
+      const server = fakeServer()
+      const a = await computer(server)
+      await on(a)
+      const { versions } = await a.sync.earlier()
+      expect((await a.sync.applyEarlier(versions[0].version, { token: 'not-this-one' })).error).toBe('changedAgain')
+    })
+  })
+
+  describe('finding 7: what the settling takes in is compared too', () => {
+    const start = async (server, settings) => {
+      const a = await computer(server, { setup: { settings: layout({ workspaces: ['ws-a', 'ws-b', 'ws-c'].map((id) => ({ id, name: id, cwd: null, tree: null })) }) } })
+      await on(a)
+      const b = await computer(server, { name: 'LAPTOP-2', setup: { settings: settings || layout({ workspaces: [] }) } })
+      await on(b)
+      await b.sync.apply()
+      applyPendingImport({ dir: b.dataDir })
+      b.sync.close()
+      const next = await computer(server, { name: 'LAPTOP-2', dataDir: b.dataDir, sync: { settleMs: 1000, minIntervalMs: 0, debounceMs: 0 } })
+      next.sync.start({ applied: true })
+      return next
+    }
+
+    it('a default grid at the start of a copy: the end of the settling asks, and the next change sends nothing', async () => {
+      const server = fakeServer()
+      const next = await start(server)
+      const version = server.row.version
+      edit(next, (d) => {
+        d.workspaces = [{ id: 'ws-default', name: 'Default', cwd: null, tree: null }]
+      })
+      next.clock.now += 2000
+      next.sync.tick()
+      await settled()
+      next.sync.tick()
+      await settled()
+      expect(await next.sync.status()).toMatchObject({ state: 'shrunk', alert: 'shrunk', shrunk: { projects: { from: 3, to: 1 } } })
+      edit(next, (d) => {
+        d.settings.fontSize = 22
+      })
+      next.clock.now += 2000
+      next.sync.tick()
+      await settled()
+      expect(server.row.version).toBe(version)
+    })
+
+    it('a save during the settling takes in nothing of what it holds', async () => {
+      const server = fakeServer()
+      const next = await start(server)
+      edit(next, (d) => {
+        d.workspaces = []
+      })
+      await next.sync.syncNow()
+      expect(stateOf(next).shape.projects).toEqual(['ws-a', 'ws-b', 'ws-c'])
+    })
+
+    it('what is as it should be settles as before', async () => {
+      const server = fakeServer()
+      const next = await start(server)
+      next.clock.now += 2000
+      next.sync.tick()
+      await settled()
+      next.sync.tick()
+      await settled()
+      expect((await next.sync.status()).state).toBe('on')
+    })
+
+    it('the person says it is right: it goes up even if the settling took in what it holds', async () => {
+      const server = fakeServer()
+      const next = await start(server)
+      const version = server.row.version
+      edit(next, (d) => {
+        d.workspaces = []
+      })
+      await next.sync.syncNow()
+      next.clock.now += 2000
+      next.sync.tick()
+      await settled()
+      expect((await next.sync.status()).state).toBe('shrunk')
+      expect((await next.sync.sendSmaller()).state).toBe('on')
+      expect(server.row.version).toBe(version + 1)
+    })
+  })
+
+  describe('finding 9: what cannot be kept is refused, not lost at the next start', () => {
+    const big = (count = 150) => {
+      const long = 'C:\\' + 'x'.repeat(1000)
+      return { 'workspace-layout.json': JSON.stringify({ version: 2, settings: {}, workspaces: [{ id: 'ws-a', cwd: null, tree: { type: 'split', dir: 'row', sizes: Array(count).fill(1), children: Array.from({ length: count }, (_, i) => ({ type: 'leaf', id: 'pane-' + i, kind: 'editor', viewPath: long, files: Array.from({ length: 50 }, (__, j) => ({ path: '\\\\evil.invalid\\s\\' + 'y'.repeat(900) + j })) })) } }] }) }
+    }
+
+    it('a copy whose shadow outgrows it is refused, nothing staged, the state as it was', async () => {
+      const server = fakeServer()
+      put(server, await sealed({ seq: 7, files: big() }))
+      const a = await computer(server)
+      expect((await on(a)).state).toBe('newer')
+      const view = await a.sync.apply()
+      expect(view.error).toBe('refusedCopy')
+      expect(hasPendingImport(a.dataDir)).toBe(false)
+      expect(readFileSync(join(a.dir, 'sync.json'), 'utf8').length).toBeLessThan(2 * 1024 * 1024)
+      a.sync.close()
+      const next = await computer(server, { dataDir: a.dataDir })
+      expect((await next.sync.status()).on).toBe(true)
+    })
+
+  })
+
+  describe('finding 11: a number nobody could seal above', () => {
+    it('a sealed number beyond any real one cannot be opened; the limit itself can', async () => {
+      const key = Buffer.alloc(32, 7)
+      const blobOf = (seq) => sealCopy({ bundle: bundleOf('x'), key, userId: 'u', seq })
+      await expect(openCopy({ blob: await blobOf(Number.MAX_SAFE_INTEGER), key, userId: 'u' })).rejects.toMatchObject({ code: 'unreadable' })
+      await expect(openCopy({ blob: await blobOf(MAX_SEQ + 1), key, userId: 'u' })).rejects.toMatchObject({ code: 'unreadable' })
+      expect((await openCopy({ blob: await blobOf(MAX_SEQ), key, userId: 'u' })).seq).toBe(MAX_SEQ)
+    })
+
+    it('such a copy leaves the number as it was, and is not offered', async () => {
+      const server = fakeServer()
+      const a = await computer(server)
+      await on(a)
+      const key = keyOf(a)
+      const salt = stateOf(a).salt
+      server.row = { version: 9, salt, updated_at: 1, blob: await sealCopy({ bundle: bundleOf('x'), key, userId: USER.id, seq: Number.MAX_SAFE_INTEGER, device: 'OTHER', at: 5 }) }
+      expect((await a.sync.status({ check: true })).remote.unreadable).toBe(true)
+      expect(stateOf(a).highWater).toBe(1)
+    })
+
+    it('at the very top, nothing is sealed that nobody could open: it says so', async () => {
+      const server = fakeServer()
+      const a = await computer(server)
+      await on(a)
+      const key = keyOf(a)
+      const salt = stateOf(a).salt
+      server.head = 2
+      server.row = { version: 2, salt, updated_at: 1, blob: await sealCopy({ bundle: bundleOf('x'), key, userId: USER.id, seq: MAX_SEQ, device: 'OTHER', at: 5 }) }
+      await a.sync.status({ check: true })
+      const puts = server.puts().length
+      await a.sync.keepMine()
+      expect(server.puts()).toHaveLength(puts)
+      expect((await a.sync.status()).problem).toBe('failed')
+    })
+
+    it('starting over then begins again', async () => {
+      const server = fakeServer()
+      const a = await computer(server)
+      await on(a)
+      const key = keyOf(a)
+      const salt = stateOf(a).salt
+      server.head = 2
+      server.row = { version: 2, salt, updated_at: 1, blob: await sealCopy({ bundle: bundleOf('x'), key, userId: USER.id, seq: MAX_SEQ, device: 'OTHER', at: 5 }) }
+      await a.sync.status({ check: true })
+      expect((await a.sync.startOver('a brand new phrase for all')).state).toBe('on')
+      expect(stateOf(a).highWater).toBe(1)
+    })
+  })
+
+  describe('finding 13: a staged copy and signing out', () => {
+    it('it does not apply to whoever is here next', async () => {
+      const server = fakeServer()
+      const { b } = await firstAndSecond(server)
+      await on(b)
+      await b.sync.apply()
+      expect(hasPendingImport(b.dataDir)).toBe(true)
+      await b.account.signOut()
+      expect(hasPendingImport(b.dataDir)).toBe(false)
+      expect(applyPendingImport({ dir: b.dataDir }).applied).toEqual([])
+      expect(stateOf(b).staged).toBeNull()
+    })
+
+    it('a session the server ended: it stays, the person asked for it', async () => {
+      const server = fakeServer()
+      const { b } = await firstAndSecond(server)
+      await on(b)
+      await b.sync.apply()
+      server.sessions.clear()
+      await b.sync.status({ check: true })
+      await b.account.status({ check: true })
+      expect(hasPendingImport(b.dataDir)).toBe(true)
+    })
   })
 })
