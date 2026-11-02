@@ -277,7 +277,20 @@ export function userKeptFields(agent, old) {
 
 // entry: the agent's own entry (configToEntry). keepUser: what the user set
 // on the entry already there stays (userKeptFields). -> { ok } or { ok: false, error }
-export function setJsonAgentServer(agent, name, entry, home, { keepUser = false } = {}) {
+// Does this agent's settings file name this server? Unreadable: no.
+export function jsonAgentHasServer(agent, name, home) {
+  const file = settingsFile(agent, home)
+  if (!file) return false
+  const r = readSettings(file)
+  if (r.error || !r.data) return false
+  const k = serversKey(agent, r.data, file)
+  if (k.error) return false
+  const servers = r.data[k.key]
+  return !!servers && typeof servers === 'object' && !Array.isArray(servers) && Object.hasOwn(servers, name)
+}
+
+// replaces: the server's former name: its entry goes, and what the person kept in it comes along.
+export function setJsonAgentServer(agent, name, entry, home, { keepUser = false, replaces = null } = {}) {
   const file = settingsFile(agent, home)
   if (!file) return { ok: false, error: t('main.jsonAgents.unknownAgent', 'Unknown agent.') }
   const r = readSettings(file)
@@ -295,11 +308,13 @@ export function setJsonAgentServer(agent, name, entry, home, { keepUser = false 
   if (agent === 'muse' && Object.hasOwn(data, key) && (!data[key] || typeof data[key] !== 'object' || Array.isArray(data[key])))
     return { ok: false, error: t('main.jsonAgents.museNotObject', '{{file}} has a {{key}} that is not an object, so Tessel left the file unchanged.', { file, key }) }
   if (!data[key] || typeof data[key] !== 'object' || Array.isArray(data[key])) data[key] = {}
-  if (keepUser) entry = { ...entry, ...userKeptFields(agent, data[key][name]) }
+  const former = replaces && Object.hasOwn(data[key], replaces) ? data[key][replaces] : undefined
+  if (former !== undefined) delete data[key][replaces]
+  if (keepUser) entry = { ...entry, ...userKeptFields(agent, data[key][name] ?? former) }
   // Field by field: an agent that saves its keys in another order (Muse
   // rewrites its settings) is not a change, so the file and its backup are
   // left alone.
-  if (sameValue(data[key][name], entry)) return { ok: true, changed: false }
+  if (former === undefined && sameValue(data[key][name], entry)) return { ok: true, changed: false }
   data[key][name] = entry
   try {
     writeSettings(file, data)

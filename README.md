@@ -337,6 +337,10 @@ on the same conversation:
   shows there. If the line stays unsent, Tessel presses Enter again, even with you
   in the pane or after a restart, as long as the box holds nothing else: what you
   type is never sent for you.
+- **Two sets of tools**: agents see Tessel's tools as `tessel_team` (the team, the board and
+  messages between agents) and `tessel_apps` (the browser, terminals, accounts, logs and the
+  connectors you connected). Your agents' settings move to these names by themselves; a running
+  agent gets them when it restarts.
 - **Conversations**: a tab in the side panel, after Agents, shows what the
   agents of a team say to each other and to you, with who sent each message
   and the model it ran on.

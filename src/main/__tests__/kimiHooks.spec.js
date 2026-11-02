@@ -198,25 +198,25 @@ describe('Kimi MCP configuration', () => {
     fs.writeFileSync(file, JSON.stringify(original))
     const entry = teamToolsEntry('kimi', script, NODE)
     expect(entry).toEqual({ command: NODE, args: [script] })
-    expect(setJsonAgentServer('kimi', 'tessel-team', entry, home)).toEqual({
+    expect(setJsonAgentServer('kimi', 'tessel_team', entry, home)).toEqual({
       ok: true,
       changed: true
     })
     const config = JSON.parse(fs.readFileSync(file, 'utf8'))
     expect(config).toEqual({
       ...original,
-      mcpServers: { ...original.mcpServers, 'tessel-team': entry }
+      mcpServers: { ...original.mcpServers, 'tessel_team': entry }
     })
-    expect(setJsonAgentServer('kimi', 'tessel-team', entry, home)).toEqual({
+    expect(setJsonAgentServer('kimi', 'tessel_team', entry, home)).toEqual({
       ok: true,
       changed: false
     })
     expect(listJsonAgent('kimi', home).servers.map((s) => s.name)).toEqual([
       'personal',
-      'tessel-team'
+      'tessel_team'
     ])
     expect(JSON.stringify(listJsonAgent('kimi', home))).not.toContain('secret')
-    expect(removeJsonAgentServer('kimi', 'tessel-team', home).ok).toBe(true)
+    expect(removeJsonAgentServer('kimi', 'tessel_team', home).ok).toBe(true)
     expect(JSON.parse(fs.readFileSync(file, 'utf8'))).toEqual(original)
   })
 
@@ -245,7 +245,7 @@ describe('Kimi MCP configuration', () => {
       fs.mkdirSync(dirname(file), { recursive: true })
       fs.writeFileSync(file, original)
       expect(
-        setJsonAgentServer('kimi', 'tessel-team', teamToolsEntry('kimi', script, NODE), home).ok
+        setJsonAgentServer('kimi', 'tessel_team', teamToolsEntry('kimi', script, NODE), home).ok
       ).toBe(false)
       expect(fs.readFileSync(file, 'utf8')).toBe(original)
     }

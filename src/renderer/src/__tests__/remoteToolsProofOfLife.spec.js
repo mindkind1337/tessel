@@ -5,7 +5,7 @@ import path from 'path'
 // The proof-of-life check of agents on an SSH host (App.vue
 // checkRemoteAgentTools), read from the source (App needs a full window).
 const src = fs.readFileSync(path.resolve(__dirname, '../App.vue'), 'utf8')
-const fnSrc = src.slice(src.indexOf('function toolsRanSince('), src.indexOf('// An agent on an SSH host whose tessel-team server never connected'))
+const fnSrc = src.slice(src.indexOf('function toolsRanSince('), src.indexOf('// An agent on an SSH host whose tessel_team server never connected'))
 // eslint-disable-next-line no-new-func
 const toolsRanSince = new Function(`${fnSrc}; return toolsRanSince`)()
 

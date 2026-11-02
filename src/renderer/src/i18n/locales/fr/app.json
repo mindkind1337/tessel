@@ -570,8 +570,8 @@
       "approved": "{{lead}} (responsable) a approuvé « {{title}} ». Elle est prête à être fusionnée."
     },
     "team": {
-      "toolsDown": "{{pane}} : ses outils d'équipe (tessel-team) ne sont pas connectés, il ne peut donc ni lire ni envoyer de messages d'équipe. Redémarrez-le (clic droit sur son panneau, Redémarrer).",
-      "toolsReady": "Les messages d'équipe passent maintenant en arrière-plan, jamais dans vos terminaux (serveurs MCP : tessel-team).",
+      "toolsDown": "{{pane}} : ses outils d'équipe (tessel_team) ne sont pas connectés, il ne peut donc ni lire ni envoyer de messages d'équipe. Redémarrez-le (clic droit sur son panneau, Redémarrer).",
+      "toolsReady": "Les messages d'équipe passent maintenant en arrière-plan, jamais dans vos terminaux (serveurs MCP : tessel_team).",
       "toolsFailed": "Les messages d'équipe ne sont pas encore configurés : {{why}} Tessel réessaiera dans 5 minutes.",
       "toolsRestarted": "{{pane}} a été redémarré pour avoir les derniers outils d'équipe. Sa conversation continue.",
       "defaultName": "Équipe {{n}}",

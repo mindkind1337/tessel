@@ -859,7 +859,7 @@ describe.skipIf(!gitSh())('a folder after a fresh /login, as Claude Code 2.1 lea
     write(home, `${folder()}/.claude.json`, {
       numStartups: 1,
       installMethod: 'native',
-      mcpServers: { 'tessel-team': { type: 'stdio', command: '/usr/bin/node', args: ['/home/u/.tessel-server/bin/tessel-shim.cjs', 'mcp'] } },
+      mcpServers: { 'tessel': { type: 'stdio', command: '/usr/bin/node', args: ['/home/u/.tessel-server/bin/tessel-shim.cjs', 'mcp'] } },
       oauthAccount: profile
         ? {
             accountUuid: '1f0c6d1e-1111-4111-8111-111111111111',

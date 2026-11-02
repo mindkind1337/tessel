@@ -36,8 +36,8 @@ const skillsIn = (home) => [
   { name: 'lint', description: 'Lint the code base', skillFile: join(home, '.agents', 'skills', 'lint', 'SKILL.md'), seenBy: ['codex'], scope: 'user' }
 ]
 const mcpListed = {
-  claude: [{ name: 'fs', scope: 'user', target: 'npx fs' }, { name: 'tessel-team', scope: 'user' }],
-  codex: [{ name: 'browser', scope: 'user', enabled: false }, { name: 'tessel-team', scope: 'user' }],
+  claude: [{ name: 'fs', scope: 'user', target: 'npx fs' }, { name: 'tessel_team', scope: 'user' }],
+  codex: [{ name: 'browser', scope: 'user', enabled: false }, { name: 'tessel_team', scope: 'user' }],
   others: {}
 }
 
@@ -89,7 +89,7 @@ describe('the Context summary', () => {
     // Without remote: no count API asked, Claude's counts are estimates.
     expect(anthropic.count).not.toHaveBeenCalled()
     const groupsOf = (a) => a.items.map((i) => `${i.group}:${i.label}`)
-    expect(groupsOf(claude)).toEqual(expect.arrayContaining(['rules:CLAUDE.md', 'skills:pdf', 'mcp:fs', 'tessel:tessel-team']))
+    expect(groupsOf(claude)).toEqual(expect.arrayContaining(['rules:CLAUDE.md', 'skills:pdf', 'mcp:fs', 'tessel:tessel_team']))
     expect(groupsOf(codex)).toEqual(expect.arrayContaining(['rules:AGENTS.md', 'skills:lint', 'mcp:browser']))
     expect(groupsOf(claude)).not.toContain('skills:lint')
     expect(codex.items.find((i) => i.label === 'browser')).toMatchObject({ loaded: false, note: 'off' })

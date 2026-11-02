@@ -33,14 +33,14 @@ describe('mergeClaudeJson', () => {
   it('adds the server to a fresh config', () => {
     const r = shim.mergeClaudeJson({}, ABS)
     expect(r.changed).toBe(true)
-    expect(r.value.mcpServers['tessel-team']).toEqual({ type: 'stdio', command: 'node', args: [ABS, 'mcp'] })
+    expect(r.value.mcpServers['tessel_team']).toEqual({ type: 'stdio', command: 'node', args: [ABS, 'mcp'] })
   })
   it('keeps the other servers and settings, and is idempotent', () => {
-    const cfg = { numStartups: 3, mcpServers: { mine: { command: 'x' }, 'tessel-team': { command: 'old' } } }
+    const cfg = { numStartups: 3, mcpServers: { mine: { command: 'x' }, 'tessel_team': { command: 'old' } } }
     const r = shim.mergeClaudeJson(cfg, ABS)
     expect(r.value.numStartups).toBe(3)
     expect(r.value.mcpServers.mine).toEqual({ command: 'x' })
-    expect(r.value.mcpServers['tessel-team'].args).toEqual([ABS, 'mcp'])
+    expect(r.value.mcpServers['tessel_team'].args).toEqual([ABS, 'mcp'])
     expect(shim.mergeClaudeJson(r.value, ABS).changed).toBe(false)
   })
 })
@@ -80,35 +80,51 @@ describe('mergeCodexToml', () => {
       'startup_timeout_sec = 60\n' +
       'tool_timeout_sec = 1200\n'
     expect(r.text).toBe(
-      `${table('tessel-team', '"mcp"')}\n${table('tessel_apps', '"mcp", "--apps"')}`
+      `${table('tessel_team', '"mcp"')}\n${table('tessel_apps', '"mcp", "--apps"')}`
     )
   })
   it('replaces only its own table (and sub-tables), and is idempotent', () => {
-    const text = 'model = "o3"\n\n[mcp_servers.tessel-team]\ncommand = "old"\n\n[mcp_servers.tessel-team.env]\nA = "1"\n\n[mcp_servers.other]\ncommand = "x"\n'
+    const text = 'model = "o3"\n\n[mcp_servers.tessel_team]\ncommand = "old"\n\n[mcp_servers.tessel_team.env]\nA = "1"\n\n[mcp_servers.other]\ncommand = "x"\n'
     const r = shim.mergeCodexToml(text, ABS)
     expect(r.changed).toBe(true)
     expect(r.text).toContain('model = "o3"')
     expect(r.text).toContain('[mcp_servers.other]\ncommand = "x"')
     expect(r.text).not.toContain('"old"')
-    expect(r.text).not.toContain('tessel-team.env')
-    expect(r.text.match(/\[mcp_servers\.tessel-team\]/g)).toHaveLength(1)
+    expect(r.text).not.toContain('tessel.env')
+    expect(r.text.match(/\[mcp_servers\.tessel_team\]/g)).toHaveLength(1)
     expect(shim.mergeCodexToml(r.text, ABS).changed).toBe(false)
   })
 })
 
 describe('mergeCodexToml, other forms', () => {
-  it('refuses a tessel-team set as an inline table or dotted keys', () => {
-    expect(shim.mergeCodexToml('[mcp_servers]\ntessel-team = { command = "x" }\n', ABS).error).toBeTruthy()
-    expect(shim.mergeCodexToml('mcp_servers.tessel-team.command = "x"\n', ABS).error).toBeTruthy()
+  it('refuses a tessel set as an inline table or dotted keys', () => {
+    expect(shim.mergeCodexToml('[mcp_servers]\ntessel_team = { command = "x" }\n', ABS).error).toBeTruthy()
+    expect(shim.mergeCodexToml('mcp_servers.tessel_team.command = "x"\n', ABS).error).toBeTruthy()
     expect(shim.mergeCodexToml('[mcp_servers]\nother = { command = "x" }\n', ABS).changed).toBe(true)
-    expect(shim.mergeCodexToml('[profiles.a]\ntessel-team = 1\n', ABS).changed).toBe(true)
+    expect(shim.mergeCodexToml('[profiles.a]\ntessel_team = 1\n', ABS).changed).toBe(true)
   })
 })
 
 describe('mergeClaudeJson, fields added by Claude Code', () => {
   it('counts as set when type, command and args match', () => {
-    const cfg = { mcpServers: { 'tessel-team': { ...shim.claudeServer(ABS), env: {} }, tessel_apps: { ...shim.claudeServer(ABS, undefined, ['mcp', '--apps']), env: {} } } }
+    const cfg = { mcpServers: { 'tessel_team': { ...shim.claudeServer(ABS), env: {} }, tessel_apps: { ...shim.claudeServer(ABS, undefined, ['mcp', '--apps']), env: {} } } }
     expect(shim.mergeClaudeJson(cfg, ABS).changed).toBe(false)
+  })
+
+  it('the former name moves to the new one: nothing doubled, and what the person put in it stays', () => {
+    const c = shim.mergeClaudeJson({ mcpServers: { mine: { command: 'x' }, 'tessel-team': { type: 'stdio', command: 'old', args: ['old', 'mcp'] } } }, ABS)
+    expect(c.changed).toBe(true)
+    expect(Object.keys(c.value.mcpServers).sort()).toEqual(['mine', 'tessel_apps', 'tessel_team'])
+    const old = 'model = "o3"\n\n[mcp_servers.tessel-team]\ncommand = "old"\nargs = ["old", "mcp"]\n# my note\nenabled = false\n\n[mcp_servers.tessel-team.tools.team_send]\napproval_mode = "prompt"\n'
+    const r = shim.mergeCodexToml(old, ABS)
+    expect(r.text).not.toContain('tessel-team')
+    expect(r.text).toContain('model = "o3"')
+    expect(r.text.match(/\[mcp_servers\.tessel_team\]/g)).toHaveLength(1)
+    for (const kept of ['# my note', 'enabled = false', '[mcp_servers.tessel_team.tools.team_send]', 'approval_mode = "prompt"']) expect(r.text).toContain(kept)
+    expect(shim.mergeCodexToml(r.text, ABS).changed).toBe(false)
+    const both = shim.mergeCodexToml(`${r.text}\n[mcp_servers.tessel-team]\ncommand = "old"\n`, ABS)
+    expect(both.text).not.toContain('tessel-team')
+    expect(both.text.match(/\[mcp_servers\.tessel_team\]/g)).toHaveLength(1)
   })
 
   it("what the person put in Tessel's Codex tables stays, and a table written another way stops only itself", () => {
@@ -124,28 +140,28 @@ describe('mergeClaudeJson, fields added by Claude Code', () => {
     for (const other of ['["mcp_servers".tessel_apps]\ncommand = "x"\n', '[[mcp_servers.tessel_apps]]\ncommand = "x"\n', '"mcp_servers".tessel_apps.command = "x"\n']) {
       const merged = shim.mergeCodexToml(other, ABS)
       expect(merged.error).toBeUndefined()
-      expect(merged.text).toContain('[mcp_servers.tessel-team]')
+      expect(merged.text).toContain('[mcp_servers.tessel_team]')
       expect((merged.text.match(/tessel_apps/g) || []).length).toBe(1)
     }
   })
 
   it("Tessel's own keys written across lines go whole, and what it cannot read is left as it is", () => {
     const table = (name) => `[mcp_servers.${name}]\ncommand = "node"\nargs = [\n  "${ABS}",\n  "mcp",\n]\nenv_vars = [\n  "TESSEL_PANE_ID",\n]\nenabled = false\n`
-    const r = shim.mergeCodexToml(`${table('tessel-team')}\n${table('tessel_apps')}`, ABS)
+    const r = shim.mergeCodexToml(`${table('tessel_team')}\n${table('tessel_apps')}`, ABS)
     expect(r.error).toBeUndefined()
     expect(r.text).not.toMatch(/^\s*"mcp",$/m)
     expect(r.text).not.toMatch(/^\s*\]$/m)
     expect(r.text.match(/enabled = false/g)).toHaveLength(2)
     expect(shim.mergeCodexToml(r.text, ABS).changed).toBe(false)
     const odd = `command = ${'"'.repeat(3)}\nnode\n${'"'.repeat(3)}\n`
-    expect(shim.mergeCodexToml(`[mcp_servers.tessel-team]\n${odd}`, ABS).error).toMatch(/cannot change/)
+    expect(shim.mergeCodexToml(`[mcp_servers.tessel_team]\n${odd}`, ABS).error).toMatch(/cannot change/)
     expect(shim.mergeCodexToml(`[mcp_servers.tessel_apps]\n${odd}`, ABS).text).toContain(odd)
     expect(shim.mergeCodexToml('mcp_servers = { other = { command = "x" } }\n', ABS).error).toMatch(/another way/)
     expect(shim.mergeCodexToml('["mcp_servers"]\ntessel_apps = { command = "x" }\n', ABS).text.match(/tessel_apps/g)).toHaveLength(1)
   })
 
   it('adds the connectors beside the team tools, and keeps a connector table turned off in Codex', () => {
-    const r = shim.mergeClaudeJson({ mcpServers: { 'tessel-team': shim.claudeServer(ABS) } }, ABS)
+    const r = shim.mergeClaudeJson({ mcpServers: { 'tessel_team': shim.claudeServer(ABS) } }, ABS)
     expect(r.changed).toBe(true)
     expect(r.value.mcpServers.tessel_apps.args).toEqual([ABS, 'mcp', '--apps'])
     const once = shim.mergeCodexToml('', ABS).text
@@ -181,10 +197,10 @@ describe('install', () => {
     expect(r.changed).toHaveLength(4)
     const cfg = JSON.parse(fs.readFileSync(join(home, '.claude.json'), 'utf8'))
     expect(cfg.mcpServers.mine).toEqual({ command: 'x' })
-    expect(cfg.mcpServers['tessel-team'].args).toEqual([ABS, 'mcp'])
+    expect(cfg.mcpServers['tessel_team'].args).toEqual([ABS, 'mcp'])
     expect(JSON.parse(fs.readFileSync(join(home, '.claude', 'settings.json'), 'utf8')).hooks.SessionEnd).toHaveLength(1)
     expect(JSON.parse(fs.readFileSync(join(home, '.codex', 'hooks.json'), 'utf8')).hooks.Interrupt).toHaveLength(1)
-    expect(fs.readFileSync(join(home, '.codex', 'config.toml'), 'utf8')).toMatch(/^model = "o3"\n\n\[mcp_servers\.tessel-team\]/)
+    expect(fs.readFileSync(join(home, '.codex', 'config.toml'), 'utf8')).toMatch(/^model = "o3"\n\n\[mcp_servers\.tessel_team\]/)
     // backups of the files that existed, and only those
     expect(fs.readFileSync(join(home, '.claude.json.tessel-bak'), 'utf8')).toContain('"mine"')
     expect(fs.readFileSync(join(home, '.codex', 'config.toml.tessel-bak'), 'utf8')).toBe('model = "o3"\n')
@@ -199,7 +215,7 @@ describe('install', () => {
     // another shim path: updated, the first backup stays as it was
     const r3 = shim.install({ home, shimPath: '/other/tessel-shim.cjs', env })
     expect(r3.changed).toHaveLength(4)
-    expect(fs.readFileSync(join(home, '.claude.json.tessel-bak'), 'utf8')).not.toContain('tessel-team')
+    expect(fs.readFileSync(join(home, '.claude.json.tessel-bak'), 'utf8')).not.toContain('tessel_team')
     expect(JSON.parse(fs.readFileSync(join(home, '.claude', 'settings.json'), 'utf8')).hooks.Stop).toHaveLength(1)
   })
 
@@ -220,9 +236,9 @@ describe('install', () => {
     const cfg = JSON.parse(fs.readFileSync(join(acct, '.claude.json'), 'utf8'))
     expect(cfg.oauthAccount).toEqual({ emailAddress: 'work@corp.example' })
     expect(cfg.mcpServers.mine).toEqual({ command: 'own' })
-    expect(cfg.mcpServers['tessel-team'].args).toEqual([ABS, 'mcp'])
+    expect(cfg.mcpServers['tessel_team'].args).toEqual([ABS, 'mcp'])
     expect(JSON.parse(fs.readFileSync(join(acct, 'settings.json'), 'utf8')).hooks.Stop).toHaveLength(1)
-    expect(fs.readFileSync(join(cx, 'config.toml'), 'utf8')).toContain('[mcp_servers.tessel-team]')
+    expect(fs.readFileSync(join(cx, 'config.toml'), 'utf8')).toContain('[mcp_servers.tessel_team]')
     expect(JSON.parse(fs.readFileSync(join(cx, 'hooks.json'), 'utf8')).hooks.Stop).toHaveLength(1)
     expect(fs.readdirSync(stranger)).toEqual([])
     // A second account with no server of its own gets yours once.
@@ -230,7 +246,7 @@ describe('install', () => {
     fs.mkdirSync(acct2)
     fs.writeFileSync(join(acct2, '.tessel-account'), 'tessel-account claude b2\n')
     shim.install({ home, shimPath: ABS, env })
-    expect(Object.keys(JSON.parse(fs.readFileSync(join(acct2, '.claude.json'), 'utf8')).mcpServers).sort()).toEqual(['mine', 'tessel-team', 'tessel_apps'])
+    expect(Object.keys(JSON.parse(fs.readFileSync(join(acct2, '.claude.json'), 'utf8')).mcpServers).sort()).toEqual(['mine', 'tessel_apps', 'tessel_team'])
     expect(shim.install({ home, shimPath: ABS, env }).changed).toEqual([])
   })
 
@@ -247,7 +263,7 @@ describe('install', () => {
     }
     sys({ a: { command: 'a', env: { TOKEN: 'v1' } }, b: { command: 'b' } })
     shim.install({ home, shimPath: ABS, env })
-    expect(Object.keys(servers()).sort()).toEqual(['a', 'b', 'tessel-team', 'tessel_apps'])
+    expect(Object.keys(servers()).sort()).toEqual(['a', 'b', 'tessel_apps', 'tessel_team'])
     expect(JSON.parse(fs.readFileSync(join(acct, '.tessel-mcp.json'), 'utf8')).servers).toMatchObject({ a: expect.any(String), b: expect.any(String) })
     // A key rotated in the default config: the untouched copy follows.
     sys({ a: { command: 'a', env: { TOKEN: 'v2' } }, b: { command: 'b' } })
@@ -266,7 +282,7 @@ describe('install', () => {
     // Gone from the default config: its untouched copy goes; yours stays.
     sys({})
     shim.install({ home, shimPath: ABS, env })
-    expect(Object.keys(servers()).sort()).toEqual(['b', 'tessel-team', 'tessel_apps'])
+    expect(Object.keys(servers()).sort()).toEqual(['b', 'tessel_apps', 'tessel_team'])
     expect(shim.install({ home, shimPath: ABS, env }).changed).toEqual([])
   })
 
@@ -276,7 +292,7 @@ describe('install', () => {
     fs.mkdirSync(join(home, '.codex'))
     const r = shim.install({ home, shimPath: ABS, env, node })
     expect(r.errors).toEqual([])
-    expect(JSON.parse(fs.readFileSync(join(home, '.claude.json'), 'utf8')).mcpServers['tessel-team'].command).toBe(node)
+    expect(JSON.parse(fs.readFileSync(join(home, '.claude.json'), 'utf8')).mcpServers['tessel_team'].command).toBe(node)
     expect(JSON.parse(fs.readFileSync(join(home, '.claude', 'settings.json'), 'utf8')).hooks.Stop[0].hooks[0].command).toBe(`'${node}' '${ABS}' hook claude Stop`)
     expect(JSON.parse(fs.readFileSync(join(home, '.codex', 'hooks.json'), 'utf8')).hooks.Stop[0].hooks[0].command).toBe(`'${node}' '${ABS}' hook codex Stop`)
     expect(fs.readFileSync(join(home, '.codex', 'config.toml'), 'utf8')).toContain(`command = "${node}"`)
@@ -308,7 +324,7 @@ describe('install', () => {
     fs.symlinkSync(real, join(home, '.claude.json'))
     expect(shim.install({ home, shimPath: ABS, env }).errors).toEqual([])
     expect(fs.lstatSync(join(home, '.claude.json')).isSymbolicLink()).toBe(true)
-    expect(JSON.parse(fs.readFileSync(real, 'utf8')).mcpServers['tessel-team']).toBeTruthy()
+    expect(JSON.parse(fs.readFileSync(real, 'utf8')).mcpServers['tessel_team']).toBeTruthy()
   })
 
   it('leaves a file it cannot read as JSON alone', () => {
@@ -438,7 +454,7 @@ describe('round trip', () => {
     expect(r.code).toBe(0)
     expect(r.err).toBe('')
     expect(answers(r.out)).toEqual([
-      { jsonrpc: '2.0', id: 1, result: { protocolVersion: '2025-03-26', capabilities: { tools: {} }, serverInfo: { name: 'tessel-team', version: shim.VERSION } } },
+      { jsonrpc: '2.0', id: 1, result: { protocolVersion: '2025-03-26', capabilities: { tools: {} }, serverInfo: { name: 'tessel_team', version: shim.VERSION } } },
       { jsonrpc: '2.0', id: 2, result: { tools: [] } },
       { jsonrpc: '2.0', id: 3, result: {} },
       { jsonrpc: '2.0', id: 4, error: { code: -32601, message: 'Method not found: resources/list' } }
@@ -461,7 +477,7 @@ describe('round trip', () => {
       expect(r.code).toBe(0)
       expect(r.err).toBe('')
       const [init, list] = answers(r.out)
-      expect(init.result.serverInfo.name).toBe('tessel-team')
+      expect(init.result.serverInfo.name).toBe('tessel_team')
       expect(init.result.instructions).toMatch(/not reachable/)
       expect(list.result).toEqual({ tools: [] })
       // No socket: tried again for 3 s first; a refusal is final at once.
@@ -506,7 +522,7 @@ describe('round trip', () => {
   }, 20000)
 
   it('version', async () => {
-    expect(shim.VERSION).toBe('1.4.5')
+    expect(shim.VERSION).toBe('1.4.6')
     expect((await run(['version'])).out).toBe(`${shim.VERSION}\n`)
   })
 })

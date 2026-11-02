@@ -9753,12 +9753,12 @@ async function checkTeamTools(round) {
         toolsDown[m.id] = true
         if (!toolsWarned.has(m.id)) {
           toolsWarned.add(m.id)
-          showToast(t('app.team.toolsDown', '{{pane}}: its team tools (tessel-team) are not connected, so it cannot read or send team messages. Restart it (right-click its pane, Restart).', { pane: paneLabel(m) }), {
+          showToast(t('app.team.toolsDown', '{{pane}}: its team tools (tessel_team) are not connected, so it cannot read or send team messages. Restart it (right-click its pane, Restart).', { pane: paneLabel(m) }), {
             kind: 'attention',
             timeout: 15000,
             action: { label: t('app.common.restart', 'Restart'), run: () => restartLeaf(m.id) }
           })
-          if (window.shellApi.log) window.shellApi.log('info', `team tools: ${paneLabel(m)} (${m.id}) has no connected tessel-team server`)
+          if (window.shellApi.log) window.shellApi.log('info', `team tools: ${paneLabel(m)} (${m.id}) has no connected tessel_team server`)
         }
       }
     }
@@ -9795,7 +9795,7 @@ function launchTokens(ids) {
   }
   return out
 }
-// An agent on an SSH host whose tessel-team server never connected since it
+// An agent on an SSH host whose tessel_team server never connected since it
 // started (Codex's startup timeout, a stale shim, no link when it started):
 // every such pane, in a team or not, gets the pane's note with Retry, since
 // the agent would otherwise silently fall back to curl or Playwright on the
@@ -9839,7 +9839,7 @@ async function checkRemoteAgentTools(round) {
     const host = remoteHostLabel(leaf.remoteHostId)
     leaf.remoteToolsNote = t('app.remoteAgents.toolsNotRunning', 'Tessel tools are not connected on {{host}}: this agent has no Tessel browser or team tools, so it may use the server for web pages instead. Retry restarts it with them.', { host })
     remoteToolsNoted.add(leaf)
-    if (window.shellApi.log) window.shellApi.log('warn', `pane ${id}: tessel-team not connected on ${leaf.remoteHostId} (no proof of life), note shown`)
+    if (window.shellApi.log) window.shellApi.log('warn', `pane ${id}: tessel_team not connected on ${leaf.remoteHostId} (no proof of life), note shown`)
   }
 }
 
@@ -9989,7 +9989,7 @@ async function followReportedSessions() {
 const sessionFollowTimer = setInterval(followReportedSessions, 5000)
 onBeforeUnmount(() => clearInterval(sessionFollowTimer))
 // The team tools are set up for Claude Code and Codex once a team exists
-// (MCP server "tessel-team" + Claude Code hooks; listed in the MCP dialog).
+// (MCP server "tessel_team" + Claude Code hooks; listed in the MCP dialog).
 let teamToolsNextTry = 0
 let teamToolsBusy = false
 let teamToolsFailed = ''
@@ -10008,7 +10008,7 @@ async function installTeamToolsOnce() {
     teamToolsReady = true
     teamToolsVersion = res.version || null
     if (res.changed && res.changed.some((c) => c.includes('MCP server')))
-      showToast(t('app.team.toolsReady', 'Team messages now go in the background, never into your terminals (MCP servers: tessel-team).'), { timeout: 10000 })
+      showToast(t('app.team.toolsReady', 'Team messages now go in the background, never into your terminals (MCP servers: tessel_team).'), { timeout: 10000 })
     return
   }
   // Not (fully) set up: say so once per failure, and try again in 5 minutes.

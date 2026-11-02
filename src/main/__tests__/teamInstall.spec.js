@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import fs from 'fs'
 import os from 'os'
 import { join, resolve, sep } from 'path'
-import { installClaudeHooks, installCodexServer, writeServerScript } from '../teamInstall'
+import { claudeServerExists, installClaudeHooks, installCodexServer, writeServerScript } from '../teamInstall'
 
 describe('team setup preserves existing agent configuration', () => {
   let fixtureHome
@@ -53,7 +53,7 @@ describe('team setup preserves existing agent configuration', () => {
     expect(fs.readFileSync(settingsFile(), 'utf8')).toBe('{ invalid JSON')
   })
 
-  it.each(['[mcp_servers."tessel-team"]', "[mcp_servers.'tessel-team']"])(
+  it.each(['[mcp_servers."tessel_team"]', "[mcp_servers.'tessel_team']"])(
     'updates the existing server spelled %s without retaining the old definition',
     async (header) => {
       const unrelated =
@@ -89,7 +89,7 @@ describe('team setup preserves existing agent configuration', () => {
       '[mcp_servers.other]\ncommand = "other-tool"\n[mcp_servers.other.env]\nKEEP = "untouched"\n'
     fs.writeFileSync(
       configFile(),
-      '[mcp_servers."tessel-team"]\ncommand = "old-node"\n[mcp_servers."tessel-team".env]\nTESSEL_PANE_ID = "stale-pane"\n' +
+      '[mcp_servers."tessel_team"]\ncommand = "old-node"\n[mcp_servers."tessel_team".env]\nTESSEL_PANE_ID = "stale-pane"\n' +
         other
     )
     const result = await installCodexServer(script, accepted, fixtureHome)
@@ -168,5 +168,49 @@ describe('the team tools script shared by every Tessel build', () => {
     } finally {
       fs.rmSync(dir, { recursive: true, force: true })
     }
+  })
+})
+
+describe('the server moved from tessel-team to tessel', () => {
+  const NODE = process.execPath
+  let home
+  beforeEach(() => {
+    home = fs.mkdtempSync(join(os.tmpdir(), 'tessel-rename-'))
+    fs.mkdirSync(join(home, '.codex'))
+  })
+  afterEach(() => fs.rmSync(home, { recursive: true, force: true }))
+  const script = () => join(home, 'server.cjs')
+  const cfg = () => join(home, '.codex', 'config.toml')
+
+  it('Codex: the old table goes, the new one comes once, and what the person put in it comes along', async () => {
+    fs.writeFileSync(script(), '')
+    fs.writeFileSync(cfg(), 'model = "o3"\n\n[mcp_servers.tessel-team]\ncommand = "old"\nargs = ["old"]\n# my note\nenabled = false\n\n[mcp_servers.tessel-team.tools.team_send]\napproval_mode = "prompt"\n')
+    expect((await installCodexServer(script(), null, home, { node: NODE })).changed).toBe(true)
+    const text = fs.readFileSync(cfg(), 'utf8')
+    expect(text).not.toContain('tessel-team')
+    expect(text.match(/\[mcp_servers\.tessel_team\]/g)).toHaveLength(1)
+    for (const kept of ['model = "o3"', '# my note', 'enabled = false', '[mcp_servers.tessel_team.tools.team_send]']) expect(text).toContain(kept)
+    expect((await installCodexServer(script(), null, home, { node: NODE })).changed).toBe(false)
+  })
+
+  it('both tables there: only the new one stays', async () => {
+    fs.writeFileSync(script(), '')
+    await installCodexServer(script(), null, home, { node: NODE })
+    fs.appendFileSync(cfg(), '\n[mcp_servers.tessel-team]\ncommand = "old"\n')
+    expect((await installCodexServer(script(), null, home, { node: NODE })).changed).toBe(true)
+    expect(fs.readFileSync(cfg(), 'utf8')).not.toContain('tessel-team')
+  })
+
+  it('the connectors table is left alone', async () => {
+    fs.writeFileSync(script(), '')
+    fs.writeFileSync(cfg(), '[mcp_servers.tessel-team]\ncommand = "old"\n')
+    await installCodexServer(script(), null, home, { node: NODE, name: 'tessel_apps', args: ['--apps'] })
+    expect(fs.readFileSync(cfg(), 'utf8')).toContain('[mcp_servers.tessel-team]')
+  })
+
+  it('Claude Code: asked by name', () => {
+    fs.writeFileSync(join(home, '.claude.json'), JSON.stringify({ mcpServers: { 'tessel-team': { command: 'old', args: [] } } }))
+    expect(claudeServerExists(home, 'tessel-team')).toBe(true)
+    expect(claudeServerExists(home)).toBe(false)
   })
 })

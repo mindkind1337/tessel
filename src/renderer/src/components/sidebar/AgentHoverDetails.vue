@@ -91,7 +91,7 @@ const childLine = computed(() => {
     </div>
     <div v-if="detail" class="hc-detail" v-text="detail"></div>
     <div v-if="row.toolsDown" class="hc-warn">
-      {{ t('sidebar.agentRow.toolsDownHint', 'Its team tools (tessel-team) are not connected: it cannot read or send team messages. Restart it (right-click its pane, Restart).') }}
+      {{ t('sidebar.agentRow.toolsDownHint', 'Its team tools (tessel_team) are not connected: it cannot read or send team messages. Restart it (right-click its pane, Restart).') }}
     </div>
 
     <section v-if="pickHint" class="hc-section">

@@ -9,7 +9,7 @@ let fixture, home, userData, system, tick
 beforeEach(() => {
   fixture = fs.mkdtempSync(join(os.tmpdir(), 'tessel-codex-accounts-'))
   home = join(fixture, 'user')
-  userData = join(fixture, 'tessel')
+  userData = join(fixture, 'tessel_team')
   system = join(home, '.codex')
   tick = Date.parse('2026-09-28T02:00:00Z')
   fs.mkdirSync(system, { recursive: true })
@@ -63,7 +63,7 @@ describe('managed Codex accounts', () => {
 
   it('adds an isolated account, copies settings/hooks/instructions only and never selects implicitly', async () => {
     const original =
-      'model = "gpt-6"\ncli_auth_credentials_store = "keyring" # personal\n[mcp_servers.tessel-team]\ncommand = "node"\n'
+      'model = "gpt-6"\ncli_auth_credentials_store = "keyring" # personal\n[mcp_servers.tessel_team]\ncommand = "node"\n'
     put(join(system, 'config.toml'), original)
     put(join(system, 'hooks.json'), { hooks: { Stop: [] } })
     put(join(system, 'AGENTS.md'), 'Keep the board updated.')

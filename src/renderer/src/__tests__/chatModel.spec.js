@@ -261,7 +261,7 @@ describe('chatModel helpers', () => {
     expect(toolSummary('Bash', { command: 'npm test\nnpm run lint' })).toBe('Bash: npm test')
     expect(toolSummary('Grep', { pattern: 'TODO', path: 'src' })).toBe('Grep TODO')
     expect(toolSummary('WebFetch', '{"url":"https://a.test"}')).toBe('WebFetch https://a.test')
-    expect(toolSummary('mcp__tessel-team__team_send', { to: '#2' })).toBe('tessel-team: team_send')
+    expect(toolSummary('mcp__tessel_team__team_send', { to: '#2' })).toBe('tessel_team: team_send')
     expect(toolSummary('Task', 'not json')).toBe('Task not json')
     expect(toolSummary('Bash', { command: 'x'.repeat(200) })).toHaveLength(80)
   })

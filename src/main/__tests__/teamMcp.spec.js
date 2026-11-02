@@ -173,8 +173,9 @@ describe('Tessel team tools (background messages)', () => {
     await new Promise((r) => setTimeout(r, 800))
     child.kill()
     const byId = Object.fromEntries(lines.map((l) => [l.id, l]))
-    expect(byId[1].result.serverInfo.name).toBe('tessel-team')
+    expect(byId[1].result.serverInfo.name).toBe('tessel_team')
     expect(byId[1].result.instructions).toMatch(/team_inbox/)
+    // tessel_team: the team and the messages between agents; everything else is in tessel_apps.
     expect(byId[2].result.tools.map((t) => t.name)).toEqual([
       'team_inbox',
       'team_send',
@@ -195,35 +196,9 @@ describe('Tessel team tools (background messages)', () => {
       'team_worker_done',
       'team_heartbeat',
       'team_gates',
-      'browser_pages',
-      'browser_open',
-      'browser_navigate',
-      'browser_snapshot',
-      'browser_click',
-      'browser_mouse',
-      'browser_fill',
-      'browser_type',
-      'browser_press',
-      'browser_scroll',
-      'browser_screenshot',
-      'browser_console',
-      'browser_wait',
-      'browser_downloads',
-      'browser_login',
-      'run_in_terminal',
-      'get_terminal_output',
-      'send_to_terminal',
-      'kill_terminal',
-      'terminal_last_command',
-      'terminal_selection',
-      'terminal_list',
       'project_agents',
       'project_send',
-      'project_inbox',
-      'tessel_logs',
-      'open_terminal',
-      'account_list',
-      'account_switch_panes'
+      'project_inbox'
     ])
     expect(byId[3].result.content[0].text).toMatch(/Sent to Claude Code/)
     expect(byId[4].result.content[0].text).toMatch(/Codex CLI \(Codex CLI\) \(you\)/)
@@ -648,12 +623,12 @@ describe('setting up the team tools', () => {
     expect(t).toContain('tool_timeout_sec = 1200')
     expect(await installCodexServer(script, async () => ({ ok: true }), home, { node: NODE })).toEqual({ changed: false })
     // A quoted key is ours too: replaced, not duplicated; refused = untouched.
-    fs.writeFileSync(join(home, '.codex', 'config.toml'), 'model = "x"\n[mcp_servers."tessel-team"]\ncommand = "old"\n[mcp_servers."tessel-team".env]\nA = "1"\n[other]\nk = 1\n')
+    fs.writeFileSync(join(home, '.codex', 'config.toml'), 'model = "x"\n[mcp_servers."tessel_team"]\ncommand = "old"\n[mcp_servers."tessel_team".env]\nA = "1"\n[other]\nk = 1\n')
     expect(await installCodexServer(script, async () => ({ ok: false, error: 'bad' }), home, { node: NODE }).then((r) => r.error)).toMatch(/would not accept/)
     expect(fs.readFileSync(join(home, '.codex', 'config.toml'), 'utf8')).toContain('command = "old"')
     expect(await installCodexServer(script, async () => ({ ok: true }), home, { node: NODE })).toEqual({ changed: true })
     const t2 = fs.readFileSync(join(home, '.codex', 'config.toml'), 'utf8')
-    expect(t2.match(/^\[mcp_servers\.[^\]\n]*tessel-team[^\]\n]*\]/gm)).toEqual(['[mcp_servers.tessel-team]'])
+    expect(t2.match(/^\[mcp_servers\.[^\]\n]*tessel[^\]\n]*\]/gm)).toEqual(['[mcp_servers.tessel_team]'])
     expect(t2).toContain('[other]\nk = 1')
     expect(t2).not.toContain('command = "old"')
   })
@@ -1271,19 +1246,24 @@ describe('an agent on an SSH host (TESSEL_REMOTE=1)', () => {
     fs.rmSync(dir, { recursive: true, force: true })
   })
 
-  it('lists every tool a local agent has: browser, terminal and worker tools included', () => {
-    const local = mcp.handle({ id: 1, method: 'tools/list' }).tools.map((t) => t.name)
+  it('lists every tool a local agent has: browser, terminal and worker tools included', async () => {
+    const before = mcp.__setTerminalTool(async () => ({ text: JSON.stringify({ tools: [] }) }))
+    const local = (await mcp.appsToolList()).map((t) => t.name)
     expect(local).toContain('browser_open')
+    expect(local).not.toContain('team_inbox')
+    expect(local).not.toContain('project_send')
     remote(A)
-    const names = mcp.handle({ id: 1, method: 'tools/list' }).tools.map((t) => t.name)
+    const names = (await mcp.appsToolList()).map((t) => t.name)
+    mcp.__setTerminalTool(before)
     expect(names).toEqual(local)
-    expect(names).toEqual(expect.arrayContaining(['browser_open', 'browser_snapshot', 'run_in_terminal', 'terminal_list', 'team_worker_start', 'team_send', 'team_task_add', 'team_inbox']))
+    expect(names).toEqual(expect.arrayContaining(['browser_open', 'browser_snapshot', 'run_in_terminal', 'terminal_list']))
+    expect(mcp.TEAM_TOOLS().map((t) => t.name)).toEqual(expect.arrayContaining(['team_worker_start', 'team_send', 'team_task_add', 'team_inbox']))
     // Not refused for being remote (it may fail for other reasons: no Tessel here).
     for (const n of ['team_worker_list']) {
       const r = call(n, {})
       expect(r && typeof r.then === 'function' ? '' : r.content[0].text).not.toMatch(/not available to an agent on an SSH host/)
     }
-    const instructions = mcp.handle({ id: 1, method: 'initialize' }).instructions
+    const instructions = mcp.appsInstructions()
     expect(instructions).toMatch(/browser_snapshot/)
     expect(instructions).toMatch(/run_in_terminal/)
     expect(instructions).toMatch(/You run on an SSH host/)
@@ -1347,5 +1327,32 @@ describe('an agent on an SSH host (TESSEL_REMOTE=1)', () => {
     expect(JSON.parse(await run({ hook_event_name: 'PostToolUse', cwd: '/nowhere' }, { TESSEL_PROJECT_DIR: dir })).hookSpecificOutput.additionalContext).toMatch(/Ping from A/)
     fs.rmSync(sessions, { recursive: true, force: true })
     fs.rmSync(config, { recursive: true, force: true })
+  })
+})
+
+describe('two servers from one script', () => {
+  it('every tool is on one side only, connectors apart, and nothing is lost', () => {
+    const team = new Set(mcp.TEAM_TOOLS().map((t) => t.name))
+    const others = mcp.TOOLS.filter((t) => !team.has(t.name)).map((t) => t.name)
+    expect(team.size + others.length).toBe(mcp.TOOLS.length)
+    for (const name of team) expect(mcp.isTeamTool(name)).toBe(true)
+    for (const name of others) expect(mcp.isTeamTool(name)).toBe(false)
+    expect(others).toEqual(expect.arrayContaining(['browser_click', 'run_in_terminal', 'open_terminal', 'tessel_logs', 'account_list']))
+  })
+
+  it('connectors: only what is connected; nothing connected, none; no clear answer, all of them', async () => {
+    const list = async (ask) => {
+      const before = mcp.__setTerminalTool(ask)
+      try {
+        return (await mcp.connectedAppTools()).map((t) => t.name)
+      } finally {
+        mcp.__setTerminalTool(before)
+      }
+    }
+    expect(await list(async () => ({ text: JSON.stringify({ tools: [] }) }))).toEqual([])
+    expect(await list(async () => ({ text: JSON.stringify({ tools: ['gmail_read'] }) }))).toEqual(['gmail_read'])
+    expect((await list(async () => ({ isError: true, text: 'no' }))).length).toBe(mcp.APP_TOOLS.length)
+    expect((await list(async () => ({ text: 'not json' }))).length).toBe(mcp.APP_TOOLS.length)
+    expect((await list(async () => { throw new Error('gone') })).length).toBe(mcp.APP_TOOLS.length)
   })
 })

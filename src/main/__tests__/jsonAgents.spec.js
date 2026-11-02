@@ -4,6 +4,7 @@ import fs from 'fs'
 import os from 'os'
 import { join } from 'path'
 import {
+  jsonAgentHasServer,
   listJsonAgent,
   setJsonAgentServer,
   removeJsonAgentServer,
@@ -94,11 +95,11 @@ describe('MCP servers in agents settings files', () => {
     put('.gemini/config/mcp_config.json', '')
     expect(listJsonAgent('antigravity', home)).toEqual({ servers: [], error: null })
     const NODE = 'C:\\Program Files\\nodejs\\node.exe'
-    expect(setJsonAgentServer('antigravity', 'tessel-team', teamToolsEntry('antigravity', 'C:/t/tessel-team-mcp.cjs', NODE), home)).toEqual({ ok: true, changed: true })
-    expect(read('.gemini', 'config', 'mcp_config.json')).toEqual({ mcpServers: { 'tessel-team': { command: NODE, args: ['C:/t/tessel-team-mcp.cjs'] } } })
+    expect(setJsonAgentServer('antigravity', 'tessel_team', teamToolsEntry('antigravity', 'C:/t/tessel-team-mcp.cjs', NODE), home)).toEqual({ ok: true, changed: true })
+    expect(read('.gemini', 'config', 'mcp_config.json')).toEqual({ mcpServers: { 'tessel_team': { command: NODE, args: ['C:/t/tessel-team-mcp.cjs'] } } })
     expect(read('.gemini', 'settings.json').mcpServers).toEqual({ gem: { command: 'g' } })
     // Again: nothing to change.
-    expect(setJsonAgentServer('antigravity', 'tessel-team', teamToolsEntry('antigravity', 'C:/t/tessel-team-mcp.cjs', NODE), home)).toEqual({ ok: true, changed: false })
+    expect(setJsonAgentServer('antigravity', 'tessel_team', teamToolsEntry('antigravity', 'C:/t/tessel-team-mcp.cjs', NODE), home)).toEqual({ ok: true, changed: false })
   })
 
   it('Antigravity CLI: reads url or serverUrl, and a server agy turned off', () => {
@@ -126,16 +127,16 @@ describe('MCP servers in agents settings files', () => {
     try {
       fs.mkdirSync(join(home, '.cline', 'data', 'settings'), { recursive: true })
       fs.writeFileSync(join(home, '.cline', 'data', 'settings', 'cline_mcp_settings.json'), JSON.stringify({ mcpServers: {} }))
-      expect(setJsonAgentServer('cline', 'tessel-team', teamToolsEntry('cline', 'C:/t/s.cjs', 'C:/nodejs/node.exe'), home).ok).toBe(true)
+      expect(setJsonAgentServer('cline', 'tessel_team', teamToolsEntry('cline', 'C:/t/s.cjs', 'C:/nodejs/node.exe'), home).ok).toBe(true)
       const web = configToEntry('cline', { transport: 'http', url: 'https://x/mcp', headers: { A: 'b' } })
       expect(web).toEqual({ type: 'streamableHttp', url: 'https://x/mcp', headers: { A: 'b' } })
       expect(setJsonAgentServer('cline', 'web', web, home).ok).toBe(true)
-      expect(read('.cline', 'data', 'settings', 'cline_mcp_settings.json').mcpServers['tessel-team']).toEqual({
+      expect(read('.cline', 'data', 'settings', 'cline_mcp_settings.json').mcpServers['tessel_team']).toEqual({
         command: 'C:/nodejs/node.exe',
         args: ['C:/t/s.cjs']
       })
       expect(listJsonAgent('cline', home).servers.map((s) => [s.name, s.type, s.target])).toEqual([
-        ['tessel-team', 'stdio', 'C:/nodejs/node.exe C:/t/s.cjs'],
+        ['tessel_team', 'stdio', 'C:/nodejs/node.exe C:/t/s.cjs'],
         ['web', 'http', 'https://x/mcp']
       ])
     } finally {
@@ -207,5 +208,43 @@ describe('MCP server formats, per agent', () => {
   it('Gemini: url with type "http" is streamable HTTP, url alone is SSE', () => {
     expect(entryToConfig('gemini', { url: 'https://x', type: 'http' }).sse).toBe(false)
     expect(entryToConfig('gemini', { url: 'https://x' }).sse).toBe(true)
+  })
+})
+
+describe('a server that changed its name', () => {
+  it('the old entry goes, what the person kept in it comes along, and it happens once', () => {
+    const home = fs.mkdtempSync(join(os.tmpdir(), 'tessel-json-rename-'))
+    try {
+      const file = join(home, '.gemini', 'settings.json')
+      fs.mkdirSync(join(home, '.gemini'), { recursive: true })
+      fs.writeFileSync(file, JSON.stringify({ mcpServers: { mine: { command: 'x' }, 'tessel-team': { command: 'old', args: [] } } }))
+      const entry = { command: 'node', args: ['s.cjs'] }
+      expect(setJsonAgentServer('gemini', 'tessel_team', entry, home, { keepUser: true, replaces: 'tessel-team' })).toEqual({ ok: true, changed: true })
+      const servers = JSON.parse(fs.readFileSync(file, 'utf8')).mcpServers
+      expect(Object.keys(servers).sort()).toEqual(['mine', 'tessel_team'])
+      expect(setJsonAgentServer('gemini', 'tessel_team', entry, home, { keepUser: true, replaces: 'tessel-team' })).toEqual({ ok: true, changed: false })
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true })
+    }
+  })
+})
+
+describe('whether an agent names a server', () => {
+  it('yes, no, and an unreadable file is no', () => {
+    const home = fs.mkdtempSync(join(os.tmpdir(), 'tessel-json-has-'))
+    try {
+      const file = join(home, '.gemini', 'settings.json')
+      fs.mkdirSync(join(home, '.gemini'), { recursive: true })
+      expect(jsonAgentHasServer('gemini', 'old', home)).toBe(false)
+      fs.writeFileSync(file, JSON.stringify({ mcpServers: { old: { command: 'x' } } }))
+      expect(jsonAgentHasServer('gemini', 'old', home)).toBe(true)
+      expect(jsonAgentHasServer('gemini', 'other', home)).toBe(false)
+      expect(jsonAgentHasServer('gemini', 'constructor', home)).toBe(false)
+      fs.writeFileSync(file, '{not json')
+      expect(jsonAgentHasServer('gemini', 'old', home)).toBe(false)
+      expect(jsonAgentHasServer('nobody', 'old', home)).toBe(false)
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true })
+    }
   })
 })

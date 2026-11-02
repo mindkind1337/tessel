@@ -5,7 +5,7 @@
 //     (%APPDATA%\tessel-team): the dev build and the installed app point
 //     the agents to the same file, so they never rewrite each other's
 //     settings; the file is only replaced by a newer version;
-//   - Claude Code: an MCP server "tessel-team" (user scope) and hooks that
+//   - Claude Code: an MCP server "tessel_team" (user scope) and hooks that
 //     show new team messages as context (UserPromptSubmit, PostToolUse, Stop);
 //   - Codex: the same MCP server in ~/.codex/config.toml, forwarding the
 //     pane's TESSEL_* variables.
@@ -23,7 +23,10 @@ import { hookNode, hookCommand, pluginNodeSource } from './nodePath'
 import { removeKimiHooks } from './kimiHooks'
 export { installKimiHooks, KIMI_HOOK_EVENTS } from './kimiHooks'
 
-export const SERVER_NAME = 'tessel-team'
+export const SERVER_NAME = 'tessel_team'
+// Its name until 2026-11: agents' settings are moved to the new name when the tools are set up. The
+// folder and the script keep the old words: nobody reads them, and hooks already point at them.
+export const OLD_SERVER_NAME = 'tessel-team'
 // The same script with --apps: Tessel's own connectors (teamMcp/server.cjs).
 export const APPS_SERVER_NAME = 'tessel_apps'
 export const APPS_ARGS = Object.freeze(['--apps'])
@@ -531,7 +534,7 @@ export function codexTable(scriptPath, node, { name = SERVER_NAME, args = [] } =
   )
 }
 
-// Codex: [mcp_servers.tessel-team] in ~/.codex/config.toml. The new file is
+// Codex: [mcp_servers.tessel_team] in ~/.codex/config.toml. The new file is
 // checked with Codex itself (`validate(text)` -> { ok, error }) before it
 // replaces the old one.
 // -> { changed: bool } or { error }
@@ -545,12 +548,15 @@ export async function installCodexServer(scriptPath, validate, home = os.homedir
   if (unsafePath(scriptPath) || unsafePath(found.node)) return { error: t('main.hooks.badPath', 'The Tessel data folder or node has a line break in its path.') }
   // TOML literal strings ('...') keep Windows backslashes as they are.
   if (scriptPath.includes("'") || found.node.includes("'")) return { error: t('main.hooks.quoteInPath', 'The Tessel data folder has a quote in its path.') }
-  const { kept, ours } = splitCodexConfig(text, name)
-  const theirs = codexTheirLines(ours)
+  // The table under its former name goes, and what the person put in it comes along.
+  const old = name === SERVER_NAME ? splitCodexConfig(text, OLD_SERVER_NAME) : null
+  const hadOld = !!(old && old.ours.trim())
+  const { kept, ours } = splitCodexConfig(old ? old.kept : text, name)
+  const theirs = codexTheirLines(ours.trim() || !hadOld ? ours : old.ours)?.map((l) => (/^\s*\[/.test(l) ? l.replace(/tessel-team/g, name) : l))
   if (!theirs) return { error: t('main.hooks.codexShape', "Codex's settings for {{name}} are written in a way Tessel cannot change, so they were left as they are.", { name }) }
   const table = codexTable(scriptPath, found.node, { name, args })
   const want = (theirs.some((l) => /default_tools_approval_mode/.test(l)) ? table.replace('default_tools_approval_mode = "approve"\n', '') : table) + (theirs.length ? `${theirs.join('\n')}\n` : '')
-  if (ours.trim() === want.trim()) return { changed: false }
+  if (ours.trim() === want.trim() && !hadOld) return { changed: false }
   const next = kept.replace(/\s*$/, '\n') + '\n' + want
   if (validate) {
     const v = await validate(next)
@@ -561,7 +567,7 @@ export async function installCodexServer(scriptPath, validate, home = os.homedir
   return { changed: true }
 }
 
-// Grok Build: [mcp_servers.tessel-team] in <GROK_HOME or ~/.grok>/config.toml
+// Grok Build: [mcp_servers.tessel_team] in <GROK_HOME or ~/.grok>/config.toml
 // (its own servers outrank the ones it borrows from ~/.claude.json). The
 // pane's variables reach the server through Grok's ${VAR} expansion; the team
 // tools may wait for a teammate or a card, past Grok's own timeout.
@@ -593,7 +599,7 @@ export const unsafePath = (p) => typeof p !== 'string' || /[\r\n\0]/.test(p)
 // -> { changed: bool } or { error }. Only where Grok Build is set up (its
 // folder). The file is read as TOML first and the result read back before it
 // is written: a file Tessel cannot read, or an edit that would not read back
-// with exactly one tessel-team table, is left as it was (said as an error).
+// with exactly one table of Tessel, is left as it was (said as an error).
 export function installGrokServer(scriptPath, home = os.homedir(), { node, env = process.env, name = SERVER_NAME, args = [] } = {}) {
   const dir = grokHome(home, env)
   if (!fs.existsSync(dir)) return { changed: false }
@@ -605,11 +611,13 @@ export function installGrokServer(scriptPath, home = os.homedir(), { node, env =
   const before = parseToml(text)
   if (!before.ok) return { error: t('main.hooks.grokUnreadable', "Grok Build's config.toml is not valid TOML (line {{line}}: {{error}}), so Tessel left it as it was.", { line: before.line, error: before.error }) }
   const servers = before.data.mcp_servers && typeof before.data.mcp_servers === 'object' ? before.data.mcp_servers : {}
-  const old = servers[name] && typeof servers[name] === 'object' && !Array.isArray(servers[name]) ? servers[name] : null
-  if (old && old.command === found.node && sameJson(old.args, [scriptPath, ...args]) && sameJson(old.env, GROK_ENV)) return { changed: false }
+  const table = (key) => (servers[key] && typeof servers[key] === 'object' && !Array.isArray(servers[key]) ? servers[key] : null)
+  const former = name === SERVER_NAME ? table(OLD_SERVER_NAME) : null
+  const old = table(name)
+  if (!former && old && old.command === found.node && sameJson(old.args, [scriptPath, ...args]) && sameJson(old.env, GROK_ENV)) return { changed: false }
   const kept = {}
-  for (const k of GROK_KEPT) if (old && old[k] !== undefined) kept[k] = old[k]
-  const { kept: others } = splitCodexConfig(text, name)
+  for (const k of GROK_KEPT) if ((old || former) && (old || former)[k] !== undefined) kept[k] = (old || former)[k]
+  const { kept: others } = splitCodexConfig(former ? splitCodexConfig(text, OLD_SERVER_NAME).kept : text, name)
   const want = grokTable(scriptPath, found.node, kept, { name, args })
   const next = (others.trim() ? others.replace(/\s*$/, '\n') + '\n' : '') + want
   const after = parseToml(next)
@@ -622,10 +630,10 @@ export function installGrokServer(scriptPath, home = os.homedir(), { node, env =
 
 // Claude Code's MCP server (user scope), from ~/.claude.json. -> true when
 // it is already there with this script.
-// A "tessel-team" server is registered for Claude Code (any script path).
-export function claudeServerExists(home = os.homedir()) {
+// A server of this name is registered for Claude Code (any script path).
+export function claudeServerExists(home = os.homedir(), name = SERVER_NAME) {
   const cfg = readJson(join(home, '.claude.json'))
-  return !!(cfg && cfg.mcpServers && cfg.mcpServers[SERVER_NAME])
+  return !!(cfg && cfg.mcpServers && cfg.mcpServers[name])
 }
 
 // ... with this script, run by this node (an older bare "node" is replaced).

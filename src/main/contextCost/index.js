@@ -26,7 +26,9 @@ import { ollamaName, ollamaCounter } from './ollama'
 import { approvalsFrom, approvalSources, mcpApprovalState } from './mcpApproval'
 
 export const CONTEXT_AGENTS = RULE_AGENTS
-export const TEAM_SERVER = 'tessel-team'
+export const TEAM_SERVER = 'tessel_team'
+// (An agent not set up again yet still has its former name.)
+const isTeamServer = (name) => name === TEAM_SERVER || name === 'tessel_apps' || name === 'tessel-team'
 const MCP_RECORD_LIMIT = 2 * 1024 * 1024
 const LIST_TTL_MS = 60 * 1000
 // A kept MCP measurement older than this is deleted (a server or config gone).
@@ -236,7 +238,7 @@ export function createContextCost({
     const servers = agentServers(mcp, agent)
     const approvals = agent === 'claude' && servers.some((s) => s.scope === 'project') ? approvalsFrom(await Promise.resolve(mcpApprovals(cwd, dir)).catch(() => [])) : approvalsFrom([])
     for (const s of servers) {
-      if (s.name === TEAM_SERVER) continue
+      if (isTeamServer(s.name)) continue
       const state = s.enabled === false ? 'disabled' : mcpApprovalState(agent, s, approvals)
       const record = state === 'approved' ? await mcpRecord(agent, s, cwd) : null
       const base = { key: `mcp:${agent}:${s.scope || 'user'}:${s.name}`, group: 'mcp', type: 'mcp', label: s.name, scope: s.scope || 'user', optional: true, ref: { agent, name: s.name, scope: s.scope || 'user' } }
@@ -245,7 +247,7 @@ export function createContextCost({
       else if (record && Array.isArray(record.defs)) items.push({ ...base, loaded: true, kind: 'tools', tools: shapeTools(s.name, record.defs, agent), toolCount: record.defs.length, measuredAt: record.at })
       else items.push({ ...base, loaded: true, note: 'notMeasured' })
     }
-    if (servers.some((s) => s.name === TEAM_SERVER && s.enabled !== false)) {
+    if (servers.some((s) => isTeamServer(s.name) && s.enabled !== false)) {
       const team = await tesselContext()
       if (team) {
         items.push({ key: 'tessel:instructions', group: 'tessel', type: 'teamInstructions', label: TEAM_SERVER, loaded: true, optional: true, kind: 'text', text: team.instructions })
@@ -389,7 +391,7 @@ export function createContextCost({
       const out = {}
       const counters = new Map()
       for (const s of (Array.isArray(servers) ? servers : []).slice(0, 200)) {
-        if (!s || !CONTEXT_AGENTS.includes(s.agent) || typeof s.name !== 'string' || s.name === TEAM_SERVER) continue
+        if (!s || !CONTEXT_AGENTS.includes(s.agent) || typeof s.name !== 'string' || isTeamServer(s.name)) continue
         const scope = typeof s.scope === 'string' ? s.scope : 'user'
         const record = await mcpRecord(s.agent, { name: s.name, scope }, cwd)
         if (!record || !Array.isArray(record.defs)) continue
