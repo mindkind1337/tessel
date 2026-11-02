@@ -5378,12 +5378,13 @@ body.pane-dragging * {
 
 .tb-left .brand-dev {
   margin-left: 0;
-  padding: 1px 5px;
-  border: 1px solid color-mix(in srgb, #facc15 45%, transparent);
+  /* The same chip as the restart button beside it. */
+  padding: 0 6px;
+  border: 1px solid #facc15;
   border-radius: 4px;
   color: #facc15;
   font-size: 10.5px;
-  font-weight: 600;
+  font-weight: 700;
   line-height: 1.3;
 }
 
