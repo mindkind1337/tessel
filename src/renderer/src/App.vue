@@ -12216,7 +12216,13 @@ const agentTerminalTargets = createAgentTerminalTargets({
       agentLabel: c.agentLabel,
       name: c.name,
       where,
-      folder: String(leaf.cwd || leaf.remotePath || leaf.startDir || '')
+      folder: String(leaf.cwd || leaf.remotePath || leaf.startDir || ''),
+      // Where it comes from: its project, the Live Share guests in it, the guest who wrote last.
+      project: c.project,
+      guests: c.guests,
+      fromGuest: c.fromGuest,
+      // So the main process giving up on this card ends it on screen too.
+      cardId: c.cardId
     }
     const answer = await askAgentApproval(card, c.agentLeaf.id)
     if (!answer || !answer.allow) return { allow: false }
