@@ -51,6 +51,8 @@ function loadTokenizer(loader) {
 }
 
 export function tesselContext(server = teamServer) {
+  // Both of Tessel's servers come from this script (tessel_team and tessel_apps).
+  if (typeof server.contextParts === 'function') return server.contextParts()
   const init = server.handle({ id: 1, method: 'initialize', params: {} })
   const list = server.handle({ id: 2, method: 'tools/list', params: {} })
   return { instructions: String((init && init.instructions) || ''), tools: Array.isArray(list && list.tools) ? list.tools : [] }

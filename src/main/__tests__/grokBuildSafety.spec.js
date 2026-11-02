@@ -64,7 +64,7 @@ describe('tomlLite', () => {
   it.each([
     ['a = 1\na = 2', 'defined twice'],
     ['[t]\n[t]', 'defined twice'],
-    ['[mcp_servers]\ntessel-team = { command = "x" }\n[mcp_servers.tessel-team]\ncommand = "y"', 'defined twice'],
+    ['[mcp_servers]\ntessel_team = { command = "x" }\n[mcp_servers.tessel_team]\ncommand = "y"', 'defined twice'],
     ['[f]\napple.color = "red"\n[f.apple]', 'defined twice'],
     ['a = "open', 'unclosed'],
     ['a = [1, 2', 'unclosed'],
@@ -92,8 +92,8 @@ describe("Grok Build's config.toml: validated edits", () => {
     expect(fs.readFileSync(cfg(), 'utf8')).toBe(bad)
   })
 
-  it('a tessel-team server defined another way (an inline table) is never doubled', () => {
-    const text = '[mcp_servers]\ntessel-team = { command = "old", args = [] }\n'
+  it('a tessel server defined another way (an inline table) is never doubled', () => {
+    const text = '[mcp_servers]\ntessel_team = { command = "old", args = [] }\n'
     fs.writeFileSync(cfg(), text)
     const r = installGrokServer(script, home, { node, env: {} })
     expect(r.error).toMatch(/without breaking it/)
@@ -101,13 +101,13 @@ describe("Grok Build's config.toml: validated edits", () => {
   })
 
   it('one table, readable, the rest kept; a hand-split table (with its env sub-table) is replaced', () => {
-    fs.writeFileSync(cfg(), '[cli]\ninstaller = "internal"\n\n[mcp_servers.tessel-team]\ncommand = "old"\n[mcp_servers.tessel-team.env]\nA = "1"\n\n[mcp_servers.other]\ncommand = "x"\n')
+    fs.writeFileSync(cfg(), '[cli]\ninstaller = "internal"\n\n[mcp_servers.tessel_team]\ncommand = "old"\n[mcp_servers.tessel_team.env]\nA = "1"\n\n[mcp_servers.other]\ncommand = "x"\n')
     expect(installGrokServer(script, home, { node, env: {} })).toEqual({ changed: true })
     const r = parseToml(fs.readFileSync(cfg(), 'utf8'))
     expect(r.ok).toBe(true)
     expect(r.data.cli.installer).toBe('internal')
     expect(r.data.mcp_servers.other.command).toBe('x')
-    expect(r.data.mcp_servers['tessel-team']).toEqual({ command: node, args: [script], env: { TESSEL_PANE_ID: '${TESSEL_PANE_ID:-}', TESSEL_PROJECT_DIR: '${TESSEL_PROJECT_DIR:-}', TESSEL_TEAM_SECRET: '${TESSEL_TEAM_SECRET:-}' }, tool_timeout_sec: 1200 })
+    expect(r.data.mcp_servers['tessel_team']).toEqual({ command: node, args: [script], env: { TESSEL_PANE_ID: '${TESSEL_PANE_ID:-}', TESSEL_PROJECT_DIR: '${TESSEL_PROJECT_DIR:-}', TESSEL_TEAM_SECRET: '${TESSEL_TEAM_SECRET:-}' }, tool_timeout_sec: 1200 })
     expect(fs.existsSync(`${cfg()}.before-tessel`)).toBe(true)
   })
 
@@ -123,7 +123,7 @@ describe("Grok Build's config.toml: validated edits", () => {
     fs.mkdirSync(path.dirname(moved))
     fs.writeFileSync(moved, '')
     expect(installGrokServer(moved, home, { node, env: {} })).toEqual({ changed: true })
-    const t = parseToml(fs.readFileSync(cfg(), 'utf8')).data.mcp_servers['tessel-team']
+    const t = parseToml(fs.readFileSync(cfg(), 'utf8')).data.mcp_servers['tessel_team']
     expect(t).toMatchObject({ args: [moved], enabled: false, tool_timeout_sec: 3000 })
   })
 

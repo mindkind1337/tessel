@@ -132,3 +132,13 @@ describe('who gets the request', () => {
     expect(app).not.toMatch(/liveShare[^\n]*routeInput/)
   })
 })
+
+describe('a window that reloaded: only a real run comes back', () => {
+  it('an answer without an id shows nothing', async () => {
+    for (const answer of [{}, { ok: false, error: 'not now' }, { id: 7 }, null, undefined]) {
+      const h = createHostCommands({ api: () => ({ commandRunning: async () => answer }), approve: async () => ({}), expire: () => {}, allowed: () => true })
+      await h.restore()
+      expect(h.runs).toEqual([])
+    }
+  })
+})

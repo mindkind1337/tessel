@@ -24,7 +24,7 @@ export const RULE_END = '<!-- tessel:task-board:end -->'
 export const BOARD_RULE = [
   '## Tessel task board',
   '',
-  "When you run inside Tessel (the tessel-team tools are available to you), the user follows everything you do on Tessel's task board. Keep it up to date yourself, without being asked:",
+  "When you run inside Tessel (the tessel_team tools are available to you), the user follows everything you do on Tessel's task board. Keep it up to date yourself, without being asked:",
   '',
   '- Add a card (team_task_add) for every piece of work the moment you start it: what the user asks, each step you decide to take (split bigger work into cards), and each task you give a teammate. Column "doing" for what you start now, "todo" for later.',
   '- Move your cards as they go (team_task_move): "review" when one waits for a review, "done" as soon as it is finished. See their ids with team_tasks.',

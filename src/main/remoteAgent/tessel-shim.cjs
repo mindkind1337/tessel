@@ -2,8 +2,8 @@
 // Tessel's helper on an SSH server (src/main/remoteAgent/REMOTE_AGENTS.md). An agent there
 // (Claude Code, Codex) runs it instead of the team tools: it pipes its stdio
 // through the pane's Unix socket (TESSEL_REMOTE_SOCK), which sshd forwards to
-// Tessel on the PC, where the real tessel-team server runs.
-//   node tessel-shim.cjs mcp                     the tessel-team MCP server
+// Tessel on the PC, where the real tessel_team server runs.
+//   node tessel-shim.cjs mcp                     the tessel_team MCP server
 //   node tessel-shim.cjs hook <provider> <Event> an agent hook
 //   node tessel-shim.cjs install [--node <abs>]  set up Claude Code and Codex (and Tessel's account folders)
 //   node tessel-shim.cjs sessions [limit]       past Claude Code / Codex conversations
@@ -17,11 +17,12 @@ const net = require('net')
 const path = require('path')
 const crypto = require('crypto')
 
-const VERSION = '1.4.5'
+const VERSION = '1.4.6'
 const PROTOCOL = 1
-const SERVER_NAME = 'tessel-team'
-// Tessel's connectors (Gmail, Calendar, Drive): the same link to the PC, with --apps. The PC says
-// no when nothing is connected there, and this is then a server without tools.
+const SERVER_NAME = 'tessel_team'
+// Its name until 2026-11: moved to the new name by install.
+const OLD_NAME = 'tessel-team'
+// Tessel's other tools (the browser, terminals, connectors): the same link to the PC, with --apps.
 const APPS_NAME = 'tessel_apps'
 const SERVERS = [
   { name: SERVER_NAME, args: ['mcp'] },
@@ -128,7 +129,7 @@ function writeThen(stream, data, then) {
 
 // The agent outside a Tessel pane (VS Code, a plain ssh login: no socket), or
 // Tessel closed: a valid MCP server without tools, quietly, so the agent does
-// not list tessel-team as failed. reason: said to the agent when it was in a
+// not list tessel_team as failed. reason: said to the agent when it was in a
 // Tessel pane but Tessel did not answer.
 function emptyServer(reason, name = SERVER_NAME) {
   const write = (obj) => process.stdout.write(JSON.stringify(obj) + '\n')
@@ -141,7 +142,7 @@ function emptyServer(reason, name = SERVER_NAME) {
         capabilities: { tools: {} },
         serverInfo: { name, version: VERSION }
       }
-      if (reason) result.instructions = `Tessel's team tools, including its browser (a real Chromium on the user's computer), are not reachable right now (${reason}). Do not fall back to curl or a headless browser on this server for web pages: tell the user the Tessel tools are not connected and that they can restart this agent from Tessel (right-click its pane, Restart) or click Retry in the pane.`
+      if (reason) result.instructions = `Tessel's tools, including its browser (a real Chromium on the user's computer), are not reachable right now (${reason}). Do not fall back to curl or a headless browser on this server for web pages: tell the user the Tessel tools are not connected and that they can restart this agent from Tessel (right-click its pane, Restart) or click Retry in the pane.`
       return write({ jsonrpc: '2.0', id, result })
     }
     if (method === 'tools/list') return write({ jsonrpc: '2.0', id, result: { tools: [] } })
@@ -222,8 +223,7 @@ function runMcp(argv, env = process.env) {
   const attempt = () =>
     open(conn, 'mcp', args, (err, socket, rest) => {
       if (err && tries < FIRST_RETRY_MS.length && firstRetry(err)) return setTimeout(attempt, FIRST_RETRY_MS[tries++])
-      // Connectors not there (nothing connected): quietly no tools, nothing to tell the agent.
-      if (err) return emptyServer(apps ? null : safeReason(err), name)
+      if (err) return emptyServer(safeReason(err), name)
       proxyMcp(conn, socket, rest, args)
     })
   attempt()
@@ -335,7 +335,7 @@ function proxyMcp(conn, first, firstRest, args = []) {
       tries++
       open(conn, 'mcp', args, (err, socket, rest) => {
         // Not for a refusal that will not change; "busy" (too many hellos) waits longer each time.
-        if (err && tries < 3 && !/bad-token|unknown-pane|no-apps/.test(err.message)) return setTimeout(attempt, tries * 1000)
+        if (err && tries < 3 && !/bad-token|unknown-pane/.test(err.message)) return setTimeout(attempt, tries * 1000)
         connecting = false
         if (err) {
           const items = queue
@@ -513,6 +513,10 @@ function mergeClaudeJson(cfg, shimPath, node) {
   const value = isPlainObject(cfg) ? { ...cfg } : {}
   const servers = isPlainObject(value.mcpServers) ? { ...value.mcpServers } : {}
   let changed = false
+  if (Object.hasOwn(servers, OLD_NAME)) {
+    delete servers[OLD_NAME]
+    changed = true
+  }
   for (const { name, args } of SERVERS) {
     const want = claudeServer(shimPath, node, args)
     // Only what Tessel sets is compared (Claude Code may add its own fields).
@@ -682,8 +686,17 @@ function mergeCodexToml(text, shimPath, node) {
   const old = String(text || '')
   let cur = old
   let changed = false
+  // The table under its former name goes, and what the person put in it comes along.
+  const former = splitCodexConfig(cur, OLD_NAME)
+  const hadOld = !!former.ours.trim()
+  if (hadOld) {
+    cur = former.kept
+    changed = true
+  }
   for (const { name, args } of SERVERS) {
-    const { kept, ours } = splitCodexConfig(cur, name)
+    const split = splitCodexConfig(cur, name)
+    const { kept } = split
+    const ours = name === SERVER_NAME && hadOld && !split.ours.trim() ? former.ours.replace(/tessel-team/g, (w, at, all) => (all.slice(all.lastIndexOf('\n', at) + 1, at).trim().startsWith('[') ? name : w)) : split.ours
     if (otherForm(kept, name)) {
       // The connectors written another way stop only the connectors.
       if (name === APPS_NAME) continue
@@ -934,7 +947,7 @@ function mergeAccountClaudeJson(cfg, system, shimPath, node, record = {}) {
   const nextCopied = {}
   let touched = false
   for (const name of Object.keys(theirs)) {
-    if (name === SERVER_NAME || name === APPS_NAME || !isPlainObject(theirs[name])) continue
+    if (name === SERVER_NAME || name === OLD_NAME || name === APPS_NAME || !isPlainObject(theirs[name])) continue
     const want = digestOf(theirs[name])
     if (!Object.hasOwn(own, name)) {
       // Removed from the account after Tessel copied it: left out (and

@@ -1370,7 +1370,7 @@ describe('agent terminal: an agent pane in Yolo', () => {
 
 describe('the tools tell agents when a terminal helps', () => {
   it('instructions: their own shell tool for quick commands, run_in_terminal only when it helps', () => {
-    const instructions = mcp.handle({ id: 1, method: 'initialize' }).instructions
+    const instructions = mcp.appsInstructions()
     expect(instructions).toContain('For quick shell commands, use your own shell tool.')
     expect(instructions).toContain(
       "Use run_in_terminal only when it helps: a long-running process that must stay up (a dev server, a watcher), a command the user should see, or a command on your project's SSH host when you are not on it"
@@ -1395,7 +1395,7 @@ describe('the tools tell agents when a terminal helps', () => {
     expect(open.description).toContain('without saying which kind, open the same agent as you, or ask the user if it is unclear')
     expect(open.inputSchema.properties.kind.enum).toEqual(['agent', 'shell'])
     expect(mcp.TERMINAL_OPS.open_terminal).toBe('open')
-    expect(mcp.VERSION).toBe('1.11.14')
+    expect(mcp.VERSION).toBe('1.11.15')
   })
 })
 

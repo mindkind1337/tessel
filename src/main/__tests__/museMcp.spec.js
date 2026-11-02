@@ -1,6 +1,6 @@
 // @vitest-environment node
 // Muse Code's MCP servers, in its settings.json (its MCP guide): the
-// tessel-team server written the way Muse starts a server (a cleared
+// tessel server written the way Muse starts a server (a cleared
 // environment: the pane's variables through ${NAME:-}), its older
 // "mcp_servers" key kept, the schema_version it needs, in a temporary home.
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -27,34 +27,34 @@ const NODE = 'C:\\Program Files\\nodejs\\node.exe'
 describe('Muse Code: the team tools written again at each start', () => {
   it('a server the user turned off stays off, its timeouts stay, never written twice, round-trips as JSON', () => {
     const entry = teamToolsEntry('muse', 'C:/t/tessel-team-mcp.cjs', NODE)
-    put({ schema_version: 1, model: 'muse-wonder-1.0', mcpServers: { 'tessel-team': { command: 'node', args: ['old.cjs'], enabled: false, startup_timeout_ms: 60000 }, docs: { url: 'https://d' } } })
-    expect(setJsonAgentServer('muse', 'tessel-team', entry, home, { keepUser: true })).toEqual({ ok: true, changed: true })
+    put({ schema_version: 1, model: 'muse-wonder-1.0', mcpServers: { 'tessel_team': { command: 'node', args: ['old.cjs'], enabled: false, startup_timeout_ms: 60000 }, docs: { url: 'https://d' } } })
+    expect(setJsonAgentServer('muse', 'tessel_team', entry, home, { keepUser: true })).toEqual({ ok: true, changed: true })
     const saved = read()
-    expect(saved.mcpServers['tessel-team']).toEqual({ ...entry, enabled: false, startup_timeout_ms: 60000 })
+    expect(saved.mcpServers['tessel_team']).toEqual({ ...entry, enabled: false, startup_timeout_ms: 60000 })
     expect(saved.mcpServers.docs).toEqual({ url: 'https://d' })
     expect(saved.model).toBe('muse-wonder-1.0')
-    expect(Object.keys(saved.mcpServers).filter((k) => k === 'tessel-team')).toHaveLength(1)
+    expect(Object.keys(saved.mcpServers).filter((k) => k === 'tessel_team')).toHaveLength(1)
     // Again: nothing to change.
-    expect(setJsonAgentServer('muse', 'tessel-team', entry, home, { keepUser: true })).toEqual({ ok: true, changed: false })
-    expect(listJsonAgent('muse', home).servers.find((s) => s.name === 'tessel-team')).toMatchObject({ enabled: false })
+    expect(setJsonAgentServer('muse', 'tessel_team', entry, home, { keepUser: true })).toEqual({ ok: true, changed: false })
+    expect(listJsonAgent('muse', home).servers.find((s) => s.name === 'tessel_team')).toMatchObject({ enabled: false })
     // Muse rewrote its settings with the keys in another order: no change, no new backup.
-    const reordered = { schema_version: 1, mcpServers: { 'tessel-team': { startup_timeout_ms: 60000, enabled: false, env: { ...entry.env }, args: entry.args, command: entry.command } } }
+    const reordered = { schema_version: 1, mcpServers: { 'tessel_team': { startup_timeout_ms: 60000, enabled: false, env: { ...entry.env }, args: entry.args, command: entry.command } } }
     put(reordered)
     fs.rmSync(`${file()}.tessel-bak`, { force: true })
-    expect(setJsonAgentServer('muse', 'tessel-team', entry, home, { keepUser: true })).toEqual({ ok: true, changed: false })
+    expect(setJsonAgentServer('muse', 'tessel_team', entry, home, { keepUser: true })).toEqual({ ok: true, changed: false })
     expect(fs.existsSync(`${file()}.tessel-bak`)).toBe(false)
     // A server list that is not an object: left as it is, said why.
     for (const bad of ['oops', ['x'], null]) {
       put({ schema_version: 1, mcpServers: bad })
-      const res = setJsonAgentServer('muse', 'tessel-team', entry, home, { keepUser: true })
+      const res = setJsonAgentServer('muse', 'tessel_team', entry, home, { keepUser: true })
       expect(res.ok).toBe(false)
       expect(res.error).toMatch(/not an object/)
       expect(read().mcpServers).toEqual(bad)
     }
     // Its older key: still one server there, none added under the new key.
-    put({ schema_version: 1, mcp_servers: { 'tessel-team': { command: 'node', args: ['old.cjs'] } } })
-    expect(setJsonAgentServer('muse', 'tessel-team', entry, home, { keepUser: true })).toEqual({ ok: true, changed: true })
-    expect(read()).toEqual({ schema_version: 1, mcp_servers: { 'tessel-team': entry } })
+    put({ schema_version: 1, mcp_servers: { 'tessel_team': { command: 'node', args: ['old.cjs'] } } })
+    expect(setJsonAgentServer('muse', 'tessel_team', entry, home, { keepUser: true })).toEqual({ ok: true, changed: true })
+    expect(read()).toEqual({ schema_version: 1, mcp_servers: { 'tessel_team': entry } })
   })
 })
 
@@ -74,14 +74,14 @@ describe('Muse Code: MCP servers in its settings', () => {
   })
 
   it('a new settings file gets schema_version 1 (Muse refuses to start without it); the rest of a file is kept', () => {
-    expect(setJsonAgentServer('muse', 'tessel-team', teamToolsEntry('muse', 'C:/t/tessel-team-mcp.cjs', NODE), home)).toEqual({ ok: true, changed: true })
+    expect(setJsonAgentServer('muse', 'tessel_team', teamToolsEntry('muse', 'C:/t/tessel-team-mcp.cjs', NODE), home)).toEqual({ ok: true, changed: true })
     expect(read().schema_version).toBe(1)
-    expect(Object.keys(read().mcpServers)).toEqual(['tessel-team'])
+    expect(Object.keys(read().mcpServers)).toEqual(['tessel_team'])
     put({ schema_version: 1, tui: { terminal_background: 'dark' }, hooks: { Stop: [] }, mcpServers: { docs: { command: 'docs' } } })
-    expect(setJsonAgentServer('muse', 'tessel-team', teamToolsEntry('muse', 'C:/t/tessel-team-mcp.cjs', NODE), home).ok).toBe(true)
+    expect(setJsonAgentServer('muse', 'tessel_team', teamToolsEntry('muse', 'C:/t/tessel-team-mcp.cjs', NODE), home).ok).toBe(true)
     expect(read()).toMatchObject({ schema_version: 1, tui: { terminal_background: 'dark' }, hooks: { Stop: [] } })
-    expect(Object.keys(read().mcpServers)).toEqual(['docs', 'tessel-team'])
-    expect(setJsonAgentServer('muse', 'tessel-team', teamToolsEntry('muse', 'C:/t/tessel-team-mcp.cjs', NODE), home)).toEqual({ ok: true, changed: false })
+    expect(Object.keys(read().mcpServers)).toEqual(['docs', 'tessel_team'])
+    expect(setJsonAgentServer('muse', 'tessel_team', teamToolsEntry('muse', 'C:/t/tessel-team-mcp.cjs', NODE), home)).toEqual({ ok: true, changed: false })
   })
 
   it('its older "mcp_servers" key is the one kept; with both keys Muse turns MCP off, and Tessel changes nothing', () => {

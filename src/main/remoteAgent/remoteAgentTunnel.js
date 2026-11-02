@@ -74,7 +74,7 @@ export function validateRemoteAgent(raw) {
   }
   let provider = raw.provider == null ? env.TESSEL_AGENT_PROVIDER : raw.provider
   if (provider != null && provider !== '' && !(typeof provider === 'string' && PROVIDER_RE.test(provider))) return null
-  return { token, instance, node, script, env, provider: provider || null, apps: raw.apps === true }
+  return { token, instance, node, script, env, provider: provider || null }
 }
 
 // POSIX single quotes (values here never hold a backslash: see remoteProject.js).
@@ -485,14 +485,12 @@ export function createRemoteAgentTunnel({
         return finishWith({ ok: false, error: 'bad-hello' })
       }
       if (m.kind === 'hook' && args[0] !== 'claude' && args[0] !== 'codex') return finishWith({ ok: false, error: 'bad-hello' })
-      // The connectors' server is the one thing a host may ask of the MCP server by name.
+      // tessel_apps is the one thing a host may ask of the MCP server by name.
       const appsLink = m.kind === 'mcp' && args.length === 1 && args[0] === '--apps'
       if (m.kind === 'mcp' && args.length && !appsLink) return finishWith({ ok: false, error: 'bad-hello' })
       const p = panes.get(m.pane)
       if (!p || p.hostId !== hostId) return finishWith({ ok: false, error: 'unknown-pane' })
       if (!crypto.timingSafeEqual(Buffer.from(m.token, 'hex'), p.token)) return finishWith({ ok: false, error: 'bad-token' })
-      // Nothing connected in Tessel when this pane started: no tools for it.
-      if (appsLink && !p.agent.apps) return finishWith({ ok: false, error: 'no-apps' })
       if (!reserve(p, m.kind)) return finishWith({ ok: false, error: 'busy' })
       pane = p
       p.conns.add(conn)

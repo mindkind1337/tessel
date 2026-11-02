@@ -146,6 +146,7 @@ import { startSignIn, signInStatus, activeSignIns, cancelSignIn, cancelAllSignIn
 import { createTesselAccount, findAppLink, ACCOUNT_URL } from './tesselAccount'
 import { createSettingsSync } from './settingsSync'
 import { createTesselApps } from './tesselApps'
+import { otherConnectorsOff } from '../shared/otherConnectors'
 import { listAgyPlugins, setAgyPlugin, removeAgyPlugin } from './agyPlugins'
 import { createMusePlugins } from './musePlugins'
 import {
@@ -187,7 +188,7 @@ import { createModelLister } from './agentModelList'
 import { takeTeamAcks } from './teamAcks'
 import { writeJsonSafe, readJsonSafe, writeFileAtomic } from './safeJson'
 import { addNotices, writeCurrentTeams, retireOldTeams } from './teamNotices'
-import { JSON_AGENTS, setJsonAgentServer, teamToolsEntry } from './jsonAgents'
+import { JSON_AGENTS, jsonAgentHasServer, setJsonAgentServer, teamToolsEntry } from './jsonAgents'
 import { detectAgents, KNOWN_AGENT_IDS } from './agentDetect'
 import { createAgentStateRulesFile } from './agentStateRulesFile'
 import { OVERRIDE_FILE_NAME } from '../shared/agentStateRules'
@@ -211,7 +212,9 @@ import {
   claudeServerPresent,
   claudeServerExists,
   removeTeamHooks,
-  SERVER_NAME
+  SERVER_NAME,
+  OLD_SERVER_NAME,
+  splitCodexConfig
 } from './teamInstall'
 import { findNode, noNodeError } from './nodePath'
 import { remoteToolsReason as remoteToolsReasonText, remoteInstallErrorFor, REMOTE_TOOLS_CODES } from './remoteToolsReason'
@@ -1518,7 +1521,12 @@ const chatSessions = createChatSessions({
   onRateLimit: (event) => void usageLiveIngest?.(event)?.catch?.(() => {}),
   // Claude (stream-json), Codex (codex app-server, JSON-RPC) or OpenCode
   // (opencode serve: HTTP + SSE on 127.0.0.1 with a password of its own).
-  createAdapter: (opts) => (opts && opts.agent === 'codex' ? createCodexChat(opts) : opts && opts.agent === 'opencode' ? createOpencodeChat({ ...opts, pids: opencodePids, envPluginFile: join(app.getPath('userData'), 'opencode-chat', 'tessel-chat-env.js') }) : createClaudeChat(opts)),
+  createAdapter: (given) => {
+    // What is connected through Tessel replaces the other vendors' connector for it in chats too.
+    const off = given ? otherConnectorsOff(given.agent, tesselApps.connections.list().map((c) => c.service)) : []
+    const opts = off.length ? { ...given, exeArgs: [...(given.exeArgs || []), ...off] } : given
+    return (opts && opts.agent === 'codex' ? createCodexChat(opts) : opts && opts.agent === 'opencode' ? createOpencodeChat({ ...opts, pids: opencodePids, envPluginFile: join(app.getPath('userData'), 'opencode-chat', 'tessel-chat-env.js') }) : createClaudeChat(opts))
+  },
   // The installed claude (the npm shim resolved to what it runs), as for
   // Tessel's headless calls.
   resolveClaude: async () => {
@@ -2987,7 +2995,7 @@ ipcMain.handle(
         commandLine: `"${node}" "${script}"`,
         scope: 'user'
       })
-      if (res.ok) changed.push('Claude Code: MCP server tessel-team')
+      if (res.ok) changed.push(`Claude Code: MCP server ${SERVER_NAME}`)
       else {
         errors.push(`Claude Code: ${res.error}`)
         if (before && before.command) {
@@ -3002,6 +3010,10 @@ ipcMain.handle(
         }
       }
     }
+    // Its former name goes once the new one is there, so the tools are never listed twice, nor missing.
+    if (claudeServerExists(undefined, OLD_SERVER_NAME) && claudeServerPresent(script, undefined, node)) {
+      await removeMcp({ agent: 'claude', name: OLD_SERVER_NAME, scope: 'user' }).catch((err) => log.warn('team', `could not remove the former server name: ${err.message}`)) // i18n-ignore log
+    }
     try {
       const r = installClaudeHooks(script, undefined, { node })
       if (r.error) errors.push(t('main.hooks.claudeFailed', 'Claude Code hooks: {{error}}', { error: r.error }))
@@ -3012,7 +3024,7 @@ ipcMain.handle(
     try {
       const r = await installCodexServer(script, validateCodexConfig, undefined, { node })
       if (r.error) errors.push(`Codex: ${r.error}`)
-      else if (r.changed) changed.push('Codex: MCP server tessel-team')
+      else if (r.changed) changed.push(`Codex: MCP server ${SERVER_NAME}`)
     } catch (err) {
       errors.push(`Codex: ${err.message}`)
     }
@@ -3034,7 +3046,7 @@ ipcMain.handle(
       if (grok && grok.available) {
         const r = installGrokServer(script, undefined, { node })
         if (r.error) errors.push(`Grok Build: ${r.error}`)
-        else if (r.changed) changed.push('Grok Build: MCP server tessel-team')
+        else if (r.changed) changed.push(`Grok Build: MCP server ${SERVER_NAME}`)
       }
     } catch (err) {
       errors.push(`Grok Build: ${err.message}`)
@@ -3098,10 +3110,12 @@ ipcMain.handle(
         errors.push(`${preset.name}: ${t('main.hooks.badPath', 'The Tessel data folder or node has a line break in its path.')}`)
         continue
       }
-      const r = setJsonAgentServer(agent, SERVER_NAME, teamToolsEntry(agent, script, node), undefined, { keepUser: true })
+      const r = setJsonAgentServer(agent, SERVER_NAME, teamToolsEntry(agent, script, node), undefined, { keepUser: true, replaces: OLD_SERVER_NAME })
       if (!r.ok) errors.push(`${preset.name}: ${r.error}`)
-      else if (r.changed) changed.push(`${preset.name}: MCP server tessel-team`)
+      else if (r.changed) changed.push(`${preset.name}: MCP server ${SERVER_NAME}`)
     }
+    // The other half of Tessel's tools (the browser, terminals, connectors): before any agent starts.
+    await setUpAppsTools().catch((err) => log.warn('team', `tessel_apps tools: ${err && err.message}`)) // i18n-ignore log
     // The task board rule in each installed agent's persistent memory
     // (CLAUDE.md, AGENTS.md...: read every session), see agentMemory.js.
     for (const preset of await getAgents()) {
@@ -3206,11 +3220,35 @@ const tesselApps = createTesselApps({
   accountUrl: ACCOUNT_URL,
   onChange: () => {
     send('tesselApps:changed', tesselApps.connections.view())
-    if (tesselApps.connections.list().length) setUpAppsTools().catch((err) => log.warn('team', `tessel_apps tools: ${err && err.message}`)) // i18n-ignore log
+    retireOldGoogleServer().catch((err) => log.warn('team', `could not retire ${OLD_GOOGLE_SERVER}: ${err && err.message}`)) // i18n-ignore log
   }
 })
 let appsToolsSetUp = null
 // tessel_apps in each installed agent's settings, once a run. Agents already running get it when restarted.
+// Google connected through Tessel replaces the community server the old Google row set up, so an
+// agent does not have two Gmails. Only that name, only where it is, and only once connected: it
+// comes back from the MCP dialog if wanted. Running agents keep it until they are restarted.
+const OLD_GOOGLE_SERVER = 'google-workspace'
+async function retireOldGoogleServer() {
+  if (!tesselApps.connections.list().some((c) => c.service === 'google')) return
+  const removed = []
+  const remove = async (agent) => {
+    const r = await removeMcp({ agent, name: OLD_GOOGLE_SERVER, scope: 'user' }).catch((err) => ({ ok: false, error: err.message }))
+    if (r && r.ok) removed.push(agent)
+  }
+  if (claudeServerExists(undefined, OLD_GOOGLE_SERVER)) await remove('claude')
+  let codex = ''
+  try {
+    codex = fs.readFileSync(join(os.homedir(), '.codex', 'config.toml'), 'utf8')
+  } catch {
+    // no Codex settings
+  }
+  if (splitCodexConfig(codex, OLD_GOOGLE_SERVER).ours.trim()) await remove('codex')
+  for (const agent of JSON_AGENTS) {
+    if (jsonAgentHasServer(agent, OLD_GOOGLE_SERVER)) await remove(agent)
+  }
+  if (removed.length) log.info('team', `${OLD_GOOGLE_SERVER} replaced by tessel_apps for: ${removed.join(', ')}`) // i18n-ignore log
+}
 function setUpAppsTools() {
   if (appsToolsSetUp) return appsToolsSetUp
   appsToolsSetUp = (async () => {
@@ -3243,7 +3281,7 @@ function setUpAppsTools() {
 }
 // Agents installed since: set up at a start too, once the team tools had their turn with the files.
 setTimeout(() => {
-  if (tesselApps.connections.list().length) setUpAppsTools().catch((err) => log.warn('team', `tessel_apps tools: ${err && err.message}`)) // i18n-ignore log
+  setUpAppsTools().catch((err) => log.warn('team', `tessel_apps tools: ${err && err.message}`)) // i18n-ignore log
 }, 30000).unref?.()
 ipcMain.handle(
   'tesselApps:view',
@@ -4986,7 +5024,7 @@ async function prepareRemoteAgent({ id, target, remotePath, agentId, teamSecret 
   })
   return {
     launchToken,
-    remoteAgent: { apps: tesselApps.connections.list().length > 0, token: newRemoteToken(), instance: instanceName(basename(app.getPath('userData')), target.id, remoteInstallId()), provider, env, node, script }
+    remoteAgent: { token: newRemoteToken(), instance: instanceName(basename(app.getPath('userData')), target.id, remoteInstallId()), provider, env, node, script }
   }
 }
 let installIdCache = null

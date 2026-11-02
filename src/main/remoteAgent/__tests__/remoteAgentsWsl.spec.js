@@ -220,7 +220,7 @@ describe.skipIf(!RUN)('remote agents on a real sshd (WSL smoke test)', () => {
     expect(lines[3]).toBe(shimVersion(source()))
     const settings = JSON.parse(sshRun('cat "$HOME/.claude/settings.json"'))
     expect(JSON.stringify(settings.hooks.Stop)).toContain('tessel-shim.cjs')
-    expect(sshRun('cat "$HOME/.codex/config.toml"')).toContain('[mcp_servers.tessel-team]')
+    expect(sshRun('cat "$HOME/.codex/config.toml"')).toContain('[mcp_servers.tessel_team]')
   }, 120000)
 
   // A remote-agent pane as index.js prepareRemoteAgent makes it.

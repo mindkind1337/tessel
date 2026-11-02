@@ -45,7 +45,7 @@ import { readLogs } from './agentLogs'
 import { MAX_RELAY_TEXT, PAIR_MAX, cleanText, oneLine, pairKey, relayInboxText } from './agentRelay'
 import { MAX_OUTPUT_LENGTH, MAX_POLL_OUTPUT, truncateLargeOutput, truncateOutputKeepingTail, detectsSensitiveInputPrompt } from '../shared/terminalOutput'
 
-export const TERMINAL_OPS = ['list', 'run', 'output', 'send', 'kill', 'lastCommand', 'selection', 'open', 'logs', 'relayList', 'relaySend', 'relayInbox', 'apps']
+export const TERMINAL_OPS = ['list', 'run', 'output', 'send', 'kill', 'lastCommand', 'selection', 'open', 'logs', 'relayList', 'relaySend', 'relayInbox', 'apps', 'appsListed']
 // open_terminal: panes opened in one call.
 export const MAX_OPEN_PANES = 4
 export const MAX_COMMAND_BYTES = 8 * 1024
@@ -969,6 +969,8 @@ export function createAgentTerminal({ apps = null, verify, settings = () => ({ e
       if (op === 'relaySend') return await relaySend(pane, args)
       if (op === 'relayInbox') return relayInbox(pane)
       if (op === 'apps') return await useApp(pane, args, signal)
+      // Names only, which a pane may know: the services it could ask for, never whose accounts.
+      if (op === 'appsListed') return { text: JSON.stringify({ tools: apps && apps.connectedTools ? apps.connectedTools() : [] }) }
       return await selection(pane)
     } catch (err) {
       if (err instanceof CliError) throw err

@@ -218,7 +218,7 @@ function clearFilters() {
         </button>
 
         <div v-if="openName === row.name" :id="'mcpi-d-' + row.name" class="sl-details">
-          <p v-if="row.name === 'tessel-team'" class="sl-details-desc">
+          <p v-if="row.name === 'tessel_team' || row.name === 'tessel-team'" class="sl-details-desc">
             {{ t('mcp.teamServer.short', 'Added by Tessel: agents in the same team use it to message each other and share the task board. It does nothing for an agent outside a team.') }}
           </p>
           <p v-else-if="desc(row)" class="sl-details-desc">{{ desc(row) }}</p>

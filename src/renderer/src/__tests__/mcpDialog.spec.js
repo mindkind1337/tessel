@@ -39,10 +39,10 @@ describe('MCP servers dialog', () => {
     // Drawn while the lists are still being read: must not throw.
     expect(w.findAll('.sl-skeleton').length).toBeGreaterThan(0)
     expect(w.text()).not.toContain('No MCP servers yet')
-    answer({ claude: [], codex: [], others: { cline: { servers: [{ name: 'tessel-team', type: 'stdio', target: 'node s.cjs' }] } } })
+    answer({ claude: [], codex: [], others: { cline: { servers: [{ name: 'tessel_team', type: 'stdio', target: 'node s.cjs' }] } } })
     await flushPromises()
     expect(w.find('.sl-skeleton').exists()).toBe(false)
-    expect(row(w, 'tessel-team').exists()).toBe(true)
+    expect(row(w, 'tessel_team').exists()).toBe(true)
   })
 
   it('a failed check for node and uvx is no unhandled rejection, and flags nothing as missing', async () => {
@@ -275,7 +275,7 @@ describe('MCP servers dialog', () => {
           others: {
             antigravity: {
               servers: [
-                { name: 'tessel-team', scope: 'user', type: 'stdio', target: 'node s.cjs' },
+                { name: 'tessel_team', scope: 'user', type: 'stdio', target: 'node s.cjs' },
                 { name: 'figma', scope: 'user', type: 'http', target: 'https://x/mcp', enabled: false }
               ]
             }
@@ -288,8 +288,8 @@ describe('MCP servers dialog', () => {
     )
     await flushPromises()
     expect(row(w, 'figma').text()).toContain('Turned off')
-    expect(row(w, 'tessel-team').text()).not.toContain('Turned off')
-    const r = await openRow(w, 'tessel-team')
+    expect(row(w, 'tessel_team').text()).not.toContain('Turned off')
+    const r = await openRow(w, 'tessel_team')
     expect(sub(r, 'antigravity').text()).toContain('Antigravity CLI')
     await tabBtn(w, 'Catalog').trigger('click')
     await catalogItem(w, 'context7').get('.mcpc-row').trigger('click')

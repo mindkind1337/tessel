@@ -228,7 +228,7 @@
       "museEnvList": "{{file}} contient un managed_hooks_env_vars qui n'est pas une liste de noms : Tessel ne l'a pas modifié.",
       "badPath": "Le chemin du dossier de données de Tessel ou de node contient un saut de ligne.",
       "grokUnreadable": "Le config.toml de Grok Build n'est pas un TOML valide (ligne {{line}} : {{error}}), Tessel l'a donc laissé tel quel.",
-      "grokNoEdit": "Tessel n'a pas pu ajouter ses outils d'équipe au config.toml de Grok Build sans le casser (un serveur tessel-team y est défini autrement), il l'a donc laissé tel quel.",
+      "grokNoEdit": "Tessel n'a pas pu ajouter ses outils d'équipe au config.toml de Grok Build sans le casser (un serveur tessel y est défini autrement), il l'a donc laissé tel quel.",
       "codexShape": "Les réglages de Codex pour {{name}} sont écrits d'une façon que Tessel ne peut pas changer : ils restent tels quels."
     },
     "jsonAgents": {

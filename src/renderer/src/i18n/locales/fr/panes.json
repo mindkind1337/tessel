@@ -120,7 +120,7 @@
       "unread_other": "{{count}} messages d'équipe que cet agent n'a pas encore lus (il les lit avec ses outils d'équipe)",
       "leadHint": "Dirige l'équipe",
       "lead": "chef",
-      "toolsDownHint": "Ses outils d'équipe (tessel-team) ne sont pas connectés : il ne peut ni lire ni envoyer de messages d'équipe. Redémarrez-le (clic droit sur son panneau, Redémarrer).",
+      "toolsDownHint": "Ses outils d'équipe (tessel_team) ne sont pas connectés : il ne peut ni lire ni envoyer de messages d'équipe. Redémarrez-le (clic droit sur son panneau, Redémarrer).",
       "toolsDown": "outils",
       "subAgentsOf": "Sous-agents de {{name}}",
       "showLess": "Afficher moins",

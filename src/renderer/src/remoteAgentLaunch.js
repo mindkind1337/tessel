@@ -126,7 +126,7 @@ export function rootRefusalWatcher() {
 // started by the first `codex` of that user there). That server starts the MCP
 // servers itself, with the environment of the pane that started it, and the
 // next Codex joins it and its servers (seen with Codex 0.157 and 0.164 on
-// Linux): tessel-team then runs as another pane, and stops with that pane's
+// Linux): tessel_team then runs as another pane, and stops with that pane's
 // link ("Transport closed"). --no-daemon (Codex 0.156+) keeps a Codex and its
 // servers in its own pane; older ones refuse it ("error: unexpected argument
 // '--no-daemon' found") and have no daemon. -c features.daemon_auto_start=false

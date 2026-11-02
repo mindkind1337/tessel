@@ -41,7 +41,7 @@ const upd = (ms, update, meta = {}) =>
   JSON.stringify({ timestamp: Math.floor(ms / 1000), method: update.sessionUpdate === 'hook_execution' || update.sessionUpdate === 'turn_completed' ? '_x.ai/session/update' : 'session/update', params: { sessionId: SID, update, _meta: { eventId: `${SID}-1`, agentTimestampMs: ms, ...meta } } })
 const usage = { inputTokens: 117564, outputTokens: 1426, totalTokens: 118990, cachedReadTokens: 69632, cacheCreationTokens: 0, reasoningTokens: 932, modelCalls: 3, apiDurationMs: 18649, costUsdTicks: 1392360000 }
 const UPDATES = [
-  upd(T0 - 60000, { sessionUpdate: 'hook_execution', event_name: 'session_start', runs: [{ name: 'tessel', status: { status: 'success', elapsed_ms: 40 } }] }),
+  upd(T0 - 60000, { sessionUpdate: 'hook_execution', event_name: 'session_start', runs: [{ name: 'tessel_team', status: { status: 'success', elapsed_ms: 40 } }] }),
   upd(T0, { sessionUpdate: 'user_message_chunk', content: { type: 'text', text: 'Fix the login bug please' }, _meta: { modelId: 'grok-4.7', promptIndex: 0 } }),
   upd(T0 + 1, { sessionUpdate: 'user_message_chunk', content: { type: 'image', data: PNG, mimeType: 'image/png' }, _meta: { modelId: 'grok-4.7', promptIndex: 0 } }),
   upd(T0 + 2000, { sessionUpdate: 'agent_thought_chunk', content: { type: 'text', text: 'Looking at the auth code.' } }, { totalTokens: 2750, promptId: 'p1' }),
@@ -297,7 +297,7 @@ describe('Grok Build usage report (Stats), from its own session files', () => {
 })
 
 describe('Grok Build: team tools, task board rule, skills', () => {
-  it('[mcp_servers.tessel-team] in its config.toml, the rest kept, written once', () => {
+  it('[mcp_servers.tessel_team] in its config.toml, the rest kept, written once', () => {
     fs.mkdirSync(grokDir(), { recursive: true })
     const file = path.join(grokDir(), 'config.toml')
     fs.writeFileSync(file, '[cli]\ninstaller = "internal"\n\n[mcp_servers.other]\ncommand = "x"\n')

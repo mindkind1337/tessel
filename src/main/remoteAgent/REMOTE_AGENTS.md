@@ -1,7 +1,7 @@
 # Agents on an SSH host (remote agents)
 
 Goal: an agent (Claude Code, Codex) started in a Tessel SSH pane works like a
-local one: team tools (tessel-team MCP), status from hooks, board, messages.
+local one: team tools (tessel_team MCP), status from hooks, board, messages.
 Same idea as VS Code Remote-SSH: Tessel puts a small helper on the server and
 talks back through the SSH connection it already holds.
 
@@ -90,12 +90,12 @@ server.cjs runs with cwd = the pane env's `TESSEL_PROJECT_DIR` (when absolute).
   started outside Tessel, e.g. VS Code) → a silent empty MCP server (no tools).
 - `hook <args...>` – connect, send stdin, print stdout/stderr, exit with code.
   Unreachable Tessel → exit 0 silently (a hook must never block the agent).
-- `install` – idempotent: Claude `~/.claude.json` `mcpServers["tessel-team"]` =
+- `install` – idempotent: Claude `~/.claude.json` `mcpServers["tessel_team"]` =
   `{type:"stdio",command:"node",args:["<abs shim>","mcp"]}`; Claude
   `~/.claude/settings.json` hooks (same events as `teamInstall.js` installs
   locally) running `'<node>' '<abs shim>' hook claude <Event>` (`--node <abs>`
   given: that node everywhere; else `node`); Codex
-  `~/.codex/config.toml` `[mcp_servers.tessel-team]` with `env_vars =
+  `~/.codex/config.toml` `[mcp_servers.tessel_team]` with `env_vars =
   ["TESSEL_PANE_ID","TESSEL_REMOTE_SOCK","TESSEL_REMOTE_TOKEN","TESSEL_AGENT_PROVIDER"]`
   and `~/.codex/hooks.json`. Only touches files that exist or whose agent is
   installed; writes atomically (tmp + rename), keeps a `.tessel-bak` once,

@@ -48,6 +48,11 @@ export function createTesselApps({ dir, safeStorage, openExternal, signedRequest
       }
     },
     // The accounts connected for this service, by address.
+    // The tools of what is connected, by name (what an agent is offered when it starts).
+    connectedTools: () => {
+      const connected = new Set(connections.list().map((c) => c.service))
+      return Object.keys(tools).filter((name) => connected.has(PROVIDER_OF[tools[name].service]))
+    },
     accounts: (service) => connections.list().filter((c) => c.service === PROVIDER_OF[service]).map((c) => c.account),
     // When this account was connected: an agreement is for that connection, not for a later one.
     connectedAt: (service, account) => connections.list().find((c) => c.service === PROVIDER_OF[service] && c.account === account)?.connectedAt ?? null,

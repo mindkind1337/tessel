@@ -216,7 +216,7 @@ describe('sidebar hover cards', () => {
     expect(card.querySelector('[data-hover-chat]').textContent).toContain('Chat (no terminal)')
     // Terminal-only lines are hidden.
     expect(text).not.toContain('Pane 5')
-    expect(text).not.toContain('tessel-team')
+    expect(text).not.toContain('tessel_team')
 
     await row.trigger('pointerleave')
     await wait(200)

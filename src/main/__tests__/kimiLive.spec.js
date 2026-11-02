@@ -102,7 +102,7 @@ describe.skipIf(!executable)('actual Kimi Code hooks against a local model', () 
           vi.stubEnv('KIMI_CODE_HOME', kimiHome)
           const entry = teamToolsEntry('kimi', script)
           expect(entry.env).toBeUndefined()
-          expect(setJsonAgentServer('kimi', 'tessel-team', entry, home).ok).toBe(true)
+          expect(setJsonAgentServer('kimi', 'tessel_team', entry, home).ok).toBe(true)
         }
         expect(
           await installKimiHooks(script, home, {

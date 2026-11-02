@@ -43,7 +43,7 @@ const path = require('path')
 const crypto = require('crypto')
 const { randomUUID } = crypto
 
-const VERSION = '1.11.14'
+const VERSION = '1.11.15'
 const MAX_TEXT = 6000
 
 // --- An agent on an SSH host --------------------------------------------------
@@ -1766,6 +1766,35 @@ const APP_TOOLS = [
   { name: 'drive_read', description: 'Read a file of the user\'s Google Drive as text (Google Docs, Sheets and Slides too), by its id from drive_search.', inputSchema: appArgs({ id: { type: 'string' } }, ['id']) }
 ]
 const APP_TOOL_NAMES = new Set(APP_TOOLS.map((tool) => tool.name))
+// Two servers from this one script. tessel_team: the team and the messages between agents.
+// tessel_apps (--apps): what an agent uses, the browser, terminals, accounts, logs and connectors.
+const isTeamTool = (name) => name.startsWith('team_') || name.startsWith('project_')
+const TEAM_TOOLS = () => TOOLS.filter((tool) => isTeamTool(tool.name))
+const APP_SIDE_TOOLS = () => TOOLS.filter((tool) => !isTeamTool(tool.name))
+// Only the connectors of what is connected: every tool listed takes room in each agent's context.
+// Asked when the agent starts, as it reads its tools then. Tessel not answering in time: all of
+// them, so an agent never starts without tools it could use.
+const APP_LIST_WAIT_MS = 3000
+let listAsk = (op, args, deps) => terminalTool(op, args, deps)
+async function connectedAppTools(deps) {
+  let timer
+  try {
+    const answer = await Promise.race([
+      listAsk('appsListed', {}, deps),
+      new Promise((resolve) => {
+        timer = setTimeout(() => resolve(null), APP_LIST_WAIT_MS)
+      })
+    ])
+    if (!answer || answer.isError) return APP_TOOLS
+    const names = new Set(JSON.parse(answer.text).tools)
+    return APP_TOOLS.filter((tool) => names.has(tool.name))
+  } catch {
+    return APP_TOOLS
+  } finally {
+    clearTimeout(timer)
+  }
+}
+const appsToolList = async (deps) => [...APP_SIDE_TOOLS(), ...(await connectedAppTools(deps))]
 function appsTool(name, args = {}, deps) {
   const { explanation, ...input } = args
   return terminalTool('apps', { tool: name, input: JSON.stringify(input), explanation }, deps)
@@ -1774,7 +1803,13 @@ function appsTool(name, args = {}, deps) {
 const BOARD_TOOLS = ['team_tasks', 'team_task_add', 'team_task_move', 'team_task_done', 'team_task_gate']
 
 function callTool(name, args = {}, signal = null) {
-  if (APPS_MODE) return APP_TOOL_NAMES.has(name) ? appsTool(name, args) : { text: `Unknown tool: ${String(name).slice(0, 60)}`, isError: true }
+  if (APPS_MODE) {
+    if (APP_TOOL_NAMES.has(name)) return appsTool(name, args)
+    if (BROWSER_OPS[name]) return browserTool(BROWSER_OPS[name], args)
+    if (TERMINAL_OPS[name] && !isTeamTool(name)) return terminalTool(TERMINAL_OPS[name], args)
+    if (ACCOUNT_OPS[name]) return accountsTool(ACCOUNT_OPS[name], args, signal)
+    return { text: `Unknown tool: ${String(name).slice(0, 60)}`, isError: true }
+  }
   // The browser and terminal tools need no team: only this pane's identity.
   if (BROWSER_OPS[name]) return browserTool(BROWSER_OPS[name], args)
   if (TERMINAL_OPS[name]) return terminalTool(TERMINAL_OPS[name], args)
@@ -1833,13 +1868,17 @@ function callTool(name, args = {}, signal = null) {
   return { text: `Unknown tool ${name}.`, isError: true }
 }
 
-const INSTRUCTIONS =
-  'BROWSER DOWNLOADS: Original files automatically save in local Downloads/Tessel while you control the page, with its authenticated session and no Save As dialog. Before clicking, use browser_downloads({saveAs: absoluteLocalFilePath}) if a specific name or folder is needed. Afterwards use browser_downloads to verify completed and obtain the actual path. Never substitute printing, reconstructed text or an external browser for the original file. Do not ask the user to operate a save dialog. ' +
-  'You work in Tessel: the user follows everything you do on its task board, so keep it up to date yourself, without being asked. Add a card (team_task_add) for every piece of work the moment you start it (what the user asks, each step you decide to take, each task you give a teammate), and move your cards as they go (team_task_move: "done" as soon as one is finished). Only a quick question or a short answer needs no card. If you are in a team, call team_inbox when you start and after each step to read messages from teammates, answer them with team_send, and never ask the user to pass messages between agents. To work together: give a teammate a card (team_task_add, with "after" when it must wait for other cards), finish work you were given with team_task_done and a short report, ask one teammate and wait for the answer with team_ask, ask the user to decide with team_task_gate, and send to groups like "@codex" or "@idle"; team_members shows who is idle. A team lead can also coordinate workers: start new agents in new panes with team_worker_start (one per independent piece of work), follow them with team_worker_list and team_worker_read, and stop or release them; a worker reports with team_worker_done and sends team_heartbeat while it works. WEB PAGES: for anything that involves a web page, a site, a demo, a game, a login or a UI check (your dev server, a UI change, a public URL the user gives you), use the built-in browser of Tessel with the browser_* tools. It is a real Chromium on the USER\'S COMPUTER (their network and IP, a normal browser profile), so it works where a headless or datacenter-IP browser fails (Cloudflare 403, CORS, "connection lost" on a game server, geo or IP blocks), and the user sees the page. This holds for agents on an SSH host too: the browser is still on the user\'s computer. Do NOT start curl, Playwright, Puppeteer or any headless browser on the machine you run on to browse a page, unless the user asks for it or the page is a localhost page that only that machine can reach (then still show it with browser_open on an address the user\'s computer can open). If a browser_* tool fails or the tessel-team tools are missing, say so plainly and tell the user how to fix it (restart this agent from Tessel, right-click its pane, Restart; or /mcp to reconnect) instead of silently falling back to the server. How: browser_pages or browser_open, then browser_snapshot to read the page with element refs (@e1), browser_click / browser_fill / browser_type / browser_press by ref, and browser_snapshot again after the page changes or navigates; browser_wait instead of sleeping, browser_console for errors, browser_screenshot to see it. The user sees an Agent badge on the page and can stop you. For quick shell commands, use your own shell tool. Use run_in_terminal only when it helps: a long-running process that must stay up (a dev server, a watcher), a command the user should see, or a command on your project\'s SSH host when you are not on it; it runs in a terminal of your own next to your pane and the user approves each command. terminal_list shows the user\'s other terminals, which you can read with get_terminal_output. To reach an agent of another project (on this computer or an SSH host), use project_agents and project_send: Tessel relays the message; read answers with project_inbox. run_in_terminal runs commands, it does not open sessions for the user: to open terminals or sessions for the user, use open_terminal, and when they do not say which kind, open the same agent as you, or ask them if it is unclear.'
+// The team and the messages between agents.
+const TEAM_INSTRUCTIONS =
+  'You work in Tessel: the user follows everything you do on its task board, so keep it up to date yourself, without being asked. Add a card (team_task_add) for every piece of work the moment you start it (what the user asks, each step you decide to take, each task you give a teammate), and move your cards as they go (team_task_move: "done" as soon as one is finished). Only a quick question or a short answer needs no card. If you are in a team, call team_inbox when you start and after each step to read messages from teammates, answer them with team_send, and never ask the user to pass messages between agents. To work together: give a teammate a card (team_task_add, with "after" when it must wait for other cards), finish work you were given with team_task_done and a short report, ask one teammate and wait for the answer with team_ask, ask the user to decide with team_task_gate, and send to groups like "@codex" or "@idle"; team_members shows who is idle. A team lead can also coordinate workers: start new agents in new panes with team_worker_start (one per independent piece of work), follow them with team_worker_list and team_worker_read, and stop or release them; a worker reports with team_worker_done and sends team_heartbeat while it works. To reach an agent of another project (on this computer or an SSH host), use project_agents and project_send: Tessel relays the message; read answers with project_inbox.'
+// What an agent uses: the browser, its terminals; the connectors say their own part (APP_INSTRUCTIONS).
+const TOOLS_INSTRUCTIONS =
+  'BROWSER DOWNLOADS: Original files automatically save in local Downloads/Tessel while you control the page, with its authenticated session and no Save As dialog. Before clicking, use browser_downloads({saveAs: absoluteLocalFilePath}) if a specific name or folder is needed. Afterwards use browser_downloads to verify completed and obtain the actual path. Never substitute printing, reconstructed text or an external browser for the original file. Do not ask the user to operate a save dialog. WEB PAGES: for anything that involves a web page, a site, a demo, a game, a login or a UI check (your dev server, a UI change, a public URL the user gives you), use the built-in browser of Tessel with the browser_* tools. It is a real Chromium on the USER\'S COMPUTER (their network and IP, a normal browser profile), so it works where a headless or datacenter-IP browser fails (Cloudflare 403, CORS, "connection lost" on a game server, geo or IP blocks), and the user sees the page. This holds for agents on an SSH host too: the browser is still on the user\'s computer. Do NOT start curl, Playwright, Puppeteer or any headless browser on the machine you run on to browse a page, unless the user asks for it or the page is a localhost page that only that machine can reach (then still show it with browser_open on an address the user\'s computer can open). If a browser_* tool fails or the tessel_apps tools are missing, say so plainly and tell the user how to fix it (restart this agent from Tessel, right-click its pane, Restart; or /mcp to reconnect) instead of silently falling back to the server. How: browser_pages or browser_open, then browser_snapshot to read the page with element refs (@e1), browser_click / browser_fill / browser_type / browser_press by ref, and browser_snapshot again after the page changes or navigates; browser_wait instead of sleeping, browser_console for errors, browser_screenshot to see it. The user sees an Agent badge on the page and can stop you. For quick shell commands, use your own shell tool. Use run_in_terminal only when it helps: a long-running process that must stay up (a dev server, a watcher), a command the user should see, or a command on your project\'s SSH host when you are not on it; it runs in a terminal of your own next to your pane and the user approves each command. terminal_list shows the user\'s other terminals, which you can read with get_terminal_output. run_in_terminal runs commands, it does not open sessions for the user: to open terminals or sessions for the user, use open_terminal, and when they do not say which kind, open the same agent as you, or ask them if it is unclear.'
 // On an SSH host: the same tools, and where they run.
-const REMOTE_INSTRUCTIONS =
-  INSTRUCTIONS +
+const REMOTE_TOOLS_INSTRUCTIONS =
   " You run on an SSH host: Tessel's browser is on the user's computer (a page on the host is reached through an address that computer can open), and run_in_terminal opens your terminal on that host. To read Tessel's own logs on the user's computer, use tessel_logs (read only, the user allows it once). To look at anything else there (a local file, a local tool), call run_in_terminal with host \"local\": a Windows PowerShell opens there, the user is asked first and then for every command; do not ask the user to copy files to the server by hand."
+const appsInstructions = () => `${TOOLS_INSTRUCTIONS}${isRemote() ? REMOTE_TOOLS_INSTRUCTIONS : ''} ${APP_INSTRUCTIONS}`
+
 
 // signal: aborted when the client cancels this request (a waiting team_ask).
 function handle(msg, signal = null) {
@@ -1848,12 +1887,12 @@ function handle(msg, signal = null) {
     return {
       protocolVersion: (params && params.protocolVersion) || '2025-06-18',
       capabilities: { tools: {} },
-      serverInfo: { name: APPS_MODE ? APP_SERVER_NAME : 'tessel-team', version: VERSION },
-      instructions: APPS_MODE ? APP_INSTRUCTIONS : isRemote() ? REMOTE_INSTRUCTIONS : INSTRUCTIONS
+      serverInfo: { name: APPS_MODE ? APP_SERVER_NAME : 'tessel_team', version: VERSION },
+      instructions: APPS_MODE ? appsInstructions() : TEAM_INSTRUCTIONS
     }
   }
   if (method === 'ping') return {}
-  if (method === 'tools/list') return { tools: APPS_MODE ? APP_TOOLS : TOOLS }
+  if (method === 'tools/list') return APPS_MODE ? appsToolList().then((tools) => ({ tools })) : { tools: TEAM_TOOLS() }
   if (method === 'tools/call') {
     const done = (r) => ({ content: [{ type: 'text', text: r.text }, ...(r.image ? [{ type: 'image', data: r.image.data, mimeType: r.image.mimeType }] : [])], isError: !!r.isError })
     const failed = (err) => done({ text: `Tessel team tool failed: ${err.message}`, isError: true })
@@ -2722,9 +2761,23 @@ if (require.main === module) {
   if (process.argv.includes('--hook')) hookMain()
   else {
     serve()
-    // (That the agent's tools are alive is said by its tessel-team server.)
+    // (That the agent's tools are alive is said by its tessel_team server.)
     if (!APPS_MODE) startAlive()
   }
 }
 
-module.exports = { APP_TOOLS, appsTool, browserTool, browserRequest, browserRuntimes, BROWSER_TOOLS, terminalTool, terminalRequest, TERMINAL_TOOLS, TERMINAL_OPS, accountsTool, accountsRequest, ACCOUNT_TOOLS, ACCOUNT_OPS, teamMgmtTool, teamMgmtRequest, sanitizeAsk, ASK_LIMITS, PERMISSION_MODES, MODE_PROVIDERS, taskRequest, locate, readInbox, send, members, handle, candidateDirs, ackPath, markRead, unread, listTasks, addTask, moveTask, reportTask, gateTask, ask, groupTargets, listWorkers, listGates, TOOLS, VERSION, AGENT_STATUS_AGENTS, statusEvent, usageLimitOf }
+module.exports = {
+  // For a spec: what connectedAppTools asks with.
+  __setTerminalTool(fn) {
+    const before = listAsk
+    listAsk = fn
+    return before
+  },
+  // Everything both servers put in an agent's context, connectors aside (contextCost).
+  contextParts: () => ({ instructions: `${TEAM_INSTRUCTIONS} ${appsInstructions()}`, tools: TOOLS }),
+  appsInstructions,
+  appsToolList,
+  connectedAppTools,
+  TEAM_TOOLS,
+  isTeamTool,
+  APP_TOOLS, appsTool, browserTool, browserRequest, browserRuntimes, BROWSER_TOOLS, terminalTool, terminalRequest, TERMINAL_TOOLS, TERMINAL_OPS, accountsTool, accountsRequest, ACCOUNT_TOOLS, ACCOUNT_OPS, teamMgmtTool, teamMgmtRequest, sanitizeAsk, ASK_LIMITS, PERMISSION_MODES, MODE_PROVIDERS, taskRequest, locate, readInbox, send, members, handle, candidateDirs, ackPath, markRead, unread, listTasks, addTask, moveTask, reportTask, gateTask, ask, groupTargets, listWorkers, listGates, TOOLS, VERSION, AGENT_STATUS_AGENTS, statusEvent, usageLimitOf }
