@@ -456,6 +456,8 @@ function wakeSandbox(over = {}) {
     remoteHostIsRoot: () => false,
     noteRootNoYolo: vi.fn(),
     watchRootYoloRefusal: vi.fn(),
+    // What the person connected through Tessel turns off in the agent's own connectors: nothing here.
+    connectorsOffWords: async () => '',
     setTimeout: (fn) => fn(),
     ...over
   }
