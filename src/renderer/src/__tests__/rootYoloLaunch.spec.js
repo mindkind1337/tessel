@@ -7,6 +7,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import fs from 'fs'
 import vm from 'vm'
+import { safeSessionId } from '../agentResumeLine'
 import { join } from 'path'
 import { reactive } from 'vue'
 import { savedPaneModel } from '../paneLastModel'
@@ -111,6 +112,7 @@ function load({ username = 'root', status = { hostId: HOST, claude: '/usr/local/
     settings: { resumeAgents: true, yoloFolders: [], agentPermissions: permissions, agentPrefs: prefs, teamWakeUps: false },
     FOUND_AFTER_START: [],
     watchFoundSession: () => {},
+    safeSessionId,
     teamToolsReady: false,
     teamToolsVersion: null,
     showToast: vi.fn(),

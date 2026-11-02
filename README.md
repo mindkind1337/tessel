@@ -135,6 +135,7 @@ working on Tessel itself (see [Build from source](#build-from-source)).
 - **Model and effort per pane**: pick them when you start an agent or later
   from the pane menu. The header shows the model and effort the agent really
   runs with, read from its own conversation, in your language.
+- **Shift+Enter** adds a line to your message to an agent instead of sending it.
 - **Live state for every agent**: working, waiting for you, approval needed,
   usage limit, interrupted, idle. It comes from the agents' own hooks, with the
   screen as a fallback, and shows as a dot on the agent's logo in its pane and
@@ -300,6 +301,11 @@ on the same conversation:
 - **Task board**: a kanban beside the panes (`Ctrl+Shift+K`). You and the
   agents add and move cards, so you can see who does what. Tasks are saved
   with the workspace, with the tokens, time and estimated cost of each one.
+- **Message alerts**: when an agent has unread messages and is idle, Tessel types
+  a short line in its box and presses Enter. On Codex, Enter waits until the line
+  shows there. If the line stays unsent, Tessel presses Enter again, even with you
+  in the pane or after a restart, as long as the box holds nothing else: what you
+  type is never sent for you.
 - **Conversations**: a tab in the side panel, after Agents, shows what the
   agents of a team say to each other and to you, with who sent each message
   and the model it ran on.

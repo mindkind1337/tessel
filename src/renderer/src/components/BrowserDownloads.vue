@@ -29,11 +29,11 @@ onMounted(() => {
 onBeforeUnmount(() => { off?.(); document.removeEventListener('pointerdown', closeOutside) })
 const active = (r) => ['choosing', 'progressing'].includes(r.state) || (r.state === 'interrupted' && r.error === 'transfer-interrupted')
 const labels = {
-  choosing: ['browser.download.choosing', 'Choose where to save'],
+  choosing: ['browser.download.choosing', 'Choose where to save'], // i18n-ignore
   progressing: ['browser.download.progressing', 'Downloading'],
   completed: ['browser.download.completed', 'Saved'],
   cancelled: ['browser.download.cancelled', 'Cancelled'],
-  interrupted: ['browser.download.interrupted', 'Download interrupted']
+  interrupted: ['browser.download.interrupted', 'Download interrupted'] // i18n-ignore
 }
 const label = (r) => t(...(labels[r.state] || labels.interrupted))
 </script>

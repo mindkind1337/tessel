@@ -1006,7 +1006,8 @@ function runQuickCommand(id, q) {
   if (!pane || !pane.paste) return
   if (q.enter) shellEnterAt[id] = Date.now()
   pane.paste(q.text)
-  if (q.enter) setTimeout(() => pane.submit && pane.submit(), 60)
+  // An agent can take an Enter right after a paste as a new line (teamDelivery.js).
+  if (q.enter) setTimeout(() => pane.submit && pane.submit(), findLeaf(id)?.kind === 'agent' ? 500 : 60)
   focusPane(id)
 }
 const mcpOpen = ref(false)
@@ -7823,7 +7824,8 @@ const teamPointer = createTeamDelivery({
   setTimeout: (fn, ms) => setTimeout(fn, ms),
   clearTimeout: (h) => clearTimeout(h),
   unread: (id) => ({ count: teamUnread[id] || 0, ids: teamUnreadIds[id] || null }),
-  blocked: (id, { phase } = {}) => pointerBlocked(id) || (phase === 'write' && relayPointer.state(id)?.flying ? 'a relayed message pointer is being typed there' : ''),
+  blocked: (id, { phase, ownPointer } = {}) => pointerBlocked(id, ownPointer) || (phase === 'write' && relayPointer.state(id)?.flying ? 'a relayed message pointer is being typed there' : ''),
+  userTypedSince: (id, at) => (lastUserKey[id] || 0) > at,
   getPane: (id) => {
     const leaf = findLeaf(id)
     return leaf && !leaf.sleeping && !leaf.notConnected ? getPane(id) || null : null
@@ -7863,8 +7865,9 @@ const relayPointer = createTeamDelivery({
   unread: (id) => relayUnread[id] || { count: 0, ids: null },
   // Team mail goes first, but only for a new pointer: Enter on one already typed
   // always goes, or each would wait for the other. Not when the team's pointer gave up.
-  blocked: (id, { phase, retry } = {}) => {
-    const why = pointerBlocked(id)
+  userTypedSince: (id, at) => (lastUserKey[id] || 0) > at,
+  blocked: (id, { phase, retry, ownPointer } = {}) => {
+    const why = pointerBlocked(id, ownPointer)
     if (why) return why
     if (settings.agentTerminal === false) return 'terminal tools are off in Settings (project_inbox would be refused)'
     const team = teamPointer.state(id)
@@ -10604,7 +10607,9 @@ function typeWake(leaf, count, unconfirmed) {
 // and the user away from it. A state not confirmed yet: only with
 // Settings > Orchestration > wake agents even without confirmation, and not
 // just after its launch.
-function pointerBlocked(id) {
+// ownPointer: only Tessel's own pointer waits in the input box, so the Enter
+// that sends it may go even with the user in the pane.
+function pointerBlocked(id, ownPointer = false) {
   const leaf = findLeaf(id)
   if (!leaf) return 'pane closed'
   if (!settings.teamWakeUps) return 'wake-ups are off in Settings'
@@ -10634,7 +10639,7 @@ function pointerBlocked(id) {
   if (approvals[id]) return 'waiting for an approval'
   if (limits[id]) return 'at its usage limit'
   if (pendingMessages[id] || unsent[id] || delivering.has(id)) return 'another message is being typed there'
-  if (!wakeAllowed(id, unconfirmed)) return 'the user is in this pane or typed there lately'
+  if (!ownPointer && !wakeAllowed(id, unconfirmed)) return 'the user is in this pane or typed there lately'
   return ''
 }
 

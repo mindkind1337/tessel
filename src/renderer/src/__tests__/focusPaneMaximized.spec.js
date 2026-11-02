@@ -74,6 +74,7 @@ function setup(maximized = null) {
     recordActivity: vi.fn(),
     agentInfo: () => null,
     deliverToAgent: vi.fn(),
+    shellEnterAt: {},
     taskPrompt: () => '',
     taskPanelOpen: { value: true }
   }

@@ -112,6 +112,7 @@ describe("App.vue's message queue: notes checked again when typed", () => {
       agentStatus: {},
       delivering: new Set(),
       teamPointer: { inFlight: () => false },
+      relayPointer: { inFlight: () => false },
       unsent: {},
       userIsTyping: () => false,
       pasteAndConfirm: (id, text) => {

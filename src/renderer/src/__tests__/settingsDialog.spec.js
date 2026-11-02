@@ -33,7 +33,7 @@ describe('Settings modal accessibility', { timeout: 30_000 }, () => {
   it('wraps Tab and Shift+Tab within the modal, including from its initial focus', async () => {
     const dialog = wrapper.get('[role="dialog"]')
     const first = wrapper.get('.set-back')
-    const last = wrapper.get('.set-foot button')
+    const last = wrapper.findAll('.set-foot button').at(-1)
     expect(document.activeElement).toBe(dialog.element)
     expect(dialog.attributes('aria-modal')).toBe('true')
     await dialog.trigger('keydown', { key: 'Tab' })

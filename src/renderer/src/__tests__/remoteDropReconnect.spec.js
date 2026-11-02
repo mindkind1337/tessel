@@ -8,6 +8,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import fs from 'fs'
 import vm from 'vm'
+import { safeSessionId } from '../agentResumeLine'
 import { join } from 'path'
 import { reactive } from 'vue'
 import { allowDropRetry, droppedRemotePane } from '../projectLauncher'
@@ -213,6 +214,7 @@ describe('the line the reopened agent starts with', () => {
         }
       },
       sessionKind: (a) => a.id,
+      safeSessionId,
       newUuid: () => 'new-uuid',
       claudeStartChoice,
       codexResumes,
