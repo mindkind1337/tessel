@@ -18,7 +18,7 @@
 import crypto from 'crypto'
 import { t } from '../i18n'
 import shellSource from './remoteAccounts.sh?raw'
-import { cleanSubscription } from '../../shared/claudeSubscription'
+import { cleanSubscription, planDisplayName } from '../../shared/claudeSubscription'
 
 // The functions the host's session may run for this (remoteShell.js FUNCTIONS).
 export const ACCOUNT_FUNCTIONS = ['__t_accts', '__t_acctmk', '__t_acctrm', '__t_acctout', '__t_acctpane', '__t_acctdiag', '__t_acctplan']
@@ -98,6 +98,7 @@ const FIELDS = {
   // __t_acctplan: how its subscription check went, and the kept fields of
   // Anthropic's answer (claudeSubscription.js checks them again).
   subcheck: (v) => (['ok', 'expired', 'refused', 'failed', 'skipped', 'nologin'].includes(v) ? v : null),
+  sub_plan_display_name: (v) => (planDisplayName(v) ? notSecret(v) : null),
   sub_organization_type: (v) => subWord(v),
   sub_rate_limit_tier: (v) => subWord(v),
   sub_seat_tier: (v) => subWord(v),
@@ -194,6 +195,7 @@ export function parsePlans(text, at = Date.now()) {
       const sub =
         e.subcheck === 'ok'
           ? cleanSubscription({
+              plan_display_name: e.sub_plan_display_name,
               organization_type: e.sub_organization_type,
               rate_limit_tier: e.sub_rate_limit_tier,
               seat_tier: e.sub_seat_tier,

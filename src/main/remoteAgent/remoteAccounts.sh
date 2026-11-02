@@ -352,7 +352,7 @@ __ta_planone() {
   esac
   __tb=$(printf '%s' "$__tr" | head -c 262144 | tr -d '\n\r'); __tr=
   __ta_v subcheck ok
-  for __k in organization_type rate_limit_tier seat_tier billing_type subscription_status claude_code_trial_ends_at; do
+  for __k in plan_display_name organization_type rate_limit_tier seat_tier billing_type subscription_status claude_code_trial_ends_at; do
     __ta_v "sub_$__k" "$(printf '%s' "$__tb" | __ta_str "$__k")"
   done
   __ta_v sub_has_claude_max "$(printf '%s' "$__tb" | __ta_bool has_claude_max)"

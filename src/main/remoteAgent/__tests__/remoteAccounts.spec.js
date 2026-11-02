@@ -1213,6 +1213,7 @@ describe('Claude subscriptions on a host (its own check)', () => {
         '@h Linux /home/u',
         '@a claude default - 1760000000 /home/u/.claude',
         'v subcheck ok',
+        'v sub_plan_display_name Ultra',
         'v sub_organization_type claude_max',
         'v sub_rate_limit_tier default_claude_max_20x',
         'v sub_subscription_status active',
@@ -1235,7 +1236,7 @@ describe('Claude subscriptions on a host (its own check)', () => {
         dir: '/home/u/.claude',
         check: 'ok',
         account: '1f0c6d1e-1111-4111-8111-111111111111',
-        sub: { organization_type: 'claude_max', rate_limit_tier: 'default_claude_max_20x', seat_tier: null, billing_type: null, subscription_status: 'active', has_claude_max: true, has_claude_pro: null, claude_code_trial_ends_at: null, checkedAt: 5000 }
+        sub: { plan_display_name: 'Ultra', organization_type: 'claude_max', rate_limit_tier: 'default_claude_max_20x', seat_tier: null, billing_type: null, subscription_status: 'active', has_claude_max: true, has_claude_pro: null, claude_code_trial_ends_at: null, checkedAt: 5000 }
       },
       { scope: 'tessel', id: 'abc123', dir: '/home/u/.tessel-server/accounts/claude/abc123', check: 'expired', account: null, sub: null }
     ])

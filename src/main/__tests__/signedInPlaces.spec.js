@@ -276,7 +276,7 @@ describe('the subscription of each Claude sign-in', () => {
     const list = structuredClone(accountsList)
     list.providers[0].system.subscription = { ...CANCELED, payment_auth_hosted_invoice_url: 'https://invoice.example.invalid/x', email: 'x@example.invalid' }
     const [system, added] = pcAccountRows(list)
-    expect(system.sub).toEqual({ ...CANCELED, seat_tier: null, claude_code_trial_ends_at: null })
+    expect(system.sub).toEqual({ ...CANCELED, plan_display_name: null, seat_tier: null, claude_code_trial_ends_at: null })
     expect(JSON.stringify(system)).not.toMatch(/invoice|example\.invalid/)
     expect(added.sub).toBeUndefined()
     const rows = hostRows([{ ...hostEntries[0], sub: CANCELED }, { ...hostEntries[2], sub: CANCELED }, { ...hostEntries[1], sub: { checkedAt: 5 } }])

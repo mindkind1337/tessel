@@ -13,7 +13,7 @@ import path from 'node:path'
 import { createProviderUsage } from '../providerUsage'
 import { createHash } from 'node:crypto'
 import { createClaudePlanCheck, emailKey } from '../claudePlanCheck'
-import { cleanSubscription, subscriptionFields, subscriptionPlan, subscriptionState } from '../../shared/claudeSubscription'
+import { cleanSubscription, planDisplayName, subscriptionFields, subscriptionPlan, subscriptionState } from '../../shared/claudeSubscription'
 
 const PROFILE_URL = 'https://api.anthropic.com/api/oauth/profile'
 const USAGE_URL = 'https://api.anthropic.com/api/oauth/usage'
@@ -152,6 +152,7 @@ describe('the kept fields and their words', () => {
   it('keeps only the plan fields of the profile, never a name, an email or a payment link', () => {
     const kept = subscriptionFields(PROFILES.canceled)
     expect(kept).toEqual({
+      plan_display_name: null,
       organization_type: 'claude_free',
       rate_limit_tier: 'default_claude_ai',
       seat_tier: null,
@@ -341,5 +342,54 @@ describe('a usage read refused for want of a subscription', () => {
     expect(await usage.read({ provider: 'claude', accountId: null })).toMatchObject({ ok: false, code: 'auth' })
     await new Promise((r) => setTimeout(r, 20))
     expect(profileCalls(request)).toHaveLength(0)
+  })
+})
+
+describe('the plan name the service gives', () => {
+  const answer = (over = {}) => ({
+    account: { has_claude_max: true, has_claude_pro: false },
+    organization: { organization_type: 'claude_max', rate_limit_tier: 'default_claude_max_20x', subscription_status: 'active', plan_display_name: 'Ultra', plan_display_label: 'Ultra plan', ...over }
+  })
+
+  it('a renamed plan shows its new name, its type and tier keeping their old words', () => {
+    const fields = subscriptionFields(answer())
+    expect(fields.plan_display_name).toBe('Ultra')
+    expect(subscriptionPlan(fields)).toBe('Ultra')
+    expect(subscriptionState(fields).plan).toBe('Ultra')
+  })
+
+  it('kept and read back from the cache', () => {
+    const kept = cleanSubscription({ ...subscriptionFields(answer()), checkedAt: 1700000000000 })
+    expect(kept.plan_display_name).toBe('Ultra')
+    expect(subscriptionPlan(kept)).toBe('Ultra')
+  })
+
+  it('a copy kept before this field: the name from its type and tier', () => {
+    const kept = cleanSubscription({ organization_type: 'claude_max', rate_limit_tier: 'default_claude_max_20x', checkedAt: 1700000000000 })
+    expect(kept.plan_display_name).toBe(null)
+    expect(subscriptionPlan(kept)).toBe('Max 20x')
+  })
+
+  it('an answer without it, or with text that is not a plain name: the name from its type and tier', () => {
+    for (const bad of [undefined, null, 7, '', '   ', '<b>Ultra</b>', 'Ultra\nplan', 'x'.repeat(41), 'https://example.com/plan']) {
+      const fields = subscriptionFields(answer({ plan_display_name: bad }))
+      expect(fields.plan_display_name).toBe(null)
+      expect(subscriptionPlan(fields)).toBe('Max 20x')
+    }
+  })
+
+  it('a name in any language, with its capitals', () => {
+    expect(planDisplayName('Équipe Plus')).toBe('Équipe Plus')
+    expect(planDisplayName('  Max 20x ')).toBe('Max 20x')
+    expect(planDisplayName('Pro+')).toBe('Pro+')
+  })
+
+  it('warnings do not depend on the name', () => {
+    const free = subscriptionFields(answer({ organization_type: 'claude_free', rate_limit_tier: null, plan_display_name: 'Gratuit' }))
+    expect(subscriptionState(free)).toMatchObject({ plan: 'Gratuit', warn: 'none' })
+    const ended = subscriptionFields(answer({ subscription_status: 'canceled' }))
+    expect(subscriptionState(ended)).toMatchObject({ plan: 'Ultra', warn: 'canceled' })
+    const named = subscriptionFields(answer({ plan_display_name: 'Free' }))
+    expect(subscriptionState(named).warn).toBe(null)
   })
 })
