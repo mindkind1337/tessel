@@ -633,7 +633,8 @@
     },
     "sleep": {
       "overlay": "En veille depuis {{time}} : son terminal a été arrêté pour libérer de la mémoire. Sa conversation est conservée.",
-      "wake": "Le réveiller"
+      "wake": "Le réveiller",
+      "held": "Arrivé avec vos réglages depuis ailleurs. Rien n'a démarré ici : il démarre quand vous le réveillez."
     },
     "exit": {
       "withCode": "Le processus s'est terminé avec le code {{code}}.",

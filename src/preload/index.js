@@ -483,9 +483,14 @@ const api = {
     startOver: (phrase) => ipcRenderer.invoke('tesselSync:startOver', { phrase }),
     turnOff: (options) => ipcRenderer.invoke('tesselSync:turnOff', options),
     syncNow: () => ipcRenderer.invoke('tesselSync:syncNow'),
-    apply: () => ipcRenderer.invoke('tesselSync:apply'),
+    apply: (options) => ipcRenderer.invoke('tesselSync:apply', options),
     cancelApply: () => ipcRenderer.invoke('tesselSync:cancelApply'),
     keepMine: () => ipcRenderer.invoke('tesselSync:keepMine'),
+    sendAgain: () => ipcRenderer.invoke('tesselSync:sendAgain'),
+    sendSmaller: () => ipcRenderer.invoke('tesselSync:sendSmaller'),
+    useCopyInstead: () => ipcRenderer.invoke('tesselSync:useCopyInstead'),
+    earlier: () => ipcRenderer.invoke('tesselSync:earlier'),
+    applyEarlier: (options) => ipcRenderer.invoke('tesselSync:applyEarlier', options),
     restart: () => ipcRenderer.invoke('tesselSync:restart'),
     onChanged: (cb) => {
       const handler = (_evt, view) => cb(view)
@@ -496,6 +501,11 @@ const api = {
       const handler = (_evt, info) => cb(info)
       ipcRenderer.on('tesselSync:newer', handler)
       return () => ipcRenderer.removeListener('tesselSync:newer', handler)
+    },
+    onAlert: (cb) => {
+      const handler = (_evt, alert) => cb(alert)
+      ipcRenderer.on('tesselSync:alert', handler)
+      return () => ipcRenderer.removeListener('tesselSync:alert', handler)
     }
   },
   tesselAccount: {
@@ -570,6 +580,8 @@ const api = {
 
   // Workspace layout persistence.
   loadLayout: () => ipcRenderer.invoke('layout:load'),
+  layoutHeld: () => ipcRenderer.invoke('layout:held'),
+  layoutHeldDone: () => ipcRenderer.invoke('layout:heldDone'),
   saveLayout: (data) => ipcRenderer.send('layout:save', data),
 
   // Task-board persistence. load() resolves to the saved task array ([] when

@@ -390,6 +390,7 @@ function cardNotes(t) {
   if (t.gate && t.gate.status === 'pending') out.push(`waits for the user's decision: ${t.gate.question}`)
   if (t.gate && t.gate.status === 'resolved') out.push(t.gate.answeredBy ? `${t.gate.answeredBy}, a Live Share guest (not the user), answered: ${t.gate.answer}` : `the user decided: ${t.gate.answer}`)
   if (t.guest) out.push(`added or renamed by ${t.guest}, a Live Share guest (not the user)`)
+  if (t.copied) out.push(`its words came from a copy of the settings made on ${t.copied} (not typed here by the user)`)
   if (t.report) out.push(`${t.report.outcome}: ${String(t.report.summary || '').slice(0, 160)}`)
   return out.length ? `  [${out.join('; ')}]` : ''
 }

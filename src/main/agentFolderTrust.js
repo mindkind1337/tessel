@@ -252,7 +252,7 @@ export function createAgentFolderTrust({
 
   const realKey = (p) => trustKey(realpathOrSelf(p))
 
-  // The saved layout's local project folders (worktreeList.localRootsOfLayout).
+  // The saved layout's local project folders the person chose here (worktreeList.chosenRootsOfLayout).
   function setRoots(list) {
     roots = new Set((Array.isArray(list) ? list : []).map((p) => realKey(p)).filter(Boolean))
   }

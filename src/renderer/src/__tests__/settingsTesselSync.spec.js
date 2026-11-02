@@ -1,6 +1,8 @@
 import { describe, it, expect, afterEach, vi } from 'vitest'
 import { ref } from 'vue'
 import { mount, flushPromises } from '@vue/test-utils'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 
 const page = ref('tessel-account')
 vi.mock('../components/settings/settingsShell', () => ({
@@ -9,11 +11,13 @@ vi.mock('../components/settings/settingsShell', () => ({
 const { default: SettingsTesselSync } = await import('../components/settings/SettingsTesselSync.vue')
 
 const PHRASE = 'correct horse battery staple'
-const OFF = { signedIn: true, canSeal: true, on: false, state: 'off', busy: false, device: 'DESKTOP-1', lastSyncAt: null, remote: null, staged: null, problem: null, notice: null }
-const ON = { ...OFF, on: true, state: 'on', lastSyncAt: 1_800_000_000_000 }
-const NEWER = { ...ON, state: 'newer', remote: { device: 'LAPTOP-2', at: 1_800_000_000_000, older: false, unreadable: false, first: false } }
-const STAGED = { ...ON, state: 'staged', staged: { device: 'LAPTOP-2', at: 1_800_000_000_000, missing: [] } }
-const NEEDS = { ...ON, state: 'needsPhrase' }
+const OFF = { signedIn: true, canSeal: true, on: false, state: 'off', busy: false, device: 'DESKTOP-1', hasKey: false, lastUploadAt: null, lastCheckAt: null, remote: null, staged: null, shrunk: null, alert: null, problem: null, unreadable: [] }
+const ON = { ...OFF, on: true, state: 'on', hasKey: true, lastUploadAt: 1_800_000_000_000 }
+const SUMMARY = { projects: 6, names: ['Alpha', 'Beta'], panes: 14, agents: 8, hosts: 3, cards: 40 }
+const LOCAL = { projects: 1, names: ['Mine'], panes: 2, agents: 0, hosts: 0, cards: 0 }
+const NEWER = { ...ON, state: 'newer', remote: { device: 'LAPTOP-2', at: 1_800_000_000_000, older: false, unreadable: false, refused: false, saltChanged: false, first: false, summary: SUMMARY, local: LOCAL, hostChanges: [] } }
+const STAGED = { ...ON, state: 'staged', staged: { device: 'LAPTOP-2', at: 1_800_000_000_000, missing: [], missingAgents: [] } }
+const NEEDS = { ...ON, state: 'needsPhrase', hasKey: false }
 
 function api(over = {}) {
   return {
@@ -26,6 +30,11 @@ function api(over = {}) {
     apply: vi.fn(async () => STAGED),
     cancelApply: vi.fn(async () => NEWER),
     keepMine: vi.fn(async () => ON),
+    sendAgain: vi.fn(async () => ON),
+    sendSmaller: vi.fn(async () => ON),
+    useCopyInstead: vi.fn(async () => NEWER),
+    earlier: vi.fn(async () => ({ ...ON, versions: [] })),
+    applyEarlier: vi.fn(async () => STAGED),
     restart: vi.fn(async () => ({ ok: true })),
     onChanged: vi.fn(() => () => {}),
     ...over
@@ -147,7 +156,7 @@ describe('Your settings everywhere', () => {
   })
 
   describe('a computer with a copy on the server', () => {
-    const withCopy = (over = {}) => api({ peek: vi.fn(async () => ({ ...OFF, copy: { device: 'LAPTOP-2', at: 1_800_000_000_000 } })), ...over })
+    const withCopy = (over = {}) => api({ peek: vi.fn(async () => ({ ...OFF, copy: {} })), ...over })
     async function open(a = withCopy(), provide) {
       await mountPage(a, provide)
       await w.get('.tessel-sync-on').trigger('click')
@@ -155,9 +164,9 @@ describe('Your settings everywhere', () => {
       return a
     }
 
-    it('says whose it is, and asks the phrase once', async () => {
+    it('says a copy is there, nothing the server could have made up about it, and asks the phrase once', async () => {
       await open()
-      expect(w.text()).toContain('A copy from LAPTOP-2')
+      expect(w.text()).toContain('A copy is on the server')
       expect(w.find('.tessel-sync-again').exists()).toBe(false)
     })
 
@@ -189,10 +198,13 @@ describe('Your settings everywhere', () => {
   })
 
   describe('on', () => {
-    it('shows its state, the last sync and this computer\'s name', async () => {
-      await mountPage(api({ status: vi.fn(async () => ON) }))
+    it('shows its state, the last upload and this computer\'s name', async () => {
+      await mountPage(api({ status: vi.fn(async () => ({ ...ON, lastCheckAt: 1_800_000_500_000 })) }))
       expect(w.get('[data-sync-state]').text()).toBe('On')
-      expect(w.get('[data-sync-last]').text()).toContain('Last synced')
+      // M10: an upload is an upload, and a check is a check.
+      expect(w.get('[data-sync-last]').text()).toContain('Last uploaded from this computer')
+      expect(w.get('[data-sync-last]').text()).toContain(new Date(1_800_000_000_000).toLocaleString())
+      expect(w.get('[data-sync-checked]').text()).toContain(new Date(1_800_000_500_000).toLocaleString())
       expect(w.get('[data-sync-device]').text()).toContain('DESKTOP-1')
       expect(w.text()).toContain('nobody can recover it')
       expect(w.text()).toContain('Starting over erases the copy on the server')
@@ -297,9 +309,23 @@ describe('Your settings everywhere', () => {
       expect(a.turnOff).not.toHaveBeenCalled()
     })
 
-    it('erased elsewhere: says that this computer stopped and its settings did not change', async () => {
-      await mountPage(api({ status: vi.fn(async () => ({ ...OFF, notice: 'erased' })) }))
-      expect(w.get('[data-sync-erased]').text()).toContain('Your settings here did not change')
+    it('H3: the copy gone: a lasting alert, with the choice, and nothing goes up without a click', async () => {
+      const askConfirm = vi.fn(async () => true)
+      const a = api({ status: vi.fn(async () => ({ ...ON, state: 'erased', alert: 'erased' })) })
+      await mountPage(a, { askConfirm })
+      const row = w.get('[data-sync-erased]')
+      expect(row.attributes('role')).toBe('alert')
+      expect(row.text()).toContain('your settings here did not change')
+      expect(row.text()).toContain('someone using your session')
+      expect(a.sendAgain).not.toHaveBeenCalled()
+      await w.get('.tessel-sync-send-again').trigger('click')
+      await flushPromises()
+      expect(a.sendAgain).toHaveBeenCalled()
+    })
+
+    it('H3: without the key it cannot offer to send', async () => {
+      await mountPage(api({ status: vi.fn(async () => ({ ...ON, state: 'erased', hasKey: false })) }))
+      expect(w.find('.tessel-sync-send-again').exists()).toBe(false)
     })
   })
 
@@ -327,6 +353,10 @@ describe('Your settings everywhere', () => {
       expect(asked.text).toContain('that are not in that layout are closed')
       expect(asked.text).toContain('What decides what agents may do stays as it is here')
       expect(asked.text).toContain('import-backups')
+      // H1 and H5: what starts, and what it holds.
+      expect(asked.text).toContain('No agent starts')
+      expect(asked.text).toContain('Projects: 6. Panes: 14, of which agents: 8. SSH hosts: 3. Task cards: 40.')
+      expect(asked.text).toContain('On this computer now: Projects: 1.')
       expect(a.apply).toHaveBeenCalled()
       expect(w.find('[data-sync-staged]').exists()).toBe(true)
       expect(a.restart).not.toHaveBeenCalled()
@@ -437,5 +467,179 @@ describe('Your settings everywhere', () => {
     await submit()
     expect(a.turnOn).toHaveBeenCalledWith(PHRASE)
     expect(w.find('[data-sync-newer]').exists()).toBe(true)
+  })
+
+  describe('what the review asked of this page', () => {
+    it('H5: the question says what the copy holds, against what is here', async () => {
+      await mountPage(api({ status: vi.fn(async () => NEWER) }))
+      expect(w.get('[data-sync-summary]').text()).toContain('Projects: 6')
+      expect(w.get('[data-sync-summary]').text()).toContain('Alpha, Beta')
+      expect(w.get('[data-sync-local]').text()).toContain('Projects: 1')
+    })
+
+    it('H5: keeping this computer\'s says what it replaces, and that it can be undone', async () => {
+      const askConfirm = vi.fn(async () => true)
+      await mountPage(api({ status: vi.fn(async () => NEWER) }), { askConfirm })
+      await w.get('.tessel-sync-keep').trigger('click')
+      await flushPromises()
+      const asked = askConfirm.mock.calls[0][0]
+      expect(asked.text).toContain('The copy it replaces: Projects: 6')
+      expect(asked.text).toContain('last 5 versions')
+      expect(asked.danger).toBe(true)
+    })
+
+    it('H5: much of the setup gone: says so, sends nothing, and offers both ways', async () => {
+      const askConfirm = vi.fn(async () => true)
+      const shrunk = { files: ['workspace-layout.json'], projects: { from: 6, to: 1 } }
+      const a = api({ status: vi.fn(async () => ({ ...ON, state: 'shrunk', alert: 'shrunk', shrunk })) })
+      await mountPage(a, { askConfirm })
+      const row = w.get('[data-sync-shrunk]')
+      expect(row.attributes('role')).toBe('alert')
+      expect(row.text()).toContain('workspace-layout.json')
+      expect(row.text()).toContain('nothing was sent')
+      expect(a.sendSmaller).not.toHaveBeenCalled()
+      await w.get('.tessel-sync-send-smaller').trigger('click')
+      await flushPromises()
+      expect(askConfirm.mock.calls[0][0].danger).toBe(true)
+      expect(a.sendSmaller).toHaveBeenCalled()
+    })
+
+    it('H5: wanting the copy instead looks at it first', async () => {
+      const a = api({ status: vi.fn(async () => ({ ...ON, state: 'shrunk', shrunk: { projects: { from: 6, to: 1 } } })) })
+      await mountPage(a)
+      await w.get('.tessel-sync-use-copy').trigger('click')
+      await flushPromises()
+      expect(a.useCopyInstead).toHaveBeenCalled()
+      expect(w.find('[data-sync-newer]').exists()).toBe(true)
+    })
+
+    it('H6: a changed host address asks by itself; no means it stays as it is here', async () => {
+      const changes = [{ id: 'ssh-1', label: 'prod', from: 'me@prod.example', to: 'root@attacker.example' }]
+      const askConfirm = vi.fn(async (message) => !message.title.includes('somewhere else'))
+      const a = api({ status: vi.fn(async () => ({ ...NEWER, remote: { ...NEWER.remote, hostChanges: changes } })) })
+      await mountPage(a, { askConfirm })
+      await w.get('.tessel-sync-apply').trigger('click')
+      await flushPromises()
+      expect(askConfirm).toHaveBeenCalledTimes(2)
+      expect(askConfirm.mock.calls[1][0].text).toContain('prod: me@prod.example \u2192 root@attacker.example')
+      expect(askConfirm.mock.calls[1][0].danger).toBe(true)
+      expect(a.apply).toHaveBeenCalledWith({ hostAddresses: 'keep' })
+    })
+
+    it('H6: yes takes the new addresses; with no change there is no second question', async () => {
+      const askConfirm = vi.fn(async () => true)
+      const a = api({ status: vi.fn(async () => ({ ...NEWER, remote: { ...NEWER.remote, hostChanges: [{ id: 'ssh-1', label: 'x', from: 'a', to: 'b' }] } })) })
+      await mountPage(a, { askConfirm })
+      await w.get('.tessel-sync-apply').trigger('click')
+      await flushPromises()
+      expect(a.apply).toHaveBeenCalledWith({ hostAddresses: 'copy' })
+      w.unmount()
+      const ask = vi.fn(async () => true)
+      const b = api({ status: vi.fn(async () => NEWER) })
+      await mountPage(b, { askConfirm: ask })
+      await w.get('.tessel-sync-apply').trigger('click')
+      await flushPromises()
+      expect(ask).toHaveBeenCalledTimes(1)
+      expect(b.apply).toHaveBeenCalledWith({ hostAddresses: 'keep' })
+    })
+
+    it('M2: an older copy is said to be older; one with no known computer says so', async () => {
+      await mountPage(api({ status: vi.fn(async () => ({ ...NEWER, remote: { ...NEWER.remote, older: true } })) }))
+      expect(w.get('[data-sync-newer]').text()).toContain('is older than the one this computer last saw')
+      w.unmount()
+      await mountPage(api({ status: vi.fn(async () => ({ ...NEWER, remote: { ...NEWER.remote, device: null, at: null } })) }))
+      expect(w.get('[data-sync-newer]').text()).toContain('an unknown computer')
+    })
+
+    it('C1: a copy refused or unreadable can only be replaced, never used', async () => {
+      for (const flag of ['refused', 'unreadable']) {
+        await mountPage(api({ status: vi.fn(async () => ({ ...NEWER, remote: { ...NEWER.remote, summary: null, [flag]: true } })) }))
+        expect(w.find('.tessel-sync-apply').exists()).toBe(false)
+        expect(w.find('.tessel-sync-keep').exists()).toBe(true)
+        w.unmount()
+      }
+      w = null
+    })
+
+    it('M3: a changed salt: the key stays, and both ways out are there', async () => {
+      const a = api({ status: vi.fn(async () => ({ ...ON, state: 'needsPhrase', alert: 'saltChanged', remote: { ...NEWER.remote, saltChanged: true, device: null, at: null, summary: null } })), peek: vi.fn(async () => ({ ...ON, copy: {} })) })
+      await mountPage(a)
+      const row = w.get('[data-sync-needs-phrase]')
+      expect(row.attributes('role')).toBe('alert')
+      expect(row.text()).toContain('This computer still has its key')
+      expect(w.find('.tessel-sync-enter').exists()).toBe(true)
+      expect(w.find('.tessel-sync-keep').exists()).toBe(true)
+      expect(w.text()).not.toContain('click here')
+    })
+
+    it('M5: a phrase too easy to guess says so', async () => {
+      const a = api({ turnOn: vi.fn(async () => ({ ...OFF, error: 'weakPhrase' })) })
+      await mountPage(a)
+      await w.get('.tessel-sync-on').trigger('click')
+      await flushPromises()
+      await type('.tessel-sync-phrase', PHRASE)
+      await type('.tessel-sync-again', PHRASE)
+      await submit()
+      expect(w.get('[data-sync-error]').text()).toContain('too easy to guess')
+    })
+
+    it('M10: a file that stops the uploads is named', async () => {
+      await mountPage(api({ status: vi.fn(async () => ({ ...ON, problem: 'unreadableFile', unreadable: ['task-board.json'] })) }))
+      expect(w.get('[data-sync-problem]').text()).toContain('task-board.json')
+    })
+
+    it('the kept versions: opened here, with what each holds, and asked again before use', async () => {
+      const askConfirm = vi.fn(async () => true)
+      const versions = [
+        { version: 9, device: 'LAPTOP-2', at: 1_800_000_000_000, seq: 4, summary: SUMMARY },
+        { version: 8, unreadable: true }
+      ]
+      const a = api({ status: vi.fn(async () => ON), earlier: vi.fn(async () => ({ ...ON, versions })) })
+      await mountPage(a, { askConfirm })
+      await w.get('.tessel-sync-earlier').trigger('click')
+      await flushPromises()
+      const rows = w.findAll('[data-sync-earlier-row]')
+      expect(rows[0].text()).toContain('LAPTOP-2')
+      expect(rows[0].text()).toContain('Projects: 6')
+      expect(rows[1].text()).toContain('could not be opened')
+      expect(rows[1].find('[data-sync-earlier-use]').exists()).toBe(false)
+      await rows[0].get('[data-sync-earlier-use]').trigger('click')
+      await flushPromises()
+      expect(askConfirm.mock.calls[0][0].text).toContain('Nothing starts by itself')
+      expect(a.applyEarlier).toHaveBeenCalledWith({ version: 9 })
+      expect(w.find('[data-sync-staged]').exists()).toBe(true)
+    })
+
+    it('agents this computer does not have are named when it is staged', async () => {
+      await mountPage(api({ status: vi.fn(async () => ({ ...STAGED, staged: { ...STAGED.staged, missingAgents: ['my-agent'] } })) }))
+      expect(w.get('[data-sync-missing-agents]').text()).toContain('my-agent')
+    })
+  })
+
+  describe('words', () => {
+    const fr = JSON.parse(readFileSync(join(__dirname, '../i18n/locales/fr/settings.json'), 'utf8')).settings.tesselAccount
+    const source = readFileSync(join(__dirname, '../components/settings/SettingsTesselSync.vue'), 'utf8')
+    const app = readFileSync(join(__dirname, '../App.vue'), 'utf8')
+
+    it('every word of this page has its French', () => {
+      const keys = [...(source + app).matchAll(/t\(\s*'settings\.tesselAccount\.([\w.]+)'/g)].map((m) => m[1])
+      expect(keys.length).toBeGreaterThan(60)
+      for (const key of new Set(keys)) {
+        const value = key.split('.').reduce((node, part) => (node ? node[part] : undefined), fr)
+        expect(typeof value, key).toBe('string')
+      }
+    })
+
+    it('no value goes inside a template mustache as {{x}} in a string', () => {
+      const template = source.slice(source.indexOf('<template>'))
+      for (const mustache of template.matchAll(/\{\{([^}]*)\}\}/g)) expect(mustache[1]).not.toMatch(/\{\{/)
+      expect(template).not.toMatch(/t\([^)]*\{\{/)
+    })
+
+    it('the page no longer says Soon', () => {
+      expect(fr.soon).toBeUndefined()
+      const account = readFileSync(join(__dirname, '../components/settings/SettingsTesselAccount.vue'), 'utf8')
+      expect(account).not.toContain('tesselAccount.soon')
+    })
   })
 })

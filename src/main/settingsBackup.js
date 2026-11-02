@@ -18,9 +18,9 @@
 // id (typed in its command line) and a folder on a network share.
 // Agent environment variables (they hold API keys) are never exported.
 //
-// The same packing makes the copy an account keeps (settingsSync.js, encrypted there):
-// only settings, hosts and the board, without what decides what agents may do, and each
-// computer keeps what belongs to it (buildSyncBundle, localizeLayout).
+// The copy an account keeps (settingsSync.js, encrypted there) goes further: it is rebuilt from a
+// strict list of what it may hold (syncSchema.js), and each computer keeps what belongs to it
+// (buildSyncBundle, localizeLayout, and at the next start applyPendingImport).
 //
 // Import never writes over files Tessel is using: it stages the chosen files in
 // `import-pending/` and the next start of Tessel puts them in place, before any of
@@ -29,6 +29,7 @@
 // the data folder, never a path from the file.
 import fs from 'node:fs'
 import path from 'node:path'
+import { SYNCED_FILE_NAMES, finishFile, localizeRebuilt, rebuildLayout, rebuildToSend, restoreShadow } from './syncSchema'
 
 export const FORMAT = 1
 export const APP = 'tessel'
@@ -36,6 +37,8 @@ export const MAX_FILE_BYTES = 40 * 1024 * 1024
 export const MAX_TOTAL_BYTES = 120 * 1024 * 1024
 export const PENDING_DIR = 'import-pending'
 export const BACKUPS_DIR = 'import-backups'
+// Says that the layout came from elsewhere, until the window has saved it with its agents asleep.
+export const HELD_FILE = 'layout-held.json'
 const KEEP_BACKUPS = 5
 
 // id -> the files in the data folder (top-level, by exact name) and the shape each must have.
@@ -62,15 +65,7 @@ export const SENSITIVE_SETTINGS = [
   // What they start by themselves: agents' updates, an agent for each project opened.
   'autoUpdateAgents', 'projectOpen'
 ]
-// What a pane records about how it was started here: what it may do, and its account (a folder
-// of this computer). Its start follows Settings where it comes back.
-const PANE_SECURITY = ['permissions', 'permissionMode', 'launchYolo', 'rootNoYolo', 'launchSig']
-const PANE_THIS_RUN = ['accountId', 'lastModel', 'launchedAt', 'teamTools', 'toolsVersion']
-// Settings that describe this computer, not the person: each computer keeps its own.
-const THIS_COMPUTER_SETTINGS = ['workspaceDir', 'gpuAcceleration', 'cookiesImportedOnce', 'contextClaudeSignIn', 'contextGeminiSignIn']
 const isObject = (v) => !!v && typeof v === 'object' && !Array.isArray(v)
-// A conversation id a sleeping pane can come back with (the window's safeSessionId).
-const SESSION_ID_RE = /^[A-Za-z0-9_][A-Za-z0-9_-]{5,79}$/
 
 // Far beyond anyone's screen. Deeper is refused, not skipped: what walks a layout below
 // stops at this depth, and the start-up restore does not.
@@ -138,7 +133,7 @@ function agentCommands(node, out = new Set(), depth = 0) {
 // sign-in to it). Over the whole file: older layouts keep their tree outside `workspaces`.
 const SAFE_SESSION_ID = /^[A-Za-z0-9_][A-Za-z0-9_-]{5,79}$/
 const PANE_POWERS = ['permissions', 'permissionMode', 'launchYolo', 'launchSig', 'rootNoYolo', 'agentMissing']
-const onShare = (p) => typeof p === 'string' && /^\s*[\\/]{2}/.test(p)
+const onShare = (p) => typeof p === 'string' && /^\s*(?:[\\/]{2}|\\\?\?\\)/.test(p)
 function cleanPanes(node, known, depth = 0) {
   if (depth > MAX_DEPTH || !node) return
   if (Array.isArray(node)) node.forEach((n) => cleanPanes(n, known, depth + 1))
@@ -149,19 +144,6 @@ function cleanPanes(node, known, depth = 0) {
     for (const key of ['cwd', 'startDir', 'path']) if (onShare(node[key])) node[key] = null
     for (const v of Object.values(node)) if (v && typeof v === 'object') cleanPanes(v, known, depth + 1)
   }
-}
-
-// Every pane of a saved tree.
-function forEachPane(node, visit, depth = 0) {
-  if (depth > 60 || !isObject(node)) return
-  if (node.type === 'leaf') visit(node)
-  else if (Array.isArray(node.children)) node.children.forEach((child) => forEachPane(child, visit, depth + 1))
-}
-const forEachSavedPane = (layout, visit) => {
-  if (Array.isArray(layout.workspaces)) for (const w of layout.workspaces) if (isObject(w)) forEachPane(w.tree, (pane) => visit(pane, w))
-}
-const dropKeys = (from, keys) => {
-  for (const key of keys) delete from[key]
 }
 
 // What an import without "security" does to the files it brings: the sensitive settings
@@ -257,69 +239,55 @@ export function buildBackup({ dir, categories, appVersion = '', build = '', now 
   return { bundle: { app: APP, format: FORMAT, createdAt: now(), appVersion: String(appVersion).slice(0, 40), build: String(build).slice(0, 40), files }, included, missing }
 }
 
-// What an account's copy holds, from the same packing as a backup. What decides what agents may
-// do never goes in it, nor what only means something on this computer. A pane's agent command
-// stays: the computer that gets it keeps only those it knows (withoutSecurity).
-function forSync(name, body) {
-  const parsed = JSON.parse(body)
-  if (name === 'workspace-layout.json') {
-    if (isObject(parsed.settings)) dropKeys(parsed.settings, [...SENSITIVE_SETTINGS, ...THIS_COMPUTER_SETTINGS])
-    forEachSavedPane(parsed, (pane) => dropKeys(pane, [...PANE_SECURITY, ...PANE_THIS_RUN]))
-    return JSON.stringify(parsed)
+// What an account's copy holds: each file rebuilt from the strict list of syncSchema.js, so that
+// what decides what agents may do, or only means something on this computer, is simply not there.
+// shadow: what this computer changed only to fit a copy it received, which goes back as it was.
+// -> { bundle, unsettled, unreadable: [names] }. unsettled: a file that is there could not be read
+// right now (being written, or damaged). A copy without it would replace one that has it: not this
+// round. A file that is simply not there is left out, and settingsSync.js asks before that goes up.
+export function buildSyncBundle({ dir, appVersion = '', build = '', now = Date.now, fsImpl = fs, shadow = null } = {}) {
+  const files = {}
+  const unreadable = []
+  for (const name of SYNCED_FILE_NAMES) {
+    let text
+    try {
+      const file = path.join(dir, name)
+      const st = fsImpl.lstatSync(file)
+      if (!st.isFile() || st.isSymbolicLink() || st.size > MAX_FILE_BYTES) throw new Error('not a plain file') // i18n-ignore
+      text = fsImpl.readFileSync(file, 'utf8')
+    } catch (err) {
+      if (!err || err.code !== 'ENOENT') unreadable.push(name)
+      continue
+    }
+    let parsed
+    try {
+      parsed = JSON.parse(text)
+    } catch {
+      unreadable.push(name)
+      continue
+    }
+    try {
+      if (name === 'workspace-layout.json' && shadow) files[name] = JSON.stringify(restoreShadow(rebuildLayout(parsed), shadow))
+      else files[name] = rebuildToSend(name, parsed)
+    } catch (err) {
+      // Not the shape of that file at all: as good as damaged. Too much for a copy is said as such.
+      if (!err || err.code !== 'refused') throw err
+      unreadable.push(name)
+    }
   }
-  if (name === 'remote-hosts.json' && Array.isArray(parsed.targets)) {
-    for (const target of parsed.targets) if (isObject(target)) delete target.proxyCommand
-    return JSON.stringify(parsed)
+  return {
+    bundle: { app: APP, format: FORMAT, createdAt: now(), appVersion: String(appVersion).slice(0, 40), build: String(build).slice(0, 40), files },
+    unsettled: unreadable.length > 0,
+    unreadable
   }
-  return body
 }
 
-// -> { bundle, unsettled }. unsettled: a file that is there could not be read right now (being
-// written, or damaged). A copy without it would replace one that has it: not this round.
-export function buildSyncBundle({ dir, appVersion = '', build = '', now = Date.now, fsImpl = fs } = {}) {
-  const { bundle, missing } = buildBackup({ dir, categories: SYNC_CATEGORIES, appVersion, build, now, fsImpl })
-  for (const [name, body] of Object.entries(bundle.files)) bundle.files[name] = forSync(name, body)
-  return { bundle, unsettled: missing.some((name) => fsImpl.existsSync(path.join(dir, name))) }
-}
-
-// A copy from another computer, made ready for this one before it is staged. This computer's own
-// settings come back. An agent never starts by itself or in the wrong place: one whose folder is
-// not here comes back as a plain terminal (its terminal then starts in the home folder), the
-// others come back asleep, unless their terminal still runs here (running: its pane ids).
-// -> { body, missing: [folders not on this computer] }
-export function localizeLayout(body, { currentBody = null, running = new Set(), folderExists = fs.existsSync, now = Date.now } = {}) {
-  const parsed = JSON.parse(body)
-  let current
-  try {
-    current = currentBody ? JSON.parse(currentBody) : null
-  } catch {
-    current = null
-  }
-  if (isObject(parsed.settings) && isObject(current) && isObject(current.settings)) {
-    for (const key of THIS_COMPUTER_SETTINGS) if (Object.prototype.hasOwnProperty.call(current.settings, key)) parsed.settings[key] = current.settings[key]
-  }
-  const missing = new Set()
-  const isHere = (folder) => {
-    if (typeof folder !== 'string' || !folder) return true
-    const exists = folderExists(folder)
-    if (!exists) missing.add(folder)
-    return exists
-  }
-  if (Array.isArray(parsed.workspaces)) {
-    for (const w of parsed.workspaces) if (isObject(w) && !w.remote) isHere(w.cwd)
-  }
-  forEachSavedPane(parsed, (pane, w) => {
-    if (pane.kind !== 'agent' || typeof pane.agentCommand !== 'string' || w.remote || pane.remoteHostId || running.has(pane.id)) return
-    const copy = isObject(pane.worktree) && typeof pane.worktree.path === 'string' ? pane.worktree.path : null
-    if (!isHere(copy || w.cwd)) {
-      pane.agentCommand = null
-      pane.worktree = null
-      delete pane.sleeping
-    } else if (SESSION_ID_RE.test(String(pane.sessionId))) {
-      if (!pane.sleeping) pane.sleeping = { at: now() }
-    } else pane.agentCommand = null
-  })
-  return { body: JSON.stringify(parsed), missing: [...missing] }
+// A copy from another computer, rebuilt strictly, made ready for this one before it is staged:
+// see syncSchema.js localizeRebuilt. Throws { code: 'refused' } for anything out of shape.
+// -> { body, missing: [folders not on this computer], missingAgents, shadow }
+export function localizeLayout(body, { agents = new Map(), running = new Set(), folderExists = fs.existsSync, now = Date.now } = {}) {
+  const { layout, missing, missingAgents, shadow } = localizeRebuilt(rebuildLayout(JSON.parse(body), { strict: true }), { agents, running, folderExists, now })
+  return { body: JSON.stringify(layout), missing, missingAgents, shadow }
 }
 
 // The file the user picked -> what it holds, checked, or a code. Nothing is written.
@@ -367,7 +335,9 @@ export function inspectBackup(text) {
 
 // Chosen categories of an inspected backup -> staged in the data folder, to be put in
 // place at the next start. -> { count, categories }
-export function stageImport({ dir, files, categories, knownCommands = [], now = Date.now, fsImpl = fs } = {}) {
+// prepared: the bodies are ready as they are (a copy of an account, rebuilt and made ready); it is
+// laid over this computer's files at the start that applies it, as its manifest says (extra).
+export function stageImport({ dir, files, categories, knownCommands = [], now = Date.now, fsImpl = fs, prepared = false, extra = null } = {}) {
   const wanted = new Set(Array.isArray(categories) ? categories : [])
   const names = []
   for (const cat of CATEGORIES) {
@@ -384,7 +354,7 @@ export function stageImport({ dir, files, categories, knownCommands = [], now = 
       if (err && err.code === 'failed') throw err
     }
   }
-  const security = wanted.has(SECURITY)
+  const security = wanted.has(SECURITY) || prepared
   const bodies = {}
   for (const name of names) {
     let body = files[name]
@@ -403,7 +373,7 @@ export function stageImport({ dir, files, categories, knownCommands = [], now = 
   fsImpl.mkdirSync(pending, { recursive: true })
   for (const name of names) fsImpl.writeFileSync(path.join(pending, name), bodies[name])
   // The manifest last: a staging cut short has no manifest and is never applied.
-  fsImpl.writeFileSync(path.join(pending, 'manifest.json'), JSON.stringify({ format: FORMAT, at: now(), files: names }))
+  fsImpl.writeFileSync(path.join(pending, 'manifest.json'), JSON.stringify({ ...(extra || {}), format: FORMAT, at: now(), files: names }))
   return { count: names.length, categories: CATEGORIES.filter((c) => wanted.has(c.id)).map((c) => c.id) }
 }
 
@@ -425,6 +395,17 @@ function renameWithRetry(fsImpl, from, to) {
 }
 
 export const hasPendingImport = (dir, fsImpl = fs) => fsImpl.existsSync(path.join(dir, PENDING_DIR, 'manifest.json'))
+
+// Whether the layout came from elsewhere and the window has not saved it asleep yet: nothing is
+// typed into a pane until a click, whatever the panes say (App.vue restoreOrSeedLayout).
+export const layoutHeld = (dir, fsImpl = fs) => fsImpl.existsSync(path.join(dir, HELD_FILE))
+export function releaseLayoutHeld({ dir, fsImpl = fs } = {}) {
+  try {
+    fsImpl.rmSync(path.join(dir, HELD_FILE), { force: true })
+  } catch {
+    /* stays held: the agents come back asleep once more */
+  }
+}
 
 // What was staged and not put in place yet is dropped. A link there is left alone.
 export function dropPendingImport({ dir, fsImpl = fs } = {}) {
@@ -464,6 +445,14 @@ export function applyPendingImport({ dir, now = Date.now, fsImpl = fs } = {}) {
       /* not there yet */
     }
   }
+  // Written before the layout is in place: a crash right after it must not start anything.
+  if (names.includes('workspace-layout.json')) {
+    try {
+      fsImpl.writeFileSync(path.join(dir, HELD_FILE), JSON.stringify({ at: now() }))
+    } catch {
+      return { applied: [], failed: names }
+    }
+  }
   // Applied at most once from this manifest: a crash half-way is resumed from the staged
   // files that are left, never started over on top of what was already applied.
   try {
@@ -478,9 +467,19 @@ export function applyPendingImport({ dir, now = Date.now, fsImpl = fs } = {}) {
       const source = path.join(pending, name)
       const st = fsImpl.lstatSync(source)
       if (!st.isFile() || st.isSymbolicLink() || st.size > MAX_FILE_BYTES) throw new Error('bad staged file') // i18n-ignore
-      const body = fsImpl.readFileSync(source, 'utf8')
+      let body = fsImpl.readFileSync(source, 'utf8')
       if (!shapeOk(JSON.parse(body), ALL.get(name).shape)) throw new Error('bad shape') // i18n-ignore
       const target = path.join(dir, name)
+      // A copy of an account: over what this computer has now, a change since "Use them" included.
+      if (manifest.source === 'sync') {
+        let currentBody = null
+        try {
+          currentBody = fsImpl.readFileSync(target, 'utf8')
+        } catch {
+          currentBody = null
+        }
+        body = finishFile(name, body, currentBody, manifest)
+      }
       if (fsImpl.existsSync(target)) {
         fsImpl.mkdirSync(backups, { recursive: true })
         fsImpl.copyFileSync(target, path.join(backups, name))
@@ -497,7 +496,7 @@ export function applyPendingImport({ dir, now = Date.now, fsImpl = fs } = {}) {
   if (out.failed.length) {
     // What could not be put in place stays staged, to be tried again at the next start.
     try {
-      fsImpl.writeFileSync(path.join(pending, 'manifest.json'), JSON.stringify({ format: FORMAT, at: now(), files: out.failed }))
+      fsImpl.writeFileSync(path.join(pending, 'manifest.json'), JSON.stringify({ ...manifest, format: FORMAT, at: now(), files: out.failed }))
       fsImpl.rmSync(path.join(pending, 'manifest.applying'), { force: true })
     } catch {
       /* the staging stays as it is */

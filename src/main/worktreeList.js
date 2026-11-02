@@ -65,6 +65,14 @@ export function localRootsOfLayout(data) {
   return out
 }
 
+// The folders the person chose on this computer: those an agent may be pre-trusted in. A project
+// that came with a copy of the settings has its folder named by that copy, not by a person here:
+// the agent asks (settingsBackup.js marks it when the copy is put in place).
+export function chosenRootsOfLayout(data) {
+  const list = data && typeof data === 'object' && Array.isArray(data.workspaces) ? data.workspaces : []
+  return localRootsOfLayout({ workspaces: list.filter((w) => !w || w.fromCopy !== true) })
+}
+
 // The folders whose worktrees may be listed: the local project folders and
 // the repositories of a folder imported as a group (inside that folder).
 export function localRepoRootsOfLayout(data) {

@@ -6,7 +6,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { CATEGORIES, FORMAT, PENDING_DIR, BACKUPS_DIR, SENSITIVE_SETTINGS, SYNC_CATEGORIES, buildBackup, buildSyncBundle, dropPendingImport, inspectBackup, localizeLayout, stageImport, hasPendingImport, applyPendingImport, layoutOk, withoutSecurity } from '../settingsBackup'
+import { CATEGORIES, FORMAT, HELD_FILE, PENDING_DIR, BACKUPS_DIR, SENSITIVE_SETTINGS, SYNC_CATEGORIES, buildBackup, buildSyncBundle, dropPendingImport, inspectBackup, layoutHeld, localizeLayout, releaseLayoutHeld, stageImport, hasPendingImport, applyPendingImport, layoutOk, withoutSecurity } from '../settingsBackup'
 
 let dir
 const put = (name, value) => fs.writeFileSync(path.join(dir, name), typeof value === 'string' ? value : JSON.stringify(value))
@@ -427,13 +427,15 @@ describe('what an account\u2019s copy holds', () => {
 
   it('what decides what agents may do, and what is this computer\u2019s, stays out', () => {
     const settings = Object.fromEntries(SENSITIVE_SETTINGS.map((key) => [key, 'SENSITIVE']))
-    put('workspace-layout.json', { settings: { ...settings, theme: 'dark', workspaceDir: 'C:/mine', gpuAcceleration: 'off' }, workspaces: [{ tree: { type: 'split', children: [agent({ permissions: 'yolo', permissionMode: 'x', launchYolo: true, rootNoYolo: true, launchSig: 'sig', accountId: 'acc', lastModel: { model: 'm' }, launchedAt: 5, teamTools: true, toolsVersion: 'v' })] } }] })
-    put('remote-hosts.json', { targets: [{ id: 'h', host: 'x', proxyCommand: 'evil', jumpHost: 'j' }] })
+    put('workspace-layout.json', { settings: { ...settings, theme: 'dark', workspaceDir: 'C:/mine', gpuAcceleration: 'off' }, workspaces: [{ id: 'ws-1', tree: { type: 'split', dir: 'row', sizes: [50, 50], children: [agent({ permissions: 'yolo', permissionMode: 'x', launchYolo: true, rootNoYolo: true, launchSig: 'SENSITIVE', accountId: 'a', lastModel: {}, launchedAt: 1, teamTools: true, toolsVersion: 'v' }), agent({ id: 'pane-b' })] } }] })
+    put('remote-hosts.json', { targets: [{ id: 'h', host: 'x', proxyCommand: 'evil', jumpHost: 'j', identityFile: 'C:/key' }] })
     const { bundle } = buildSyncBundle({ dir })
     const layout = JSON.parse(bundle.files['workspace-layout.json'])
     expect(layout.settings).toEqual({ theme: 'dark' })
-    expect(layout.workspaces[0].tree.children[0]).toEqual(agent())
-    expect(JSON.parse(bundle.files['remote-hosts.json']).targets[0]).toEqual({ id: 'h', host: 'x', jumpHost: 'j' })
+    expect(layout.workspaces[0].tree.children[0]).toEqual({ type: 'leaf', id: 'pane-a', kind: 'agent', agentId: 'claude', sessionId: 'session-id-1' })
+    const host = JSON.parse(bundle.files['remote-hosts.json']).targets[0]
+    expect(host).toMatchObject({ id: 'h', host: 'x' })
+    for (const key of ['proxyCommand', 'jumpHost', 'identityFile']) expect(host).not.toHaveProperty(key)
     expect(JSON.stringify(bundle)).not.toContain('SENSITIVE')
   })
 
@@ -441,36 +443,50 @@ describe('what an account\u2019s copy holds', () => {
     fs.rmSync(path.join(dir, 'remote-hosts.json'))
     expect(buildSyncBundle({ dir }).unsettled).toBe(false)
     put('task-board.json', '{ half written')
-    const { bundle, unsettled } = buildSyncBundle({ dir })
+    const { bundle, unsettled, unreadable } = buildSyncBundle({ dir })
     expect(unsettled).toBe(true)
+    expect(unreadable).toEqual(['task-board.json'])
     expect(bundle.files['task-board.json']).toBeUndefined()
+  })
+
+  it('a board in the older shape (a bare list, still read) goes up as cards, and holds nothing back', () => {
+    put('task-board.json', [{ id: 'old-card', title: 'From before', column: 'todo' }])
+    const { bundle, unsettled } = buildSyncBundle({ dir })
+    expect(unsettled).toBe(false)
+    expect(JSON.parse(bundle.files['task-board.json']).tasks).toEqual([{ id: 'old-card', title: 'From before', column: 'todo' }])
   })
 
   describe('made ready for this computer', () => {
     const exists = (...folders) => (folder) => folders.includes(folder)
+    const agents = new Map([['claude', { command: 'claude', name: 'Claude Code', available: true }]])
+    const asked = []
     const local = (workspaces, options = {}) => {
-      const out = localizeLayout(JSON.stringify({ settings: { theme: 'dark' }, workspaces }), { now: () => 7, ...options })
-      return { layout: JSON.parse(out.body), missing: out.missing }
+      const out = localizeLayout(JSON.stringify({ settings: { theme: 'dark' }, workspaces }), { now: () => 7, agents, ...options })
+      return { layout: JSON.parse(out.body), missing: out.missing, missingAgents: out.missingAgents, shadow: out.shadow }
     }
+    const ws = (over = {}) => ({ id: 'ws-1', cwd: 'C:/p', ...over })
 
-    it('this computer\u2019s own settings come back', () => {
-      const { layout } = local([], { currentBody: JSON.stringify({ settings: { workspaceDir: 'D:/here', gpuAcceleration: 'off', theme: 'old' } }) })
-      expect(layout.settings).toEqual({ theme: 'dark', workspaceDir: 'D:/here', gpuAcceleration: 'off' })
-    })
-
-    it('a damaged current file only means nothing comes back from it', () => {
-      expect(local([], { currentBody: '{ nope' }).layout.settings).toEqual({ theme: 'dark' })
-    })
-
-    it('an agent whose folder is here comes back asleep, its conversation kept', () => {
-      const { layout, missing } = local([{ cwd: 'C:/p', tree: agent() }], { folderExists: exists('C:/p') })
-      expect(layout.workspaces[0].tree).toEqual(agent({ sleeping: { at: 7 } }))
+    it('an agent whose folder is here comes back asleep and held, with this computer\u2019s command', () => {
+      const { layout, missing } = local([ws({ tree: agent() })], { folderExists: exists('C:/p') })
+      expect(layout.workspaces[0].tree).toMatchObject({ kind: 'agent', agentId: 'claude', agentCommand: 'claude', sessionId: 'session-id-1', sleeping: { at: 7, held: true } })
       expect(missing).toEqual([])
     })
 
+    it('whatever command the copy names, the one that comes back is this computer\u2019s', () => {
+      const { layout } = local([ws({ tree: agent({ agentCommand: 'calc.exe' }) })], { folderExists: exists('C:/p') })
+      expect(layout.workspaces[0].tree.agentCommand).toBe('claude')
+    })
+
+    it('an agent this computer does not have: a plain terminal, named, and nothing to start', () => {
+      const { layout, missingAgents } = local([ws({ tree: agent({ agentId: 'made-up', agentCommand: 'calc.exe' }) })], { folderExists: exists('C:/p') })
+      expect(layout.workspaces[0].tree.kind).toBe('shell')
+      expect(layout.workspaces[0].tree.agentCommand).toBeUndefined()
+      expect(missingAgents).toEqual(['made-up'])
+    })
+
     it('an agent whose folder is not here never runs elsewhere: a plain terminal, and the folder is named', () => {
-      const { layout, missing } = local([{ cwd: 'C:/gone', tree: { type: 'split', children: [agent(), agent({ id: 'pane-b', sleeping: { at: 1 } })] } }], { folderExists: exists() })
-      expect(layout.workspaces[0].tree.children.map((p) => p.agentCommand)).toEqual([null, null])
+      const { layout, missing } = local([ws({ cwd: 'C:/gone', tree: { type: 'split', dir: 'row', sizes: [50, 50], children: [agent(), agent({ id: 'pane-b', sleeping: { at: 1 } })] } })], { folderExists: exists() })
+      expect(layout.workspaces[0].tree.children.map((p) => p.kind)).toEqual(['shell', 'shell'])
       expect(layout.workspaces[0].tree.children[1].sleeping).toBeUndefined()
       expect(layout.workspaces[0].cwd).toBe('C:/gone')
       expect(missing).toEqual(['C:/gone'])
@@ -478,43 +494,131 @@ describe('what an account\u2019s copy holds', () => {
 
     it('a copy of the project (a worktree) that is not here: the same, even if the project is', () => {
       const pane = agent({ worktree: { path: 'C:/p.worktrees/x', branch: 'x' } })
-      const { layout, missing } = local([{ cwd: 'C:/p', tree: pane }], { folderExists: exists('C:/p') })
-      expect(layout.workspaces[0].tree).toMatchObject({ agentCommand: null, worktree: null })
+      const { layout, missing } = local([ws({ tree: pane })], { folderExists: exists('C:/p') })
+      expect(layout.workspaces[0].tree.kind).toBe('shell')
+      expect(layout.workspaces[0].tree.worktree).toBeUndefined()
       expect(missing).toEqual(['C:/p.worktrees/x'])
     })
 
-    it('an agent with no conversation to come back to does not start by itself', () => {
-      const { layout } = local([{ cwd: 'C:/p', tree: agent({ sessionId: null }) }], { folderExists: exists('C:/p') })
-      expect(layout.workspaces[0].tree.agentCommand).toBeNull()
+    it('an agent with no conversation stays asleep and held: never started by itself', () => {
+      const { layout } = local([ws({ tree: agent({ sessionId: null }) })], { folderExists: exists('C:/p') })
+      expect(layout.workspaces[0].tree).toMatchObject({ kind: 'agent', sleeping: { at: 7, held: true } })
+      expect(layout.workspaces[0].tree.sessionId).toBeUndefined()
     })
 
-    it('a terminal still running here comes back as it is', () => {
-      const { layout } = local([{ cwd: 'C:/gone', tree: agent() }], { folderExists: exists(), running: new Set(['pane-a']) })
-      expect(layout.workspaces[0].tree).toEqual(agent())
+    it('a pane that still runs here is left to this computer\u2019s own pane', () => {
+      const { layout } = local([ws({ cwd: 'C:/gone', tree: agent() })], { folderExists: exists(), running: new Set(['pane-a']) })
+      expect(layout.workspaces[0].tree.sleeping).toBeUndefined()
+      expect(layout.workspaces[0].tree.kind).toBe('agent')
     })
 
-    it('a project with no folder, an SSH project and an SSH pane are not about this computer\u2019s folders', () => {
-      const remoteTree = agent({ id: 'pane-r', remoteHostId: 'ssh-1' })
+    it('an SSH project and an SSH pane are not about this computer\u2019s folders, and come back asleep too', () => {
       const { layout, missing } = local(
         [
-          { cwd: null, tree: agent({ id: 'pane-n' }) },
-          { remote: { hostId: 'ssh-1', path: '/x' }, cwd: '/x', tree: agent({ id: 'pane-o' }) },
-          { cwd: 'C:/gone', tree: remoteTree }
+          ws({ cwd: null, tree: agent({ id: 'pane-n' }) }),
+          ws({ id: 'ws-2', remote: { hostId: 'ssh-1', path: '/x' }, cwd: null, tree: agent({ id: 'pane-o' }) }),
+          ws({ id: 'ws-3', cwd: 'C:/gone', tree: agent({ id: 'pane-r', remoteHostId: 'ssh-1' }) })
         ],
         { folderExists: exists() }
       )
-      expect(layout.workspaces[0].tree.sleeping).toEqual({ at: 7 })
-      expect(layout.workspaces[1].tree).toEqual(agent({ id: 'pane-o' }))
-      expect(layout.workspaces[2].tree).toEqual(remoteTree)
+      for (const w of layout.workspaces) expect(w.tree).toMatchObject({ kind: 'agent', sleeping: { at: 7, held: true } })
       expect(missing).toEqual(['C:/gone'])
     })
 
-    it('terminals, editors, browsers and chats are left alone: they already cope with a missing folder', () => {
-      const shell = { type: 'leaf', kind: 'shell', id: 'pane-s', shellId: 'powershell', startDir: 'C:/gone' }
-      const editor = { type: 'leaf', kind: 'editor', id: 'pane-e', files: [{ path: 'C:/gone/a.txt' }] }
-      const chat = { type: 'leaf', kind: 'chat', id: 'pane-c', cwd: 'C:/gone', agentId: 'claude' }
-      const { layout } = local([{ cwd: 'C:/gone', tree: { type: 'split', children: [shell, editor, chat] } }], { folderExists: exists() })
-      expect(layout.workspaces[0].tree.children).toEqual([shell, editor, chat])
+    it('a chat comes back held; one whose folder is not here is a plain terminal', () => {
+      const chat = { type: 'leaf', kind: 'chat', id: 'pane-c', cwd: 'C:/p', agentId: 'claude' }
+      expect(local([ws({ tree: chat })], { folderExists: exists('C:/p') }).layout.workspaces[0].tree).toMatchObject({ kind: 'chat', held: true })
+      expect(local([ws({ tree: chat })], { folderExists: exists() }).layout.workspaces[0].tree.kind).toBe('shell')
+    })
+
+    it.each([
+      ['a share', '\\\\evil.example\\share'],
+      ['a share with forward slashes', '//evil.example/share'],
+      ['the long form', '\\\\?\\UNC\\evil.example\\share'],
+      ['the device form', '\\\\.\\UNC\\evil.example\\share'],
+      ['the native form', '\\??\\UNC\\evil.example\\share'],
+      ['mixed slashes', '/\\evil.example\\share'],
+      ['a space first', ' \\\\evil.example\\share'],
+      ['a relative path', 'share\\folder'],
+      ['a URL', 'file://evil.example/share']
+    ])('%s is refused without ever being looked at, wherever it is named', (_what, share) => {
+      const looked = []
+      const folderExists = (folder) => {
+        looked.push(folder)
+        return true
+      }
+      const panes = { type: 'split', dir: 'row', sizes: [25, 25, 25, 25], children: [
+        agent({ worktree: { path: share, branch: 'x' } }),
+        { type: 'leaf', kind: 'chat', id: 'pane-c', cwd: share, agentId: 'claude' },
+        { type: 'leaf', kind: 'editor', id: 'pane-e', files: [{ path: share + '\\a.txt' }] },
+        { type: 'leaf', kind: 'shell', id: 'pane-s', worktree: { path: share } }
+      ] }
+      const { layout, missing, shadow } = local([ws({ cwd: share, group: { repos: [{ path: share }] }, tree: panes })], { folderExists })
+      expect(looked).toEqual([])
+      expect(layout.workspaces[0].cwd).toBeNull()
+      expect(layout.workspaces[0].group).toBeUndefined()
+      expect(JSON.stringify(layout)).not.toContain('evil.example')
+      expect(missing).toContain(share)
+      // ...and what this computer will send goes back as it was: it is not this computer's to change.
+      expect(shadow.projects['ws-1'].cwd).toBe(share)
+    })
+  })
+
+  describe('put in place at the next start', () => {
+    const stageIt = (over = {}) =>
+      stageImport({
+        dir,
+        categories: SYNC_CATEGORIES,
+        prepared: true,
+        extra: { source: 'sync', running: [], hostAddresses: 'keep', device: 'OTHER', ...over.extra },
+        files: {
+          'workspace-layout.json': JSON.stringify({ version: 2, settings: { theme: 'from-copy' }, workspaces: [{ id: 'ws-1', cwd: 'C:/new', tree: null }] }),
+          ...over.files
+        }
+      })
+
+    it('what this computer changed since "Use them" counts: a setting stays what it is now', () => {
+      put('workspace-layout.json', { settings: { agentPermissions: 'manual', theme: 'mine' }, workspaces: [] })
+      stageIt()
+      put('workspace-layout.json', { settings: { agentPermissions: 'yolo', theme: 'mine', workspaceDir: 'D:/here' }, workspaces: [] })
+      expect(applyPendingImport({ dir }).applied).toEqual(['workspace-layout.json'])
+      expect(JSON.parse(fs.readFileSync(path.join(dir, 'workspace-layout.json'), 'utf8')).settings).toEqual({ agentPermissions: 'yolo', theme: 'from-copy', workspaceDir: 'D:/here' })
+    })
+
+    it('says that the layout came from elsewhere until the window has saved it asleep', () => {
+      stageIt()
+      expect(layoutHeld(dir)).toBe(false)
+      applyPendingImport({ dir })
+      expect(layoutHeld(dir)).toBe(true)
+      releaseLayoutHeld({ dir })
+      expect(layoutHeld(dir)).toBe(false)
+    })
+
+    it('a backup with a layout says so too, and a board alone does not', () => {
+      stageImport({ dir, files: { 'task-board.json': '{"tasks":[]}' }, categories: ['board'] })
+      applyPendingImport({ dir })
+      expect(layoutHeld(dir)).toBe(false)
+      stageImport({ dir, files: { 'workspace-layout.json': '{"workspaces":[]}' }, categories: ['settings'] })
+      applyPendingImport({ dir })
+      expect(layoutHeld(dir)).toBe(true)
+    })
+
+    it('if the mark cannot be written, the layout is not put in place', () => {
+      stageIt()
+      const fsImpl = { ...fs, writeFileSync: (where, ...rest) => {
+        if (String(where).endsWith(HELD_FILE)) throw new Error('disk full')
+        return fs.writeFileSync(where, ...rest)
+      } }
+      expect(applyPendingImport({ dir, fsImpl }).applied).toEqual([])
+      expect(hasPendingImport(dir)).toBe(true)
+      expect(JSON.parse(fs.readFileSync(path.join(dir, 'workspace-layout.json'), 'utf8')).settings.theme).not.toBe('from-copy')
+    })
+
+    it('what stays staged after a failure keeps what it says about itself', () => {
+      stageIt({ files: { 'task-board.json': '{"tasks":[]}' } })
+      fs.writeFileSync(path.join(dir, PENDING_DIR, 'task-board.json'), '[]')
+      applyPendingImport({ dir })
+      expect(JSON.parse(fs.readFileSync(path.join(dir, PENDING_DIR, 'manifest.json'), 'utf8'))).toMatchObject({ source: 'sync', device: 'OTHER', files: ['task-board.json'] })
     })
   })
 

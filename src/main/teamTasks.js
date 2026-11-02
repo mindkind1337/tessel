@@ -84,6 +84,8 @@ export function publishTeamTasks({ dir, teamId, board, tasks } = {}) {
       since: Number.isFinite(t.since) ? t.since : null,
       // Added or renamed by a Live Share guest (its name).
       ...(guestName(t.guest) ? { guest: guestName(t.guest) } : {}),
+      // Its words came with a copy of the settings, from that computer.
+      ...(guestName(t.copied) ? { copied: guestName(t.copied) } : {}),
       // Orchestration: what it waits for, a decision asked, its report.
       ...orchestration(t)
     }))

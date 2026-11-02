@@ -336,13 +336,33 @@ function openSettingsAt(section, anchor = null) {
 const stopAccountSignedIn = window.shellApi?.tesselAccount?.onSignedIn?.(() => openSettingsAt('tessel-account'))
 // Newer settings from another computer: said once for each version, and the choice is on the page.
 const stopSyncNewer = window.shellApi?.tesselSync?.onNewer?.((info) => {
-  showToast(t('settings.tesselAccount.sync.newerToast', 'Newer settings from {{device}} are waiting. Nothing changes until you choose.', { device: info.device }), {
+  const text = info.device
+    ? t('settings.tesselAccount.sync.newerToast', 'Newer settings from {{device}} are waiting. Nothing changes until you choose.', { device: info.device })
+    : t('settings.tesselAccount.sync.newerToastUnknown', 'Newer settings are waiting. Nothing changes until you choose.')
+  showToast(text, {
     timeout: 20000,
+    action: { label: t('settings.tesselAccount.sync.newerToastAction', 'See them'), run: () => openSettingsAt('tessel-account') }
+  })
+})
+// Something about the sync needs the person: it stays on screen until it is dismissed or dealt with,
+// and comes back at each start while it lasts (settingsSync.js raiseAlert).
+const stopSyncAlert = window.shellApi?.tesselSync?.onAlert?.((alert) => {
+  const words = {
+    erased: () => t('settings.tesselAccount.sync.alert.erased', 'Your settings copy is gone from the server. Nothing was sent. Choose what to do in Settings.'),
+    saltChanged: () => t('settings.tesselAccount.sync.alert.saltChanged', 'Your settings copy was replaced with another phrase. Nothing goes up until you enter your phrase in Settings.'),
+    shrunk: () => t('settings.tesselAccount.sync.alert.shrunk', 'Much of your setup is gone from this computer. Nothing was sent. Choose what to do in Settings.'),
+    uploadsStopped: () => t('settings.tesselAccount.sync.alert.uploadsStopped', 'Your settings are no longer being uploaded: a file cannot be read. See Settings.')
+  }[alert && alert.kind]
+  if (!words) return
+  showToast(words(), {
+    kind: 'error',
+    timeout: 24 * 3600 * 1000,
     action: { label: t('settings.tesselAccount.sync.newerToastAction', 'See them'), run: () => openSettingsAt('tessel-account') }
   })
 })
 onBeforeUnmount(() => stopAccountSignedIn?.())
 onBeforeUnmount(() => stopSyncNewer?.())
+onBeforeUnmount(() => stopSyncAlert?.())
 // Markdown, diagrams, tables, JSON, images and PDFs open as editor tabs with
 // Orca's view toggle (Preview | Source | Changes, Table, the picture, the PDF's
 // pages). A PDF goes to its own window (Chromium's viewer) only when no
@@ -733,6 +753,8 @@ function openChatAgent({ ws = currentWs.value, agent = 'claude', accountId } = {
 async function chatOpen(leaf, { askTrust = true } = {}) {
   const api = window.shellApi.chat
   if (!api || !leaf || leaf.kind !== 'chat') return { ok: false, code: 'failed' }
+  // Came with a layout from elsewhere: only the person's first message starts it (ChatPane.vue).
+  if (leaf.held === true) return { ok: false, code: 'held' }
   const agentId = CHAT_AGENTS.includes(leaf.agentId) ? leaf.agentId : 'claude'
   const agent = agentById(agentId) || { id: agentId, name: { claude: 'Claude Code', codex: 'Codex', opencode: 'OpenCode' }[agentId] } // i18n-ignore
   // OpenCode takes only a provider/model id.
@@ -2030,7 +2052,9 @@ function serializeNode(node) {
       team: node.team || null,
       worker: node.worker ? true : undefined,
       maxPermissions: node.maxPermissions === 'manual' ? 'manual' : undefined,
-      worktree: node.worktree || undefined
+      worktree: node.worktree || undefined,
+      // Came with a layout from elsewhere: not started until the person writes to it.
+      held: node.held === true ? true : undefined
     }
   }
   // A browser pane: its page (no terminal).
@@ -2074,7 +2098,7 @@ function serializeNode(node) {
       remoteHostId: node.remoteHostId || undefined,
       remotePath: node.remotePath || undefined,
       // Asleep: restored asleep (no terminal) until you open it.
-      sleeping: !node.detected && node.sleeping && Number.isFinite(node.sleeping.at) ? { at: node.sleeping.at } : undefined,
+      sleeping: !node.detected && node.sleeping && Number.isFinite(node.sleeping.at) ? { at: node.sleeping.at, ...(node.sleeping.held === true ? { held: true } : {}) } : undefined,
       titleSet: node.detected ? undefined : node.titleSet || undefined,
       autoTitle: node.detected ? undefined : node.autoTitle || undefined,
       launchedAt: node.launchedAt || null,
@@ -2169,6 +2193,7 @@ async function deserializeNode(snap, cwd = null, attaching = null) {
     // follows Settings again when Tessel starts (Yolo on: Yolo).
     if (snap.maxPermissions === 'manual' && snap.worker === true) leaf.maxPermissions = 'manual'
     if (snap.worktree && typeof snap.worktree === 'object' && typeof snap.worktree.path === 'string') leaf.worktree = snap.worktree
+    if (snap.held === true || restoreHeld) leaf.held = true
     return leaf
   }
   // A browser pane comes back on its page (http(s) only).
@@ -2197,7 +2222,17 @@ async function deserializeNode(snap, cwd = null, attaching = null) {
             accent: snap.accent
           }
         : null
-    const savedId = typeof snap.id === 'string' && /^pane-[\w-]+$/.test(snap.id) ? snap.id : null
+    let savedId = typeof snap.id === 'string' && /^pane-[\w-]+$/.test(snap.id) ? snap.id : null
+    // One rule, whatever the pane says, for a layout that came from elsewhere
+    // (an applied copy or backup; main says so): no agent starts until a click.
+    // Only a terminal that still runs here comes back running, as it is.
+    if (agent && restoreHeld && !restoresAsleep(snap)) {
+      const running = savedId && attaching && attaching.get(savedId) ? await attaching.get(savedId) : null
+      if (!running || !running.ok) {
+        savedId = savedId || newId('pane')
+        snap = { ...snap, id: savedId, sessionId: safeSessionId(snap.sessionId) ? snap.sessionId : null, sleeping: { at: snap.sleeping && Number.isFinite(snap.sleeping.at) ? snap.sleeping.at : Date.now(), held: true } }
+      }
+    }
     // An agent put to sleep stays asleep: its pane, conversation, account and
     // copy are kept, no terminal is started until you open it (Wake).
     if (agent && savedId && restoresAsleep(snap)) {
@@ -2226,7 +2261,10 @@ async function deserializeNode(snap, cwd = null, attaching = null) {
         // follows Settings again (Yolo on: every agent starts in Yolo).
         ...(snap.permissions === 'yolo' ? { permissions: 'yolo' } : {}),
         restoredText: savedOutput[savedId] || '',
-        sleeping: { at: snap.sleeping.at },
+        sleeping: { at: snap.sleeping.at, ...(snap.sleeping.held === true || restoreHeld ? { held: true } : {}) },
+        // On its SSH host again when it wakes (its conversation is there).
+        ...(typeof snap.remoteHostId === 'string' && /^ssh-[\w-]{1,60}$/.test(snap.remoteHostId) ? { remoteHostId: snap.remoteHostId } : {}),
+        ...(typeof snap.remotePath === 'string' && snap.remotePath.length <= 1024 ? { remotePath: snap.remotePath } : {}),
         broadcast: snap.broadcast !== false,
         ...(snap.chatView === true ? { chatView: true } : {})
       })
@@ -2331,8 +2369,14 @@ async function deserializeNode(snap, cwd = null, attaching = null) {
   return reactive({ type: 'split', id: newId('split'), dir: snap.dir, sizes, children })
 }
 
+// This start follows a layout from elsewhere (restoreOrSeedLayout asks main): see deserializeNode.
+let restoreHeld = false
+function holdRestore(held) {
+  restoreHeld = !!held
+}
 // A saved agent put to sleep comes back asleep (no terminal) when it has
-// its pane id and a conversation to resume.
+// its pane id and a conversation to resume. One held until a click needs no
+// conversation: it starts a new one when it is woken.
 function restoresAsleep(snap) {
   return (
     !!snap &&
@@ -2342,7 +2386,7 @@ function restoresAsleep(snap) {
     /^pane-[\w-]+$/.test(snap.id) &&
     !!snap.sleeping &&
     Number.isFinite(snap.sleeping.at) &&
-    !!safeSessionId(snap.sessionId)
+    (!!safeSessionId(snap.sessionId) || (snap.sleeping.held === true && !snap.sessionId))
   )
 }
 // A saved leaf whose terminal may still run in the terminal host: re-attached
@@ -2398,6 +2442,7 @@ function saveLayoutNow() {
       cwd: w.cwd || null,
       ...(w.remote ? { remote: { hostId: w.remote.hostId, path: w.remote.path } } : {}),
       ...(w.group ? { group: { repos: w.group.repos.map((r) => ({ path: r.path, name: r.name })) } } : {}),
+      ...(w.fromCopy === true ? { fromCopy: true } : {}),
       // Auto-tile: the grids arranged by hand (paneGrid.js).
       ...gridModeFields(w),
       tree: serializeNode(w.tree)
@@ -8419,6 +8464,8 @@ function taskPrompt(task, ws) {
     : ''
   return (
     `[Tessel task] ${task.title}\n\n` + // i18n-ignore
+    (task.guestBy ? `(This card's title was written by ${task.guestBy}, a Live Share guest, not the user.)\n\n` : '') + // i18n-ignore
+    (task.copiedFrom ? `(This card's words came from a copy of the settings made on ${task.copiedFrom}, not typed here by the user.)\n\n` : '') + // i18n-ignore
     (task.brief ? `${task.brief}\n\n` : '') +
     team +
     `${where}\n\n` +
@@ -10378,11 +10425,13 @@ async function wakeLeaf(leafId) {
   const ok = await restartInPlace(leafId, { resume: true })
   if (!ok && findLeaf(leafId) === leaf) showToast(t('app.sleep.wakeFailed', '{{name}} could not be woken: try Wake again.', { name: leaf.paneName || leaf.title }), { kind: 'error', timeout: 8000 })
 }
-// A sleeping pane you open wakes up.
+// A sleeping pane you open wakes up. Not one held since a layout came from
+// elsewhere: being shown is not a click, its button wakes it.
+const wakesWhenOpened = (leaf) => !!leaf && !!leaf.sleeping && leaf.sleeping.held !== true
 watch(
   () => {
     const leaf = activeId.value ? findLeaf(activeId.value) : null
-    return leaf && leaf.sleeping ? leaf.id : null
+    return wakesWhenOpened(leaf) ? leaf.id : null
   },
   (id) => {
     if (id) wakeLeaf(id)
@@ -12482,7 +12531,7 @@ watch(
         const leaf = findLeaf(t.paneId)
         recordActivity({ type: 'task', action: 'ready', paneId: t.paneId, title: t.title, wsId: t.wsId })
         if (leaf && leaf.team && teamById(leaf.team))
-          tellAgents([leaf], `[Tessel] Card ${t.id} "${t.title}" can start now: the cards it waited for are done.${t.guestBy ? ` (Its title was written by ${t.guestBy}, a Live Share guest, not the user.)` : ''}`, leaf.team) // i18n-ignore
+          tellAgents([leaf], `[Tessel] Card ${t.id} "${t.title}" can start now: the cards it waited for are done.${t.guestBy ? ` (Its title was written by ${t.guestBy}, a Live Share guest, not the user.)` : ''}${t.copiedFrom ? ` (Its words came from a copy of the settings made on ${t.copiedFrom}, not typed here by the user.)` : ''}`, leaf.team) // i18n-ignore
       }
     }
   }
@@ -12668,6 +12717,8 @@ async function syncBoard(b, round = teamRound) {
       ...(t.gate ? { gate: { question: t.gate.question, options: t.gate.options, status: t.gate.status, answer: t.gate.answer, ...(t.gate.answeredBy ? { answeredBy: t.gate.answeredBy } : {}) } } : {}),
       // Added or renamed by a Live Share guest.
       ...(t.guestBy ? { guest: t.guestBy } : {}),
+      // Its words came with a copy of the settings: said the same way.
+      ...(t.copiedFrom ? { copied: t.copiedFrom } : {}),
       ...(t.report ? { report: { outcome: t.report.outcome, summary: t.report.summary, files: t.report.files } } : {})
     }))
   const sig = JSON.stringify(cards)
@@ -13988,6 +14039,12 @@ async function restoreOrSeedLayout() {
   const def = shells.value.find((s) => s.id === 'powershell') || shells.value[0]
   selectedShell.value = def ? def.id : null
 
+  // Main says whether this layout came from elsewhere. Not knowing is the same as yes.
+  try {
+    holdRestore(window.shellApi.layoutHeld ? await window.shellApi.layoutHeld() : false)
+  } catch {
+    holdRestore(true)
+  }
   let saved = null
   try {
     saved = await loadUnlocked(() => window.shellApi.loadLayout())
@@ -14054,6 +14111,8 @@ async function restoreOrSeedLayout() {
       ws.remote = savedRemote(snap.remote)
       if (ws.remote) ws.cwd = null
       ws.group = savedGroup(snap.group)
+      // Its folder came with a copy: never pre-trusted for an agent, which asks (main's chosenRootsOfLayout).
+      if (snap.fromCopy === true) ws.fromCopy = true
       // Auto-tile: which grids were arranged by hand (none in an older layout).
       ws.gridModes = savedGridModes(snap)
       made.push(ws)
@@ -14235,6 +14294,11 @@ onMounted(async () => {
     // Also capture the initial (seeded or restored) state so an untouched
     // workspace still persists across launches.
     scheduleSave()
+    // A layout from elsewhere, now saved with its agents asleep and held: the next start reads that.
+    if (restoreHeld && persistReady) {
+      saveLayoutNow()
+      window.shellApi.layoutHeldDone?.()
+    }
 
     // Hydrate the task board from its own persisted store, then debounce-save on
     // any change. The watch is registered AFTER hydration so loading the saved

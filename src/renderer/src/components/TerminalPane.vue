@@ -2989,6 +2989,7 @@ function quietFor(minutes) {
   return t('pane.badge.quiet', 'quiet {{minutes}} min', { minutes })
 }
 function asleepText() {
+  if (props.node.sleeping && props.node.sleeping.held === true) return t('pane.sleep.held', 'Came with your settings from elsewhere. Nothing started here: it starts when you wake it.')
   return t('pane.sleep.overlay', 'Asleep since {{time}}: its terminal was stopped to free memory. Its conversation is kept.', { time: sleptAt.value })
 }
 function exitedText() {
@@ -4842,7 +4843,7 @@ const paneMenuBindings = computed(() => ({
       </div>
     </div>
 
-    <div v-else-if="node.sleeping && !chatShown" class="exit-overlay sleeping" data-test="sleep-overlay" @mousedown.stop>
+    <div v-else-if="node.sleeping && (!chatShown || node.sleeping.held === true)" class="exit-overlay sleeping" data-test="sleep-overlay" @mousedown.stop>
       <span>{{ asleepText() }}</span>
       <button class="exit-btn primary" @click="ctx.wakeLeaf && ctx.wakeLeaf(node.id)">{{ t('pane.sleep.wake', 'Wake it') }}</button>
     </div>

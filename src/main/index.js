@@ -49,7 +49,7 @@ import { createWslAccounts } from './wslAccounts'
 import { createUsageProviderSources } from './usageProviderSources'
 import { createGitTrust, setGitTrust } from './gitSafety'
 import { cleanCommitRoots, commitRootAllowed } from '../shared/commitRoots'
-import { createWorktreeList, localRootsOfLayout, localRepoRootsOfLayout } from './worktreeList'
+import { createWorktreeList, chosenRootsOfLayout, localRepoRootsOfLayout } from './worktreeList'
 import { createWorktreeCleanup } from './worktreeCleanup'
 import { isRemotePath } from '../shared/remotePath'
 import { isLsharePath } from '../shared/liveSharePath'
@@ -125,7 +125,7 @@ import { listProcesses, treeOf, waitForExit, killPids, listProcessNames, running
 import { pipeName, trimBuffer } from './ptyProtocol'
 import { createUpdater } from './updater'
 import { createDevUpdate, devRestartCommand } from './devUpdate'
-import { buildBackup, inspectBackup, stageImport, hasPendingImport, applyPendingImport } from './settingsBackup'
+import { buildBackup, inspectBackup, stageImport, hasPendingImport, applyPendingImport, layoutHeld, releaseLayoutHeld } from './settingsBackup'
 import { createAgentUpdates } from './agentUpdates'
 import { createUpdateRunner, fakeSpawn, classifyFailure } from './agentUpdateRunner'
 import { createUpdateHistory } from './agentUpdateHistory'
@@ -1010,6 +1010,19 @@ ipcMain.handle('layout:load', () => {
   }
 })
 
+// A layout that came from elsewhere (settingsBackup.js applyPendingImport): the window starts
+// nothing until a click, whatever its panes say, and says when it has saved them that way.
+ipcMain.handle('layout:held', () => {
+  try {
+    return layoutHeld(app.getPath('userData'))
+  } catch {
+    return true
+  }
+})
+ipcMain.handle('layout:heldDone', (event) => {
+  if (fromMainWindow(event)) releaseLayoutHeld({ dir: app.getPath('userData') })
+})
+
 ipcMain.on('layout:save', (_evt, data) => {
   // Its remote projects are the only remote folders Files, Changes and the
   // editor may reach (remoteFs.js).
@@ -1017,7 +1030,7 @@ ipcMain.on('layout:save', (_evt, data) => {
   // Its local project folders (and a group's repositories) are the only ones whose worktrees are listed.
   if (isLayout(data)) worktreeList.setRoots(localRepoRootsOfLayout(data))
   // ...and the projects whose folder an agent may be pre-trusted in.
-  if (isLayout(data)) agentFolderTrust.setRoots(localRootsOfLayout(data))
+  if (isLayout(data)) agentFolderTrust.setRoots(chosenRootsOfLayout(data))
   // ...and the project it shows (named in the window's memory reports).
   if (isLayout(data)) {
     const w = Array.isArray(data.workspaces) ? data.workspaces[data.currentIndex] : null
@@ -2287,7 +2300,7 @@ try {
   const saved = readJsonSafe(layoutFile(), isLayout)
   remoteFs.setRoots(remoteRootsOfLayout(saved && saved.data))
   worktreeList.setRoots(localRepoRootsOfLayout(saved && saved.data))
-  agentFolderTrust.setRoots(localRootsOfLayout(saved && saved.data))
+  agentFolderTrust.setRoots(chosenRootsOfLayout(saved && saved.data))
 } catch {
   /* none yet: the first save brings them */
 }
@@ -3173,6 +3186,7 @@ const tesselAccount = createTesselAccount({
     send('tesselAccount:signedIn')
     settingsSync.wake()
   },
+  onSignedOut: () => settingsSync.signedOut(),
   onDeleted: () => settingsSync.accountDeleted()
 })
 ipcMain.handle(
@@ -3207,6 +3221,14 @@ app.on('will-quit', () => tesselAccount.close())
 
 // Settings > Tessel account > Your settings everywhere (settingsSync.js): encrypted here, before
 // it leaves. The phrase comes from the window once, in the one call that uses it.
+const savedCustomAgents = () => {
+  try {
+    const list = readJsonSafe(layoutFile(), isLayout)?.data?.settings?.customAgents
+    return Array.isArray(list) ? list : []
+  } catch {
+    return []
+  }
+}
 const settingsSync = createSettingsSync({
   dir: join(app.getPath('userData'), 'tessel-account'),
   dataDir: app.getPath('userData'),
@@ -3220,10 +3242,16 @@ const settingsSync = createSettingsSync({
     const res = await host.request('list', {}, 3000)
     return res && res.ok && Array.isArray(res.ids) ? res.ids : []
   },
-  // The agents Tessel knows and this computer has: a pane of one of them comes back as that agent.
-  knownCommands: async () => (await getAgents()).filter((agent) => agent.available && agent.command).map((agent) => agent.command),
+  // The agents Tessel knows, with this computer's own command: a pane of one of them comes back as
+  // that agent. A copy never says what a pane runs. Asked of this computer's own list of agents,
+  // with those it added itself (never from the copy, which does not hold them).
+  localAgents: async () =>
+    (await getAgents(savedCustomAgents()))
+      .filter((agent) => agent.command)
+      .map((agent) => ({ id: agent.id, command: agent.command, name: agent.name, available: !!agent.available })),
   onChanged: (view) => send('tesselSync:changed', view),
   onNewer: (info) => send('tesselSync:newer', info),
+  onAlert: (alert) => send('tesselSync:alert', alert),
   log: { info: (area, text) => log.info(area, text), warn: (area, text) => log.warn(area, text) }
 })
 const syncFromWindow = (run) => async (event, arg) => {
@@ -3242,9 +3270,14 @@ ipcMain.handle('tesselSync:turnOn', syncFromWindow((q) => settingsSync.turnOn(q 
 ipcMain.handle('tesselSync:startOver', syncFromWindow((q) => settingsSync.startOver(q && q.phrase)))
 ipcMain.handle('tesselSync:turnOff', syncFromWindow((q) => settingsSync.turnOff({ erase: !!(q && q.erase === true) })))
 ipcMain.handle('tesselSync:syncNow', syncFromWindow(() => settingsSync.syncNow()))
-ipcMain.handle('tesselSync:apply', syncFromWindow(() => settingsSync.apply()))
+ipcMain.handle('tesselSync:apply', syncFromWindow((q) => settingsSync.apply({ hostAddresses: q && q.hostAddresses === 'copy' ? 'copy' : 'keep' })))
 ipcMain.handle('tesselSync:cancelApply', syncFromWindow(() => settingsSync.cancelApply()))
 ipcMain.handle('tesselSync:keepMine', syncFromWindow(() => settingsSync.keepMine()))
+ipcMain.handle('tesselSync:sendAgain', syncFromWindow(() => settingsSync.sendAgain()))
+ipcMain.handle('tesselSync:sendSmaller', syncFromWindow(() => settingsSync.sendSmaller()))
+ipcMain.handle('tesselSync:useCopyInstead', syncFromWindow(() => settingsSync.useCopyInstead()))
+ipcMain.handle('tesselSync:earlier', syncFromWindow(() => settingsSync.earlier()))
+ipcMain.handle('tesselSync:applyEarlier', syncFromWindow((q) => settingsSync.applyEarlier(q && q.version, { hostAddresses: q && q.hostAddresses === 'copy' ? 'copy' : 'keep' })))
 // An installed Tessel has no launcher to start the next one: Electron does, once this one is
 // gone. As with a development restart, the closing steps are skipped, so the terminal host and
 // its terminals keep running and the next window reattaches to them. Only ever on a click.

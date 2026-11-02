@@ -382,6 +382,12 @@ async function load() {
     // that turn, its tools or its request any more (else the chat would say
     // "Working" with Stop, or show a card nobody can answer).
     if (session.turnId.value !== null || session.prompts.value.length) session.dispatchLocal({ type: 'status', state: 'ended' })
+    // Came with a layout from elsewhere: nothing starts by itself. It waits, as
+    // one asleep does, and its first message starts it.
+    if (props.node.held === true) {
+      session.dispatchLocal({ type: 'status', state: 'asleep' })
+      return
+    }
     // A conversation restored with the app (it has one already) does not ask
     // to trust its folder by itself: it waits for "Trust this folder…".
     await start({ askTrust: !props.node.sessionId })
@@ -460,6 +466,12 @@ async function send(text, opts = {}) {
   const images = Array.isArray(opts?.images) ? opts.images.filter((id) => typeof id === 'string') : []
   if (!body.trim() && !images.length) return { ok: false }
   if (!sendable()) return { ok: false, error: disabledReason.value || sendBlockedReason.value || undefined }
+  // Came with a layout from elsewhere: this message is the click that starts it.
+  if (props.node.held === true) {
+    delete props.node.held
+    await start({ askTrust: true })
+    if (!sendable()) return { ok: false, error: disabledReason.value || sendBlockedReason.value || undefined }
+  }
   if (images.length) {
     let res
     try {

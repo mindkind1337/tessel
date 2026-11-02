@@ -29,7 +29,7 @@ const cleanUser = (user) => ({
 // The way back from the web page in a command line (a second launch of Tessel), if any.
 export const findAppLink = (argv, scheme) => (Array.isArray(argv) ? argv.find((arg) => typeof arg === 'string' && arg.toLowerCase().startsWith(`${scheme}://`)) : undefined)
 
-export function createTesselAccount({ dir, safeStorage, openExternal, onSignedIn = () => {}, onDeleted = () => {}, scheme = 'tessel', fetchFn = fetch, apiUrl = API_URL, accountUrl = ACCOUNT_URL, signInMs = SIGN_IN_MS, requestMs = REQUEST_MS } = {}) {
+export function createTesselAccount({ dir, safeStorage, openExternal, onSignedIn = () => {}, onSignedOut = () => {}, onDeleted = () => {}, scheme = 'tessel', fetchFn = fetch, apiUrl = API_URL, accountUrl = ACCOUNT_URL, signInMs = SIGN_IN_MS, requestMs = REQUEST_MS } = {}) {
   const file = join(dir, 'session.json')
   let session // undefined until read; null when signed out
   let pending = null // the sign-in waiting for the browser
@@ -276,6 +276,8 @@ export function createTesselAccount({ dir, safeStorage, openExternal, onSignedIn
     const current = readSession()
     forgetSession()
     lastError = null
+    // The person signed out: nothing of a sync key stays. A session the server ended is not this.
+    onSignedOut()
     if (current) {
       try {
         await request('/auth/logout', { method: 'POST', headers: bearer(current.token) })
