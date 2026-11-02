@@ -332,7 +332,7 @@ working on Tessel itself (see [Build from source](#build-from-source)).
   a restart.
 - **Updating a development copy**: a Tessel started with `npm run dev` checks GitHub
   every 30 minutes (`git fetch` of the branch it follows) and, when there are newer
-  builds, shows a yellow `↑ b1700` next to **dev**. It lists them and, for a copy with
+  builds, shows a yellow `↑ b1700` next to the version. It lists them and, for a copy with
   no change of its own, brings them in with a fast-forward; with changes of your own
   it touches nothing and gives you the command. It says whether to restart
   (main process changed). `npm run dev` installs the packages the code needs by itself
@@ -362,7 +362,7 @@ working on Tessel itself (see [Build from source](#build-from-source)).
   part changes (`src/main`, `src/preload`, `launch.mjs`): that cut sessions every time an
   agent merged into the folder. The window still reloads by itself for the
   interface. When the background code changed since Tessel started, a yellow
-  **↻ restart** button next to **dev** lists the files and says to restart when
+  **↻ restart** button next to the version lists the files and says to restart when
   it suits you; your terminals and agents keep running. `TESSEL_WATCH=1 npm run dev`
   brings the automatic restart back. **Restart now**, in that window (and after an
   update), starts the new Tessel in the background and closes this one without

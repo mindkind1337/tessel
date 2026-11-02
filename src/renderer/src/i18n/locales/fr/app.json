@@ -100,7 +100,6 @@
       "updateVersion": "Mettre à jour {{version}}",
       "version": "Version de Tessel : {{version}}",
       "devBuild": "Version de développement (npm run dev)",
-      "dev": "dev",
       "switchWorkspace": "Changer d'espace de travail (Ctrl+PageUp / Ctrl+PageDown)",
       "workspace": "Espace de travail",
       "workspaces": "Espaces de travail",

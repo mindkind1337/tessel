@@ -157,13 +157,6 @@ body.popup-open .toolbar {
   color: #facc15;
 }
 
-.brand-dev {
-  margin-left: -4px;
-  color: #facc15;
-  font-size: 12px;
-  font-weight: 600;
-}
-
 .toolbar-sep {
   width: 1px;
   height: 18px;
@@ -5374,18 +5367,6 @@ body.pane-dragging * {
 }
 .brand-dev-update:hover {
   filter: brightness(1.1);
-}
-
-.tb-left .brand-dev {
-  margin-left: 0;
-  /* The same chip as the restart button beside it. */
-  padding: 0 6px;
-  border: 1px solid #facc15;
-  border-radius: 4px;
-  color: #facc15;
-  font-size: 10.5px;
-  font-weight: 700;
-  line-height: 1.3;
 }
 
 .tb-slash {
