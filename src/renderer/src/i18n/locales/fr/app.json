@@ -141,7 +141,10 @@
       "devUpdated": "Mis à jour : voir quoi faire ensuite",
       "devUpdatedShort": "redémarrer ?",
       "devRestart": "Le code de la partie en arrière-plan a changé depuis le démarrage de Tessel : redémarrer pour l'appliquer",
-      "devRestartShort": "redémarrer"
+      "devRestartShort": "redémarrer",
+      "agentRequest": "Demande d'agent",
+      "agentRequestTitle": "{{agent}} attend ta réponse",
+      "agentRequestEnded": "Une demande de {{agent}} s'est terminée sans réponse."
     },
     "codexHooks": {
       "updated": "Les hooks d'état de Codex ont été mis à jour. Vérifiez-les dans /hooks pour activer l'état en direct."

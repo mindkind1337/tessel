@@ -17,18 +17,22 @@ function slice(from, to) {
 }
 const CODE = slice('const AGENT_APPROVAL_MS', '// An "Allow ..." rule needs auto approve on')
 
-function load() {
+const toasts = []
+function load(extra) {
   const ctx = {
     // Vue's own refs: a fake one hid that a deep ref hands back a proxy.
     ref,
     shallowRef,
     confirmState: { value: null },
+    userWritingNow: () => !!(extra && extra.writing && extra.writing()),
+    showToast: (text) => toasts.push(text),
+    t: (key, text, vars) => String(text).replace(/\{\{(\w+)\}\}/g, (_, k) => (vars || {})[k]),
     Date: globalThis.Date,
     Map,
     Promise,
     setTimeout: (...a) => globalThis.setTimeout(...a)
   }
-  vm.runInNewContext(`${CODE}\nthis.api = { askAgentApproval, answerAgentApproval, dismissAgentApprovals, expireAgentApprovalById, checkAgentApprovalTime, closeExpiredApproval, approvalCard, APPROVAL_GAP_MS, APPROVAL_EXPIRED_SHOW_MS }`, ctx)
+  vm.runInNewContext(`${CODE}\nthis.api = { approvalParked, approvalOpenedByUser, parkAgentApproval, openParkedApproval, askAgentApproval, answerAgentApproval, dismissAgentApprovals, expireAgentApprovalById, checkAgentApprovalTime, closeExpiredApproval, approvalCard, APPROVAL_GAP_MS, APPROVAL_EXPIRED_SHOW_MS }`, ctx)
   return ctx.api
 }
 const shown = (api) => (api.approvalCard.value && !api.approvalCard.value.expired ? api.approvalCard.value.card.name : null)
@@ -159,5 +163,62 @@ describe('the approval cards\' queue', () => {
     api.dismissAgentApprovals('p1')
     expect(await a).toEqual({ allow: false })
     expect(expired(api)).toBe(true)
+  })
+
+  describe('while someone is writing', () => {
+    it('the card waits in the toolbar, its answer still counts, and the next one is asked the same way', async () => {
+      let writing = true
+      const api = load({ writing: () => writing })
+      const answer = api.askAgentApproval({ name: 'one', command: 'a', cardId: 'c1' }, 'p1')
+      await vi.waitFor(() => expect(shown(api)).toBe('one'))
+      expect(api.approvalParked.value).toBe(true)
+      expect(api.approvalOpenedByUser.value).toBe(false)
+      api.openParkedApproval()
+      expect(api.approvalParked.value).toBe(false)
+      expect(api.approvalOpenedByUser.value).toBe(true)
+      api.answerAgentApproval({ allow: true })
+      expect(await answer).toEqual({ allow: true })
+      writing = false
+      const next = api.askAgentApproval({ name: 'two', command: 'b', cardId: 'c2' }, 'p1')
+      await vi.waitFor(() => expect(shown(api)).toBe('two'), { timeout: 3000 })
+      expect(api.approvalParked.value).toBe(false)
+      api.answerAgentApproval({ allow: false })
+      await next
+    })
+
+    it('put away by the person, it waits too', async () => {
+      const api = load()
+      const answer = api.askAgentApproval({ name: 'one', command: 'a', cardId: 'c1' }, 'p1')
+      await vi.waitFor(() => expect(shown(api)).toBe('one'))
+      expect(api.approvalParked.value).toBe(false)
+      api.parkAgentApproval()
+      expect(api.approvalParked.value).toBe(true)
+      api.openParkedApproval()
+      api.answerAgentApproval({ allow: false })
+      await answer
+    })
+
+    it('its time runs out in the toolbar: no card takes the screen, a small notice says so', async () => {
+      toasts.length = 0
+      const api = load({ writing: () => true })
+      const answer = api.askAgentApproval({ name: 'one', agentLabel: 'Ada', command: 'a', cardId: 'c1' }, 'p1')
+      await vi.waitFor(() => expect(shown(api)).toBe('one'))
+      api.expireAgentApprovalById('c1')
+      expect(await answer).toEqual({ allow: false, timedOut: true })
+      expect(api.approvalCard.value).toBeNull()
+      expect(api.approvalParked.value).toBe(false)
+      expect(toasts).toEqual(['A request from Ada ended without an answer.'])
+    })
+
+    it("the agent's call went away: it goes quietly", async () => {
+      toasts.length = 0
+      const api = load({ writing: () => true })
+      const answer = api.askAgentApproval({ name: 'one', command: 'a', cardId: 'c1' }, 'p1')
+      await vi.waitFor(() => expect(shown(api)).toBe('one'))
+      api.dismissAgentApprovals('p1')
+      expect(await answer).toEqual({ allow: false })
+      expect(api.approvalCard.value).toBeNull()
+      expect(toasts).toEqual([])
+    })
   })
 })

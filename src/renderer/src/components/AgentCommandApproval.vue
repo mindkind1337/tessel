@@ -12,16 +12,18 @@
 // for something else never allows a command.
 import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
 import { t } from '../i18n'
-import { useApprovalArming, ARM_MS } from './approvalArming'
+import { typingGuard, useApprovalArming, ARM_MS } from './approvalArming'
 
 const props = defineProps({
   // { kind: 'command' | 'pane' | 'send', command, explanation, goal, info,
   //   disclaimers, actions, own, userTerminal, send, agentLabel, name, where, folder }
   card: { type: Object, required: true },
   // How long the Allow buttons stay unusable once shown (tests: 0).
-  armMs: { type: Number, default: ARM_MS }
+  armMs: { type: Number, default: ARM_MS },
+  // The person opened it from the toolbar: the keyboard is for this card.
+  openedByUser: { type: Boolean, default: true }
 })
-const emit = defineEmits(['answer', 'configure'])
+const emit = defineEmits(['answer', 'configure', 'park'])
 const text = ref(String(props.card.command || ''))
 const menuOpen = ref(false)
 const skipEl = ref(null)
@@ -186,6 +188,11 @@ onMounted(() => {
 onUnmounted(() => {
   if (previousFocus?.isConnected) previousFocus.focus({ preventScroll: true })
 })
+const guard = typingGuard({
+  chosen: props.openedByUser,
+  back: () => previousFocus?.isConnected && previousFocus.focus({ preventScroll: true }),
+  park: () => emit('park')
+})
 function trapTab(event) {
   const items = [...(dialog.value?.querySelectorAll('button:not(:disabled), textarea, pre[tabindex]') || [])]
   if (!items.length) return
@@ -201,7 +208,7 @@ function trapTab(event) {
 </script>
 
 <template>
-  <div class="help-backdrop confirm-backdrop" data-test="agent-command-approval" @pointerdown.self="answer(false)">
+  <div class="help-backdrop confirm-backdrop" data-test="agent-command-approval" @pointerdown.self="emit('park')">
     <div
       ref="dialog"
       class="help-card confirm-card aca-card"
@@ -210,6 +217,8 @@ function trapTab(event) {
       aria-modal="true"
       aria-labelledby="aca-title"
       @focusin.stop
+      @keydown.capture="guard.key"
+      @pointerdown.capture="guard.pointer"
       @keydown.escape.prevent.stop="menuOpen ? (menuOpen = false) : answer(false)"
       @keydown.tab.stop="trapTab"
       @scroll="checkRead"

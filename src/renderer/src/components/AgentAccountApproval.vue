@@ -15,7 +15,7 @@ import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
 import { t } from '../i18n'
 import { planInfo } from '../claudePlan'
 import { planName } from '../hostAccounts'
-import { useApprovalArming, ARM_MS } from './approvalArming'
+import { typingGuard, useApprovalArming, ARM_MS } from './approvalArming'
 
 const props = defineProps({
   // { kind: 'accounts', agentLabel, explanation, timeoutMs,
@@ -26,13 +26,20 @@ const props = defineProps({
   //   projects: [{ name, count }], already: [{ id, name, project }] }
   card: { type: Object, required: true },
   // How long Allow stays unusable once shown (tests: 0).
-  armMs: { type: Number, default: ARM_MS }
+  armMs: { type: Number, default: ARM_MS },
+  // The person opened it from the toolbar: the keyboard is for this card.
+  openedByUser: { type: Boolean, default: true },
 })
-const emit = defineEmits(['answer'])
+const emit = defineEmits(['answer', 'park'])
 const refuseEl = ref(null)
 const dialog = ref(null)
 let previousFocus = null
 const { armed, press, mayAllow } = useApprovalArming(props.armMs)
+const guard = typingGuard({
+  chosen: props.openedByUser,
+  back: () => previousFocus?.isConnected && previousFocus.focus({ preventScroll: true }),
+  park: () => emit('park')
+})
 
 const account = computed(() => props.card.account || {})
 const panes = computed(() => (Array.isArray(props.card.panes) ? props.card.panes : []))
@@ -131,6 +138,8 @@ function trapTab(event) {
       aria-modal="true"
       aria-labelledby="aaa-title"
       @focusin.stop
+      @keydown.capture="guard.key"
+      @pointerdown.capture="guard.pointer"
       @keydown.escape.prevent.stop="refuse()"
       @keydown.tab.stop="trapTab"
     >

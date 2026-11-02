@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 // Live Share, on a guest's computer: the card, then what ran stays in sight.
 import { describe, it, expect, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
@@ -108,5 +110,25 @@ describe('the panel', () => {
     expect(w.text()).toContain('sent back')
     await w.find('[data-test="host-command-dismiss"]').trigger('click')
     expect(w.emitted('dismiss')[0]).toEqual(['c1'])
+  })
+})
+
+// Who is asked in a Live Share session: the person whose computer would run it. These read the
+// wiring in App.vue, where a mistake would hand one person's answer to another.
+describe('who gets the request', () => {
+  const app = readFileSync(join(process.cwd(), 'src/renderer/src/App.vue'), 'utf8')
+
+  it("a command for a guest's computer is asked in that guest's own window, in the queue of their own cards", () => {
+    expect(app).toMatch(/createHostCommands\(\{[\s\S]{0,120}approve: \(card\) => askAgentApproval\(card\)/)
+  })
+
+  it("what counts as writing is this window's own keys: a guest's typing on the host goes through the main process, not here", () => {
+    const pane = readFileSync(join(process.cwd(), 'src/renderer/src/components/TerminalPane.vue'), 'utf8')
+    expect((app.match(/noteUserInput\(/g) || []).length).toBe(3) // its definition and two calls in routeInput
+    const route = app.slice(app.indexOf('function routeInput('), app.indexOf('function routeInput(') + 1600)
+    expect((route.match(/noteUserInput\(/g) || []).length).toBe(2)
+    expect((app.match(/\brouteInput\(/g) || []).length).toBe(1)
+    expect(pane).toContain('ctx.routeInput(props.node.id, data)')
+    expect(app).not.toMatch(/liveShare[^\n]*routeInput/)
   })
 })

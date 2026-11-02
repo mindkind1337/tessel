@@ -17,6 +17,78 @@ describe('the approval card', () => {
     return wrapper
   }
 
+  describe('it opened by itself and the person goes on writing', () => {
+    let field
+    const openBy = async (card = {}) => {
+      field = document.createElement('textarea')
+      document.body.append(field)
+      field.focus()
+      wrapper = mount(AgentCommandApproval, {
+        props: { card: { kind: 'command', command: 'npm test', own: true, agentLabel: 'Ada', ...card }, armMs: 0, openedByUser: false },
+        attachTo: document.body
+      })
+      await flushPromises()
+      return wrapper.find('[data-test="agent-command-skip"]')
+    }
+    afterEach(() => field?.remove())
+
+    it('a letter or an Enter puts the card away and gives the keyboard back: no answer', async () => {
+      for (const key of ['a', 'Enter', ' ', '@']) {
+        const skip = await openBy()
+        expect(document.activeElement).toBe(skip.element)
+        await skip.trigger('keydown', { key, ...(key === '@' ? { ctrlKey: true, altKey: true } : {}) })
+        expect(document.activeElement).toBe(field)
+        expect(wrapper.emitted('park')).toHaveLength(1)
+        expect(wrapper.emitted('answer')).toBeUndefined()
+        wrapper.unmount()
+        wrapper = null
+        field.remove()
+      }
+    })
+
+    it('Tab or a click on the card says it is for the card: Enter answers then', async () => {
+      const skip = await openBy()
+      await skip.trigger('keydown', { key: 'Tab' })
+      await skip.trigger('keydown', { key: 'Enter' })
+      expect(wrapper.emitted('park')).toBeUndefined()
+      wrapper.unmount()
+      field.remove()
+      const again = await openBy()
+      await wrapper.find('[role="alertdialog"]').trigger('pointerdown')
+      await again.trigger('keydown', { key: 'a' })
+      expect(wrapper.emitted('park')).toBeUndefined()
+    })
+
+    it("on a Live Share guest's computer, the same: their keys stay theirs, and nothing is answered for them", async () => {
+      const skip = await openBy({ kind: 'hostRun', hostName: 'Sam', project: 'Shared', command: 'dir' })
+      await skip.trigger('keydown', { key: 'Enter' })
+      expect(document.activeElement).toBe(field)
+      expect(wrapper.emitted('park')).toHaveLength(1)
+      expect(wrapper.emitted('answer')).toBeUndefined()
+    })
+
+    it('a shortcut is not writing', async () => {
+      const skip = await openBy()
+      await skip.trigger('keydown', { key: 'c', ctrlKey: true })
+      await skip.trigger('keydown', { key: 'Shift' })
+      expect(wrapper.emitted('park')).toBeUndefined()
+    })
+
+    it('a click beside the card puts it away, it does not answer', async () => {
+      await openBy()
+      await wrapper.find('[data-test="agent-command-approval"]').trigger('pointerdown')
+      expect(wrapper.emitted('park')).toHaveLength(1)
+      expect(wrapper.emitted('answer')).toBeUndefined()
+    })
+  })
+
+  it('opened from the toolbar, the keyboard is for the card: a letter does nothing to it', async () => {
+    open({})
+    await flushPromises()
+    await wrapper.find('[data-test="agent-command-skip"]').trigger('keydown', { key: 'a' })
+    expect(wrapper.emitted('park')).toBeUndefined()
+  })
+
   it('starts on Skip: an Enter typed for something else never allows', async () => {
     open({})
     await flushPromises()
