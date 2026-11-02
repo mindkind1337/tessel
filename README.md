@@ -249,8 +249,9 @@ working on Tessel itself (see [Build from source](#build-from-source)).
   after a restart of its pane; while the project is shared in Live Share, it asks each time.
   Deleting or changing an event, inviting someone, writing to a calendar other than your main
   one and every request from an agent on an SSH host are asked each time, with what will happen. Mail can be read and drafted, never sent. Signing out of your Tessel account ends the
-  connections. With Google connected, Codex panes, here and on hosts, run without
-  OpenAI's own connectors, so agents use Tessel's. Agents already running get the tools after
+  connections. What you connect here replaces the same service in Claude Code's and Codex's own
+  connectors, in Tessel's panes here and on hosts, so agents use Tessel's. All their other tools
+  stay. Agents already running get the tools after
   a restart.
 - **Updating a development copy**: a Tessel started with `npm run dev` checks GitHub
   every 30 minutes (`git fetch` of the branch it follows) and, when there are newer

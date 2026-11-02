@@ -103,6 +103,7 @@ import { rulesOfAction } from '../../shared/terminalRules'
 import AgentCommandApproval from './components/AgentCommandApproval.vue'
 import HostCommandsPanel from './components/HostCommandsPanel.vue'
 import { createHostCommands } from './liveShareCommands'
+import { otherConnectorsOff } from '../../shared/otherConnectors'
 import AgentAccountApproval from './components/AgentAccountApproval.vue'
 import AgentApprovalExpired from './components/AgentApprovalExpired.vue'
 import GitHubDialog from './components/GitHubDialog.vue'
@@ -1339,6 +1340,13 @@ function newUuid() {
 
 // The command that starts an agent: a fresh conversation, or the pane's own
 // previous one when `resume` is set and it exists.
+// What a pane's agent starts without: the other vendors' connectors for what is connected through
+// Tessel (otherConnectors.js), as words for its command line.
+async function connectorsOffWords(agentId) {
+  const connections = (await window.shellApi.tesselApps?.view().catch(() => null))?.connections
+  const words = otherConnectorsOff(agentId, Array.isArray(connections) ? connections.map((c) => c.service) : [])
+  return words.length ? ` ${words.join(' ')}` : ''
+}
 async function agentStartLine(agent, sessionId, resume, accountId, { known = false, hostId = null, hostNoDaemon = null } = {}) {
   // It goes into a command line: whatever cannot be an id never gets there.
   if (sessionId && !safeSessionId(sessionId)) sessionId = null
@@ -1376,8 +1384,9 @@ async function agentStartLine(agent, sessionId, resume, accountId, { known = fal
     // that exists ("Resume agents" off), or can't tell: a new id, since
     // Claude Code refuses an id in use and the agent would not start.
     const choice = claudeStartChoice({ sessionId, resume, exists, newId: newUuid })
-    if (choice.resume) return { line: `${agent.command} --resume ${choice.id}`, sessionId: choice.id, resumed: true } // i18n-ignore
-    return { line: `${agent.command} --session-id ${choice.id}`, sessionId: choice.id, resumed: false } // i18n-ignore
+    const off = kind === 'claude' ? await connectorsOffWords('claude') : ''
+    if (choice.resume) return { line: `${agent.command} --resume ${choice.id}${off}`, sessionId: choice.id, resumed: true } // i18n-ignore
+    return { line: `${agent.command} --session-id ${choice.id}${off}`, sessionId: choice.id, resumed: false } // i18n-ignore
   }
   if (kind === 'codex') {
     // Without Codex's shared daemon: with it, the team tools lose the pane's
@@ -1388,10 +1397,8 @@ async function agentStartLine(agent, sessionId, resume, accountId, { known = fal
     // No update check at start: its menu takes keystrokes (a reminder's
     // Enter chose "Update now" and Codex quit). Updates: Settings > Agents.
     const bare = ' -c check_for_update_on_startup=false'
-    // Google connected through Tessel: Codex's own connectors (OpenAI's) stay off in its panes, so
-    // the agent uses Tessel's, on this computer or on a host.
-    const connected = !!(await window.shellApi.tesselApps?.view().catch(() => null))?.connections?.some((c) => c.service === 'google')
-    const own = (noDaemon ? ' --no-daemon' : '') + bare + (connected ? ' -c features.apps=false' : '')
+    // What is connected through Tessel replaces OpenAI's connector for it, here or on a host.
+    const own = (noDaemon ? ' --no-daemon' : '') + bare + (await connectorsOffWords('codex'))
     // On a host: its rollout there (gone: a fresh Codex rather than a resume
     // that fails); can't tell: resumed as here.
     const exists = sessionId && resume && hostId && !known ? await onHost('codex') : null
