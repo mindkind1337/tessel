@@ -176,7 +176,7 @@ function hashOf(files) {
   return hash.digest('base64url')
 }
 
-const validMeta = (body) => !!body && Number.isSafeInteger(body.version) && body.version >= 1 && typeof body.salt === 'string' && body.salt.length > 0
+const validMeta = (body) => !!body && Number.isSafeInteger(body.version) && body.version >= 1 && typeof body.salt === 'string' && body.salt.length > 0 && body.salt.length <= 256
 const metaOf = (body) => ({ version: body.version, salt: body.salt })
 
 // An answer as JSON, read up to a limit whatever it claims. -> the value, or null.
@@ -721,7 +721,8 @@ export function createSettingsSync({
       if (failed !== 'signedOut') problem = failed
       return
     }
-    if (problem === 'offline') problem = null
+    // It answered: what it said before no longer stands.
+    if (problem === 'offline' || problem === 'failed') problem = null
     checkedAt = now()
     await reconcile(none ? null : copy)
   }
@@ -901,6 +902,8 @@ export function createSettingsSync({
   // The key goes in the state. Under the salt this computer already had, what it knows stays.
   function adopt({ userId, salt, raw }) {
     const same = saved && saved.userId === userId && saved.salt === salt ? saved : null
+    // Staged from another account's copy, or under another phrase: it does not follow.
+    if (saved && saved.staged && !same) dropPendingImport({ dir: dataDir })
     saved = {
       userId,
       on: true,

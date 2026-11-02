@@ -161,24 +161,55 @@ working on Tessel itself (see [Build from source](#build-from-source)).
   or delete the account; security changes are confirmed by email. Tessel works the
   same without an account. It keeps your email address, name, password as a hash
   and Google or GitHub ID on Tessel's server, never your mail, calendar or files.
-- **Your settings everywhere** (Settings → Tessel account): once you turn it on, your
-  settings, projects and their layout, SSH hosts and task board follow you to every
-  computer you sign in on. They are encrypted on your computer before they leave it,
-  with a key made from a sync phrase you choose (at least 12 characters), so Tessel's
-  server keeps one copy it cannot read, with the name of the computer that sent it and
-  the time. The phrase is asked once per computer and never leaves it; if you lose it,
-  nobody can recover it, and starting over erases the copy on the server. Sign-ins,
-  saved passwords, agents' environment variables and what decides what agents may do
-  (agent commands and rules, Yolo, SSH proxy commands, host keys, trusted guests and
-  folders) never leave the computer, and neither does the activity history. Your setup
-  uploads a few minutes after it changes, and at quit if that is quick. A newer copy
-  from another computer is never applied by itself: you see which computer and when,
-  then use it, which applies at the next start of Tessel and restarts only if you ask,
-  or keep this computer's, which replaces it. On a computer that gets a copy, agents
-  come back asleep, and those whose folder is not there come back as plain terminals in
-  your home folder. Being offline or signed out changes nothing and shows no alert. You
-  can sync now or turn it off, and choose to erase the copy on the server too; deleting
-  your account erases it as well.
+- **Your settings everywhere** (Settings → Tessel account): once you turn it on, how
+  Tessel looks, your projects and their layout, SSH hosts and task cards follow you to
+  every computer you sign in on. They are encrypted on your computer before they leave
+  it, with a key made from a sync phrase you choose (at least 12 characters, and not one
+  that is easy to guess). Tessel's server keeps the last 5 versions of a copy it cannot
+  read. What it can see is when a version was sent, how often that happens, and a rough
+  size: each copy is padded to one of a few large sizes. The name of the computer that
+  sent it and the time it says are inside the encryption. The phrase is asked once per
+  computer, and again after you sign out; it never leaves the computer. If you lose it,
+  nobody can recover it, and starting over erases the copies on the server.
+
+  In a copy, encrypted: how Tessel looks and how its panels are arranged, your projects
+  with their folders, your panes with the names you gave them and each agent's
+  conversation id, your SSH hosts' names and addresses, and your task cards' words.
+  Never in a copy: sign-ins, saved passwords, agents' environment variables, the command
+  a pane runs (each computer uses its own for that agent, so a key in a custom command
+  stays on its computer), what a browser pane shows (its address and title), what
+  decides what agents may do (agent commands and rules, Yolo, trusted guests and
+  folders), teams, the broadcast switch, side browsers, a host's proxy command, jump host
+  and key file, and the activity history and task history. Any other setting stays what
+  each computer has: only a fixed list of appearance and panel settings travels.
+
+  Your setup uploads a few minutes after it changes, and at quit if that is quick. If
+  most of it just vanished (a file is gone, most of your projects are not there any
+  more), nothing goes up: you are asked, and can send it, or look at the copy. Earlier
+  copies lists the versions the server keeps, and you can go back to one.
+
+  A newer copy from another computer is never applied by itself: you see which computer,
+  when, and what it holds next to what this computer has, then use it, which applies at
+  the next start of Tessel and restarts only if you ask, or keep this computer's, which
+  replaces it. A copy older than the one this computer last saw says so; a computer new
+  to the account has nothing to compare with, and shows you when it was made. A copy
+  that is out of shape in any way is refused whole. Nothing starts by itself on the
+  computer that gets a copy: an agent waits until you click Wake it and a chat until you
+  write to it, while a terminal that was already running here carries on as it is. An
+  agent whose folder or program is not on this computer comes back as a plain terminal in
+  your home folder, and that stays between you and this computer: the other computers
+  keep their agent. Agents ask before trusting a folder that came with a copy, and a
+  folder on a network share is refused without ever being looked at. SSH hosts keep this
+  computer's proxy command, jump host and key file, hosts only on this computer stay, and
+  if a copy changes the address of a host you have, you are asked, and it stays as it is
+  unless you agree. Task cards from a copy tell agents that their words came from a copy.
+
+  Being offline or signed out changes nothing and shows no alert. What needs you stays on
+  screen until it is dealt with: the copy is gone from the server, it was replaced under
+  another phrase, a file cannot be read so uploads stopped. What the server says never
+  turns anything off here or drops your key: you choose. You can sync now or turn it off,
+  and choose to erase the copies on the server too; deleting your account erases them as
+  well.
 - **Connections** (Settings → Connections): connect your accounts to your agents:
   Gmail, Google Calendar and Drive (nothing to set up with a Tessel account; without
   one, or if you prefer, with your own free Google Cloud OAuth client; Google warns
@@ -265,7 +296,8 @@ working on Tessel itself (see [Build from source](#build-from-source)).
   commands and host keys, trusted guests and folders) is a separate part, restored only
   if you tick it: otherwise those settings stay as they are on this computer. An import is checked, then put in place when Tessel starts again
   (the replaced files are kept in `import-backups`), so it can bring back a deleted
-  data folder or move your setup to another computer.
+  data folder or move your setup to another computer. Nothing starts by itself at that
+  start: its agents wait until you click Wake it.
 - **A development Tessel no longer restarts by itself** when the code of its background
   part changes (`src/main`, `src/preload`, `launch.mjs`): that cut sessions every time an
   agent merged into the folder. The window still reloads by itself for the

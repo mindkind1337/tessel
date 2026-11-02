@@ -212,13 +212,15 @@ async function applyRemote() {
   const ok = await confirm({
     title: t('settings.tesselAccount.sync.applyConfirm', 'Use the settings from {{device}}?', { device: remote.device || t('settings.tesselAccount.sync.unknownComputer', 'an unknown computer') }),
     text: [
+      remote.older ? t('settings.tesselAccount.sync.olderWarning', 'This copy is older than the one this computer last saw. Use it only if you are going back on purpose.') : '',
       summaryText.value,
       localText.value,
       t('settings.tesselAccount.sync.applyDetail', 'They replace this computer\'s look and feel, projects, SSH hosts and task cards when Tessel next starts. Tessel does not restart by itself. At that start, terminals and agents running here that are not in that layout are closed. What decides what agents may do stays as it is here, and hosts only on this computer stay. No agent starts: each waits until you wake it, and those whose folder or agent is not on this computer come back as plain terminals. Agents ask before trusting a folder that came with the copy. The files they replace are kept in the import-backups folder of Tessel\'s data folder.')
     ]
       .filter(Boolean)
       .join('\n\n'),
-    confirmLabel: t('settings.tesselAccount.sync.applyButton', 'Use them')
+    confirmLabel: t('settings.tesselAccount.sync.applyButton', 'Use them'),
+    danger: !!remote.older
   })
   if (!ok) return
   const hostAddresses = await askHostAddresses(remote.hostChanges)
@@ -326,7 +328,7 @@ async function confirmTurnOff() {
   if (eraseToo.value) {
     const ok = await confirm({
       title: t('settings.tesselAccount.sync.eraseConfirm', 'Erase the copy on the server?'),
-      text: t('settings.tesselAccount.sync.eraseDetail', 'Nothing on this computer changes. Your other computers stop syncing when they next look, and keep what they have.'),
+      text: t('settings.tesselAccount.sync.eraseDetail', 'Nothing on this computer changes. Your other computers say so when they next look, keep what they have, and send nothing until you choose there. The versions the server keeps are erased too.'),
       confirmLabel: t('settings.tesselAccount.sync.eraseButton', 'Turn off and erase'),
       danger: true
     })
@@ -361,7 +363,7 @@ onBeforeUnmount(() => {
       <div v-if="!state.on && !form" class="set-row">
         <div class="set-label">
           {{ t('settings.tesselAccount.sync.offTitle', 'Keep your settings and projects on every computer') }}
-          <span class="set-hint">{{ t('settings.tesselAccount.sync.offHint', 'Your settings, projects, SSH hosts and task board, encrypted on this computer with a phrase only you know, so Tessel\'s server cannot read them. Sign-ins, passwords and what decides what agents may do never leave this computer.') }}</span>
+          <span class="set-hint">{{ t('settings.tesselAccount.sync.offHint', 'How Tessel looks, your projects, SSH hosts and task cards, encrypted on this computer with a phrase only you know, so Tessel\'s server cannot read them. Sign-ins, passwords and what decides what agents may do never leave this computer.') }}</span>
         </div>
         <button type="button" class="exit-btn primary tessel-sync-on" :disabled="busy || !state.canSeal" @click="openForm">{{ t('settings.tesselAccount.sync.turnOn', 'Turn on') }}</button>
       </div>
@@ -438,7 +440,7 @@ onBeforeUnmount(() => {
           <span class="set-hint">{{ t('settings.tesselAccount.sync.choiceHint', 'Nothing changes and nothing is sent until you choose.') }}</span>
         </div>
         <div class="set-inline">
-          <button v-if="!state.remote.unreadable && !state.remote.refused" type="button" class="exit-btn primary tessel-sync-apply" :disabled="busy" @click="applyRemote">{{ t('settings.tesselAccount.sync.applyButton', 'Use them') }}</button>
+          <button v-if="!state.remote.unreadable && !state.remote.refused && state.problem !== 'newerApp'" type="button" class="exit-btn primary tessel-sync-apply" :disabled="busy" @click="applyRemote">{{ t('settings.tesselAccount.sync.applyButton', 'Use them') }}</button>
           <button type="button" class="exit-btn tessel-sync-keep" :disabled="busy" @click="keepMine">{{ t('settings.tesselAccount.sync.keepButton', 'Keep this computer\'s') }}</button>
         </div>
       </div>

@@ -38,7 +38,9 @@ const HOST_ID = /^ssh-[\w-]{1,60}$/
 const TARGET_ID = /^[\w.-]{1,80}$/
 const CARD_ID = /^[\w.:-]{1,80}$/
 const COLOR = /^#[0-9a-fA-F]{3,8}$/
-const BRANCH = /^[^\s~^:?*[\\][^\s~^:?*[\\]{0,199}$/
+const BRANCH = /^(?!-)[^\s~^:?*[\\]{1,200}$/
+// A folder on an SSH host: never one that reads as a share on this computer.
+const REMOTE_PATH = /^(?:\/(?![\\/])|~$|~\/)[^\\]*$/
 // The window's own rules for what goes in a command line (agentResumeLine.js safeSessionId) and
 // for a chat's conversation (App.vue deserializeNode).
 export const SESSION_ID = /^[A-Za-z0-9_][A-Za-z0-9_-]{5,79}$/
@@ -203,7 +205,7 @@ function rebuildTerminal(src, out, c) {
   if (zoom) out.fontZoom = zoom
   set(out, 'worktree', rebuildWorktree(src.worktree, c))
   set(out, 'remoteHostId', c.text(src.remoteHostId, 64, HOST_ID))
-  set(out, 'remotePath', c.text(src.remotePath, MAX_PATH))
+  set(out, 'remotePath', c.text(src.remotePath, MAX_PATH, REMOTE_PATH))
 }
 
 function rebuildLeaf(src, c, count) {
@@ -300,7 +302,7 @@ function rebuildProject(src, c, count) {
   out.cwd = c.text(src.cwd, MAX_PATH) ?? null
   if (src.remote !== undefined && src.remote !== null) {
     const hostId = isObject(src.remote) ? c.text(src.remote.hostId, 64, HOST_ID) : c.bad()
-    const path = isObject(src.remote) ? c.text(src.remote.path, MAX_PATH, /^(?:\/|~$|~\/)[^\\]*$/) : undefined
+    const path = isObject(src.remote) ? c.text(src.remote.path, MAX_PATH, REMOTE_PATH) : undefined
     if (hostId && path) {
       out.remote = { hostId, path }
       out.cwd = null
@@ -330,7 +332,7 @@ function rebuildProject(src, c, count) {
     else {
       const modes = {}
       for (const [key, mode] of Object.entries(src.gridModes).slice(0, 200)) {
-        if (key.length <= 1000 && (mode === 'manual' || mode === 'tiled')) modes[key] = mode
+        if (key.length <= 1000 && !CONTROL.test(key) && (mode === 'manual' || mode === 'tiled')) modes[key] = mode
         else c.bad()
       }
       if (Object.keys(modes).length) out.gridModes = modes
@@ -535,13 +537,20 @@ export function localizeRebuilt(layout, { agents = new Map(), running = new Set(
       if (pane.kind === 'chat') {
         const remote = /^ssh:\/\//.test(pane.cwd)
         const folder = pane.worktree ? pane.worktree.path : pane.cwd
-        if (remote || isHere(folder)) return { ...pane, held: true }
+        if (remote || isHere(folder)) {
+          // Never looked at, or worse: a chat's own folder goes through the same door as its project's.
+          const { projectDir, ...rest } = pane
+          return { ...rest, ...(projectDir && (/^ssh:\/\//.test(projectDir) || localFolderOk(projectDir)) ? { projectDir } : {}), held: true }
+        }
         shadow.panes[pane.id] = { localKind: 'shell', pane }
         return { type: 'leaf', id: pane.id, kind: 'shell', ...(pane.paneName ? { paneName: pane.paneName } : {}), ...(pane.num ? { num: pane.num } : {}) }
       }
       if (pane.kind !== 'agent' && pane.kind !== 'shell') return pane
       const copy = pane.worktree ? pane.worktree.path : null
-      const folderHere = onHost(pane) || isHere(copy || (project.remote ? null : src.cwd))
+      // Main asks the system about a pane's folder even on a host: a share is refused there too.
+      const refusedCopy = !!copy && !localFolderOk(copy)
+      if (refusedCopy) missing.add(copy)
+      const folderHere = !refusedCopy && (onHost(pane) || isHere(copy || (project.remote ? null : src.cwd)))
       if (pane.kind === 'shell') {
         if (!copy || folderHere) return pane
         const { worktree, ...rest } = pane // eslint-disable-line no-unused-vars -- what is not on this computer
@@ -602,23 +611,38 @@ const PANE_SYNCED = {
 const PANE_COMMON = ['type', 'id', 'kind', 'num', 'paneName', 'viewPath']
 const folderKey = (p) => String(p).replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase()
 
+// Only a folder the person chose on this computer is theirs to trust. A project from elsewhere is
+// marked, whatever it says of itself, and the agents started there ask (worktreeList.js).
+// current: this computer's layout as it is now. What a copy or a file says of this is never read.
+export function markFolders(workspaces, current) {
+  const chosen = new Set()
+  if (isObject(current) && Array.isArray(current.workspaces)) {
+    for (const w of current.workspaces) {
+      if (isObject(w) && typeof w.cwd === 'string' && w.cwd && !w.remote && w.fromCopy !== true) chosen.add(folderKey(w.cwd))
+    }
+  }
+  return workspaces.map((project) => {
+    if (!isObject(project)) return project
+    const { fromCopy, ...rest } = project // eslint-disable-line no-unused-vars -- never taken from what arrives
+    return typeof rest.cwd === 'string' && rest.cwd && !rest.remote && !chosen.has(folderKey(rest.cwd)) ? { ...rest, fromCopy: true } : rest
+  })
+}
+
 export function finishLayout(stagedBody, currentBody, { running = [] } = {}) {
   const staged = JSON.parse(stagedBody)
   const current = parse(currentBody)
   const here = isObject(current) ? current : {}
   const panes = new Map()
-  const chosen = new Set()
   if (Array.isArray(here.workspaces)) {
     for (const w of here.workspaces) {
       if (!isObject(w)) continue
-      if (typeof w.cwd === 'string' && w.cwd && !w.remote && w.fromCopy !== true) chosen.add(folderKey(w.cwd))
       forEachPane(w.tree, (pane) => {
         if (typeof pane.id === 'string') panes.set(pane.id, pane)
       })
     }
   }
   const stillRunning = new Set(Array.isArray(running) ? running : [])
-  const workspaces = staged.workspaces.map((project) => {
+  const workspaces = markFolders(staged.workspaces, here).map((project) => {
     const tree = mapPanes(project.tree, (pane) => {
       const own = panes.get(pane.id)
       if (!own) return pane
@@ -629,9 +653,7 @@ export function finishLayout(stagedBody, currentBody, { running = [] } = {}) {
       const mine = Object.fromEntries(Object.entries(own).filter(([key]) => !synced.has(key)))
       return { ...mine, ...pane }
     })
-    // Only a folder the person chose on this computer is theirs to trust: the agent asks for the others.
-    const fromCopy = !!project.cwd && !project.remote && !chosen.has(folderKey(project.cwd))
-    return { ...project, tree, ...(fromCopy ? { fromCopy: true } : {}) }
+    return { ...project, tree }
   })
   const shown = Array.isArray(here.workspaces) && isObject(here.workspaces[here.currentIndex]) ? here.workspaces[here.currentIndex].id : null
   const index = workspaces.findIndex((w) => w.id === shown)

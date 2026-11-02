@@ -202,9 +202,11 @@ describe('H1: the next start, with what was saved', () => {
     expect(shellApi.writePty.mock.calls[0][1]).toContain(`--resume ${SAFE}`)
   })
 
-  it('an unsafe id with a sleeping mark still does not come back asleep, in a line or anywhere', async () => {
-    const { api } = load()
-    expect(api.restoresAsleep({ ...base, sessionId: 'x; calc.exe #', sleeping: { at: 5, held: true } })).toBe(false)
+  it('a pane held stays asleep whatever its id says, and an id that could add to a command line goes', async () => {
+    const { api, shellApi } = load()
+    const leaf = await api.deserializeNode({ ...base, sessionId: 'x; calc.exe #', sleeping: { at: 5, held: true } })
+    expect(leaf).toMatchObject({ sleeping: { at: 5, held: true }, sessionId: null })
+    expect(shellApi.writePty).not.toHaveBeenCalled()
   })
 })
 

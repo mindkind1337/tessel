@@ -56,7 +56,10 @@ describe('C1: a copy refused whole', () => {
     ['a split with a direction nobody knows', layout({ type: 'split', dir: 'x', sizes: [50, 50], children: [agent(), agent({ id: 'pane-b' })] })],
     ['a worktree that is not one', layout(agent({ worktree: 'C:/x' }))],
     ['a host id the window refuses', layout(agent({ remoteHostId: '-oProxyCommand=calc.exe' }))],
-    ['control characters in a name', layout(agent({ paneName: 'a\u0007b' }))]
+    ['control characters in a name', layout(agent({ paneName: 'a\u0007b' }))],
+    ['a branch that reads as an option', layout(agent({ worktree: { path: 'C:/x', branch: '--upload-pack=calc' } }))],
+    ['a host folder that reads as a share here', layout(agent({ remoteHostId: 'ssh-abc', remotePath: '//evil.example/share' }))],
+    ['a project on a host in a folder that reads as a share here', { version: 2, workspaces: [project(null, { remote: { hostId: 'ssh-abc', path: '//evil.example/share' } })] }]
   ])('%s', (_what, value) => refused(value))
 
   it('too deep: refused, not skipped', () => {
@@ -374,6 +377,45 @@ describe('H5: what a copy holds, and what an upload would lose', () => {
 
   it('with nothing to compare with, nothing to ask', () => {
     expect(shrunkFrom(null, shapeOf(files(['ws-a'])))).toBeNull()
+  })
+})
+
+describe('what main does with it', () => {
+  const main = readFileSync(join(__dirname, '../index.js'), 'utf8').replace(/\r\n/g, '\n')
+
+  it('H2: the only roots the trust module gets are the folders the person chose, in both places', () => {
+    expect(main.match(/agentFolderTrust\.setRoots\(([^)]*)/g)).toEqual(['agentFolderTrust.setRoots(chosenRootsOfLayout(data', 'agentFolderTrust.setRoots(chosenRootsOfLayout(saved && saved.data'])
+  })
+
+  it('H1: the window is told whether its layout came from elsewhere, and a failure means yes', () => {
+    expect(main).toContain("ipcMain.handle('layout:held'")
+    expect(main).toContain('return layoutHeld(app.getPath(\'userData\'))\n  } catch {\n    return true')
+    expect(main).toContain("if (fromMainWindow(event)) releaseLayoutHeld(")
+  })
+
+  it('H3: the window hears of a lasting alert, keeps it on screen, and has a word for each kind', () => {
+    expect(main).toContain("onAlert: (alert) => send('tesselSync:alert', alert)")
+    const preload = readFileSync(join(__dirname, '../../preload/index.js'), 'utf8').replace(/\r\n/g, '\n')
+    expect(preload).toContain("ipcRenderer.on('tesselSync:alert', handler)")
+    expect(preload).toContain("layoutHeld: () => ipcRenderer.invoke('layout:held')")
+    const app = readFileSync(join(__dirname, '../../renderer/src/App.vue'), 'utf8').replace(/\r\n/g, '\n')
+    const at = app.indexOf('const stopSyncAlert =')
+    const body = app.slice(at, app.indexOf('onBeforeUnmount(() => stopAccountSignedIn', at))
+    for (const kind of ['erased', 'saltChanged', 'shrunk', 'uploadsStopped']) expect(body).toContain(`${kind}: () =>`)
+    expect(body).toContain('timeout: 24 * 3600 * 1000')
+  })
+
+  it('a pane\'s command comes from this computer\'s own list of agents, never from a copy', () => {
+    expect(main).toContain('localAgents: async () =>')
+    expect(main).toContain('await getAgents(savedCustomAgents())')
+    expect(main).not.toContain('knownCommands:')
+  })
+
+  it('Low: the person signing out reaches the sync; the server ending a session does not', () => {
+    expect(main).toContain('onSignedOut: () => settingsSync.signedOut()')
+    const account = readFileSync(join(__dirname, '../tesselAccount.js'), 'utf8').replace(/\r\n/g, '\n')
+    expect(account.slice(account.indexOf('async function signOut()'), account.indexOf('async function signOut()') + 400)).toContain('onSignedOut()')
+    expect(account.slice(account.indexOf('async function authed('), account.indexOf('async function authed(') + 400)).not.toContain('onSignedOut')
   })
 })
 

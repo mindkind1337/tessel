@@ -255,6 +255,17 @@ describe('what decides what agents may do', () => {
       expect(project.workspaces[1].cwd).toBe('C:\\proj')
     })
 
+    it('H2: nor which folders an agent is pre-trusted in; what the file says of itself is not read', () => {
+      const body = JSON.stringify({ workspaces: [{ name: 'p', cwd: 'C:\\evil', fromCopy: false }, { name: 'q', cwd: 'C:\\mine' }] })
+      const out = JSON.parse(withoutSecurity('workspace-layout.json', body, JSON.stringify({ workspaces: [{ cwd: 'c:/mine/' }] })))
+      expect(out.workspaces.map((w) => w.fromCopy)).toEqual([true, undefined])
+    })
+
+    it('M6: the native form of a share is a share too', () => {
+      const out = JSON.parse(withoutSecurity('workspace-layout.json', JSON.stringify({ workspaces: [{ name: 'p', cwd: '\\??\\UNC\\evil\\s' }] }), known))
+      expect(out.workspaces[0].cwd).toBeNull()
+    })
+
     it('a team\'s message folder is not the file\'s to choose', () => {
       const out = clean(pane({}), { teams: [{ id: 't', name: 'T', color: '#112233', channelDir: '\\\\evil\\s' }] })
       expect(out.teams[0]).toEqual({ id: 't', name: 'T', color: '#112233' })
@@ -561,6 +572,22 @@ describe('what an account\u2019s copy holds', () => {
       expect(missing).toContain(share)
       // ...and what this computer will send goes back as it was: it is not this computer's to change.
       expect(shadow.projects['ws-1'].cwd).toBe(share)
+    })
+
+    it('a copy of a project on an SSH host that names a share: main would ask the system about it, so it is refused too', () => {
+      const looked = []
+      const { layout, missing } = local([ws({ tree: agent({ remoteHostId: 'ssh-1', worktree: { path: '\\\\evil.example\\share', branch: 'x' } }) })], { folderExists: (f) => (looked.push(f), true) })
+      expect(looked).not.toContain('\\\\evil.example\\share')
+      expect(layout.workspaces[0].tree.kind).toBe('shell')
+      expect(JSON.stringify(layout)).not.toContain('evil.example')
+      expect(missing).toContain('\\\\evil.example\\share')
+    })
+
+    it('a chat whose own project folder is a share keeps its place, without it', () => {
+      const chat = { type: 'leaf', kind: 'chat', id: 'pane-c', cwd: 'C:/p', projectDir: '\\\\evil.example\\share', agentId: 'claude' }
+      const { layout } = local([ws({ tree: chat })], { folderExists: exists('C:/p') })
+      expect(layout.workspaces[0].tree.projectDir).toBeUndefined()
+      expect(layout.workspaces[0].tree.held).toBe(true)
     })
   })
 

@@ -1057,12 +1057,12 @@
       "cancel": "Annuler",
       "changePassword": "Changer le mot de passe",
       "changePasswordHint": "Nous vous envoyons un lien par courriel. Une fois le nouveau choisi, vous vous reconnectez sur tous vos ordinateurs.",
-      "data": "Votre adresse courriel, votre nom, votre mot de passe sous forme de hachage si vous en avez choisi un et, si vous les utilisez, votre identifiant Google ou GitHub, sur le serveur de Tessel. Jamais vos courriels, votre agenda ni vos fichiers. Si vous activez Vos réglages partout : aussi une copie de votre configuration, chiffrée sur votre ordinateur pour que le serveur ne puisse pas la lire, avec le nom de l'ordinateur qui l'a envoyée et l'heure.",
+      "data": "Votre adresse courriel, votre nom, votre mot de passe sous forme de hachage si vous en avez choisi un et, si vous les utilisez, votre identifiant Google ou GitHub, sur le serveur de Tessel. Jamais vos courriels, votre agenda ni vos fichiers. Si vous activez Vos réglages partout : aussi les dernières copies de votre configuration, chiffrées sur votre ordinateur pour que le serveur ne puisse pas les lire, et l'heure d'envoi de chacune.",
       "dataTitle": "Ce qu'un compte conserve",
       "delete": "Supprimer mon compte",
       "deleteButton": "Supprimer",
       "deleteConfirm": "Supprimer votre compte Tessel ?",
-      "deleteDetail": "Votre adresse courriel, votre nom et la copie chiffrée de vos réglages sont effacés du serveur et vous êtes déconnecté. C'est irréversible. Vos réglages, vos projets et vos connexions Google sur cet ordinateur ne changent pas.",
+      "deleteDetail": "Votre adresse courriel, votre nom et les copies chiffrées de vos réglages sont effacés du serveur et vous êtes déconnecté. C'est irréversible. Vos réglages, vos projets et vos connexions Google sur cet ordinateur ne changent pas.",
       "deleted": "Votre compte a été supprimé.",
       "deleteHint": "Efface votre compte du serveur. Rien ne change sur cet ordinateur.",
       "error": {
@@ -1104,7 +1104,7 @@
         "enterTitle": "Entrez votre phrase de synchronisation",
         "eraseButton": "Désactiver et effacer",
         "eraseConfirm": "Effacer la copie sur le serveur ?",
-        "eraseDetail": "Rien ne change sur cet ordinateur. Vos autres ordinateurs cessent de synchroniser à leur prochaine vérification et gardent ce qu'ils ont.",
+        "eraseDetail": "Rien ne change sur cet ordinateur. Vos autres ordinateurs le signalent à leur prochaine vérification, gardent ce qu'ils ont et n'envoient rien tant que vous n'y avez pas choisi. Les versions gardées par le serveur sont effacées aussi.",
         "eraseHint": "Vos réglages sur cet ordinateur ne sont touchés dans aucun cas. Sans effacer, la copie chiffrée reste sur le serveur pour vos autres ordinateurs.",
         "erasedElsewhere": "Votre copie n'est plus sur le serveur : elle a été effacée depuis un autre ordinateur, ou par quelqu'un qui utilise votre session. Rien n'a été envoyé et vos réglages ici n'ont pas changé. Envoyez la configuration de cet ordinateur comme nouvelle copie, ou désactivez la synchronisation.",
         "eraseToo": "Effacer aussi la copie sur le serveur",
@@ -1213,7 +1213,8 @@
           "panes": "panneaux : {{from}} avant, {{to}} maintenant",
           "hosts": "hôtes SSH : {{from}} avant, {{to}} maintenant",
           "cards": "cartes de tâches : {{from}} avant, {{to}} maintenant"
-        }
+        },
+        "olderWarning": "Cette copie est plus ancienne que celle que cet ordinateur a vue en dernier. Utilisez-la seulement si vous revenez en arrière exprès."
       },
       "waiting": "Terminez la connexion dans votre navigateur",
       "waitingHint": "Une page s'est ouverte dans votre navigateur. Cette page se met à jour toute seule."

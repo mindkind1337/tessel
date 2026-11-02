@@ -95,7 +95,7 @@ async function sendPasswordLink() {
 async function removeAccount() {
   const message = {
     title: t('settings.tesselAccount.deleteConfirm', 'Delete your Tessel account?'),
-    detail: t('settings.tesselAccount.deleteDetail', 'Your email address, your name and the encrypted copy of your settings are erased from the server and you are signed out. This cannot be undone. Your settings, projects and Google connections on this computer are not touched.'),
+    detail: t('settings.tesselAccount.deleteDetail', 'Your email address, your name and the encrypted copies of your settings are erased from the server and you are signed out. This cannot be undone. Your settings, projects and Google connections on this computer are not touched.'),
     confirmLabel: t('settings.tesselAccount.delete', 'Delete my account'),
     danger: true
   }
@@ -208,7 +208,7 @@ onBeforeUnmount(() => {
     <div v-if="!missing" class="set-group">
       <h3 class="set-group-title">{{ t('settings.tesselAccount.dataTitle', 'What an account keeps') }}</h3>
       <p class="set-group-desc">
-        {{ t('settings.tesselAccount.data', 'Your email address, your name, your password as a hash if you chose one and, if you use them, your Google or GitHub ID, on Tessel\'s server. Never your mail, calendar or files. If you turn on Your settings everywhere: also a copy of your setup, encrypted on your computer so that the server cannot read it, with the name of the computer that sent it and the time.') }}
+        {{ t('settings.tesselAccount.data', 'Your email address, your name, your password as a hash if you chose one and, if you use them, your Google or GitHub ID, on Tessel\'s server. Never your mail, calendar or files. If you turn on Your settings everywhere: also the last few copies of your setup, encrypted on your computer so that the server cannot read them, and the time each was sent.') }}
         <button type="button" class="sl-link tessel-account-privacy" @click="openPrivacy">{{ t('settings.tesselAccount.privacy', 'Privacy policy') }}</button>
       </p>
       <div v-if="state && state.signedIn" class="set-card">

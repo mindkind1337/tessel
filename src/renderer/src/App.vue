@@ -2249,7 +2249,7 @@ async function deserializeNode(snap, cwd = null, attaching = null) {
         worktree: snap.worktree && snap.worktree.path ? { path: snap.worktree.path, branch: snap.worktree.branch } : null,
         backend: 'conpty',
         startDir: typeof snap.startDir === 'string' ? snap.startDir : cwd,
-        sessionId: snap.sessionId,
+        sessionId: safeSessionId(snap.sessionId) ? snap.sessionId : null,
         accountId:
           snap.accountId === null || (typeof snap.accountId === 'string' && /^[\w.-]{1,80}$/.test(snap.accountId))
             ? snap.accountId
@@ -2376,7 +2376,8 @@ function holdRestore(held) {
 }
 // A saved agent put to sleep comes back asleep (no terminal) when it has
 // its pane id and a conversation to resume. One held until a click needs no
-// conversation: it starts a new one when it is woken.
+// conversation, and what its id says changes nothing: it stays asleep, and an
+// id that could add to a command line is dropped (deserializeNode).
 function restoresAsleep(snap) {
   return (
     !!snap &&
@@ -2386,7 +2387,7 @@ function restoresAsleep(snap) {
     /^pane-[\w-]+$/.test(snap.id) &&
     !!snap.sleeping &&
     Number.isFinite(snap.sleeping.at) &&
-    (!!safeSessionId(snap.sessionId) || (snap.sleeping.held === true && !snap.sessionId))
+    (!!safeSessionId(snap.sessionId) || snap.sleeping.held === true)
   )
 }
 // A saved leaf whose terminal may still run in the terminal host: re-attached

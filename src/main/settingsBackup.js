@@ -29,7 +29,7 @@
 // the data folder, never a path from the file.
 import fs from 'node:fs'
 import path from 'node:path'
-import { SYNCED_FILE_NAMES, finishFile, localizeRebuilt, rebuildLayout, rebuildToSend, restoreShadow } from './syncSchema'
+import { SYNCED_FILE_NAMES, finishFile, localizeRebuilt, markFolders, rebuildLayout, rebuildToSend, restoreShadow } from './syncSchema'
 
 export const FORMAT = 1
 export const APP = 'tessel'
@@ -156,7 +156,7 @@ export function withoutSecurity(name, body, currentBody, knownCommands = []) {
   } catch {
     return body
   }
-  let current = null
+  let current
   try {
     current = currentBody ? JSON.parse(currentBody) : null
   } catch {
@@ -172,6 +172,8 @@ export function withoutSecurity(name, body, currentBody, knownCommands = []) {
     cleanPanes(parsed, new Set([...agentCommands(current), ...knownCommands]))
     // A team's message folder, recomputed when it is missing: a file must not choose it.
     if (Array.isArray(parsed.teams)) for (const team of parsed.teams) if (isObject(team)) delete team.channelDir
+    // Nor which folders an agent is pre-trusted in: that is the "security" part too.
+    if (Array.isArray(parsed.workspaces)) parsed.workspaces = markFolders(parsed.workspaces, current)
     return JSON.stringify(parsed)
   }
   if (name === 'remote-hosts.json' && isObject(parsed) && Array.isArray(parsed.targets)) {
@@ -472,7 +474,7 @@ export function applyPendingImport({ dir, now = Date.now, fsImpl = fs } = {}) {
       const target = path.join(dir, name)
       // A copy of an account: over what this computer has now, a change since "Use them" included.
       if (manifest.source === 'sync') {
-        let currentBody = null
+        let currentBody
         try {
           currentBody = fsImpl.readFileSync(target, 'utf8')
         } catch {
