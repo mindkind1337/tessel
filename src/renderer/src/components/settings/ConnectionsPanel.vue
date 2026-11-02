@@ -7,6 +7,7 @@
 import { reactive, onMounted, onBeforeUnmount } from 'vue'
 import { Check, Copy, ExternalLink } from 'lucide-vue-next'
 import BrandIcon from '../BrandIcon.vue'
+import TesselConnections from './TesselConnections.vue'
 import SettingsListItem from './SettingsListItem.vue'
 import { useMcpState } from '../mcp/mcpState'
 import { AGENT_NAME, copyText, openLink } from '../mcp/mcpShared'
@@ -327,6 +328,7 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="conn">
+    <TesselConnections @open-account="emit('open-account')" />
     <p v-if="m.message.text" :class="m.message.kind === 'error' ? 'mcp-error' : 'mcp-notice'" role="status">{{ m.message.text }}</p>
     <ul class="sl-list" :aria-label="t('settings.connections.list', 'Services')">
       <SettingsListItem

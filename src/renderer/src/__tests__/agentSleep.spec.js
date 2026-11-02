@@ -54,3 +54,25 @@ describe('why an agent stays awake (for the log)', () => {
     expect(sleepBlocker(base)).toBe('')
   })
 })
+
+import { sleepsAtStart } from '../../../shared/agentSleep'
+describe('which saved panes start asleep (Settings > General)', () => {
+  const pane = { type: 'leaf', id: 'pane-1', kind: 'shell', shellId: 'powershell' }
+  it('an agent or a terminal of this computer', () => {
+    expect(sleepsAtStart(pane)).toBe(true)
+    expect(sleepsAtStart({ ...pane, kind: undefined })).toBe(true)
+    expect(sleepsAtStart({ ...pane, kind: 'agent', agentId: 'claude', agentCommand: 'claude' })).toBe(true)
+    expect(sleepsAtStart({ ...pane, kind: 'agent', agentCommand: 'claude', sessionId: null })).toBe(true)
+  })
+  it('never a page, an editor, a chat, a pane on an SSH host or a split', () => {
+    for (const kind of ['browser', 'editor', 'chat']) expect(sleepsAtStart({ ...pane, kind })).toBe(false)
+    expect(sleepsAtStart({ ...pane, remoteHostId: 'ssh-box' })).toBe(false)
+    expect(sleepsAtStart({ type: 'split', children: [pane] })).toBe(false)
+  })
+  it('never one Tessel could not start again (no pane id, an agent without its command)', () => {
+    expect(sleepsAtStart({ ...pane, id: undefined })).toBe(false)
+    expect(sleepsAtStart({ ...pane, id: 'bad id' })).toBe(false)
+    expect(sleepsAtStart({ ...pane, kind: 'agent', agentCommand: null })).toBe(false)
+    expect(sleepsAtStart(null)).toBe(false)
+  })
+})

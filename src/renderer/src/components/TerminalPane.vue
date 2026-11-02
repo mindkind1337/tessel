@@ -2990,7 +2990,9 @@ function quietFor(minutes) {
 }
 function asleepText() {
   if (props.node.sleeping && props.node.sleeping.held === true) return t('pane.sleep.held', 'Came with your settings from elsewhere. Nothing started here: it starts when you wake it.')
-  return t('pane.sleep.overlay', 'Asleep since {{time}}: its terminal was stopped to free memory. Its conversation is kept.', { time: sleptAt.value })
+  // A terminal asleep since launch (Settings > General): a new shell on Wake.
+  if (!isAgent.value) return t('pane.sleep.overlayShell', 'Asleep since {{time}}: its terminal is stopped to free memory. Waking it starts a new one in the same folder.', { time: sleptAt.value })
+  return t('pane.sleep.overlay','Asleep since {{time}}: its terminal was stopped to free memory. Its conversation is kept.', { time: sleptAt.value })
 }
 function exitedText() {
   return exitCode.value !== null

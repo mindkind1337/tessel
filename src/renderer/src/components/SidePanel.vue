@@ -96,6 +96,8 @@ const emit = defineEmits([
   'resume-session',
   // Dashboard: put these idle agents to sleep (App's sleepPanes).
   'sleep',
+  // Dashboard: close this agent's pane (a card's right-click menu; App's closeLeaf).
+  'close-pane',
   'update:fullscreen',
   'update:browsers',
   // A page's tab pressed: App follows the pointer, a drag moves the page to
@@ -375,6 +377,7 @@ onBeforeUnmount(() => {
         :now="now"
         @focus-pane="focusPane"
         @sleep="(ids) => emit('sleep', ids)"
+        @close-pane="(id) => emit('close-pane', id)"
       />
       <ExplorerPanel
         v-if="shown.files"

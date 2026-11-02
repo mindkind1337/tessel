@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { nextTick } from 'vue'
 import { mount, flushPromises } from '@vue/test-utils'
 import AgentCommandApproval from '../components/AgentCommandApproval.vue'
+import { ARM_MS, typingGuard } from '../components/approvalArming'
 
 describe('the approval card', () => {
   let wrapper
@@ -46,17 +47,55 @@ describe('the approval card', () => {
       }
     })
 
-    it('Tab or a click on the card says it is for the card: Enter answers then', async () => {
-      const skip = await openBy()
-      await skip.trigger('keydown', { key: 'Tab' })
-      await skip.trigger('keydown', { key: 'Enter' })
-      expect(wrapper.emitted('park')).toBeUndefined()
-      wrapper.unmount()
-      field.remove()
+    it('a click on the card says it is for the card: letters no longer put it away', async () => {
       const again = await openBy()
       await wrapper.find('[role="alertdialog"]').trigger('pointerdown')
       await again.trigger('keydown', { key: 'a' })
       expect(wrapper.emitted('park')).toBeUndefined()
+    })
+
+    it('Tab alone does not: a letter or a space after it still puts the card away, nothing is allowed', async () => {
+      for (const key of ['f', ' ']) {
+        const skip = await openBy()
+        await skip.trigger('keydown', { key: 'Tab' })
+        await skip.trigger('keydown', { key })
+        expect(wrapper.emitted('park')).toHaveLength(1)
+        expect(wrapper.emitted('answer')).toBeUndefined()
+        expect(document.activeElement).toBe(field)
+        wrapper.unmount()
+        wrapper = null
+        field.remove()
+      }
+    })
+
+    it('Shift+Tab from the refusing button does not go round to the strongest one', async () => {
+      const skip = await openBy()
+      const before = document.activeElement
+      await skip.trigger('keydown', { key: 'Tab', shiftKey: true })
+      expect(document.activeElement).toBe(before)
+      await wrapper.find('[role="alertdialog"]').trigger('pointerdown')
+      await skip.trigger('keydown', { key: 'Tab', shiftKey: true })
+      expect(document.activeElement).not.toBe(before)
+    })
+
+    it('an Enter right after Tab does nothing; a moment later it is an answer by someone who means it', () => {
+      vi.useFakeTimers()
+      try {
+        const parked = vi.fn()
+        const guard = typingGuard({ back: () => {}, park: parked })
+        const enter = () => {
+          const event = { key: 'Enter', target: { tagName: 'BUTTON' }, preventDefault: vi.fn(), stopPropagation: vi.fn() }
+          guard.key(event)
+          return event
+        }
+        guard.key({ key: 'Tab', target: { tagName: 'BUTTON' } })
+        expect(enter().preventDefault).toHaveBeenCalled()
+        vi.advanceTimersByTime(ARM_MS)
+        expect(enter().preventDefault).not.toHaveBeenCalled()
+        expect(parked).not.toHaveBeenCalled()
+      } finally {
+        vi.useRealTimers()
+      }
     })
 
     it("on a Live Share guest's computer, the same: their keys stay theirs, and nothing is answered for them", async () => {
@@ -121,6 +160,45 @@ describe('the approval card', () => {
     open({ kind: 'host', pc: true, command: '' })
     expect(wrapper.find('[data-test="agent-command-guest"]').exists()).toBe(false)
     expect(wrapper.find('[data-test="agent-command-allow"]').exists()).toBe(true)
+  })
+
+  describe('a connector', () => {
+    const asked = { kind: 'apps', service: 'Gmail', account: 'me@gmail.com', writes: false, command: 'gmail_read', explanation: 'To read the code', project: 'Shared Project' }
+
+    it('says which service, why, and that what it reads goes to the AI provider', () => {
+      open(asked)
+      expect(wrapper.find('#aca-title').text()).toContain('Gmail')
+      expect(wrapper.find('#aca-title').text()).toContain('me@gmail.com')
+      expect(wrapper.find('[data-test="agent-command-why"]').text()).toContain('To read the code')
+      expect(wrapper.text()).toContain('AI provider')
+      expect(wrapper.find('[data-test="agent-command-text"]').exists()).toBe(false)
+      expect(wrapper.find('[data-test="agent-command-allow"]').text()).toContain('Gmail')
+    })
+
+    it('changing something is said in the title', () => {
+      open({ ...asked, writes: true })
+      expect(wrapper.find('#aca-title').text()).toContain('change')
+    })
+
+    it('a change shows what it will do', () => {
+      open({ ...asked, writes: true, detail: 'Invites: a@b.c' })
+      expect(wrapper.find('[data-test="agent-apps-detail"]').text()).toBe('Invites: a@b.c')
+    })
+
+    it('asked each time, or a project shared with someone who only watches: only this once, and said', () => {
+      open({ ...asked, writes: true, eachTime: true })
+      expect(wrapper.find('[data-test="agent-command-allow"]').exists()).toBe(false)
+      wrapper.unmount()
+      open({ ...asked, shared: true, eachTime: true })
+      expect(wrapper.find('[data-test="agent-command-allow"]').exists()).toBe(false)
+      expect(wrapper.find('[data-test="agent-command-guest"]').text()).toContain('Live Share')
+    })
+
+    it('a Live Share guest in the project: only this once', () => {
+      open({ ...asked, guests: ['Alex'] })
+      expect(wrapper.find('[data-test="agent-command-allow"]').exists()).toBe(false)
+      expect(wrapper.find('[data-test="agent-command-once"]').exists()).toBe(true)
+    })
   })
 
   describe('a command of the host, on a guest\'s computer', () => {

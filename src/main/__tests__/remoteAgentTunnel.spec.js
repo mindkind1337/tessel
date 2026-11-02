@@ -235,7 +235,47 @@ describe('hello', () => {
   })
 })
 
+describe('one host and the slots', () => {
+  it('a host takes at most its share: another host still gets its tools', async () => {
+    const t = makeTunnel({ limits: { maxHostSessions: 1, maxSessions: 8 } })
+    t.registerPane('h1', 'p1', agent())
+    t.registerPane('h2', 'p2', agent({ token: OTHER }))
+    const first = connect(t, hello())
+    await until(() => first.text().includes('{"ok":true}'))
+    const second = connect(t, hello())
+    await closed(second)
+    expect(second.lines()).toEqual(['{"ok":false,"error":"busy"}'])
+    const other = connect(t, hello({ pane: 'p2', token: OTHER }), 'h2')
+    await until(() => other.text().includes('{"ok":true}'))
+    first.push(null)
+    other.push(null)
+    await closed(first)
+    await closed(other)
+  })
+})
+
 describe('mcp', () => {
+  it('the connectors server: only for a pane started with something connected, and no other argument', async () => {
+    const t = makeTunnel()
+    t.registerPane('h1', 'p1', agent({ apps: true }))
+    t.registerPane('h1', 'p2', agent({ token: OTHER }))
+    const on = connect(t, hello({ args: ['--apps'] }) + 'one\n')
+    await until(() => on.text().includes('mcp:one'))
+    expect(t.children[0].args[1]).toEqual([script, '--apps'])
+    on.push(null)
+    await closed(on)
+    const off = connect(t, hello({ pane: 'p2', token: OTHER, args: ['--apps'] }))
+    await closed(off)
+    expect(off.lines()).toEqual(['{"ok":false,"error":"no-apps"}'])
+    for (const args of [['--hook'], ['--apps', '--hook'], ['--apps=1'], ['x']]) {
+      const bad = connect(t, hello({ args }))
+      await closed(bad)
+      expect(bad.lines()).toEqual(['{"ok":false,"error":"bad-hello"}'])
+    }
+    expect(t.children).toHaveLength(1)
+    expect(validateRemoteAgent({ ...agent(), apps: 'yes' }).apps).toBe(false)
+  })
+
   it('pipes both ways with the pane environment, no shell, hidden window', async () => {
     const t = makeTunnel()
     t.registerPane('h1', 'p1', agent())

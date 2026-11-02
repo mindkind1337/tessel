@@ -294,6 +294,7 @@ const api = {
   },
   github: {
     status: (q) => ipcRenderer.invoke('github:status', q),
+    chooseRepo: (q) => ipcRenderer.invoke('github:chooseRepo', q),
     list: (q) => ipcRenderer.invoke('github:list', q),
     detail: (q) => ipcRenderer.invoke('github:detail', q),
     createIssue: (q) => ipcRenderer.invoke('github:createIssue', q),
@@ -507,6 +508,14 @@ const api = {
       ipcRenderer.on('tesselSync:alert', handler)
       return () => ipcRenderer.removeListener('tesselSync:alert', handler)
     }
+  },
+  // Tessel's own connectors (src/main/tesselApps): never a token, only who is connected.
+  tesselApps: {
+    view: () => ipcRenderer.invoke('tesselApps:view'),
+    connect: (service) => ipcRenderer.invoke('tesselApps:connect', service),
+    cancel: () => ipcRenderer.invoke('tesselApps:cancel'),
+    disconnect: ({ service, account } = {}) => ipcRenderer.invoke('tesselApps:disconnect', { service, account }),
+    onChanged: (cb) => subscribe('tesselApps:changed', cb)
   },
   tesselAccount: {
     status: (options) => ipcRenderer.invoke('tesselAccount:status', options),

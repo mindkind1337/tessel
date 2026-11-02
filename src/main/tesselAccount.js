@@ -218,6 +218,24 @@ export function createTesselAccount({ dir, safeStorage, openExternal, onSignedIn
   }
 
   // Tessel's Google app, for this account. -> { clientId, clientSecret } or { error }
+  // A signed-in request to the server (tesselApps/connections.js). -> { status, ok, body } or
+  // { error: 'signedOut' | 'offline' }. Nothing of the session leaves this file.
+  async function signedRequest(path, init = {}) {
+    const current = readSession()
+    if (!current) return { error: 'signedOut' }
+    let res
+    try {
+      res = await request(path, { ...init, headers: { ...(init.headers || {}), ...bearer(current.token) } })
+    } catch {
+      return { error: 'offline' }
+    }
+    if (res.status === 401) {
+      forgetSession()
+      return { error: 'signedOut' }
+    }
+    return { status: res.status, ok: res.ok, body: await res.json().catch(() => null) }
+  }
+
   async function googleClient() {
     const current = readSession()
     if (!current) return { error: 'signedOut' }
@@ -316,5 +334,5 @@ export function createTesselAccount({ dir, safeStorage, openExternal, onSignedIn
     return { ...view(), deleted: true }
   }
 
-  return { status, signIn, handleLink, googleClient, passwordLink, cancelSignIn, signOut, deleteAccount, userId, authed, close: () => endPending() }
+  return { status, signIn, handleLink, signedRequest, googleClient, passwordLink, cancelSignIn, signOut, deleteAccount, userId, authed, close: () => endPending() }
 }

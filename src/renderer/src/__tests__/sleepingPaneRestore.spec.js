@@ -8,6 +8,7 @@ import { join } from 'path'
 import { reactive } from 'vue'
 import { savedPaneModel } from '../paneLastModel'
 import { HOST_ACCOUNT_AGENTS, validHostAccount, hostAccountChoice, defaultHostAccount } from '../hostAccounts'
+import { sleepsAtStart } from '../../../shared/agentSleep'
 
 const source = fs.readFileSync(join(process.cwd(), 'src/renderer/src/App.vue'), 'utf8')
 function slice(from, to) {
@@ -40,6 +41,7 @@ function load({ shared = false, tree = null } = {}) {
   }
   const ctx = {
     HOST_ACCOUNT_AGENTS,
+    sleepsAtStart,
     validHostAccount,
     hostAccountChoice,
     defaultHostAccount,
@@ -78,6 +80,8 @@ function load({ shared = false, tree = null } = {}) {
       walk(ws.tree)
     },
     replaceNode: (tree, id, make) => (tree.id === id ? make(tree) : tree),
+    restartingLeaves: new Set(),
+    sleptWhileOpen: new Set(),
     setTimeout: (fn) => fn(),
     Promise,
     Object,
@@ -86,10 +90,11 @@ function load({ shared = false, tree = null } = {}) {
   }
   vm.createContext(ctx)
   vm.runInContext(
-    slice('async function deserializeNode(snap, cwd = null, attaching = null)', 'let persistReady') +
+    slice('async function deserializeNode(snap, cwd = null, attaching = null, startAsleep = false)', 'let persistReady') +
       slice('async function createLeaf(shellId, agent = null', 'function replaceNode(') +
       slice('const connectingLeaves = new Set()', '// Replace a pane with a fresh process') +
-      '\nthis.api = { deserializeNode, createLeaf, connectLeaf }',
+      slice('async function wakeLeaf(leafId)', '// A sleeping pane you open wakes up.') +
+      '\nthis.api = { deserializeNode, createLeaf, connectLeaf, wakeLeaf }',
     ctx
   )
   // The auto-connect watch: run it as Vue would when the states change.
@@ -142,5 +147,68 @@ describe('the pane a workspace opens on after a restart or a reload', () => {
     expect(ctx.api.firstAwakeLeafId(tree)).toBe('bohr')
     expect(ctx.api.firstAwakeLeafId(split(leaf('a', { sleeping: { at: 1 } }), leaf('b', { sleeping: { at: 2 } })))).toBe('a')
     expect(ctx.api.firstAwakeLeafId(null)).toBe(null)
+  })
+})
+
+describe('Start terminals asleep (Settings > General)', () => {
+  const shell = { type: 'leaf', id: 'pane-t1', shellId: 'pwsh', kind: 'shell', title: 'PowerShell', paneName: 'Logs', num: 3, startDir: 'C:\\p', broadcast: true }
+  const agent = { ...asleep, id: 'pane-a1', sleeping: undefined, team: undefined, teamTools: undefined, toolsVersion: undefined }
+  const running = (id) => new Map([[id, Promise.resolve({ ok: true, buffer: '', shell: { id: 'pwsh', name: 'PowerShell' }, backend: 'conpty', pid: 42, cwd: 'C:\\p' })]])
+  const gone = (id) => new Map([[id, Promise.resolve({ ok: false })]])
+
+  it('an agent whose terminal no longer runs comes back asleep, its conversation kept', async () => {
+    const { api, shellApi } = load()
+    const leaf = await api.deserializeNode(agent, 'C:\\p', gone('pane-a1'), true)
+    expect(shellApi.createPty).not.toHaveBeenCalled()
+    expect(leaf).toMatchObject({ id: 'pane-a1', kind: 'agent', sessionId: asleep.sessionId, paneName: 'Ada', num: 2 })
+    expect(Number.isFinite(leaf.sleeping.at)).toBe(true)
+    const fresh = await api.deserializeNode({ ...agent, sessionId: null }, 'C:\\p', null, true)
+    expect(fresh.sleeping).toBeTruthy()
+    expect(fresh.sessionId).toBe(null)
+  })
+
+  it('a terminal comes back asleep with its name, folder and last output', async () => {
+    const { api, shellApi } = load()
+    const leaf = await api.deserializeNode({ ...shell, id: 'pane-r1' }, 'C:\\p', gone('pane-r1'), true)
+    expect(shellApi.createPty).not.toHaveBeenCalled()
+    expect(leaf).toMatchObject({ id: 'pane-r1', kind: 'shell', agentCommand: null, paneName: 'Logs', num: 3, startDir: 'C:\\p', restoredText: 'last output' })
+    expect(leaf.sleeping).toBeTruthy()
+  })
+
+  it('a pane whose terminal still runs is kept as it is', async () => {
+    const { api, shellApi } = load()
+    const leaf = await api.deserializeNode(shell, 'C:\\p', running('pane-t1'), true)
+    expect(shellApi.createPty).not.toHaveBeenCalled()
+    expect(leaf.sleeping).toBeUndefined()
+    expect(leaf.attached).toBe(true)
+  })
+
+  it('off: every pane starts as before', async () => {
+    const { api, shellApi } = load()
+    const leaf = await api.deserializeNode(shell, 'C:\\p', gone('pane-t1'))
+    expect(shellApi.createPty).toHaveBeenCalledTimes(1)
+    expect(leaf.sleeping).toBeUndefined()
+  })
+
+  it('in a split too, and never a pane on an SSH host', async () => {
+    const { api, shellApi } = load()
+    const tree = { type: 'split', dir: 'row', sizes: [50, 50], children: [shell, { ...shell, id: 'pane-t2', remoteHostId: 'ssh-box' }] }
+    const built = await api.deserializeNode(tree, 'C:\\p', null, true)
+    expect(built.children[0].sleeping).toBeTruthy()
+    expect(built.children[1].sleeping).toBeUndefined()
+    expect(built.children[1].notConnected).toBeTruthy()
+    expect(shellApi.createPty).not.toHaveBeenCalled()
+  })
+})
+
+describe('a terminal asleep since launch, opened', () => {
+  it('starts a new shell in the same pane, with its name and last output', async () => {
+    const { api, ws, shellApi } = load()
+    ws.tree = await api.deserializeNode({ type: 'leaf', id: 'pane-r1', shellId: 'pwsh', kind: 'shell', title: 'PowerShell', paneName: 'Logs', num: 3, broadcast: true }, null, null, true)
+    expect(ws.tree.sleeping).toBeTruthy()
+    await api.wakeLeaf('pane-r1')
+    expect(shellApi.createPty).toHaveBeenCalledTimes(1)
+    expect(ws.tree).toMatchObject({ id: 'pane-r1', paneName: 'Logs', num: 3, restoredText: 'last output' })
+    expect(ws.tree.sleeping).toBeUndefined()
   })
 })

@@ -73,12 +73,14 @@ describe('mergeCodexToml', () => {
   it('writes the table in a fresh file', () => {
     const r = shim.mergeCodexToml('', ABS)
     expect(r.changed).toBe(true)
+    const table = (name, args) =>
+      `[mcp_servers.${name}]\ncommand = "node"\nargs = ["/home/u/.tessel-server/bin/tessel-shim.cjs", ${args}]\n` +
+      'env_vars = ["TESSEL_PANE_ID", "TESSEL_REMOTE_SOCK", "TESSEL_REMOTE_TOKEN", "TESSEL_AGENT_PROVIDER"]\n' +
+      'default_tools_approval_mode = "approve"\n' +
+      'startup_timeout_sec = 60\n' +
+      'tool_timeout_sec = 1200\n'
     expect(r.text).toBe(
-      '[mcp_servers.tessel-team]\ncommand = "node"\nargs = ["/home/u/.tessel-server/bin/tessel-shim.cjs", "mcp"]\n' +
-        'env_vars = ["TESSEL_PANE_ID", "TESSEL_REMOTE_SOCK", "TESSEL_REMOTE_TOKEN", "TESSEL_AGENT_PROVIDER"]\n' +
-        'default_tools_approval_mode = "approve"\n' +
-        'startup_timeout_sec = 60\n' +
-        'tool_timeout_sec = 1200\n'
+      `${table('tessel-team', '"mcp"')}\n${table('tessel_apps', '"mcp", "--apps"')}`
     )
   })
   it('replaces only its own table (and sub-tables), and is idempotent', () => {
@@ -105,8 +107,53 @@ describe('mergeCodexToml, other forms', () => {
 
 describe('mergeClaudeJson, fields added by Claude Code', () => {
   it('counts as set when type, command and args match', () => {
-    const cfg = { mcpServers: { 'tessel-team': { ...shim.claudeServer(ABS), env: {} } } }
+    const cfg = { mcpServers: { 'tessel-team': { ...shim.claudeServer(ABS), env: {} }, tessel_apps: { ...shim.claudeServer(ABS, undefined, ['mcp', '--apps']), env: {} } } }
     expect(shim.mergeClaudeJson(cfg, ABS).changed).toBe(false)
+  })
+
+  it("what the person put in Tessel's Codex tables stays, and a table written another way stops only itself", () => {
+    const once = shim.mergeCodexToml('', ABS).text
+    const mine = once.replace(
+      '[mcp_servers.tessel_apps]\n',
+      '[mcp_servers.tessel_apps]\n# my note\ndisabled_tools = ["gmail_read"]\ndefault_tools_approval_mode = "prompt"\n'
+    ) + '\n[mcp_servers.tessel_apps.tools.drive_read]\napproval_mode = "prompt"\n'
+    const r = shim.mergeCodexToml(mine, ABS)
+    for (const kept of ['# my note', 'disabled_tools = ["gmail_read"]', 'default_tools_approval_mode = "prompt"', '[mcp_servers.tessel_apps.tools.drive_read]', 'approval_mode = "prompt"']) expect(r.text).toContain(kept)
+    expect(r.text.match(/\[mcp_servers\.tessel_apps\]/g)).toHaveLength(1)
+    expect(shim.mergeCodexToml(r.text, ABS).changed).toBe(false)
+    for (const other of ['["mcp_servers".tessel_apps]\ncommand = "x"\n', '[[mcp_servers.tessel_apps]]\ncommand = "x"\n', '"mcp_servers".tessel_apps.command = "x"\n']) {
+      const merged = shim.mergeCodexToml(other, ABS)
+      expect(merged.error).toBeUndefined()
+      expect(merged.text).toContain('[mcp_servers.tessel-team]')
+      expect((merged.text.match(/tessel_apps/g) || []).length).toBe(1)
+    }
+  })
+
+  it("Tessel's own keys written across lines go whole, and what it cannot read is left as it is", () => {
+    const table = (name) => `[mcp_servers.${name}]\ncommand = "node"\nargs = [\n  "${ABS}",\n  "mcp",\n]\nenv_vars = [\n  "TESSEL_PANE_ID",\n]\nenabled = false\n`
+    const r = shim.mergeCodexToml(`${table('tessel-team')}\n${table('tessel_apps')}`, ABS)
+    expect(r.error).toBeUndefined()
+    expect(r.text).not.toMatch(/^\s*"mcp",$/m)
+    expect(r.text).not.toMatch(/^\s*\]$/m)
+    expect(r.text.match(/enabled = false/g)).toHaveLength(2)
+    expect(shim.mergeCodexToml(r.text, ABS).changed).toBe(false)
+    const odd = `command = ${'"'.repeat(3)}\nnode\n${'"'.repeat(3)}\n`
+    expect(shim.mergeCodexToml(`[mcp_servers.tessel-team]\n${odd}`, ABS).error).toMatch(/cannot change/)
+    expect(shim.mergeCodexToml(`[mcp_servers.tessel_apps]\n${odd}`, ABS).text).toContain(odd)
+    expect(shim.mergeCodexToml('mcp_servers = { other = { command = "x" } }\n', ABS).error).toMatch(/another way/)
+    expect(shim.mergeCodexToml('["mcp_servers"]\ntessel_apps = { command = "x" }\n', ABS).text.match(/tessel_apps/g)).toHaveLength(1)
+  })
+
+  it('adds the connectors beside the team tools, and keeps a connector table turned off in Codex', () => {
+    const r = shim.mergeClaudeJson({ mcpServers: { 'tessel-team': shim.claudeServer(ABS) } }, ABS)
+    expect(r.changed).toBe(true)
+    expect(r.value.mcpServers.tessel_apps.args).toEqual([ABS, 'mcp', '--apps'])
+    const once = shim.mergeCodexToml('', ABS).text
+    const off = once.replace('[mcp_servers.tessel_apps]\n', '[mcp_servers.tessel_apps]\nenabled = false\n')
+    const again = shim.mergeCodexToml(off, ABS)
+    expect(again.text).toContain('enabled = false')
+    expect(shim.mergeCodexToml(again.text, ABS).changed).toBe(false)
+    expect(shim.mergeCodexToml(once, ABS).changed).toBe(false)
   })
 })
 
@@ -183,7 +230,7 @@ describe('install', () => {
     fs.mkdirSync(acct2)
     fs.writeFileSync(join(acct2, '.tessel-account'), 'tessel-account claude b2\n')
     shim.install({ home, shimPath: ABS, env })
-    expect(Object.keys(JSON.parse(fs.readFileSync(join(acct2, '.claude.json'), 'utf8')).mcpServers).sort()).toEqual(['mine', 'tessel-team'])
+    expect(Object.keys(JSON.parse(fs.readFileSync(join(acct2, '.claude.json'), 'utf8')).mcpServers).sort()).toEqual(['mine', 'tessel-team', 'tessel_apps'])
     expect(shim.install({ home, shimPath: ABS, env }).changed).toEqual([])
   })
 
@@ -200,7 +247,7 @@ describe('install', () => {
     }
     sys({ a: { command: 'a', env: { TOKEN: 'v1' } }, b: { command: 'b' } })
     shim.install({ home, shimPath: ABS, env })
-    expect(Object.keys(servers()).sort()).toEqual(['a', 'b', 'tessel-team'])
+    expect(Object.keys(servers()).sort()).toEqual(['a', 'b', 'tessel-team', 'tessel_apps'])
     expect(JSON.parse(fs.readFileSync(join(acct, '.tessel-mcp.json'), 'utf8')).servers).toMatchObject({ a: expect.any(String), b: expect.any(String) })
     // A key rotated in the default config: the untouched copy follows.
     sys({ a: { command: 'a', env: { TOKEN: 'v2' } }, b: { command: 'b' } })
@@ -219,7 +266,7 @@ describe('install', () => {
     // Gone from the default config: its untouched copy goes; yours stays.
     sys({})
     shim.install({ home, shimPath: ABS, env })
-    expect(Object.keys(servers()).sort()).toEqual(['b', 'tessel-team'])
+    expect(Object.keys(servers()).sort()).toEqual(['b', 'tessel-team', 'tessel_apps'])
     expect(shim.install({ home, shimPath: ABS, env }).changed).toEqual([])
   })
 
@@ -459,7 +506,7 @@ describe('round trip', () => {
   }, 20000)
 
   it('version', async () => {
-    expect(shim.VERSION).toBe('1.4.4')
+    expect(shim.VERSION).toBe('1.4.5')
     expect((await run(['version'])).out).toBe(`${shim.VERSION}\n`)
   })
 })

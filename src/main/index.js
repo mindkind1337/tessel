@@ -34,7 +34,7 @@ import { createCodexTurnEnd, allowedCodexHome, TURN_END_CHECK_MS } from './codex
 import { createUsageStatsTracker } from './usageStatsTracker'
 import { copyUsageImage } from './usageClipboard'
 import { registerIssueServices } from './issueServicesIpc'
-import { createGithubService } from './githubService'
+import { createChosenRepos, createGithubService } from './githubService'
 import { createRemoteHosts, registerRemoteHosts, findSshExe } from './remoteHosts'
 import { remoteProjectLaunch, validateRemotePath } from './remoteProject'
 import { createSshRemote } from './ssh/sshRemote'
@@ -143,8 +143,9 @@ import {
   runAgentCommand
 } from './agentTools'
 import { startSignIn, signInStatus, activeSignIns, cancelSignIn, cancelAllSignIns, signInState } from './mcpSignIn'
-import { createTesselAccount, findAppLink } from './tesselAccount'
+import { createTesselAccount, findAppLink, ACCOUNT_URL } from './tesselAccount'
 import { createSettingsSync } from './settingsSync'
+import { createTesselApps } from './tesselApps'
 import { listAgyPlugins, setAgyPlugin, removeAgyPlugin } from './agyPlugins'
 import { createMusePlugins } from './musePlugins'
 import {
@@ -202,6 +203,8 @@ import {
   installCopilotHooks,
   installOpencodePlugin,
   installKimiHooks,
+  APPS_ARGS,
+  APPS_SERVER_NAME,
   installCodexServer,
   installGrokServer,
   unsafePath,
@@ -2154,12 +2157,16 @@ ipcMain.handle(
 )
 const accountOptions = { userData: app.getPath('userData'), runLogin: createProviderLogin() }
 // A remote project's GitHub form and Create PR: its repository named from
-// its remote's URL, read on the host (remoteFs.js githubContext).
+// its remote's URL, read on the host (remoteFs.js githubContext). A local
+// folder that is no clone of one gets the repository chosen for it.
 registerIssueServices({
   ipcMain,
   dir: join(app.getPath('userData'), 'linear'),
   safeStorage,
-  github: createGithubService({ remote: { isRemote: isRemotePath, context: (root) => remoteFs.githubContext(root) } }),
+  github: createGithubService({
+    remote: { isRemote: isRemotePath, context: (root) => remoteFs.githubContext(root) },
+    chosen: createChosenRepos({ file: join(app.getPath('userData'), 'github-repos.json') })
+  }),
   onPrCreated: (url) => usageStats.prCreated(url)
 })
 // Remote hosts over SSH (remoteHosts.js): Settings > SSH Hosts, the status bar.
@@ -3189,6 +3196,71 @@ const tesselAccount = createTesselAccount({
   onSignedOut: () => settingsSync.signedOut(),
   onDeleted: () => settingsSync.accountDeleted()
 })
+// Tessel's own connectors (tesselApps/): the first one connected sets the tools up for the agents.
+const tesselApps = createTesselApps({
+  dir: join(app.getPath('userData'), 'tessel-apps'),
+  safeStorage,
+  openExternal: (url) => shell.openExternal(url),
+  signedRequest: (path, init) => tesselAccount.signedRequest(path, init),
+  scheme: APP_LINK_SCHEME,
+  accountUrl: ACCOUNT_URL,
+  onChange: () => {
+    send('tesselApps:changed', tesselApps.connections.view())
+    if (tesselApps.connections.list().length) setUpAppsTools().catch((err) => log.warn('team', `tessel_apps tools: ${err && err.message}`)) // i18n-ignore log
+  }
+})
+let appsToolsSetUp = null
+// tessel_apps in each installed agent's settings, once a run. Agents already running get it when restarted.
+function setUpAppsTools() {
+  if (appsToolsSetUp) return appsToolsSetUp
+  appsToolsSetUp = (async () => {
+    const script = writeServerScript(join(app.getPath('appData'), 'tessel-team'), teamServerSource)
+    const node = findNode({ env: freshEnv() })
+    if (!node || unsafePath(script) || unsafePath(node)) throw new Error('no usable node') // i18n-ignore
+    const done = []
+    if (!claudeServerPresent(script, undefined, node, APPS_SERVER_NAME)) {
+      await removeMcp({ agent: 'claude', name: APPS_SERVER_NAME, scope: 'user' }).catch(() => {})
+      const res = await addMcp({ agent: 'claude', name: APPS_SERVER_NAME, transport: 'stdio', commandLine: `"${node}" "${script}" ${APPS_ARGS.join(' ')}`, scope: 'user' })
+      if (res.ok) done.push('Claude Code') // i18n-ignore
+    }
+    const codex = await installCodexServer(script, validateCodexConfig, undefined, { node, name: APPS_SERVER_NAME, args: [...APPS_ARGS] })
+    if (codex.changed) done.push('Codex') // i18n-ignore
+    const presets = await getAgents()
+    if (presets.find((a) => a.id === 'grok')?.available && installGrokServer(script, undefined, { node, name: APPS_SERVER_NAME, args: [...APPS_ARGS] }).changed) done.push('Grok Build') // i18n-ignore
+    for (const agent of JSON_AGENTS) {
+      if (agent === 'cursor') continue
+      const preset = presets.find((a) => a.id === agent)
+      if (!preset || !preset.available) continue
+      const r = setJsonAgentServer(agent, APPS_SERVER_NAME, teamToolsEntry(agent, script, node, [...APPS_ARGS]), undefined, { keepUser: true })
+      if (r.ok && r.changed) done.push(preset.name)
+    }
+    if (done.length) log.info('team', `tessel_apps tools set up for: ${done.join(', ')}`) // i18n-ignore log
+  })()
+  appsToolsSetUp.catch(() => {
+    appsToolsSetUp = null
+  })
+  return appsToolsSetUp
+}
+// Agents installed since: set up at a start too, once the team tools had their turn with the files.
+setTimeout(() => {
+  if (tesselApps.connections.list().length) setUpAppsTools().catch((err) => log.warn('team', `tessel_apps tools: ${err && err.message}`)) // i18n-ignore log
+}, 30000).unref?.()
+ipcMain.handle(
+  'tesselApps:view',
+  safe(() => tesselApps.connections.view())
+)
+ipcMain.handle(
+  'tesselApps:connect',
+  safe((service) => tesselApps.connections.connect(service))
+)
+ipcMain.handle(
+  'tesselApps:cancel',
+  safe(() => tesselApps.connections.cancel())
+)
+ipcMain.handle(
+  'tesselApps:disconnect',
+  safe(({ service, account } = {}) => tesselApps.connections.disconnect(service, account))
+)
 ipcMain.handle(
   'tesselAccount:status',
   safe((options) => tesselAccount.status(options))
@@ -3211,11 +3283,18 @@ ipcMain.handle(
 )
 ipcMain.handle(
   'tesselAccount:signOut',
-  safe(() => tesselAccount.signOut())
+  safe(async () => {
+    // Connections were made for this account: not for whoever signs in next.
+    await tesselApps.connections.disconnectAll().catch(() => {})
+    return tesselAccount.signOut()
+  })
 )
 ipcMain.handle(
   'tesselAccount:delete',
-  safe(() => tesselAccount.deleteAccount())
+  safe(async () => {
+    await tesselApps.connections.disconnectAll().catch(() => {})
+    return tesselAccount.deleteAccount()
+  })
 )
 app.on('will-quit', () => tesselAccount.close())
 
@@ -4074,6 +4153,7 @@ const agentRelay = createAgentRelay({ file: join(app.getPath('userData'), 'agent
 ipcMain.handle('terminal:relayUnread', (event) => (mainWindow && !mainWindow.isDestroyed() && event.sender === mainWindow.webContents ? agentRelay.allUnread() : {}))
 const agentTerminal = createAgentTerminal({
   verify: (body, paneId) => verifyRequest(body, paneId, 'terminal'),
+  apps: tesselApps,
   settings: () => agentTerminalSettings,
   ask: (method, params, opts) => cliBridge.ask(method, params, opts),
   // A program running under a local shell (Settings' close confirmation does the same).
@@ -4906,7 +4986,7 @@ async function prepareRemoteAgent({ id, target, remotePath, agentId, teamSecret 
   })
   return {
     launchToken,
-    remoteAgent: { token: newRemoteToken(), instance: instanceName(basename(app.getPath('userData')), target.id, remoteInstallId()), provider, env, node, script }
+    remoteAgent: { apps: tesselApps.connections.list().length > 0, token: newRemoteToken(), instance: instanceName(basename(app.getPath('userData')), target.id, remoteInstallId()), provider, env, node, script }
   }
 }
 let installIdCache = null
@@ -6270,7 +6350,13 @@ Promise.all([acquireInstanceLock(), app.whenReady()]).then(([gotInstanceLock]) =
   app.on('second-instance', (_event, argv) => {
     showMainWindow()
     const link = findAppLink(argv, APP_LINK_SCHEME)
-    if (link) tesselAccount.handleLink(link).catch(() => {})
+    if (link) {
+      // A connection's way back, or else a sign-in's.
+      tesselApps.connections
+        .handleLink(link)
+        .then((ours) => (ours ? null : tesselAccount.handleLink(link)))
+        .catch(() => {})
+    }
   })
   // Windows opens this copy for its links: the way back from logging in on the web page. The --
   // comes before the link: an app that hands a link over unencoded could otherwise add switches

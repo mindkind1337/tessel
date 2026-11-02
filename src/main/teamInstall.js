@@ -24,6 +24,9 @@ import { removeKimiHooks } from './kimiHooks'
 export { installKimiHooks, KIMI_HOOK_EVENTS } from './kimiHooks'
 
 export const SERVER_NAME = 'tessel-team'
+// The same script with --apps: Tessel's own connectors (teamMcp/server.cjs).
+export const APPS_SERVER_NAME = 'tessel_apps'
+export const APPS_ARGS = Object.freeze(['--apps'])
 export const HOOK_EVENTS = ['SessionStart', 'UserPromptSubmit', 'PreToolUse', 'PostToolUse', 'PostToolUseFailure', 'PermissionRequest', 'Notification', 'Stop', 'StopFailure', 'SessionEnd', 'SubagentStart', 'SubagentStop']
 const OURS = 'tessel-team-mcp.cjs'
 
@@ -441,9 +444,10 @@ export async function removeTeamHooks(home = os.homedir(), { configDirs = {}, ki
 
 // The lines of Tessel's own table in a Codex config.toml (any spelling of the
 // key, with its sub-tables), or null.
-const OUR_HEADER = /^\s*\[\s*mcp_servers\s*\.\s*(?:tessel-team|"tessel-team"|'tessel-team')\s*(?:\.[^\]]*)?\]\s*(?:#.*)?$/
+const ourHeader = (name) => new RegExp(`^\\s*\\[\\s*mcp_servers\\s*\\.\\s*(?:${name}|"${name}"|'${name}')\\s*(?:\\.[^\\]]*)?\\]\\s*(?:#.*)?$`)
 const ANY_HEADER = /^\s*\[/
-export function splitCodexConfig(text) {
+export function splitCodexConfig(text, name = SERVER_NAME) {
+  const OUR_HEADER = ourHeader(name)
   const lines = String(text || '').split(/\r?\n/)
   const kept = []
   const ours = []
@@ -455,11 +459,68 @@ export function splitCodexConfig(text) {
   return { kept: kept.join('\n'), ours: ours.join('\n') }
 }
 
-export function codexTable(scriptPath, node) {
+// What the person put in Tessel's table: everything but the keys Tessel sets (its comments, a
+// server turned off, tools turned off, its sub-tables). It stays.
+const CODEX_OWN_KEY = /^\s*(?:"|')?(?:command|args|env_vars|tool_timeout_sec)(?:"|')?\s*=/
+const CODEX_PLAIN_APPROVAL = /^\s*(?:"|')?default_tools_approval_mode(?:"|')?\s*=\s*"approve"\s*(?:#.*)?$/
+// How many [ a value leaves open after this text (strings and a comment left out).
+function openBrackets(text) {
+  let depth = 0
+  let quote = ''
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i]
+    if (quote) {
+      if (c === '\\' && quote === '"') i++
+      else if (c === quote) quote = ''
+    } else if (c === '"' || c === "'") quote = c
+    else if (c === '#') break
+    else if (c === '[') depth++
+    else if (c === ']') depth--
+  }
+  return depth
+}
+// -> the lines, or null when one of Tessel's keys is written in a way it cannot safely replace.
+export function codexTheirLines(ours) {
+  const out = []
+  let seenHeader = false
+  let inSub = false
+  let inOldEnv = false
+  let open = 0
+  for (const line of String(ours || '').split('\n')) {
+    // Still inside the value of one of Tessel's keys, written across lines.
+    if (open > 0) {
+      open += openBrackets(line)
+      continue
+    }
+    if (/^\s*\[/.test(line)) {
+      if (seenHeader) inSub = true
+      seenHeader = true
+      // An env sub-table is what older versions of Tessel wrote there.
+      inOldEnv = inSub && /\.\s*env\s*\]/.test(line)
+      if (!inSub) continue
+    }
+    if (inOldEnv) continue
+    if (inSub) {
+      out.push(line)
+      continue
+    }
+    if (CODEX_OWN_KEY.test(line)) {
+      if (/"""|'''/.test(line)) return null
+      open = openBrackets(line.slice(line.indexOf('=') + 1))
+      continue
+    }
+    if (line.trim() && !CODEX_PLAIN_APPROVAL.test(line)) out.push(line)
+  }
+  if (open > 0) return null
+  while (out.length && !out[out.length - 1].trim()) out.pop()
+  return out
+}
+
+export function codexTable(scriptPath, node, { name = SERVER_NAME, args = [] } = {}) {
   return (
-    `[mcp_servers.${SERVER_NAME}]\n` +
+    `[mcp_servers.${name}]\n` +
     `command = '${node}'\n` +
-    `args = ['${scriptPath}']\n` +
+    `args = [${[scriptPath, ...args].map((a) => `'${a}'`).join(', ')}]\n` +
     `env_vars = ["TESSEL_PANE_ID", "TESSEL_PROJECT_DIR", "TESSEL_TEAM_SECRET"]\n` +
     // Only the team tools run without asking (they read and send team
     // messages); every other tool and command keeps Codex's own approvals.
@@ -474,7 +535,7 @@ export function codexTable(scriptPath, node) {
 // checked with Codex itself (`validate(text)` -> { ok, error }) before it
 // replaces the old one.
 // -> { changed: bool } or { error }
-export async function installCodexServer(scriptPath, validate, home = os.homedir(), { node } = {}) {
+export async function installCodexServer(scriptPath, validate, home = os.homedir(), { node, name = SERVER_NAME, args = [] } = {}) {
   const dir = join(home, '.codex')
   if (!fs.existsSync(dir)) return { changed: false } // Codex not set up here
   const found = hookNode(scriptPath, node)
@@ -484,8 +545,11 @@ export async function installCodexServer(scriptPath, validate, home = os.homedir
   if (unsafePath(scriptPath) || unsafePath(found.node)) return { error: t('main.hooks.badPath', 'The Tessel data folder or node has a line break in its path.') }
   // TOML literal strings ('...') keep Windows backslashes as they are.
   if (scriptPath.includes("'") || found.node.includes("'")) return { error: t('main.hooks.quoteInPath', 'The Tessel data folder has a quote in its path.') }
-  const { kept, ours } = splitCodexConfig(text)
-  const want = codexTable(scriptPath, found.node)
+  const { kept, ours } = splitCodexConfig(text, name)
+  const theirs = codexTheirLines(ours)
+  if (!theirs) return { error: t('main.hooks.codexShape', "Codex's settings for {{name}} are written in a way Tessel cannot change, so they were left as they are.", { name }) }
+  const table = codexTable(scriptPath, found.node, { name, args })
+  const want = (theirs.some((l) => /default_tools_approval_mode/.test(l)) ? table.replace('default_tools_approval_mode = "approve"\n', '') : table) + (theirs.length ? `${theirs.join('\n')}\n` : '')
   if (ours.trim() === want.trim()) return { changed: false }
   const next = kept.replace(/\s*$/, '\n') + '\n' + want
   if (validate) {
@@ -509,11 +573,11 @@ const GROK_ENV = {
 // What Tessel decides (command, args, env), and what stays the user's when
 // the table is there already (enabled = false, its timeouts).
 const GROK_KEPT = ['enabled', 'startup_timeout_sec', 'tool_timeout_sec', 'tool_timeouts']
-export function grokTable(scriptPath, node, kept = {}) {
+export function grokTable(scriptPath, node, kept = {}, { name = SERVER_NAME, args = [] } = {}) {
   const lines = [
-    `[mcp_servers.${SERVER_NAME}]`,
+    `[mcp_servers.${name}]`,
     `command = ${tomlValue(node)}`,
-    `args = ${tomlValue([scriptPath])}`,
+    `args = ${tomlValue([scriptPath, ...args])}`,
     `env = ${tomlValue(GROK_ENV)}`
   ]
   const extra = { tool_timeout_sec: 1200, ...kept }
@@ -530,7 +594,7 @@ export const unsafePath = (p) => typeof p !== 'string' || /[\r\n\0]/.test(p)
 // folder). The file is read as TOML first and the result read back before it
 // is written: a file Tessel cannot read, or an edit that would not read back
 // with exactly one tessel-team table, is left as it was (said as an error).
-export function installGrokServer(scriptPath, home = os.homedir(), { node, env = process.env } = {}) {
+export function installGrokServer(scriptPath, home = os.homedir(), { node, env = process.env, name = SERVER_NAME, args = [] } = {}) {
   const dir = grokHome(home, env)
   if (!fs.existsSync(dir)) return { changed: false }
   const found = hookNode(scriptPath, node)
@@ -541,16 +605,16 @@ export function installGrokServer(scriptPath, home = os.homedir(), { node, env =
   const before = parseToml(text)
   if (!before.ok) return { error: t('main.hooks.grokUnreadable', "Grok Build's config.toml is not valid TOML (line {{line}}: {{error}}), so Tessel left it as it was.", { line: before.line, error: before.error }) }
   const servers = before.data.mcp_servers && typeof before.data.mcp_servers === 'object' ? before.data.mcp_servers : {}
-  const old = servers[SERVER_NAME] && typeof servers[SERVER_NAME] === 'object' && !Array.isArray(servers[SERVER_NAME]) ? servers[SERVER_NAME] : null
-  if (old && old.command === found.node && sameJson(old.args, [scriptPath]) && sameJson(old.env, GROK_ENV)) return { changed: false }
+  const old = servers[name] && typeof servers[name] === 'object' && !Array.isArray(servers[name]) ? servers[name] : null
+  if (old && old.command === found.node && sameJson(old.args, [scriptPath, ...args]) && sameJson(old.env, GROK_ENV)) return { changed: false }
   const kept = {}
   for (const k of GROK_KEPT) if (old && old[k] !== undefined) kept[k] = old[k]
-  const { kept: others } = splitCodexConfig(text)
-  const want = grokTable(scriptPath, found.node, kept)
+  const { kept: others } = splitCodexConfig(text, name)
+  const want = grokTable(scriptPath, found.node, kept, { name, args })
   const next = (others.trim() ? others.replace(/\s*$/, '\n') + '\n' : '') + want
   const after = parseToml(next)
-  const mine = after.ok && after.data.mcp_servers && after.data.mcp_servers[SERVER_NAME]
-  if (!mine || mine.command !== found.node || !sameJson(mine.args, [scriptPath])) return { error: t('main.hooks.grokNoEdit', "Tessel could not add its team tools to Grok Build's config.toml without breaking it (a tessel-team server is defined another way there), so it left it as it was.") }
+  const mine = after.ok && after.data.mcp_servers && after.data.mcp_servers[name]
+  if (!mine || mine.command !== found.node || !sameJson(mine.args, [scriptPath, ...args])) return { error: t('main.hooks.grokNoEdit', "Tessel could not add its team tools to Grok Build's config.toml without breaking it (a tessel-team server is defined another way there), so it left it as it was.") }
   if (text && !fs.existsSync(`${file}.before-tessel`)) fs.copyFileSync(file, `${file}.before-tessel`)
   writeAtomic(file, next)
   return { changed: true }
@@ -565,8 +629,8 @@ export function claudeServerExists(home = os.homedir()) {
 }
 
 // ... with this script, run by this node (an older bare "node" is replaced).
-export function claudeServerPresent(scriptPath, home = os.homedir(), node) {
+export function claudeServerPresent(scriptPath, home = os.homedir(), node, name = SERVER_NAME) {
   const cfg = readJson(join(home, '.claude.json'))
-  const s = cfg && cfg.mcpServers && cfg.mcpServers[SERVER_NAME]
+  const s = cfg && cfg.mcpServers && cfg.mcpServers[name]
   return !!(s && Array.isArray(s.args) && s.args.includes(scriptPath) && (node === undefined || s.command === node))
 }

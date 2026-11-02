@@ -430,6 +430,13 @@
     "needSignIn": "Connectez-vous avec gh auth login dans un terminal, puis actualisez.",
     "loadFailed": "GitHub n'a pas pu être chargé pour ce projet.",
     "refreshConnection": "Actualiser la connexion",
+    "noRepoHere": "Ce dossier n'est pas un clone Git avec un dépôt distant GitHub. Choisissez le dépôt GitHub à afficher pour ce projet.",
+    "repoChoice": {
+      "label": "Dépôt",
+      "placeholder": "propriétaire/nom ou https://github.com/propriétaire/nom",
+      "use": "Utiliser ce dépôt"
+    },
+    "changeRepo": "Changer de dépôt",
     "itemType": "Type d'élément GitHub",
     "issues": "Issues",
     "prs": "Pull requests",

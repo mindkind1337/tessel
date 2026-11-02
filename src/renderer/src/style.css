@@ -5044,6 +5044,10 @@ body.pane-dragging * {
 .tb-approval:hover {
   filter: brightness(1.1);
 }
+.tb-approval-count {
+  margin-left: 2px;
+  font-variant-numeric: tabular-nums;
+}
 @keyframes tb-approval-pulse {
   50% {
     opacity: 0.65;

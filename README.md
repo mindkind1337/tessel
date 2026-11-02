@@ -35,6 +35,13 @@ working on Tessel itself (see [Build from source](#build-from-source)).
   one). Switching never stops a running shell or agent, and everything
   (layout, panes, conversations, tasks, terminal output) is restored on the
   next launch.
+- **Sleep**: a pane put to sleep stops its terminal to free memory and keeps
+  its place; opening it wakes it (an agent resumes its conversation, a
+  terminal starts again in the same folder under what it showed). Put a pane,
+  or every agent and terminal of a workspace, to sleep from its menu in the
+  sidebar; idle agents can sleep by themselves (Settings → Agents). **Start
+  terminals asleep** (Settings → General) brings every agent and terminal back
+  asleep at launch, so only the panes you open run.
 - **Groups of projects**: put projects of the same kind in a group of your own
   (**Group** in a project's menu): a folding row with the projects under it, to
   make room in the sidebar. Groups are saved with your settings.
@@ -77,7 +84,11 @@ working on Tessel itself (see [Build from source](#build-from-source)).
   (compact folders, indent guides, only visible rows drawn), an editor pane,
   and a Source Control panel (changes by folder, stage per file, commit,
   commits graph with times, create a pull request, send failing checks or
-  review comments to an agent).
+  review comments to an agent). The GitHub dialog (issues and pull requests)
+  also works for a project folder that is not a Git clone, such as an
+  installed app: it asks once which repository to show (`owner/name` or its
+  URL), checks it with gh, remembers it for that folder, and a **Change
+  repository** link in its header picks another.
 - **Files the editor shows in their own view** (read-only, on this computer
   and on SSH hosts, up to 30 MB):
   - **PDF** in an editor tab (pages drawn as they come into view, zoom);
@@ -100,7 +111,8 @@ working on Tessel itself (see [Build from source](#build-from-source)).
   load external media or use inline styles to fetch resources.
 - **Side panel**: Dashboard of agents, agent session history, task history
   (time, tokens and estimated cost per task), files, Source Control and web
-  pages; each tab says when it is loading.
+  pages; each tab says when it is loading. In the Dashboard, right-click an
+  agent's card to go to its pane, put it to sleep (or wake it), or close it.
 
 ### Remote hosts over SSH (like VS Code Remote-SSH)
 
@@ -275,6 +287,20 @@ working on Tessel itself (see [Build from source](#build-from-source)).
   questions, and **Settings > Agents** turns them off. Only guests with the right to
   type can be asked, the person sharing is told each time, and both sides need this
   version.
+- **Tessel's own connectors (`tessel_apps`)**: Gmail, Google Calendar and Google Drive for
+  every agent on your computer, and for Claude Code and Codex on your SSH hosts, connected in
+  **Settings > Connections**. You sign in through tesselcode.com on
+  Google's own page, after a page that names the Tessel account asking, so it takes a Tessel
+  account and nothing to set up. The refresh token stays encrypted on your computer and access
+  tokens only in memory; Tessel does not give them to agents (a program running as you could
+  still read them). Calls go from your computer straight to Google. Each agent asks, naming the
+  account, before it first reads a service and before it first changes something there, again
+  after a restart of its pane; while the project is shared in Live Share, it asks each time.
+  Deleting or changing an event, inviting someone, writing to a calendar other than your main
+  one and every request from an agent on an SSH host are asked each time, with what will happen. Mail can be read and drafted, never sent. Signing out of your Tessel account ends the
+  connections. With Google connected, Codex panes, here and on hosts, run without
+  OpenAI's own connectors, so agents use Tessel's. Agents already running get the tools after
+  a restart.
 - **Updating a development copy**: a Tessel started with `npm run dev` checks GitHub
   every 30 minutes (`git fetch` of the branch it follows) and, when there are newer
   builds, shows a yellow `↑ b1700` next to **dev**. It lists them and, for a copy with

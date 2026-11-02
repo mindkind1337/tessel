@@ -228,7 +228,8 @@
       "museEnvList": "{{file}} contient un managed_hooks_env_vars qui n'est pas une liste de noms : Tessel ne l'a pas modifié.",
       "badPath": "Le chemin du dossier de données de Tessel ou de node contient un saut de ligne.",
       "grokUnreadable": "Le config.toml de Grok Build n'est pas un TOML valide (ligne {{line}} : {{error}}), Tessel l'a donc laissé tel quel.",
-      "grokNoEdit": "Tessel n'a pas pu ajouter ses outils d'équipe au config.toml de Grok Build sans le casser (un serveur tessel-team y est défini autrement), il l'a donc laissé tel quel."
+      "grokNoEdit": "Tessel n'a pas pu ajouter ses outils d'équipe au config.toml de Grok Build sans le casser (un serveur tessel-team y est défini autrement), il l'a donc laissé tel quel.",
+      "codexShape": "Les réglages de Codex pour {{name}} sont écrits d'une façon que Tessel ne peut pas changer : ils restent tels quels."
     },
     "jsonAgents": {
       "kimiNotObject": "mcpServers de Kimi n'est pas un objet ; le fichier existant n'a pas été modifié.",
@@ -425,8 +426,13 @@
         "issueBody": "description de l'issue",
         "prTitle": "titre de la pull request",
         "prBody": "description de la pull request",
-        "comment": "commentaire"
+        "comment": "commentaire",
+        "repository": "dépôt"
       },
+      "chooseLocal": "Un dépôt ne peut être choisi que pour un dossier local.",
+      "invalidChoice": "Indiquez un dépôt GitHub sous la forme propriétaire/nom ou par son URL.",
+      "needHead": "Ce dossier n'est pas un clone Git : indiquez la branche source.",
+      "chosenStartPoint": "Non disponible : ce dossier n'est pas un clone Git du dépôt.",
       "invalidNumber": "Numéro d'élément GitHub non valide.",
       "invalidKind": "Type d'élément GitHub non valide.",
       "invalidBranch": "Nom de branche non valide.",
@@ -1110,6 +1116,30 @@
       "exportTitle": "Enregistrer les réglages de Tessel",
       "importTitle": "Choisir un fichier de réglages Tessel",
       "filter": "Réglages Tessel"
+    },
+    "apps": {
+      "card": {
+        "more": "[{{count}} caractères de plus]",
+        "calendar": "Agenda : {{value}}",
+        "invites": "Invite : {{value}}",
+        "removesGuests": "Retire tous les invités",
+        "title": "Titre : {{value}}",
+        "when": "Quand : de {{start}} à {{end}}",
+        "timeZone": "Fuseau horaire : {{value}}",
+        "where": "Lieu : {{value}}",
+        "description": "Description : {{value}}",
+        "to": "À : {{value}}",
+        "cc": "Cc : {{value}}",
+        "subject": "Objet : {{value}}",
+        "event": "Événement : {{value}}",
+        "delete": "Supprime l'événement : {{value}}",
+        "guests": "{{count}} invités",
+        "andMore": "et {{count}} de plus",
+        "notRead": "{{id}} (illisible pour le moment)",
+        "repeats": "événement répété",
+        "notPlain": "[pas de l'ASCII simple]",
+        "guestsBecome": "Invités après ce changement : {{value}}"
+      }
     }
   },
   "main.chat.image.tooLarge": "Cette image dépasse {{mb}} Mo.",

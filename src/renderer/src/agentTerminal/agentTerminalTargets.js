@@ -631,6 +631,9 @@ export function createAgentTerminalTargets(deps) {
       return { hostId, local: !hostId, label: hostId ? deps.hostLabel(hostId) : 'this computer', projectHost: (hostId || null) === ((ws.remote && ws.remote.hostId) || null), guests: guestsOf(ws), wroteLast: wroteLast(agentLeaf, ws), ...(wantsGuest ? { wantsGuest: true } : {}) } // i18n-ignore
     }
 
+    // Who asks for a connector: its name, and who is in its project.
+    if (req.op === 'appsInfo') return { agentLabel, guests: guestsOf(ws), shared: projectShared(ws), sharedBefore: !!deps.sharedUntilYouWrote?.(agentLeaf.id, ws && ws.id), onHost: agentLeaf.remoteHostId ? String(deps.hostLabel(agentLeaf.remoteHostId) || 'SSH host') : null, wroteLast: wroteLast(agentLeaf, ws) } // i18n-ignore
+
     // A command for the computer of a guest in this project, who answers on their own screen.
     if (req.op === 'guestCommand') {
       const guest = guestsOf(ws).find((g) => g.id === req.guestId)
@@ -653,7 +656,7 @@ export function createAgentTerminalTargets(deps) {
 
     // A card about no terminal yet: another SSH host ("host:<id>"), panes to
     // open ("open:<agent pane>"); shown from the agent's own pane.
-    if (req.op === 'approve' && typeof req.terminal === 'string' && /^(host|open|logs|relay):/.test(req.terminal))
+    if (req.op === 'approve' && typeof req.terminal === 'string' && /^(host|open|logs|relay|apps):/.test(req.terminal))
       return plainAnswer(await deps.approve({ ...cardFrom(req.card, agentLeaf, ws), agentLeaf, agentLabel, leaf: agentLeaf, name: agentLabel, ws }))
 
     // Messages between projects: who can be written to, and who a name means.

@@ -1037,8 +1037,8 @@ function cardMenuItems(card) {
     items.push({ type: 'item', icon: GitCompare, label: t('sidebar.card.review', 'Review Changes…'), onSelect: () => emit('review-task', card.taskId) })
     items.push({ type: 'separator' })
   }
-  // A chat agent has no terminal to stop (it stops by itself when idle).
-  const sleepable = card.panes.filter((r) => r.kind === 'agent' && !r.chat && !r.sleeping).map((r) => r.id)
+  // Agents and terminals. A chat agent has no terminal to stop (it stops by itself when idle).
+  const sleepable = card.panes.filter((r) => (r.kind === 'agent' || r.kind === 'shell') && !r.chat && !r.sleeping).map((r) => r.id)
   items.push({
     type: 'item',
     icon: Moon,
@@ -1147,6 +1147,16 @@ function rowMenuItems(row, card) {
       label: t('sidebar.card.sleep', 'Sleep'),
       disabled: row.sleeping,
       title: t('sidebar.row.sleepHint', 'Stop its terminal to free memory; opening the pane resumes the conversation.'),
+      onSelect: () => emit('sleep', [row.id])
+    })
+  } else if (row.kind === 'shell') {
+    items.push({ type: 'separator' })
+    items.push({
+      type: 'item',
+      icon: Moon,
+      label: t('sidebar.card.sleep', 'Sleep'),
+      disabled: row.sleeping,
+      title: t('sidebar.row.sleepHintShell', 'Stop its terminal to free memory; opening the pane starts a new one in the same folder.'),
       onSelect: () => emit('sleep', [row.id])
     })
   }
