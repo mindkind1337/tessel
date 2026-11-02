@@ -512,6 +512,7 @@ const api = {
   // Tessel's own connectors (src/main/tesselApps): never a token, only who is connected.
   tesselApps: {
     view: () => ipcRenderer.invoke('tesselApps:view'),
+    services: () => ipcRenderer.invoke('tesselApps:services'),
     connect: (service) => ipcRenderer.invoke('tesselApps:connect', service),
     cancel: () => ipcRenderer.invoke('tesselApps:cancel'),
     disconnect: ({ service, account } = {}) => ipcRenderer.invoke('tesselApps:disconnect', { service, account }),

@@ -236,6 +236,16 @@ export function createTesselAccount({ dir, safeStorage, openExternal, onSignedIn
     return { status: res.status, ok: res.ok, body: await res.json().catch(() => null) }
   }
 
+  // What the server says to anyone, signed in or not. -> { status, ok, body } or { error: 'offline' }
+  async function publicRequest(path, init = {}) {
+    try {
+      const res = await request(path, init)
+      return { status: res.status, ok: res.ok, body: await res.json().catch(() => null) }
+    } catch {
+      return { error: 'offline' }
+    }
+  }
+
   async function googleClient() {
     const current = readSession()
     if (!current) return { error: 'signedOut' }
@@ -334,5 +344,5 @@ export function createTesselAccount({ dir, safeStorage, openExternal, onSignedIn
     return { ...view(), deleted: true }
   }
 
-  return { status, signIn, handleLink, signedRequest, googleClient, passwordLink, cancelSignIn, signOut, deleteAccount, userId, authed, close: () => endPending() }
+  return { status, signIn, handleLink, signedRequest, publicRequest, googleClient, passwordLink, cancelSignIn, signOut, deleteAccount, userId, authed, close: () => endPending() }
 }

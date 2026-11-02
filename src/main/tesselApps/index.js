@@ -3,11 +3,68 @@
 // request to agentTerminal.js, which asks the user first, and ends here.
 import { randomUUID } from 'crypto'
 import { ConnectionError, createConnections } from './connections'
-import { AppError, createGoogleTools } from './google'
+import { createAtlassianTools } from './atlassian'
+import { createDropboxTools } from './dropbox'
+import { createGitHubTools } from './github'
+import { createGoogleTools } from './google'
+import { createLinearTools } from './linear'
+import { createMicrosoftTools } from './microsoft'
+import { createNotionTools } from './notion'
+import { createSentryTools } from './sentry'
+import { AppError } from './shared'
+import { createStripeTools } from './stripe'
+import { createVercelTools } from './vercel'
 
+// The services an agent's tool belongs to, as they are named to a person.
+export const SERVICE_LABELS = Object.freeze({
+  gmail: 'Gmail', // i18n-ignore
+  calendar: 'Google Calendar', // i18n-ignore
+  drive: 'Google Drive', // i18n-ignore
+  outlook_mail: 'Outlook mail', // i18n-ignore
+  outlook_calendar: 'Outlook Calendar', // i18n-ignore
+  onedrive: 'OneDrive', // i18n-ignore
+  github: 'GitHub', // i18n-ignore
+  dropbox: 'Dropbox', // i18n-ignore
+  notion: 'Notion', // i18n-ignore
+  linear: 'Linear', // i18n-ignore
+  jira: 'Jira', // i18n-ignore
+  confluence: 'Confluence', // i18n-ignore
+  sentry: 'Sentry', // i18n-ignore
+  vercel: 'Vercel', // i18n-ignore
+  stripe: 'Stripe' // i18n-ignore
+})
 // Each provider a person connects, and the services it gives.
-export const SERVICE_LABELS = Object.freeze({ gmail: 'Gmail', calendar: 'Google Calendar', drive: 'Google Drive' }) // i18n-ignore
-const PROVIDER_OF = Object.freeze({ gmail: 'google', calendar: 'google', drive: 'google' })
+const PROVIDER_OF = Object.freeze({
+  gmail: 'google',
+  calendar: 'google',
+  drive: 'google',
+  outlook_mail: 'microsoft',
+  outlook_calendar: 'microsoft',
+  onedrive: 'microsoft',
+  github: 'github',
+  dropbox: 'dropbox',
+  notion: 'notion',
+  linear: 'linear',
+  jira: 'atlassian',
+  confluence: 'atlassian',
+  sentry: 'sentry',
+  vercel: 'vercel',
+  stripe: 'stripe'
+})
+
+// Every tool, by name, whichever provider it belongs to.
+export const createAllTools = (deps) => ({
+  ...createGoogleTools(deps),
+  ...createMicrosoftTools(deps),
+  ...createGitHubTools(deps),
+  ...createDropboxTools(deps),
+  ...createNotionTools(deps),
+  ...createLinearTools(deps),
+  ...createAtlassianTools(deps),
+  ...createSentryTools(deps),
+  ...createVercelTools(deps),
+  ...createStripeTools(deps)
+})
 
 // What a tool brought back, between two lines it cannot guess: a mail or a file cannot write
 // anything that reads as Tessel's own words after it. A hint to the agent, not a control.
@@ -19,7 +76,7 @@ function fenced(text) {
 // What an agent reads when something is missing: in its words, with what to do.
 function explain(err, provider) {
   if (err instanceof ConnectionError) {
-    if (err.code === 'not_connected') return new AppError('not_connected', `${provider} is not connected. The user connects it in Tessel: Settings > Connections.`)
+    if (err.code === 'not_connected') return new AppError('not_connected', `${provider} is not connected. The user connects it in Tessel: Settings > Connections. If it says there that it is not available yet, it cannot be connected for now: say so.`)
     if (err.code === 'reconnect') return new AppError('reconnect', `${provider} needs connecting again: the user does it in Tessel, Settings > Connections.`)
     if (err.code === 'signed_out') return new AppError('signed_out', 'The user is signed out of their Tessel account, which renews this connection: they sign in at Settings > Tessel account.')
     if (err.code === 'offline') return new AppError('offline', 'Could not reach tesselcode.com to renew this connection. Try again in a moment.')
@@ -28,9 +85,9 @@ function explain(err, provider) {
   return err
 }
 
-export function createTesselApps({ dir, safeStorage, openExternal, signedRequest, scheme, accountUrl, fetchFn = fetch, onChange = () => {} }) {
-  const connections = createConnections({ dir, safeStorage, openExternal, signedRequest, scheme, accountUrl, onChange })
-  const tools = createGoogleTools({ connections, fetchFn })
+export function createTesselApps({ dir, safeStorage, openExternal, signedRequest, publicRequest, scheme, accountUrl, fetchFn = fetch, onChange = () => {} }) {
+  const connections = createConnections({ dir, safeStorage, openExternal, signedRequest, publicRequest, scheme, accountUrl, onChange })
+  const tools = createAllTools({ connections, fetchFn })
 
   return {
     connections,
@@ -47,12 +104,12 @@ export function createTesselApps({ dir, safeStorage, openExternal, signedRequest
         eachTime: (input) => !!(spec.eachTime && spec.eachTime(input))
       }
     },
-    // The accounts connected for this service, by address.
     // The tools of what is connected, by name (what an agent is offered when it starts).
     connectedTools: () => {
       const connected = new Set(connections.list().map((c) => c.service))
       return Object.keys(tools).filter((name) => connected.has(PROVIDER_OF[tools[name].service]))
     },
+    // The accounts connected for this service, by name: an address, a login or a workspace.
     accounts: (service) => connections.list().filter((c) => c.service === PROVIDER_OF[service]).map((c) => c.account),
     // When this account was connected: an agreement is for that connection, not for a later one.
     connectedAt: (service, account) => connections.list().find((c) => c.service === PROVIDER_OF[service] && c.account === account)?.connectedAt ?? null,

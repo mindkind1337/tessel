@@ -299,15 +299,26 @@ working on Tessel itself (see [Build from source](#build-from-source)).
   version.
 - **Tessel's own connectors (`tessel_apps`)**: Gmail, Google Calendar and Google Drive for
   every agent on your computer, and for Claude Code and Codex on your SSH hosts, connected in
-  **Settings > Connections**. You sign in through tesselcode.com on
-  Google's own page, after a page that names the Tessel account asking, so it takes a Tessel
-  account and nothing to set up. The refresh token stays encrypted on your computer and access
+  **Settings > Connections**. The same panel lists Outlook mail, Outlook Calendar, OneDrive,
+  GitHub, Dropbox, Notion, Linear, Jira, Confluence, Sentry, Vercel and Stripe; the server tells
+  it which can be connected, and one whose app is not registered yet says **Not available yet**
+  and has no Connect button. You sign in through tesselcode.com on
+  the service's own page, after a page that names the Tessel account asking, so it takes a Tessel
+  account and nothing to set up. An account can be an address, a login or a workspace. The refresh
+  token stays encrypted on your computer and access
   tokens only in memory; Tessel does not give them to agents (a program running as you could
-  still read them). Calls go from your computer straight to Google. Each agent asks, naming the
+  still read them). Calls go from your computer straight to the service. Each agent asks, naming the
   account, before it first reads a service and before it first changes something there, again
   after a restart of its pane; while the project is shared in Live Share, it asks each time.
   Deleting or changing an event, inviting someone, writing to a calendar other than your main
-  one and every request from an agent on an SSH host are asked each time, with what will happen. Mail can be read and drafted, never sent. Signing out of your Tessel account ends the
+  one, creating an issue, a comment or a Notion page, and every request from an agent on an SSH
+  host are asked each time, with what will happen. Mail can be read and drafted, never sent.
+  Outlook mails an event's guests by itself, so agents make no Outlook event with guests and leave
+  one that has guests alone. Dropbox, Sentry, Vercel and Stripe are read only, and no tool sends
+  mail, deploys, moves money or deletes a repository. What an agent reads from a service is marked
+  as someone else's words, and its size is limited. Disconnecting deletes the tokens and asks the
+  service to end its access; Microsoft, Atlassian, Sentry and Stripe give apps no way to do that,
+  so Tessel says where to end it yourself. Signing out of your Tessel account ends the
   connections. What you connect here replaces the same service in Claude Code's and Codex's own
   connectors, in Tessel's panes here and on hosts, so agents use Tessel's. All their other tools
   stay. Agents already running get the tools after

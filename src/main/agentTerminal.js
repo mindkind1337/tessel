@@ -482,7 +482,7 @@ export function createAgentTerminal({ apps = null, verify, settings = () => ({ e
     return `Not run: ${said}, from their own computer. "local" is the computer of the person sharing this project, not theirs: a crash, a file or a log they tell you about is not there. ${options} Only if you really need the sharer's computer, call again with ownerComputer: true (the sharer is asked each time, and told a guest may be behind it).`
   }
 
-  // tessel_apps (Gmail, Calendar, Drive...): the user is asked before an agent first uses a service
+  // tessel_apps (Gmail, Outlook, GitHub...): the user is asked before an agent first uses a service
   // and first changes something there, until Tessel restarts; each time while a Live Share guest
   // is in its project, who could be behind the request. The tokens stay in tesselApps.
   async function useApp(agentPane, args, signal = null) {
@@ -498,13 +498,13 @@ export function createAgentTerminal({ apps = null, verify, settings = () => ({ e
       throw fail('invalid_argument', 'The tool\'s arguments are not valid.')
     }
     if (!input || typeof input !== 'object' || Array.isArray(input)) throw fail('invalid_argument', 'The tool\'s arguments are not valid.')
-    if (!apps.accounts(spec.service).length) throw fail('not_connected', `${spec.label} is not connected. The user connects it in Tessel: Settings > Connections.`)
+    if (!apps.accounts(spec.service).length) throw fail('not_connected', `${spec.label} is not connected. The user connects it in Tessel: Settings > Connections. If it says there that it is not available yet, it cannot be connected for now: say so.`)
     // Which account: the one named, or the only one. Agreeing to one is not agreeing to another.
     const accounts = apps.accounts(spec.service)
     const account = input.account ? String(input.account).trim().toLowerCase() : accounts.length === 1 ? accounts[0] : null
-    // No address before the card: which accounts someone has is theirs to say.
-    if (!account) throw fail('which_account', 'Several accounts are connected for this. Ask the user which one, then pass its address as "account".')
-    if (!accounts.includes(account)) throw fail('unknown_account', 'That account is not connected. Ask the user which one to use, then pass its address as "account".')
+    // No account named before the card: which accounts someone has is theirs to say.
+    if (!account) throw fail('which_account', 'Several accounts are connected for this. Ask the user which one, then pass its name (an address, a login or a workspace) as "account".')
+    if (!accounts.includes(account)) throw fail('unknown_account', 'That account is not connected. Ask the user which one to use, then pass its name (an address, a login or a workspace) as "account".')
     const who = await ask('terminalTarget', { agent: agentPane, op: 'appsInfo' })
     const agentLabel = String((who && who.agentLabel) || 'agent')
     // A project shared in Live Share: someone may be behind the request, or watching what the agent
@@ -528,7 +528,7 @@ export function createAgentTerminal({ apps = null, verify, settings = () => ({ e
       if (answer.remember === 'pane' && !eachTime) appPanes.add(key(agentPane, scope))
     }
     if (signal && signal.aborted) throw fail('cancelled', 'The request was cancelled.')
-    const target = String(input.id || input.query || input.calendar || '').slice(0, 120)
+    const target = String(input.id || input.query || input.calendar || input.repo || input.key || input.jql || input.kind || '').slice(0, 120)
     writeLog({ at: now(), paneId: agentPane, paneName: `${spec.label} (${account})`, agent: agentLabel, agentPane, kind: 'app', text: spec.writes ? `${name}: ${detail}` : `${name}${target ? ` ${target}` : ''}`, why }, false)
     try {
       // Never through a file: a mail is not left in a temporary folder.

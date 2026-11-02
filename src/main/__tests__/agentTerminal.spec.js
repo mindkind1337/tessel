@@ -722,6 +722,106 @@ describe("security review: the user's own computer, asked for by an agent that w
       expect(apps.run).toHaveBeenCalledTimes(2)
     })
 
+    describe('with the real connectors, against a fake of the service', () => {
+      let dir
+      let real
+      let sent
+      let answers
+      beforeEach(async () => {
+        const { createTesselApps } = await import('../tesselApps')
+        dir = fs.mkdtempSync(join(os.tmpdir(), 'tessel-apps-terminal-'))
+        sent = []
+        answers = () => Response.json({ private: false })
+        let state = ''
+        real = createTesselApps({
+          dir,
+          safeStorage: { isEncryptionAvailable: () => true, getSelectedStorageBackend: () => 'dpapi', encryptString: (s) => Buffer.from(s), decryptString: (b) => b.toString() },
+          scheme: 'tessel-dev',
+          openExternal: async () => {},
+          signedRequest: async (path, init) => {
+            const body = JSON.parse(init.body)
+            if (path === '/api/connect/start') {
+              state = body.state
+              return { status: 200, ok: true, body: { url: `https://tesselcode.com/connect/${body.service}?flow=x` } }
+            }
+            return { status: 200, ok: true, body: { access_token: 'ACCESS-SECRET', refresh_token: 'REFRESH-SECRET', grant: 'G', expires_in: 3600, account: 'ana-codes' } }
+          },
+          fetchFn: async (url, init) => {
+            sent.push({ url: String(url), init })
+            return answers(String(url), init)
+          }
+        })
+        await real.connections.connect('github')
+        await real.connections.handleLink(`tessel-dev://connect?state=${state}&pickup=p`)
+      })
+      afterEach(() => {
+        real.connections.close()
+        fs.rmSync(dir, { recursive: true, force: true })
+      })
+      const comment = { repo: 'acme/tools', number: 8, body: 'Words the agent wrote' }
+      const posts = () => sent.filter((s) => s.init.method === 'POST')
+
+      it('a comment shows what will happen, is asked each time, and nothing is remembered', async () => {
+        answers = (url, init) => (init.method === 'POST' ? Response.json({ html_url: 'https://github.com/acme/tools/issues/8#1' }, { status: 201 }) : Response.json(url.includes('/issues/') ? { number: 8, title: 'The bug' } : { private: false }))
+        const win = fakeWindow({ approve: allowAll })
+        const { at } = make(win, { apps: real })
+        const out = await at.handle(use('github_comment', comment))
+        await at.handle(use('github_comment', comment))
+        const cards = win.calls.filter((c) => c.op === 'approve')
+        expect(cards).toHaveLength(2)
+        expect(cards[0].terminal).toBe('apps:github')
+        expect(cards[0].card).toMatchObject({ kind: 'apps', service: 'GitHub', account: 'ana-codes', writes: true, eachTime: true })
+        expect(cards[0].card.detail).toBe('Repository: acme/tools (public: anyone can read this)\nComment on: #8: The bug\nText: Words the agent wrote')
+        expect(posts()).toHaveLength(2)
+        expect(out.text).toContain('Comment added')
+        expect(out.text).not.toContain('SECRET')
+      })
+
+      it('refused on its card: nothing is written', async () => {
+        const win = fakeWindow({ approve: { allow: false } })
+        await expect(make(win, { apps: real }).at.handle(use('github_comment', comment))).rejects.toMatchObject({ code: 'denied', message: expect.stringContaining('GitHub') })
+        expect(posts()).toEqual([])
+      })
+
+      it('a read is asked once, and comes back between marks', async () => {
+        answers = () => Response.json({ full_name: 'acme/tools', default_branch: 'main' })
+        const win = fakeWindow({ approve: allowAll })
+        const { at } = make(win, { apps: real })
+        const out = await at.handle(use('github_read_repo', { repo: 'acme/tools' }))
+        await at.handle(use('github_read_repo', { repo: 'acme/tools' }))
+        expect(win.calls.filter((c) => c.op === 'approve')).toHaveLength(1)
+        expect(out.text).toContain('--- from outside')
+        expect(out.text).toContain('Default branch: main')
+      })
+
+      it('a hostile id comes back as a refusal after the card, with nothing sent', async () => {
+        const win = fakeWindow({ approve: allowAll })
+        await expect(make(win, { apps: real }).at.handle(use('github_read_repo', { repo: '../../user' }))).rejects.toMatchObject({ code: 'invalid_argument' })
+        expect(sent).toEqual([])
+      })
+
+      it('a service nobody connected says where to connect it, and that it may not be available yet', async () => {
+        const win = fakeWindow({ approve: allowAll })
+        const err = await make(win, { apps: real }).at.handle(use('notion_search', {})).catch((e) => e)
+        expect(err.code).toBe('not_connected')
+        expect(err.message).toContain('Notion is not connected')
+        expect(err.message).toContain('Settings > Connections')
+        expect(err.message).toContain('not available yet')
+      })
+
+      it('writes keep the rate limit, reads the read limit, whichever the provider', async () => {
+        answers = () => Response.json({ full_name: 'acme/tools' })
+        const win = fakeWindow({ approve: allowAll })
+        const { at } = make(win, { apps: real })
+        let refused = null
+        for (let i = 0; i < 130 && !refused; i++) refused = await at.handle(use('github_read_repo', { repo: 'acme/tools' })).then(() => null, (e) => e)
+        expect(refused).toMatchObject({ code: 'rate_limited' })
+        refused = null
+        for (let i = 0; i < 130 && !refused; i++) refused = await at.handle(use('github_comment', comment)).then(() => null, (e) => e)
+        expect(refused).toMatchObject({ code: 'rate_limited' })
+      })
+    })
+
     it('changing something is asked for separately from reading', async () => {
       const win = fakeWindow({ approve: allowAll })
       const { at } = make(win, { apps: fakeApps() })
@@ -933,8 +1033,8 @@ describe("security review: the user's own computer, asked for by an agent that w
     })
 
     it('the tools the agents see are exactly the ones Tessel has', async () => {
-      const { createGoogleTools } = await import('../tesselApps/google')
-      expect(mcp.APP_TOOLS.map((t) => t.name).sort()).toEqual(Object.keys(createGoogleTools({ connections: {} })).sort())
+      const { createAllTools } = await import('../tesselApps')
+      expect(mcp.APP_TOOLS.map((t) => t.name).sort()).toEqual(Object.keys(createAllTools({ connections: {} })).sort())
       for (const tool of mcp.APP_TOOLS) expect(tool.inputSchema.required).toContain('explanation')
       expect(mcp.APP_TOOLS.map((t) => t.name).filter((n) => /send/.test(n))).toEqual([])
     })

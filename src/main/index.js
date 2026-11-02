@@ -3216,6 +3216,7 @@ const tesselApps = createTesselApps({
   safeStorage,
   openExternal: (url) => shell.openExternal(url),
   signedRequest: (path, init) => tesselAccount.signedRequest(path, init),
+  publicRequest: (path, init) => tesselAccount.publicRequest(path, init),
   scheme: APP_LINK_SCHEME,
   accountUrl: ACCOUNT_URL,
   onChange: () => {
@@ -3286,6 +3287,10 @@ setTimeout(() => {
 ipcMain.handle(
   'tesselApps:view',
   safe(() => tesselApps.connections.view())
+)
+ipcMain.handle(
+  'tesselApps:services',
+  safe(() => tesselApps.connections.services())
 )
 ipcMain.handle(
   'tesselApps:connect',

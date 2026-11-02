@@ -1,4 +1,4 @@
-// tessel_apps: the services a person connected (Gmail, Outlook...), and their tokens.
+// tessel_apps: the services a person connected (Gmail, Outlook, GitHub...), and their tokens.
 //
 // Connecting happens on tesselcode.com and the service's own page, in the person's browser
 // (tessel-server, src/connect.js), and comes back through Tessel's own link. The tokens then live
@@ -7,18 +7,25 @@
 // in memory only. (Sealing keeps them from other Windows users, not from a program running as you,
 // which an agent with a shell is.) They only pass through tesselcode.com to be renewed, because
 // that takes the client secret kept there, and only for the account that connected them.
+// An account is what the service calls it: an address, a login or a workspace.
 import fs from 'fs'
 import { createHash, randomBytes, randomUUID } from 'crypto'
 import { join } from 'path'
 import { secureStorageAvailable } from '../credentialProtection'
 
 const CONNECT_MS = 15 * 60 * 1000
-const MAX_FILE = 256 * 1024
+const MAX_FILE = 1024 * 1024
 // A token this close to its end is renewed first.
 const EARLY_MS = 60 * 1000
 const SERVICE_RE = /^[a-z][a-z0-9-]{0,30}$/
+// Services that give an app no way to end its access: disconnecting deletes the tokens here, sends
+// them nowhere, and tells the person where to end it (TesselConnections.vue says where).
+const NO_REVOKE = new Set(['microsoft', 'atlassian', 'sentry', 'stripe'])
 
 const base64url = (bytes) => Buffer.from(bytes).toString('base64url')
+// An account's name can be someone else's words (who named that workspace?): on one line, and with
+// nothing that hides or turns text around, wherever it is shown.
+const cleanName = (value) => (typeof value === 'string' ? value.replace(/\p{Cf}/gu, '').replace(/\s+/g, ' ').trim().slice(0, 320) : '')
 const JSON_POST = { method: 'POST', headers: { 'content-type': 'application/json' } }
 
 export class ConnectionError extends Error {
@@ -28,11 +35,12 @@ export class ConnectionError extends Error {
   }
 }
 
-export function createConnections({ dir, safeStorage, openExternal, signedRequest, accountUrl = 'https://tesselcode.com', scheme = 'tessel', now = () => Date.now(), onChange = () => {} }) {
+export function createConnections({ dir, safeStorage, openExternal, signedRequest, publicRequest = signedRequest, accountUrl = 'https://tesselcode.com', scheme = 'tessel', now = () => Date.now(), onChange = () => {} }) {
   const file = join(dir, 'connections.json')
   let saved // undefined until read: { [service]: { [account]: { access_token, refresh_token, grant, expires_at, scope, connected_at, reconnect } } }
   let pending = null // the connection waiting for the browser
   let lastError = null
+  let notEnded = [] // after disconnecting: [{ service, how: 'notTold' | 'byHand' }]
   const renewing = new Map()
 
   function read() {
@@ -81,15 +89,22 @@ export function createConnections({ dir, safeStorage, openExternal, signedReques
   function list() {
     const out = []
     for (const [service, accounts] of Object.entries(read())) {
-      for (const [account, r] of Object.entries(accounts)) out.push({ service, account, connectedAt: r.connected_at || null, reconnect: !!r.reconnect })
+      for (const [account, r] of Object.entries(accounts)) out.push({ service, account, label: r.label || account, connectedAt: r.connected_at || null, reconnect: !!r.reconnect })
     }
     return out
   }
-  const view = () => ({ connections: list(), connecting: pending ? pending.service : null, error: lastError })
+  const view = () => ({ connections: list(), connecting: pending ? pending.service : null, error: lastError, notEnded })
+  // Which services can be connected now, as the server says: no account is needed to know that.
+  // -> { services: [ids] }, or { services: null } when it cannot be asked.
+  async function services() {
+    const res = await publicRequest('/api/connect/services').catch(() => null)
+    return { services: res?.ok && Array.isArray(res.body?.services) ? res.body.services.filter((s) => typeof s === 'string') : null }
+  }
   // The service forgets a connection Tessel will not keep. -> whether it could be told.
-  async function revoke(service, token) {
-    if (!token) return true
-    const res = await signedRequest('/api/connect/revoke', { ...JSON_POST, body: JSON.stringify({ service, token }) }).catch(() => null)
+  async function revoke(service, { refresh_token, access_token }) {
+    const token = refresh_token || access_token
+    if (!token || NO_REVOKE.has(service)) return true
+    const res = await signedRequest('/api/connect/revoke', { ...JSON_POST, body: JSON.stringify({ service, token, kind: refresh_token ? 'refresh' : 'access' }) }).catch(() => null)
     return !!(res && res.ok)
   }
 
@@ -97,6 +112,7 @@ export function createConnections({ dir, safeStorage, openExternal, signedReques
     if (pending) clearTimeout(pending.timer)
     pending = null
     lastError = error
+    notEnded = []
     onChange()
   }
 
@@ -107,6 +123,7 @@ export function createConnections({ dir, safeStorage, openExternal, signedReques
     const attempt = { service, verifier: base64url(randomBytes(48)), state: base64url(randomBytes(24)) }
     pending = attempt
     lastError = null
+    notEnded = []
     const challenge = base64url(createHash('sha256').update(attempt.verifier).digest())
     const res = await signedRequest('/api/connect/start', { ...JSON_POST, body: JSON.stringify({ service, challenge, state: attempt.state, app: scheme }) })
     if (pending !== attempt) return view()
@@ -162,9 +179,10 @@ export function createConnections({ dir, safeStorage, openExternal, signedReques
       return true
     }
     const got = res.ok ? res.body : null
-    const account = typeof got?.account === 'string' ? got.account.trim().toLowerCase().slice(0, 320) : ''
+    const label = cleanName(got?.account)
+    const account = label.toLowerCase()
     if (typeof got?.access_token !== 'string' || !got.access_token || !account) {
-      if (typeof got?.access_token === 'string') revoke(attempt.service, got.refresh_token || got.access_token)
+      if (typeof got?.access_token === 'string') revoke(attempt.service, got)
       endPending('failed')
       return true
     }
@@ -178,6 +196,8 @@ export function createConnections({ dir, safeStorage, openExternal, signedReques
       grant: typeof got.grant === 'string' && got.grant ? got.grant : before?.grant || null,
       expires_at: Number.isFinite(got.expires_in) ? now() + got.expires_in * 1000 : null,
       scope: typeof got.scope === 'string' ? got.scope : null,
+      // As the service writes it, for the panel: "Acme Notes" rather than the name it is found by.
+      label,
       connected_at: now()
     }
     try {
@@ -186,7 +206,7 @@ export function createConnections({ dir, safeStorage, openExternal, signedReques
       delete accounts[account]
       if (before) accounts[account] = before
       // Not kept here: not left alive at the service either.
-      revoke(attempt.service, got.refresh_token || got.access_token)
+      revoke(attempt.service, got)
       endPending(err.code === 'no_secure_storage' ? 'noSecureStorage' : 'failed')
       return true
     }
@@ -213,7 +233,17 @@ export function createConnections({ dir, safeStorage, openExternal, signedReques
     const key = `${service}\n${name}`
     if (renewing.has(key)) return renewing.get(key)
     const work = (async () => {
-      if (!record.refresh_token) throw new ConnectionError('reconnect', 'reconnect')
+      // Nothing to renew it with (a token that was not meant to end): the panel says so too.
+      if (!record.refresh_token) {
+        record.reconnect = true
+        try {
+          write()
+        } catch {
+          // said for now; it is said again at the next call
+        }
+        onChange()
+        throw new ConnectionError('reconnect', 'reconnect')
+      }
       const res = await signedRequest('/api/connect/refresh', { ...JSON_POST, body: JSON.stringify({ service, refresh_token: record.refresh_token, grant: record.grant }) })
       if (res.error === 'signedOut') throw new ConnectionError('signed_out', 'signed out')
       if (res.error) throw new ConnectionError('offline', 'offline')
@@ -256,7 +286,6 @@ export function createConnections({ dir, safeStorage, openExternal, signedReques
     const name = String(account || '').trim().toLowerCase()
     const record = accounts && Object.hasOwn(accounts, name) ? accounts[name] : null
     if (!record) return view()
-    const token = record.refresh_token || record.access_token
     delete accounts[name]
     if (!Object.keys(accounts).length) delete saved[service]
     try {
@@ -270,9 +299,12 @@ export function createConnections({ dir, safeStorage, openExternal, signedReques
       }
     }
     lastError = null
+    notEnded = []
     onChange()
-    if (!(await revoke(service, token))) {
-      lastError = 'notRevoked'
+    const told = await revoke(service, record)
+    if (!told || NO_REVOKE.has(service)) {
+      if (!told) lastError = 'notRevoked'
+      notEnded = [{ service, how: told ? 'byHand' : 'notTold' }]
       onChange()
     }
     return view()
@@ -280,9 +312,16 @@ export function createConnections({ dir, safeStorage, openExternal, signedReques
   // Before signing out of the Tessel account or deleting it, while the server still answers: the
   // connections were made for it, and must not pass to whoever signs in next.
   async function disconnectAll() {
-    for (const c of list()) await disconnect(c.service, c.account)
+    const left = []
+    for (const c of list()) {
+      await disconnect(c.service, c.account)
+      left.push(...notEnded)
+    }
+    notEnded = left
+    if (left.some((x) => x.how === 'notTold')) lastError = 'notRevoked'
+    onChange()
     return view()
   }
 
-  return { list, view, connect, cancel, handleLink, access, disconnect, disconnectAll, close: () => pending && clearTimeout(pending.timer) }
+  return { list, view, services, connect, cancel, handleLink, access, disconnect, disconnectAll, close: () => pending && clearTimeout(pending.timer) }
 }

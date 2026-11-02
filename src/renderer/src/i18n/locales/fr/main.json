@@ -1138,7 +1138,18 @@
         "notRead": "{{id}} (illisible pour le moment)",
         "repeats": "événement répété",
         "notPlain": "[pas de l'ASCII simple]",
-        "guestsBecome": "Invités après ce changement : {{value}}"
+        "guestsBecome": "Invités après ce changement : {{value}}",
+        "repository": "Dépôt : {{value}}",
+        "publicRepo": "{{value}} (public : tout le monde peut lire ceci)",
+        "privateRepo": "{{value}} (privé : quiconque y a accès peut lire ceci)",
+        "commentOn": "Commentaire sur : {{value}}",
+        "text": "Texte : {{value}}",
+        "underPage": "Sous la page : {{value}}",
+        "othersRead": "Les autres personnes qui y ont accès peuvent lire ceci.",
+        "team": "Équipe : {{value}}",
+        "site": "Site : {{value}}",
+        "project": "Projet : {{value}}",
+        "issueType": "Type : {{value}}"
       }
     }
   },

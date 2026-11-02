@@ -19,7 +19,7 @@
     <section>
       <h1>Privacy policy</h1>
       <p class="meta">Last updated: November 1, 2026</p>
-      <p>Tessel Agents lets AI agents running in the Tessel desktop app use your Google account on your own computer. This page explains what it can access and where that data goes, and what a Tessel account keeps if you create one.</p>
+      <p>Tessel Agents lets AI agents running in the Tessel desktop app use your Google account on your own computer. This page explains what it can access and where that data goes, the other services Tessel can connect, and what a Tessel account keeps if you create one.</p>
 
       <h2>What it can access</h2>
       <p>You choose the Google account and approve access on Google's own page. Tessel Agents asks for:</p>
@@ -44,6 +44,22 @@
       <h2>Keeping and deleting your data</h2>
       <p>Your data stays in your Google account, and Tessel keeps no copy on any server. Disconnecting a service in Tessel's Settings &gt; Connections, or signing out of your Tessel account, deletes its tokens from your computer and asks Google to end its access; Tessel tells you if Google could not be reached. You can also remove Tessel Agents from your <a href="https://myaccount.google.com/permissions">Google Account permissions</a>. To delete what is on your computer, delete the <code>.google_workspace_mcp</code> folder in your user folder and remove the server from Tessel under Settings &gt; MCP servers.</p>
 
+      <h2>Other services</h2>
+      <p>Tessel can also connect the services below, each one only after you approve it on that service's own page. A service whose app is not registered yet says "Not available yet" in Settings &gt; Connections and cannot be connected. What each one allows is what agents get tools for:</p>
+      <ul>
+        <li><strong>Outlook mail, Outlook Calendar, OneDrive (Microsoft):</strong> read mail and save drafts; read calendars, and create, change and delete events that have no guests; read files. Microsoft's permission for mail also covers changing and deleting it, so its page mentions that; it does not cover sending, and agents have no tool for either.</li>
+        <li><strong>GitHub:</strong> read the repositories you give Tessel's app, search them, and create issues and comments on issues.</li>
+        <li><strong>Dropbox:</strong> read your files.</li>
+        <li><strong>Notion:</strong> read the pages you choose on Notion's page, and create pages under them.</li>
+        <li><strong>Linear:</strong> read, and create issues and comments.</li>
+        <li><strong>Jira and Confluence (Atlassian):</strong> read and search Jira, and create issues and comments; read and search Confluence. Atlassian's permission for changing Jira also covers deleting issues; agents have no tool for that.</li>
+        <li><strong>Sentry:</strong> read the organization you choose, its projects, issues and events.</li>
+        <li><strong>Vercel:</strong> read projects, deployments and build logs.</li>
+        <li><strong>Stripe:</strong> read only: customers, charges, invoices, subscriptions, payments, products, prices, payouts, disputes and your balance. Its permissions cannot move money.</li>
+      </ul>
+      <p>The rest works as it does for Google. Your data stays with the service and is used only to do what you ask your agents to do, your tokens stay on your computer as described above, and requests go from your computer straight to the service. What an agent reads goes to its AI provider. Connecting, renewing and ending a connection go through tesselcode.com, which holds Tessel's client secret for that service: the tokens pass through it, with the name of the account (an address, a login or a workspace), and are held encrypted with a key we do not keep, as described above.</p>
+      <p>Disconnecting a service, or signing out of your Tessel account, deletes its tokens from your computer. GitHub, Dropbox, Notion, Linear and Vercel are also asked to end the access, and Tessel tells you if they could not be reached. Microsoft, Atlassian, Sentry and Stripe give apps no way to do that: Tessel keeps no copy and tells you where to end the access yourself, in your account with that service.</p>
+
       <h2>Tessel accounts</h2>
       <p>A Tessel account is optional, though connecting a service through tesselcode.com needs one; your own Google client does not. You can create one with an email address and a password, or by signing in with Google or GitHub. We keep your email address, your name if you give one, your password only as a one-way hash (scrypt), your Google or GitHub account ID if you use them, and the dates of your account and your sessions. They are kept on Cloudflare, which hosts our server and sends our emails. From GitHub we read only your ID, your name and your verified primary address, and we do not keep its access token. Your address is used to sign you in and to email you what concerns your account: confirming your address, resetting your password and security notices. We also keep a log of sign-ins for 90 days: when, by which method and from which country, with no IP address. The person who runs Tessel can see the accounts and this log, to run the service and stop abuse. An address nobody confirms within a week is erased. Your IP address is used to limit abuse for about a minute; we do not store it. To limit abuse we also keep, for a day, a count of the sign-up emails sent to each address, in a form that does not show the address. None of this is sold or used for advertising. Signing in to an account gives us no access to your mail, calendar or files. To delete your account, use Settings &gt; Tessel account in the app, or write to the address below. Its details are then erased from our database, and its automatic backups expire within 30 days.</p>
 
@@ -60,7 +76,7 @@
     <section id="fr" lang="fr">
       <h1>Politique de confidentialité</h1>
       <p class="meta">Dernière mise à jour : 1<sup>er</sup> novembre 2026</p>
-      <p>Tessel Agents permet aux agents d'IA de l'application de bureau Tessel d'utiliser votre compte Google sur votre propre ordinateur. Cette page explique à quoi il a accès et où vont ces données, ainsi que ce qu'un compte Tessel conserve si vous en créez un.</p>
+      <p>Tessel Agents permet aux agents d'IA de l'application de bureau Tessel d'utiliser votre compte Google sur votre propre ordinateur. Cette page explique à quoi il a accès et où vont ces données, les autres services que Tessel peut connecter, ainsi que ce qu'un compte Tessel conserve si vous en créez un.</p>
 
       <h2>À quoi il a accès</h2>
       <p>Vous choisissez le compte Google et vous approuvez l'accès sur la page de Google. Tessel Agents demande :</p>
@@ -84,6 +100,22 @@
 
       <h2>Conserver et supprimer vos données</h2>
       <p>Vos données restent dans votre compte Google, et Tessel n'en garde aucune copie sur un serveur. Déconnecter un service dans Réglages &gt; Connexions de Tessel, ou vous déconnecter de votre compte Tessel, supprime ses jetons de votre ordinateur et demande à Google de mettre fin à son accès ; Tessel vous prévient si Google n'a pas pu être joint. Vous pouvez aussi retirer Tessel Agents des <a href="https://myaccount.google.com/permissions">autorisations de votre compte Google</a>. Pour supprimer ce qui se trouve sur votre ordinateur, supprimez le dossier <code>.google_workspace_mcp</code> de votre dossier personnel et retirez le serveur de Tessel dans Réglages &gt; Serveurs MCP.</p>
+
+      <h2>Autres services</h2>
+      <p>Tessel peut aussi connecter les services ci-dessous, chacun seulement après votre accord sur la page de ce service. Un service dont l'application n'est pas encore enregistrée indique « Pas encore disponible » dans Réglages &gt; Connexions et ne peut pas être connecté. Ce que chacun permet est ce pour quoi les agents ont des outils :</p>
+      <ul>
+        <li><strong>Courrier Outlook, Calendrier Outlook, OneDrive (Microsoft) :</strong> lire le courrier et enregistrer des brouillons ; lire les calendriers, et créer, modifier et supprimer les événements sans invités ; lire les fichiers. La permission de Microsoft pour le courrier couvre aussi sa modification et sa suppression, c'est pourquoi sa page le mentionne ; elle ne couvre pas l'envoi, et les agents n'ont d'outil pour aucun des deux.</li>
+        <li><strong>GitHub :</strong> lire les dépôts que vous donnez à l'application de Tessel, y chercher, et créer des tickets et des commentaires sur les tickets.</li>
+        <li><strong>Dropbox :</strong> lire vos fichiers.</li>
+        <li><strong>Notion :</strong> lire les pages que vous choisissez sur la page de Notion, et créer des pages sous celles-ci.</li>
+        <li><strong>Linear :</strong> lire, et créer des tickets et des commentaires.</li>
+        <li><strong>Jira et Confluence (Atlassian) :</strong> lire Jira et y chercher, et créer des tickets et des commentaires ; lire Confluence et y chercher. La permission d'Atlassian pour modifier Jira couvre aussi la suppression de tickets ; les agents n'ont aucun outil pour cela.</li>
+        <li><strong>Sentry :</strong> lire l'organisation que vous choisissez, ses projets, ses problèmes et ses événements.</li>
+        <li><strong>Vercel :</strong> lire les projets, les déploiements et les journaux de compilation.</li>
+        <li><strong>Stripe :</strong> lecture seule : clients, paiements, factures, abonnements, intentions de paiement, produits, prix, virements, litiges et votre solde. Ses permissions ne peuvent pas déplacer d'argent.</li>
+      </ul>
+      <p>Le reste fonctionne comme pour Google. Vos données restent chez le service et servent uniquement à faire ce que vous demandez à vos agents, vos jetons restent sur votre ordinateur comme décrit plus haut, et les demandes vont directement de votre ordinateur au service. Ce qu'un agent lit va à son fournisseur d'IA. La connexion, le renouvellement et la fin d'une connexion passent par tesselcode.com, qui détient le secret client de Tessel pour ce service : les jetons y transitent, avec le nom du compte (une adresse, un identifiant ou un espace de travail), et y sont gardés chiffrés avec une clé que nous ne conservons pas, comme décrit plus haut.</p>
+      <p>Déconnecter un service, ou vous déconnecter de votre compte Tessel, supprime ses jetons de votre ordinateur. GitHub, Dropbox, Notion, Linear et Vercel sont aussi priés de mettre fin à l'accès, et Tessel vous prévient s'ils n'ont pas pu être joints. Microsoft, Atlassian, Sentry et Stripe ne donnent aux applications aucun moyen de le faire : Tessel ne garde aucune copie et vous indique où y mettre fin vous-même, dans votre compte chez ce service.</p>
 
       <h2>Comptes Tessel</h2>
       <p>Un compte Tessel est facultatif, mais connecter un service par tesselcode.com en demande un ; votre propre client Google, non. Il est distinct de l'accès décrit plus haut. Vous pouvez en créer un avec une adresse courriel et un mot de passe, ou en vous connectant avec Google ou GitHub. Nous conservons votre adresse courriel, votre nom si vous en donnez un, votre mot de passe uniquement sous forme de hachage à sens unique (scrypt), votre identifiant de compte Google ou GitHub si vous les utilisez, et les dates de votre compte et de vos sessions. Ils sont conservés chez Cloudflare, qui héberge notre serveur et envoie nos courriels. De GitHub, nous lisons seulement votre identifiant, votre nom et votre adresse principale vérifiée, et nous ne gardons pas son jeton d'accès. Votre adresse sert à vous connecter et à vous écrire au sujet de votre compte : confirmer votre adresse, réinitialiser votre mot de passe et vous prévenir pour la sécurité. Nous gardons aussi un journal des connexions pendant 90 jours : quand, par quelle méthode et depuis quel pays, sans adresse IP. La personne qui exploite Tessel peut voir les comptes et ce journal, pour faire fonctionner le service et bloquer les abus. Une adresse que personne ne confirme en une semaine est effacée. Votre adresse IP sert à limiter les abus pendant environ une minute ; nous ne la conservons pas. Pour limiter les abus, nous gardons aussi, pendant une journée, le nombre de courriels d'inscription envoyés à chaque adresse, sous une forme qui ne montre pas l'adresse. Rien de cela n'est vendu ni utilisé pour la publicité. Se connecter à un compte ne nous donne aucun accès à vos courriels, à votre agenda ni à vos fichiers. Pour supprimer votre compte, utilisez Réglages &gt; Compte Tessel dans l'application, ou écrivez à l'adresse ci-dessous. Ses renseignements sont alors effacés de notre base de données, et ses sauvegardes automatiques expirent en 30 jours ou moins.</p>

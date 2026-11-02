@@ -239,7 +239,7 @@ describe('tokens', () => {
     server = async () => answer({ ok: true })
     await apps.connections.disconnect('google', 'ME@gmail.com')
     expect(apps.connections.list()).toEqual([])
-    expect(calls).toEqual([{ path: '/api/connect/revoke', body: { service: 'google', token: 'REFRESH' } }])
+    expect(calls).toEqual([{ path: '/api/connect/revoke', body: { service: 'google', token: 'REFRESH', kind: 'refresh' } }])
     expect(make().connections.list()).toEqual([])
   })
 
