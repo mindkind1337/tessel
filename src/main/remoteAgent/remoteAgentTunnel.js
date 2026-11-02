@@ -32,8 +32,11 @@ export const BIND_RETRY_MS = [1000, 5000, 15000]
 // Caps (security review): server.cjs processes at once over all hosts; per
 // pane, MCP connections and hooks at once, and hooks per second (a token
 // bucket); an MCP connection with no byte either way for MCP_IDLE_MS ends.
-export const MAX_SESSIONS = 16
-export const MAX_PANE_MCP = 4
+export const MAX_SESSIONS = 60
+// One host's share of them: a hostile one cannot leave others without tools.
+export const MAX_HOST_SESSIONS = 30
+// (An agent has two servers: the team tools and the connectors.)
+export const MAX_PANE_MCP = 8
 export const MAX_PANE_HOOKS = 4
 export const HOOK_RATE_PER_S = 10
 export const MCP_IDLE_MS = 30 * 60 * 1000
@@ -71,7 +74,7 @@ export function validateRemoteAgent(raw) {
   }
   let provider = raw.provider == null ? env.TESSEL_AGENT_PROVIDER : raw.provider
   if (provider != null && provider !== '' && !(typeof provider === 'string' && PROVIDER_RE.test(provider))) return null
-  return { token, instance, node, script, env, provider: provider || null }
+  return { token, instance, node, script, env, provider: provider || null, apps: raw.apps === true }
 }
 
 // POSIX single quotes (values here never hold a backslash: see remoteProject.js).
@@ -204,6 +207,7 @@ export function createRemoteAgentTunnel({
     bindRetryMs: BIND_RETRY_MS,
     prepTimeoutMs: 20_000,
     maxSessions: MAX_SESSIONS,
+    maxHostSessions: MAX_HOST_SESSIONS,
     maxPaneMcp: MAX_PANE_MCP,
     maxPaneHooks: MAX_PANE_HOOKS,
     hookRatePerS: HOOK_RATE_PER_S,
@@ -213,6 +217,7 @@ export function createRemoteAgentTunnel({
     ...limits
   }
   let sessions = 0 // MCP connections and hooks past their hello, all hosts
+  const hostSessions = new Map() // the same, per host
   const panes = new Map() // paneId -> { hostId, token: Buffer, agent, conns: Set }
   const hosts = new Map() // hostId -> host state (below)
   const listening = new WeakSet() // ssh2 clients with our 'unix connection' listener
@@ -480,19 +485,24 @@ export function createRemoteAgentTunnel({
         return finishWith({ ok: false, error: 'bad-hello' })
       }
       if (m.kind === 'hook' && args[0] !== 'claude' && args[0] !== 'codex') return finishWith({ ok: false, error: 'bad-hello' })
+      // The connectors' server is the one thing a host may ask of the MCP server by name.
+      const appsLink = m.kind === 'mcp' && args.length === 1 && args[0] === '--apps'
+      if (m.kind === 'mcp' && args.length && !appsLink) return finishWith({ ok: false, error: 'bad-hello' })
       const p = panes.get(m.pane)
       if (!p || p.hostId !== hostId) return finishWith({ ok: false, error: 'unknown-pane' })
       if (!crypto.timingSafeEqual(Buffer.from(m.token, 'hex'), p.token)) return finishWith({ ok: false, error: 'bad-token' })
+      // Nothing connected in Tessel when this pane started: no tools for it.
+      if (appsLink && !p.agent.apps) return finishWith({ ok: false, error: 'no-apps' })
       if (!reserve(p, m.kind)) return finishWith({ ok: false, error: 'busy' })
       pane = p
       p.conns.add(conn)
-      if (m.kind === 'mcp') runMcp(p, rest)
+      if (m.kind === 'mcp') runMcp(p, rest, appsLink ? ['--apps'] : [])
       else runHook(p, args[0], rest)
     }
 
     // A slot under the caps (released with the connection). -> boolean
     function reserve(p, kind) {
-      if (sessions >= L.maxSessions) return false
+      if (sessions >= L.maxSessions || (hostSessions.get(hostId) || 0) >= L.maxHostSessions) return false
       if (kind === 'mcp') {
         if (p.mcp >= L.maxPaneMcp) return false
         // Each hello starts a node child here: a few per second per pane at most
@@ -516,8 +526,10 @@ export function createRemoteAgentTunnel({
         p.hooks++
       }
       sessions++
+      hostSessions.set(hostId, (hostSessions.get(hostId) || 0) + 1)
       release = () => {
         sessions--
+        hostSessions.set(hostId, Math.max(0, (hostSessions.get(hostId) || 0) - 1))
         if (kind === 'mcp') p.mcp--
         else p.hooks--
       }
@@ -532,15 +544,15 @@ export function createRemoteAgentTunnel({
         ...(cwd ? { cwd } : {}),
         windowsHide: true,
         shell: false,
-        stdio: ['pipe', 'pipe', argv.length ? 'pipe' : 'ignore']
+        stdio: ['pipe', 'pipe', argv[0] === '--hook' ? 'pipe' : 'ignore']
       })
     }
 
-    function runMcp(p, rest) {
+    function runMcp(p, rest, argv = []) {
       let idleTimer = null
       stream.once('close', () => timers.clearTimeout(idleTimer))
       try {
-        child = start(p, [])
+        child = start(p, argv)
       } catch {
         return finishWith({ ok: false, error: 'failed' })
       }

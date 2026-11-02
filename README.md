@@ -238,6 +238,20 @@ working on Tessel itself (see [Build from source](#build-from-source)).
   questions, and **Settings > Agents** turns them off. Only guests with the right to
   type can be asked, the person sharing is told each time, and both sides need this
   version.
+- **Tessel's own connectors (`tessel_apps`)**: Gmail, Google Calendar and Google Drive for
+  every agent on your computer, and for Claude Code and Codex on your SSH hosts, connected in
+  **Settings > Connections**. You sign in through tesselcode.com on
+  Google's own page, after a page that names the Tessel account asking, so it takes a Tessel
+  account and nothing to set up. The refresh token stays encrypted on your computer and access
+  tokens only in memory; Tessel does not give them to agents (a program running as you could
+  still read them). Calls go from your computer straight to Google. Each agent asks, naming the
+  account, before it first reads a service and before it first changes something there, again
+  after a restart of its pane; while the project is shared in Live Share, it asks each time.
+  Deleting or changing an event, inviting someone, writing to a calendar other than your main
+  one and every request from an agent on an SSH host are asked each time, with what will happen. Mail can be read and drafted, never sent. Signing out of your Tessel account ends the
+  connections. With Google connected, Codex panes, here and on hosts, run without
+  OpenAI's own connectors, so agents use Tessel's. Agents already running get the tools after
+  a restart.
 - **Updating a development copy**: a Tessel started with `npm run dev` checks GitHub
   every 30 minutes (`git fetch` of the branch it follows) and, when there are newer
   builds, shows a yellow `↑ b1700` next to **dev**. It lists them and, for a copy with

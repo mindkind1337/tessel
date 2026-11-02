@@ -1,5 +1,25 @@
 {
   "settings": {
+    "tesselApps": {
+      "title": "Connecteurs Tessel",
+      "hint": "Pour tous les agents. Vous vous connectez sur la page du service, vos jetons restent chiffrés sur cet ordinateur, et chaque agent vous demande avant d'utiliser un service pour la première fois.",
+      "signedOut": "La connexion demande un compte Tessel.",
+      "signIn": "Se connecter",
+      "denied": "Rien n'a été connecté : l'accès a été refusé sur la page du service.",
+      "timedOut": "C'a pris trop de temps, donc rien n'a été connecté. Réessayez.",
+      "offline": "Impossible de joindre tesselcode.com. Vérifiez la connexion et réessayez.",
+      "unavailable": "Ce service ne peut pas encore être connecté.",
+      "noSecureStorage": "Cet ordinateur ne peut pas garder la connexion en sécurité, donc rien n'a été gardé.",
+      "noBrowser": "Le navigateur n'a pas pu s'ouvrir.",
+      "notRevoked": "Déconnecté ici, mais le service n'a pas pu être prévenu. Pour mettre fin à son accès aussi, retirez Tessel Agents des autorisations de votre compte Google : https://myaccount.google.com/permissions",
+      "failed": "Un problème est survenu, donc rien n'a été connecté. Réessayez.",
+      "reconnect": "À reconnecter",
+      "disconnect": "Déconnecter",
+      "waiting": "En attente de votre navigateur...",
+      "cancel": "Annuler",
+      "another": "Connecter un autre compte",
+      "connect": "Connecter"
+    },
     "language": {
       "title": "Langue",
       "hint": "La langue de l'interface de Tessel. Système suit Windows.",

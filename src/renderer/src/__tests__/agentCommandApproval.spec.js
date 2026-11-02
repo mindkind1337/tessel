@@ -162,6 +162,45 @@ describe('the approval card', () => {
     expect(wrapper.find('[data-test="agent-command-allow"]').exists()).toBe(true)
   })
 
+  describe('a connector', () => {
+    const asked = { kind: 'apps', service: 'Gmail', account: 'me@gmail.com', writes: false, command: 'gmail_read', explanation: 'To read the code', project: 'Shared Project' }
+
+    it('says which service, why, and that what it reads goes to the AI provider', () => {
+      open(asked)
+      expect(wrapper.find('#aca-title').text()).toContain('Gmail')
+      expect(wrapper.find('#aca-title').text()).toContain('me@gmail.com')
+      expect(wrapper.find('[data-test="agent-command-why"]').text()).toContain('To read the code')
+      expect(wrapper.text()).toContain('AI provider')
+      expect(wrapper.find('[data-test="agent-command-text"]').exists()).toBe(false)
+      expect(wrapper.find('[data-test="agent-command-allow"]').text()).toContain('Gmail')
+    })
+
+    it('changing something is said in the title', () => {
+      open({ ...asked, writes: true })
+      expect(wrapper.find('#aca-title').text()).toContain('change')
+    })
+
+    it('a change shows what it will do', () => {
+      open({ ...asked, writes: true, detail: 'Invites: a@b.c' })
+      expect(wrapper.find('[data-test="agent-apps-detail"]').text()).toBe('Invites: a@b.c')
+    })
+
+    it('asked each time, or a project shared with someone who only watches: only this once, and said', () => {
+      open({ ...asked, writes: true, eachTime: true })
+      expect(wrapper.find('[data-test="agent-command-allow"]').exists()).toBe(false)
+      wrapper.unmount()
+      open({ ...asked, shared: true, eachTime: true })
+      expect(wrapper.find('[data-test="agent-command-allow"]').exists()).toBe(false)
+      expect(wrapper.find('[data-test="agent-command-guest"]').text()).toContain('Live Share')
+    })
+
+    it('a Live Share guest in the project: only this once', () => {
+      open({ ...asked, guests: ['Alex'] })
+      expect(wrapper.find('[data-test="agent-command-allow"]').exists()).toBe(false)
+      expect(wrapper.find('[data-test="agent-command-once"]').exists()).toBe(true)
+    })
+  })
+
   describe('a command of the host, on a guest\'s computer', () => {
     const asked = { kind: 'hostRun', hostName: 'Sam', agentLabel: 'Ada', project: 'Site', command: 'Get-Date', explanation: 'To read the log' }
 

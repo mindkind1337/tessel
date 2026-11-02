@@ -32,8 +32,8 @@ let previousFocus = null
 const { armed, press, mayAllow } = useApprovalArming(props.armMs)
 
 // A card for a whole terminal or host (allowed once, or until Tessel restarts).
-const whole = computed(() => ['pane', 'read', 'host', 'logs', 'relay'].includes(props.card.kind))
-const editable = computed(() => props.card.kind !== 'send' && !props.card.send && !['read', 'host', 'open', 'logs', 'relay', 'hostRun'].includes(props.card.kind))
+const whole = computed(() => ['pane', 'read', 'host', 'logs', 'relay', 'apps'].includes(props.card.kind))
+const editable = computed(() => props.card.kind !== 'send' && !props.card.send && !['read', 'host', 'open', 'logs', 'relay', 'hostRun', 'apps'].includes(props.card.kind))
 // Live Share, on a guest's computer: what the host's agent asks to run here.
 const hostRun = computed(() => props.card.kind === 'hostRun')
 // A command that does not fit: Allow waits until all of it has been on screen, in one unbroken
@@ -71,7 +71,7 @@ const notAsciiText = computed(() => t('app.agentTerminal.notAscii', 'Not plain A
 const hostRunText = computed(() =>
   t('app.agentTerminal.hostRunText', 'This comes from the Live Share session of {{host}}, not from you. It runs here in PowerShell with your account and can read or change your files, and what it prints goes back to that agent. Allow it only if you trust {{host}} and understand the command.', { host: props.card.hostName })
 )
-const shown = computed(() => !['read', 'host', 'open', 'logs'].includes(props.card.kind))
+const shown = computed(() => !['read', 'host', 'open', 'logs', 'apps'].includes(props.card.kind))
 // open_terminal: what the agent wants to open, beside its pane.
 const openText = computed(() => {
   const o = props.card.open || {}
@@ -84,6 +84,10 @@ const openText = computed(() => {
 })
 const title = computed(() => {
   const c = props.card
+  if (c.kind === 'apps' && c.onHost && c.writes) return t('app.agentTerminal.appsHostWriteTitle', '{{agent}}, on the server {{host}}, wants to change things in your {{service}} ({{account}})', { agent: c.agentLabel, host: c.onHost, service: c.service, account: c.account })
+  if (c.kind === 'apps' && c.onHost) return t('app.agentTerminal.appsHostTitle', '{{agent}}, on the server {{host}}, wants to use your {{service}} ({{account}})', { agent: c.agentLabel, host: c.onHost, service: c.service, account: c.account })
+  if (c.kind === 'apps' && c.writes) return t('app.agentTerminal.appsWriteTitle', '{{agent}} wants to change things in your {{service}} ({{account}})', { agent: c.agentLabel, service: c.service, account: c.account })
+  if (c.kind === 'apps') return t('app.agentTerminal.appsTitle', '{{agent}} wants to use your {{service}} ({{account}})', { agent: c.agentLabel, service: c.service, account: c.account })
   if (c.kind === 'hostRun') return t('app.agentTerminal.hostRunTitle', '{{agent}}, an agent of {{host}}, wants to run a command on your computer', { agent: c.agentLabel, host: c.hostName })
   if (c.kind === 'open') return t('app.agentTerminal.openTitle', '{{agent}} wants to open panes for you', { agent: c.agentLabel })
   if (c.kind === 'relay') return t('app.agentTerminal.relayTitle', '{{from}} (project {{fromProject}}, {{fromWhere}}) wants to write to {{to}} (project {{toProject}}, {{where}})', { from: c.relay?.from?.name, fromProject: c.relay?.from?.project, fromWhere: c.relay?.from?.where, to: c.relay?.to?.name, toProject: c.relay?.to?.project, where: c.relay?.to?.where })
@@ -117,7 +121,13 @@ function actionLabel(a) {
   return t('app.agentTerminal.allowPrefix', 'Allow {{what}} {{scope}}', { what, scope: scopeLabel(a.scope) })
 }
 const paneText = computed(() =>
-  props.card.kind === 'relay' && props.card.relay?.shared
+  props.card.kind === 'apps' && props.card.onHost
+    ? t('app.agentTerminal.appsHostText', 'This agent runs on the server {{host}}: what it reads goes there, then to its AI provider, and any program it started there can ask in its name. You are asked every time.', { host: props.card.onHost })
+    : props.card.kind === 'apps' && props.card.writes
+    ? t('app.agentTerminal.appsWriteText', 'It will create or change things there with your account. Allowing it lets it do so again until Tessel restarts.')
+    : props.card.kind === 'apps'
+    ? t('app.agentTerminal.appsText', 'It will read what this account holds, and what it reads goes to the AI provider behind this agent. Allowing it lets it use this service again until Tessel restarts.')
+    : props.card.kind === 'relay' && props.card.relay?.shared
     ? t('app.agentTerminal.relayTextShared', 'One of these projects is shared in Live Share: a guest may be behind this message, or read what arrives. You are asked for every message while it is shared.')
     : props.card.kind === 'relay'
     ? t('app.agentTerminal.relayText', 'Tessel will carry this message to the other agent, which will read it as coming from another agent, with no permission from you. Allowing it lets these two write to each other, both ways, until Tessel restarts.')
@@ -134,7 +144,9 @@ const paneText = computed(() =>
         : t('app.agentTerminal.paneText', 'It will type this command there and press Enter, with your rights on {{where}}. Allowing it in this terminal lets it type more commands there until Tessel restarts.', { where: props.card.where })
 )
 const allowWholeLabel = computed(() =>
-  props.card.kind === 'relay'
+  props.card.kind === 'apps'
+    ? t('app.agentTerminal.allowApps', 'Allow {{service}}', { service: props.card.service })
+    : props.card.kind === 'relay'
     ? t('app.agentTerminal.allowRelay', 'Allow these two to write')
     : props.card.kind === 'logs'
     ? t('app.agentTerminal.allowLogs', 'Allow reading the logs')
@@ -159,11 +171,13 @@ const guestText = computed(() =>
     ? t('app.agentTerminal.guestWrote', '{{name}}, a Live Share guest, wrote to this agent last: this request probably comes from them.', { name: props.card.fromGuest })
     : guests.value.length
       ? t('app.agentTerminal.guestIn', 'A Live Share guest ({{names}}) is in this project and may be behind this request.', { names: guests.value.join(', ') })
-      : ''
+      : props.card.kind === 'apps' && props.card.shared
+        ? t('app.agentTerminal.appsShared', 'This project is shared in Live Share: a guest may be behind this request, or see what the agent prints.')
+        : ''
 )
 const projectText = computed(() => t('app.agentTerminal.fromProject', 'Project: {{project}}', { project: props.card.project }))
 // Allowed for good, a host would stay open to whoever writes to this agent.
-const asksEachTime = computed(() => props.card.kind === 'host' && guests.value.length > 0)
+const asksEachTime = computed(() => (['host', 'apps'].includes(props.card.kind) && guests.value.length > 0) || (props.card.kind === 'apps' && props.card.eachTime === true))
 
 // An Allow button's click: only once armed, pressed on it.
 function allowWith(event, value) {
@@ -235,6 +249,7 @@ function trapTab(event) {
       <p v-if="whole" class="confirm-text aca-line">
         {{ paneText }}
       </p>
+      <pre v-if="card.kind === 'apps' && card.detail" class="confirm-code" data-test="agent-apps-detail">{{ card.detail }}</pre>
       <p v-if="card.kind === 'open'" class="confirm-text aca-line" data-test="agent-open-text">
         {{ openText }}<template v-if="card.open && card.open.name"> ({{ card.open.name }})</template>
       </p>

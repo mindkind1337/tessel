@@ -57,6 +57,8 @@ function fakeWindow({ target = OWN, approve = { allow: true }, run = { state: 'c
         return typeof run === 'function' ? run(params) : run
       case 'send':
         return { name: target.name, output: 'sent ok' }
+      case 'appsInfo':
+        return { agentLabel: 'Ada', guests: target.guests || [], shared: !!target.shared, sharedBefore: !!target.sharedBefore, onHost: target.onHost || null, wroteLast: target.wroteLast || null }
       case 'guestCommand':
         return typeof guestCommand === 'function' ? guestCommand(params) : guestCommand
       case 'host':
@@ -106,7 +108,8 @@ function make(win, extra = {}) {
     outputDir: extra.outputDir || null,
     logFile: extra.logFile || null,
     logDir: extra.logDir || null,
-    relay: extra.relay || null
+    relay: extra.relay || null,
+    apps: extra.apps || null
   })
   return { at, sent, settings: s }
 }
@@ -691,6 +694,252 @@ describe("security review: the user's own computer, asked for by an agent that w
     })
   })
 
+  describe('tessel_apps', () => {
+    const fakeApps = (extra = {}) => ({
+      tool: (name) =>
+        ({
+          gmail_read: { service: 'gmail', label: 'Gmail', provider: 'google', writes: false, describe: () => '', eachTime: () => false },
+          gmail_create_draft: { service: 'gmail', label: 'Gmail', provider: 'google', writes: true, describe: (i) => `To: ${i.to}`, eachTime: () => false },
+          calendar_delete_event: { service: 'calendar', label: 'Calendar', provider: 'google', writes: true, describe: () => 'Delete the event', eachTime: () => true }
+        })[name] || null,
+      accounts: () => ['me@gmail.com'],
+      run: vi.fn(async (name, input) => `ran ${name} ${JSON.stringify(input)}`),
+      ...extra
+    })
+    const use = (tool, input = { id: 'm1' }, extra = {}) => signed('apps', { tool, input: JSON.stringify(input), explanation: 'To read the code', ...extra })
+    const allowAll = (p) => ({ allow: true, remember: p.card.kind === 'apps' ? 'pane' : 'once' })
+
+    it('asks first, says why and what, then runs; asked once until Tessel restarts', async () => {
+      const apps = fakeApps()
+      const win = fakeWindow({ approve: allowAll })
+      const { at } = make(win, { apps })
+      expect((await at.handle(use('gmail_read'))).text).toBe('ran gmail_read {"id":"m1","account":"me@gmail.com"}')
+      await at.handle(use('gmail_read'))
+      const cards = win.calls.filter((c) => c.op === 'approve')
+      expect(cards).toHaveLength(1)
+      expect(cards[0].terminal).toBe('apps:gmail')
+      expect(cards[0].card).toMatchObject({ kind: 'apps', service: 'Gmail', account: 'me@gmail.com', writes: false, explanation: 'To read the code' })
+      expect(apps.run).toHaveBeenCalledTimes(2)
+    })
+
+    it('changing something is asked for separately from reading', async () => {
+      const win = fakeWindow({ approve: allowAll })
+      const { at } = make(win, { apps: fakeApps() })
+      await at.handle(use('gmail_read'))
+      await at.handle(use('gmail_create_draft', { to: 'a@b.c' }))
+      await at.handle(use('gmail_create_draft', { to: 'a@b.c' }))
+      expect(win.calls.filter((c) => c.op === 'approve').map((c) => c.card.writes)).toEqual([false, true])
+    })
+
+    it('another pane is asked for on its own', async () => {
+      const win = fakeWindow({ approve: allowAll })
+      const { at } = make(win, { apps: fakeApps() })
+      await at.handle(use('gmail_read'))
+      await at.handle(signed('apps', { tool: 'gmail_read', input: '{}', explanation: 'x' }, { pane: OTHER, secret: OTHER_SECRET }))
+      expect(win.calls.filter((c) => c.op === 'approve')).toHaveLength(2)
+    })
+
+    it('refused: nothing runs, and the agent is told', async () => {
+      const apps = fakeApps()
+      const win = fakeWindow({ approve: { allow: false } })
+      await expect(make(win, { apps }).at.handle(use('gmail_read'))).rejects.toMatchObject({ code: 'denied', message: expect.stringContaining('Gmail') })
+      expect(apps.run).not.toHaveBeenCalled()
+    })
+
+    it('a Live Share guest in the project: asked each time, whatever was answered', async () => {
+      const win = fakeWindow({ target: { ...OWN, guests: [{ id: 'g1', name: 'Alex' }] }, approve: allowAll })
+      const { at } = make(win, { apps: fakeApps() })
+      await at.handle(use('gmail_read'))
+      await at.handle(use('gmail_read'))
+      expect(win.calls.filter((c) => c.op === 'approve')).toHaveLength(2)
+    })
+
+    it('a pane already allowed: asked again if a guest who wrote has left, or the project is shared with someone who only watches', async () => {
+      for (const target of [{ ...OWN, wroteLast: { id: null, name: 'Eve', gone: true } }, { ...OWN, shared: true }]) {
+        const win = fakeWindow({ target, approve: allowAll })
+        const { at } = make(win, { apps: fakeApps() })
+        await at.handle(use('gmail_read'))
+        await at.handle(use('gmail_read'))
+        const cards = win.calls.filter((c) => c.op === 'approve')
+        expect(cards).toHaveLength(2)
+        expect(cards[0].card).toMatchObject({ shared: true, eachTime: true })
+      }
+    })
+
+    it('what was agreed to does not outlive the pane, or Stop', async () => {
+      const win = fakeWindow({ approve: allowAll })
+      const { at } = make(win, { apps: fakeApps() })
+      await at.handle(use('gmail_read'))
+      at.forgetPane(AGENT)
+      await at.handle(use('gmail_read'))
+      expect(win.calls.filter((c) => c.op === 'approve')).toHaveLength(2)
+    })
+
+    it('agreeing to one account is not agreeing to another', async () => {
+      let accounts = ['me@gmail.com']
+      const win = fakeWindow({ approve: allowAll })
+      const { at } = make(win, { apps: fakeApps({ accounts: () => accounts }) })
+      await at.handle(use('gmail_read'))
+      accounts = ['me@gmail.com', 'work@gmail.com']
+      await at.handle(use('gmail_read', { id: 'm', account: 'Work@gmail.com' }))
+      await at.handle(use('gmail_read', { id: 'm', account: 'me@gmail.com' }))
+      expect(win.calls.filter((c) => c.op === 'approve').map((c) => c.card.account)).toEqual(['me@gmail.com', 'work@gmail.com'])
+      const which = await at.handle(use('gmail_read')).catch((e) => e)
+      expect(which.code).toBe('which_account')
+      const unknown = await at.handle(use('gmail_read', { account: 'nobody@gmail.com' })).catch((e) => e)
+      expect(unknown.code).toBe('unknown_account')
+      // Which accounts someone has is theirs to say, not given out before a card.
+      for (const e of [which, unknown]) expect(e.message).not.toMatch(/@gmail\.com/)
+    })
+
+    it('the card names the account the call uses, even if the connections change while it is up', async () => {
+      let accounts = ['a@gmail.com']
+      const apps = fakeApps({ accounts: () => accounts })
+      const win = fakeWindow({
+        approve: (p) => {
+          accounts = ['b@gmail.com', 'a@gmail.com']
+          return allowAll(p)
+        }
+      })
+      await make(win, { apps }).at.handle(use('gmail_read'))
+      expect(apps.run.mock.calls[0][1].account).toBe('a@gmail.com')
+    })
+
+    it('reconnecting the same address is a new agreement', async () => {
+      let at0 = 1000
+      const win = fakeWindow({ approve: allowAll })
+      const { at } = make(win, { apps: fakeApps({ connectedAt: () => at0 }) })
+      await at.handle(use('gmail_read'))
+      await at.handle(use('gmail_read'))
+      expect(win.calls.filter((c) => c.op === 'approve')).toHaveLength(1)
+      at0 = 2000
+      await at.handle(use('gmail_read'))
+      expect(win.calls.filter((c) => c.op === 'approve')).toHaveLength(2)
+    })
+
+    it('sharing stopped and you have not written since: asked each time, whatever was remembered', async () => {
+      const win = fakeWindow({ target: { ...OWN, sharedBefore: true }, approve: allowAll })
+      const { at } = make(win, { apps: fakeApps() })
+      await at.handle(use('gmail_read'))
+      await at.handle(use('gmail_read'))
+      const cards = win.calls.filter((c) => c.op === 'approve')
+      expect(cards).toHaveLength(2)
+      expect(cards[0].card).toMatchObject({ shared: true, eachTime: true })
+    })
+
+    it('an agent on a server: asked each time, nothing remembered, and the card names the server', async () => {
+      const win = fakeWindow({ target: { ...OWN, onHost: 'build-box' }, approve: allowAll })
+      const { at } = make(win, { apps: fakeApps() })
+      await at.handle(use('gmail_read'))
+      await at.handle(use('gmail_read'))
+      const cards = win.calls.filter((c) => c.op === 'approve')
+      expect(cards).toHaveLength(2)
+      expect(cards[0].card).toMatchObject({ onHost: 'build-box', eachTime: true })
+    })
+
+    it('a shared project ends what a pane was allowed before', async () => {
+      const target = { ...OWN }
+      const win = fakeWindow({ target, approve: allowAll })
+      const { at } = make(win, { apps: fakeApps() })
+      await at.handle(use('gmail_read'))
+      await at.handle(use('gmail_read'))
+      expect(win.calls.filter((c) => c.op === 'approve')).toHaveLength(1)
+      target.shared = true
+      await at.handle(use('gmail_read'))
+      target.shared = false
+      await at.handle(use('gmail_read'))
+      expect(win.calls.filter((c) => c.op === 'approve')).toHaveLength(3)
+    })
+
+    it('a long change is cut with a word saying so, and a pane cannot make Tessel read without limit', async () => {
+      const describe = vi.fn(async () => 'x'.repeat(5000))
+      const apps = fakeApps({ tool: () => ({ service: 'calendar', label: 'Calendar', provider: 'google', writes: true, describe, eachTime: () => true }) })
+      const win = fakeWindow({ approve: allowAll })
+      const { at } = make(win, { apps })
+      await at.handle(use('calendar_delete_event', { id: 'e' }))
+      expect(win.calls.find((c) => c.op === 'approve').card.detail).toContain('[cut: 1000 more characters]')
+      for (let i = 0; i < 25; i++) await at.handle(use('calendar_delete_event', { id: 'e' })).catch(() => {})
+      expect(describe.mock.calls.length).toBeLessThanOrEqual(21)
+    })
+
+    it('a call cancelled while its card was prepared gets no card and does nothing', async () => {
+      const controller = new AbortController()
+      const describe = vi.fn(async () => {
+        controller.abort()
+        return 'Delete the event'
+      })
+      const apps = fakeApps({ tool: () => ({ service: 'calendar', label: 'Calendar', provider: 'google', writes: true, describe, eachTime: () => true }) })
+      const win = fakeWindow({ approve: allowAll })
+      await expect(make(win, { apps }).at.handle(use('calendar_delete_event', { id: 'e' }), { signal: controller.signal })).rejects.toMatchObject({ code: 'cancelled' })
+      expect(apps.run).not.toHaveBeenCalled()
+      await new Promise((r) => setTimeout(r, 20))
+      expect(win.calls.filter((c) => c.op === 'approve')).toEqual([])
+    })
+
+    it('a card that reads what it shows gets it with the account, and the log says the same', async () => {
+      const describe = vi.fn(async (i) => `Delete the event: Dentist (${i.account})`)
+      const apps = fakeApps({ tool: () => ({ service: 'calendar', label: 'Calendar', provider: 'google', writes: true, describe, eachTime: () => true }) })
+      const win = fakeWindow({ approve: allowAll })
+      await make(win, { apps }).at.handle(use('calendar_delete_event', { id: 'e' }))
+      expect(win.calls.find((c) => c.op === 'approve').card.detail).toBe('Delete the event: Dentist (me@gmail.com)')
+      expect(describe).toHaveBeenCalledTimes(1)
+    })
+
+    it('a change shows what it will do; what is asked each time is never remembered', async () => {
+      const win = fakeWindow({ approve: allowAll })
+      const { at } = make(win, { apps: fakeApps() })
+      await at.handle(use('gmail_create_draft', { to: 'a@b.c' }))
+      await at.handle(use('calendar_delete_event', { id: 'e' }))
+      await at.handle(use('calendar_delete_event', { id: 'e' }))
+      const cards = win.calls.filter((c) => c.op === 'approve').map((c) => c.card)
+      expect(cards[0].detail).toBe('To: a@b.c')
+      expect(cards[1]).toMatchObject({ detail: 'Delete the event', eachTime: true })
+      expect(cards).toHaveLength(3)
+    })
+
+    it('a long answer is cut, never left in a file', async () => {
+      const outputDir = fs.mkdtempSync(join(os.tmpdir(), 'tessel-apps-out-'))
+      try {
+        const { at } = make(fakeWindow({ approve: allowAll }), { outputDir, apps: fakeApps({ run: async () => 'x'.repeat(300 * 1024) }) })
+        const { text } = await at.handle(use('gmail_read'))
+        expect(text).toContain('the rest is cut')
+        expect(fs.readdirSync(outputDir)).toEqual([])
+      } finally {
+        fs.rmSync(outputDir, { recursive: true, force: true })
+      }
+    })
+
+    it('not connected: where the user connects it, and no card', async () => {
+      const win = fakeWindow()
+      await expect(make(win, { apps: fakeApps({ accounts: () => [] }) }).at.handle(use('gmail_read'))).rejects.toMatchObject({ code: 'not_connected', message: expect.stringContaining('Settings > Connections') })
+      expect(win.calls).toEqual([])
+    })
+
+    it('needs a reason, a known tool and arguments it can read', async () => {
+      const { at } = make(fakeWindow(), { apps: fakeApps() })
+      await expect(at.handle(signed('apps', { tool: 'gmail_read', input: '{}' }))).rejects.toMatchObject({ code: 'invalid_argument' })
+      await expect(at.handle(use('gmail_send'))).rejects.toMatchObject({ code: 'unknown_method' })
+      await expect(at.handle(signed('apps', { tool: 'gmail_read', input: 'nope', explanation: 'x' }))).rejects.toMatchObject({ code: 'invalid_argument' })
+      await expect(at.handle(signed('apps', { tool: 'gmail_read', input: '[1]', explanation: 'x' }))).rejects.toMatchObject({ code: 'invalid_argument' })
+    })
+
+    it('what the connector says comes through with its code', async () => {
+      const apps = fakeApps({ run: async () => { throw Object.assign(new Error('needs connecting again'), { code: 'reconnect' }) } })
+      await expect(make(fakeWindow({ approve: allowAll }), { apps }).at.handle(use('gmail_read'))).rejects.toMatchObject({ code: 'reconnect', message: 'needs connecting again' })
+    })
+
+    it('without the connectors in this Tessel: said', async () => {
+      await expect(make(fakeWindow()).at.handle(use('gmail_read'))).rejects.toMatchObject({ code: 'no_apps' })
+    })
+
+    it('the tools the agents see are exactly the ones Tessel has', async () => {
+      const { createGoogleTools } = await import('../tesselApps/google')
+      expect(mcp.APP_TOOLS.map((t) => t.name).sort()).toEqual(Object.keys(createGoogleTools({ connections: {} })).sort())
+      for (const tool of mcp.APP_TOOLS) expect(tool.inputSchema.required).toContain('explanation')
+      expect(mcp.APP_TOOLS.map((t) => t.name).filter((n) => /send/.test(n))).toEqual([])
+    })
+  })
+
   describe('host "guest"', () => {
     const J = { id: 'g1', name: 'Alex' }
     const A = { id: 'g2', name: 'Ada' }
@@ -1146,7 +1395,7 @@ describe('the tools tell agents when a terminal helps', () => {
     expect(open.description).toContain('without saying which kind, open the same agent as you, or ask the user if it is unclear')
     expect(open.inputSchema.properties.kind.enum).toEqual(['agent', 'shell'])
     expect(mcp.TERMINAL_OPS.open_terminal).toBe('open')
-    expect(mcp.VERSION).toBe('1.11.13')
+    expect(mcp.VERSION).toBe('1.11.14')
   })
 })
 

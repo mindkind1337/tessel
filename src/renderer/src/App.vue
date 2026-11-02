@@ -1388,7 +1388,10 @@ async function agentStartLine(agent, sessionId, resume, accountId, { known = fal
     // No update check at start: its menu takes keystrokes (a reminder's
     // Enter chose "Update now" and Codex quit). Updates: Settings > Agents.
     const bare = ' -c check_for_update_on_startup=false'
-    const own = (noDaemon ? ' --no-daemon' : '') + bare
+    // Google connected through Tessel: Codex's own connectors (OpenAI's) stay off in its panes, so
+    // the agent uses Tessel's, on this computer or on a host.
+    const connected = !!(await window.shellApi.tesselApps?.view().catch(() => null))?.connections?.some((c) => c.service === 'google')
+    const own = (noDaemon ? ' --no-daemon' : '') + bare + (connected ? ' -c features.apps=false' : '')
     // On a host: its rollout there (gone: a fresh Codex rather than a resume
     // that fails); can't tell: resumed as here.
     const exists = sessionId && resume && hostId && !known ? await onHost('codex') : null
@@ -12235,6 +12238,18 @@ function agentSplitDir(leafId) {
   const el = document.querySelector(`.pane[data-pane-id="${leafId}"]`) // i18n-ignore
   return splitDirFor(el ? el.getBoundingClientRect() : null)
 }
+// Projects that stopped being shared, and when.
+const sharingEndedAt = {}
+let sharedBefore = new Set()
+watch(
+  () => workspaces.value.filter((w) => liveHostOn.value && liveShare.isShared(w.id)).map((w) => w.id).join('\n'),
+  (ids) => {
+    const now = new Set(ids ? ids.split('\n') : [])
+    for (const id of sharedBefore) if (!now.has(id)) sharingEndedAt[id] = Date.now()
+    sharedBefore = now
+  },
+  { immediate: true }
+)
 const agentTerminalTargets = createAgentTerminalTargets({
   enabled: () => settings.agentTerminal !== false,
   workspaces: () => workspaces.value,
@@ -12249,6 +12264,8 @@ const agentTerminalTargets = createAgentTerminalTargets({
   askGuestCommand: (guestId, ask, waitMs) => window.shellApi.liveShare.askGuestCommand({ guestId, ask, waitMs }),
   guestCommandAsked: ({ agent, guest, command }) => showToast(t('app.agentTerminal.guestCommandAsked', '{{agent}} asks {{guest}} to run this on their computer: {{command}}', { agent, guest, command }), { timeout: 15000 }),
   guestWhoWrote: (paneId, projectId) => (liveHostOn.value && liveShare.isShared(projectId) ? guestWhoWroteLast(liveShare.state.host, paneId, projectId, shellEnterAt[paneId] || 0, windowStartedAt) : null),
+  // Sharing stopped, and you have not written to this agent since: what it asks may still come from a guest.
+  sharedUntilYouWrote: (paneId, projectId) => (sharingEndedAt[projectId] || 0) > (shellEnterAt[paneId] || 0),
   // From the pane's own launch state (Tessel's), never from the agent's request.
   agentYolo: (leaf) => paneRunsYolo(leaf),
   userTyping: (id) => userIsTyping(id),
@@ -12357,7 +12374,15 @@ const agentTerminalTargets = createAgentTerminalTargets({
       guests: c.guests,
       fromGuest: c.fromGuest,
       // So the main process giving up on this card ends it on screen too.
-      cardId: c.cardId
+      cardId: c.cardId,
+      // A connector's request: the service, the account, what will happen.
+      service: c.service,
+      account: c.account,
+      writes: c.writes,
+      detail: c.detail,
+      eachTime: c.eachTime,
+      shared: c.shared,
+      onHost: c.onHost
     }
     const answer = await askAgentApproval(card, c.agentLeaf.id)
     if (!answer || !answer.allow) return { allow: false }

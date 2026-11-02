@@ -476,6 +476,14 @@ const api = {
   mcpSignInActive: () => ipcRenderer.invoke('mcp:signInActive'),
   mcpSignInCancel: (id) => ipcRenderer.invoke('mcp:signInCancel', id),
   mcpSignInState: (ref) => ipcRenderer.invoke('mcp:signInState', ref),
+  // Tessel's own connectors (src/main/tesselApps): never a token, only who is connected.
+  tesselApps: {
+    view: () => ipcRenderer.invoke('tesselApps:view'),
+    connect: (service) => ipcRenderer.invoke('tesselApps:connect', service),
+    cancel: () => ipcRenderer.invoke('tesselApps:cancel'),
+    disconnect: ({ service, account } = {}) => ipcRenderer.invoke('tesselApps:disconnect', { service, account }),
+    onChanged: (cb) => subscribe('tesselApps:changed', cb)
+  },
   tesselAccount: {
     status: (options) => ipcRenderer.invoke('tesselAccount:status', options),
     signIn: () => ipcRenderer.invoke('tesselAccount:signIn'),

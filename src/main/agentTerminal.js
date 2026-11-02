@@ -45,7 +45,7 @@ import { readLogs } from './agentLogs'
 import { MAX_RELAY_TEXT, PAIR_MAX, cleanText, oneLine, pairKey, relayInboxText } from './agentRelay'
 import { MAX_OUTPUT_LENGTH, MAX_POLL_OUTPUT, truncateLargeOutput, truncateOutputKeepingTail, detectsSensitiveInputPrompt } from '../shared/terminalOutput'
 
-export const TERMINAL_OPS = ['list', 'run', 'output', 'send', 'kill', 'lastCommand', 'selection', 'open', 'logs', 'relayList', 'relaySend', 'relayInbox']
+export const TERMINAL_OPS = ['list', 'run', 'output', 'send', 'kill', 'lastCommand', 'selection', 'open', 'logs', 'relayList', 'relaySend', 'relayInbox', 'apps']
 // open_terminal: panes opened in one call.
 export const MAX_OPEN_PANES = 4
 export const MAX_COMMAND_BYTES = 8 * 1024
@@ -66,6 +66,10 @@ export const PREPARE_WINDOW_MS = 60000
 export const IDLE_MS = 60 * 1000
 // The user has this long to answer an approval.
 export const APPROVAL_TIMEOUT_MS = 5 * 60 * 1000
+const APP_OUTPUT_MAX = 256 * 1024
+// What a connector's card shows of a change, and how many reads a pane makes in a minute.
+const APP_DETAIL_MAX = 4000
+const APP_READS_MAX = 120
 const GUEST_DEFAULT_MS = 60 * 1000
 const GUEST_MAX_MS = 5 * 60 * 1000
 export const LOG_MAX_BYTES = 1024 * 1024
@@ -203,11 +207,12 @@ function steering(id, hung) {
 //   logFile                    the commands log (JSON lines), or null
 //   outputDir                  where outputs over 20 KB are written, or null
 //   log, now
-export function createAgentTerminal({ verify, settings = () => ({ enabled: true }), ask, busyOf = async () => ({}), send = () => {}, logFile = null, outputDir = null, logDir = null, relay = null, log = null, now = () => Date.now(), fsImpl = fs }) {
+export function createAgentTerminal({ apps = null, verify, settings = () => ({ enabled: true }), ask, busyOf = async () => ({}), send = () => {}, logFile = null, outputDir = null, logDir = null, relay = null, log = null, now = () => Date.now(), fsImpl = fs }) {
   const approvedPanes = new Set() // "agent|pane": the user allowed this agent in this user terminal
   const readPanes = new Set() // "agent|pane": the user allowed this agent to read this terminal
   const hostPanes = new Set() // "agent|host:<id>": the user allowed this agent on this SSH host
   const logPanes = new Set() // agent pane: the user allowed this agent to read Tessel's logs
+  const appPanes = new Set() // connector scopes a pane may use until Tessel restarts
   const relayPairs = new Set() // pairKey: the user allowed these two agents to write to each other
   const relayDeclined = new Map() // pairKey -> when the user last said no: no new card for a while
   const RELAY_DECLINED_MS = 10 * 60 * 1000
@@ -261,6 +266,7 @@ export function createAgentTerminal({ verify, settings = () => ({ enabled: true 
     // What the agent was allowed for its session goes too: its next commands ask.
     sessions.set(who, { allowAll: false, rules: {} })
     for (const k of [...hostPanes]) if (k.startsWith(`${who}|`)) hostPanes.delete(k)
+    for (const k of [...appPanes]) if (k.startsWith(`${who}|`)) appPanes.delete(k)
     forgetPairsOf(who)
     release(target, { stopped: true })
     return true
@@ -273,7 +279,7 @@ export function createAgentTerminal({ verify, settings = () => ({ enabled: true 
   }
   // A pane closed: what was decided for it, or by it, goes.
   function forgetPane(id) {
-    for (const set of [approvedPanes, readPanes, stopped]) for (const k of [...set]) if (k.endsWith(`|${id}`) || k.startsWith(`${id}|`)) set.delete(k)
+    for (const set of [approvedPanes, readPanes, stopped, appPanes]) for (const k of [...set]) if (k.endsWith(`|${id}`) || k.startsWith(`${id}|`)) set.delete(k)
     sessions.delete(id)
     writes.delete(id)
     forgetPairsOf(id)
@@ -299,6 +305,15 @@ export function createAgentTerminal({ verify, settings = () => ({ enabled: true 
     if (list.length >= RATE_MAX) throw fail('rate_limited', `Too many writes: at most ${RATE_MAX} in ${RATE_WINDOW_MS / 1000} s. Wait a moment.`)
     list.push(t)
     writes.set(agentPane, list)
+  }
+
+  const appReads = new Map() // pane -> times of its connector reads
+  function appReadLimit(agentPane) {
+    const t = now()
+    const list = (appReads.get(agentPane) || []).filter((x) => t - x < 60000)
+    if (list.length >= APP_READS_MAX) throw fail('rate_limited', `Too many reads: at most ${APP_READS_MAX} in a minute. Wait, then ask for less at a time.`)
+    list.push(t)
+    appReads.set(agentPane, list)
   }
 
   // toWindow false: the log file only (not a terminal's badge).
@@ -391,6 +406,7 @@ export function createAgentTerminal({ verify, settings = () => ({ enabled: true 
     allowedNow()
     if (stopped.has(key(agentPane, t.id))) throw fail('stopped_by_user', `The user stopped you from using "${t.name}".`)
     if (c.kind === 'relay' && (!answer || answer.allow !== true)) throw fail('denied', 'The user declined this message. Do not send it again unless they ask.')
+    if (c.kind === 'apps' && (!answer || answer.allow !== true)) throw fail('denied', `The user declined ${c.service}. Do not ask again unless they do.`)
     if (c.kind === 'open' && (!answer || answer.allow !== true)) throw fail('denied', 'The user declined opening these panes. Do not ask again unless they do.')
     if (!answer || answer.allow !== true) throw fail('denied', `The user skipped this ${c.kind === 'send' ? 'input' : 'command'}${t.own ? '' : ` in "${t.name}"`}. Do not run it again unless they ask.`)
     return answer
@@ -464,6 +480,63 @@ export function createAgentTerminal({ verify, settings = () => ({ enabled: true 
     const said = who.gone ? `${them}, who has left the session, wrote to you last` : `${them} is in this project and may be who writes to you`
     const options = who.gone ? 'Ask the user what they want.' : 'For their computer, call again with host "guest" (they allow it on their own screen), or ask them to paste what you need.'
     return `Not run: ${said}, from their own computer. "local" is the computer of the person sharing this project, not theirs: a crash, a file or a log they tell you about is not there. ${options} Only if you really need the sharer's computer, call again with ownerComputer: true (the sharer is asked each time, and told a guest may be behind it).`
+  }
+
+  // tessel_apps (Gmail, Calendar, Drive...): the user is asked before an agent first uses a service
+  // and first changes something there, until Tessel restarts; each time while a Live Share guest
+  // is in its project, who could be behind the request. The tokens stay in tesselApps.
+  async function useApp(agentPane, args, signal = null) {
+    if (!apps) throw fail('no_apps', 'Tessel\'s connectors are not available here.')
+    const name = String(args.tool || '')
+    const spec = apps.tool(name)
+    if (!spec) throw fail('unknown_method', `Unknown connector tool: ${name.slice(0, 60)}`)
+    const why = reasonOf(args, `to use ${spec.label}`)
+    let input
+    try {
+      input = JSON.parse(String(args.input || '{}'))
+    } catch {
+      throw fail('invalid_argument', 'The tool\'s arguments are not valid.')
+    }
+    if (!input || typeof input !== 'object' || Array.isArray(input)) throw fail('invalid_argument', 'The tool\'s arguments are not valid.')
+    if (!apps.accounts(spec.service).length) throw fail('not_connected', `${spec.label} is not connected. The user connects it in Tessel: Settings > Connections.`)
+    // Which account: the one named, or the only one. Agreeing to one is not agreeing to another.
+    const accounts = apps.accounts(spec.service)
+    const account = input.account ? String(input.account).trim().toLowerCase() : accounts.length === 1 ? accounts[0] : null
+    // No address before the card: which accounts someone has is theirs to say.
+    if (!account) throw fail('which_account', 'Several accounts are connected for this. Ask the user which one, then pass its address as "account".')
+    if (!accounts.includes(account)) throw fail('unknown_account', 'That account is not connected. Ask the user which one to use, then pass its address as "account".')
+    const who = await ask('terminalTarget', { agent: agentPane, op: 'appsInfo' })
+    const agentLabel = String((who && who.agentLabel) || 'agent')
+    // A project shared in Live Share: someone may be behind the request, or watching what the agent
+    // prints, even a guest who cannot type or has left. Asked each time, and never remembered.
+    const shared = !!(who && (who.shared || who.sharedBefore || who.wroteLast || (Array.isArray(who.guests) && who.guests.length)))
+    // Agreeing to a connection is not agreeing to a later one of the same address.
+    const scope = `app:${spec.service}:${spec.writes ? 'write' : 'read'}:${account}:${apps.connectedAt ? apps.connectedAt(spec.service, account) : ''}`
+    // An agent on a server: anything it started there holds the same pane's token, so an
+    // allowance would go to them too. Asked each time, and the card says where it is.
+    const onHost = who && typeof who.onHost === 'string' && who.onHost ? who.onHost.slice(0, 100) : null
+    const eachTime = shared || !!onHost || spec.eachTime(input)
+    if (shared) for (const k of [...appPanes]) if (k.startsWith(`${agentPane}|app:`)) appPanes.delete(k)
+    // Before anything is read for the card: a pane cannot make Tessel read for it without limit.
+    if (spec.writes) rateLimit(agentPane)
+    else appReadLimit(agentPane)
+    const full = spec.writes ? await spec.describe({ ...input, account }) : ''
+    if (signal && signal.aborted) throw fail('cancelled', 'The request was cancelled.')
+    const detail = full.length > APP_DETAIL_MAX ? `${full.slice(0, APP_DETAIL_MAX)} [cut: ${full.length - APP_DETAIL_MAX} more characters]` : full // i18n-ignore
+    if (!appPanes.has(key(agentPane, scope)) || eachTime) {
+      const answer = await card(agentPane, { id: `apps:${spec.service}`, name: agentLabel, own: false }, { kind: 'apps', service: spec.label, account, writes: spec.writes, detail, eachTime, shared, onHost, command: name, own: false, explanation: why, goal: '', info: null, disclaimers: [], actions: [] })
+      if (answer.remember === 'pane' && !eachTime) appPanes.add(key(agentPane, scope))
+    }
+    if (signal && signal.aborted) throw fail('cancelled', 'The request was cancelled.')
+    const target = String(input.id || input.query || input.calendar || '').slice(0, 120)
+    writeLog({ at: now(), paneId: agentPane, paneName: `${spec.label} (${account})`, agent: agentLabel, agentPane, kind: 'app', text: spec.writes ? `${name}: ${detail}` : `${name}${target ? ` ${target}` : ''}`, why }, false)
+    try {
+      // Never through a file: a mail is not left in a temporary folder.
+      const text = await apps.run(name, { ...input, account })
+      return { text: text.length > APP_OUTPUT_MAX ? `${text.slice(0, APP_OUTPUT_MAX)}\n[the rest is cut: ask for less]` : text }
+    } catch (err) {
+      throw err && err.code ? fail(err.code, err.message) : fail('failed', 'The connector could not do it.')
+    }
   }
 
   // host "guest" or "guest:<name>": who it means.
@@ -869,13 +942,13 @@ export function createAgentTerminal({ verify, settings = () => ({ enabled: true 
     })
     aborted.catch(() => {})
     try {
-      return await Promise.race([handleNow(params), aborted])
+      return await Promise.race([handleNow(params, signal), aborted])
     } finally {
       signal.removeEventListener('abort', onAbort)
     }
   }
 
-  async function handleNow(params) {
+  async function handleNow(params, signal = null) {
     const { pane, op, args = {}, auth } = params || {}
     const v = verify({ op, args, auth }, pane)
     if (!v || v.unsigned) throw fail('unauthorized', 'This request is not signed by a pane Tessel started: restart the agent from Tessel.')
@@ -895,6 +968,7 @@ export function createAgentTerminal({ verify, settings = () => ({ enabled: true 
       if (op === 'relayList') return await relayList(pane)
       if (op === 'relaySend') return await relaySend(pane, args)
       if (op === 'relayInbox') return relayInbox(pane)
+      if (op === 'apps') return await useApp(pane, args, signal)
       return await selection(pane)
     } catch (err) {
       if (err instanceof CliError) throw err

@@ -17,9 +17,16 @@ const net = require('net')
 const path = require('path')
 const crypto = require('crypto')
 
-const VERSION = '1.4.4'
+const VERSION = '1.4.5'
 const PROTOCOL = 1
 const SERVER_NAME = 'tessel-team'
+// Tessel's connectors (Gmail, Calendar, Drive): the same link to the PC, with --apps. The PC says
+// no when nothing is connected there, and this is then a server without tools.
+const APPS_NAME = 'tessel_apps'
+const SERVERS = [
+  { name: SERVER_NAME, args: ['mcp'] },
+  { name: APPS_NAME, args: ['mcp', '--apps'] }
+]
 const SHIM_NAME = 'tessel-shim.cjs'
 const MAX_HELLO = 8 * 1024
 const MAX_ARGS = 16
@@ -123,7 +130,7 @@ function writeThen(stream, data, then) {
 // Tessel closed: a valid MCP server without tools, quietly, so the agent does
 // not list tessel-team as failed. reason: said to the agent when it was in a
 // Tessel pane but Tessel did not answer.
-function emptyServer(reason) {
+function emptyServer(reason, name = SERVER_NAME) {
   const write = (obj) => process.stdout.write(JSON.stringify(obj) + '\n')
   const answer = (msg) => {
     if (!msg || typeof msg !== 'object' || msg.id === undefined || msg.id === null) return // a notification
@@ -132,7 +139,7 @@ function emptyServer(reason) {
       const result = {
         protocolVersion: (params && typeof params.protocolVersion === 'string' && params.protocolVersion) || '2025-06-18',
         capabilities: { tools: {} },
-        serverInfo: { name: SERVER_NAME, version: VERSION }
+        serverInfo: { name, version: VERSION }
       }
       if (reason) result.instructions = `Tessel's team tools, including its browser (a real Chromium on the user's computer), are not reachable right now (${reason}). Do not fall back to curl or a headless browser on this server for web pages: tell the user the Tessel tools are not connected and that they can restart this agent from Tessel (right-click its pane, Restart) or click Retry in the pane.`
       return write({ jsonrpc: '2.0', id, result })
@@ -206,19 +213,23 @@ function linkProblem(err) {
 const FIRST_RETRY_MS = [500, 1000, 1500]
 const firstRetry = (err) => /^(ENOENT|ECONNREFUSED|busy)$/.test(safeReason(err))
 function runMcp(argv, env = process.env) {
+  const apps = argv.includes('--apps')
+  const args = apps ? ['--apps'] : []
+  const name = apps ? APPS_NAME : SERVER_NAME
   const conn = remoteEnv(env)
-  if (conn.error) return emptyServer(null)
+  if (conn.error) return emptyServer(null, name)
   let tries = 0
   const attempt = () =>
-    open(conn, 'mcp', [], (err, socket, rest) => {
+    open(conn, 'mcp', args, (err, socket, rest) => {
       if (err && tries < FIRST_RETRY_MS.length && firstRetry(err)) return setTimeout(attempt, FIRST_RETRY_MS[tries++])
-      if (err) return emptyServer(safeReason(err))
-      proxyMcp(conn, socket, rest)
+      // Connectors not there (nothing connected): quietly no tools, nothing to tell the agent.
+      if (err) return emptyServer(apps ? null : safeReason(err), name)
+      proxyMcp(conn, socket, rest, args)
     })
   attempt()
 }
 
-function proxyMcp(conn, first, firstRest) {
+function proxyMcp(conn, first, firstRest, args = []) {
   const out = (line) => process.stdout.write(line.endsWith('\n') ? line : line + '\n') // false: stdout is full
   const note = (text) => process.stderr.write(`tessel-shim: ${text}\n`)
   let sock = null
@@ -322,9 +333,9 @@ function proxyMcp(conn, first, firstRest) {
     let tries = 0
     const attempt = () => {
       tries++
-      open(conn, 'mcp', [], (err, socket, rest) => {
+      open(conn, 'mcp', args, (err, socket, rest) => {
         // Not for a refusal that will not change; "busy" (too many hellos) waits longer each time.
-        if (err && tries < 3 && !/bad-token|unknown-pane/.test(err.message)) return setTimeout(attempt, tries * 1000)
+        if (err && tries < 3 && !/bad-token|unknown-pane|no-apps/.test(err.message)) return setTimeout(attempt, tries * 1000)
         connecting = false
         if (err) {
           const items = queue
@@ -493,20 +504,24 @@ function hookCommand(shimPath, provider, event, node) {
   return `${node ? shellQuote(node) : 'node'} ${shellQuote(shimPath)} hook ${provider} ${event}`
 }
 
-function claudeServer(shimPath, node) {
-  return { type: 'stdio', command: node || 'node', args: [shimPath, 'mcp'] }
+function claudeServer(shimPath, node, args = ['mcp']) {
+  return { type: 'stdio', command: node || 'node', args: [shimPath, ...args] }
 }
 
-// ~/.claude.json with Tessel's MCP server. -> { value, changed }
+// ~/.claude.json with Tessel's MCP servers. -> { value, changed }
 function mergeClaudeJson(cfg, shimPath, node) {
   const value = isPlainObject(cfg) ? { ...cfg } : {}
   const servers = isPlainObject(value.mcpServers) ? { ...value.mcpServers } : {}
-  const want = claudeServer(shimPath, node)
-  // Only what Tessel sets is compared (Claude Code may add its own fields).
-  const have = servers[SERVER_NAME]
-  if (isPlainObject(have) && have.type === want.type && have.command === want.command && JSON.stringify(have.args) === JSON.stringify(want.args))
-    return { value: cfg, changed: false }
-  servers[SERVER_NAME] = want
+  let changed = false
+  for (const { name, args } of SERVERS) {
+    const want = claudeServer(shimPath, node, args)
+    // Only what Tessel sets is compared (Claude Code may add its own fields).
+    const have = servers[name]
+    if (isPlainObject(have) && have.type === want.type && have.command === want.command && JSON.stringify(have.args) === JSON.stringify(want.args)) continue
+    servers[name] = want
+    changed = true
+  }
+  if (!changed) return { value: cfg, changed: false }
   value.mcpServers = servers
   return { value, changed: true }
 }
@@ -548,14 +563,17 @@ function mergeHooks(settings, events, provider, shimPath, node) {
 
 // The lines of Tessel's table in a Codex config.toml (any spelling of the
 // key, with its sub-tables) apart from the rest.
-const OUR_HEADER = /^\s*\[\s*mcp_servers\s*\.\s*(?:tessel-team|"tessel-team"|'tessel-team')\s*(?:\.[^\]]*)?\]\s*(?:#.*)?$/
+const nameForms = (name) => `(?:${name}|"${name}"|'${name}')`
+const SERVERS_KEY = `(?:mcp_servers|"mcp_servers"|'mcp_servers')`
+const ourHeader = (name) => new RegExp(`^\\s*\\[\\s*${SERVERS_KEY}\\s*\\.\\s*${nameForms(name)}\\s*(?:\\.[^\\]]*)?\\]\\s*(?:#.*)?$`)
 const ANY_HEADER = /^\s*\[/
-function splitCodexConfig(text) {
+function splitCodexConfig(text, name = SERVER_NAME) {
+  const header = ourHeader(name)
   const kept = []
   const ours = []
   let inOurs = false
   for (const line of String(text || '').split(/\r?\n/)) {
-    if (ANY_HEADER.test(line)) inOurs = OUR_HEADER.test(line)
+    if (ANY_HEADER.test(line)) inOurs = header.test(line)
     ;(inOurs ? ours : kept).push(line)
   }
   return { kept: kept.join('\n'), ours: ours.join('\n') }
@@ -564,18 +582,21 @@ function splitCodexConfig(text) {
 // Tessel's server written another way (an inline table under [mcp_servers]
 // or dotted keys): Tessel cannot replace it, and a second definition would
 // stop Codex from starting.
-const OTHER_FORM = /^\s*mcp_servers\s*\.\s*(?:tessel-team|"tessel-team"|'tessel-team')\s*[.=]/
-const IN_SERVERS = /^\s*(?:tessel-team|"tessel-team"|'tessel-team')\s*[.=]/
-const SERVERS_HEADER = /^\s*\[\s*mcp_servers\s*\]\s*(?:#.*)?$/
-function otherForm(kept) {
+const SERVERS_HEADER = new RegExp(`^\\s*\\[\\s*${SERVERS_KEY}\\s*\\]\\s*(?:#.*)?$`)
+const SERVERS_INLINE = new RegExp(`^\\s*${SERVERS_KEY}\\s*=`)
+function otherForm(kept, name = SERVER_NAME) {
+  const dotted = new RegExp(`^\\s*${SERVERS_KEY}\\s*\\.\\s*${nameForms(name)}\\s*[.=]`)
+  const arrayTable = new RegExp(`^\\s*\\[\\[\\s*${SERVERS_KEY}\\s*\\.\\s*${nameForms(name)}\\s*\\]\\]`)
+  const inServers = new RegExp(`^\\s*${nameForms(name)}\\s*[.=]`)
   let header = ''
   for (const line of kept.split('\n')) {
+    if (arrayTable.test(line)) return true
     if (ANY_HEADER.test(line)) {
       header = line
       continue
     }
-    if (OTHER_FORM.test(line) && !header) return true
-    if (IN_SERVERS.test(line) && SERVERS_HEADER.test(header)) return true
+    if ((dotted.test(line) || SERVERS_INLINE.test(line)) && !header) return true
+    if (inServers.test(line) && SERVERS_HEADER.test(header)) return true
   }
   return false
 }
@@ -583,11 +604,11 @@ function otherForm(kept) {
 // JSON strings are valid TOML basic strings.
 const tomlString = (s) => JSON.stringify(String(s))
 
-function codexTable(shimPath, node) {
+function codexTable(shimPath, node, { name = SERVER_NAME, args = ['mcp'] } = {}) {
   return (
-    `[mcp_servers.${SERVER_NAME}]\n` +
+    `[mcp_servers.${name}]\n` +
     `command = ${tomlString(node || 'node')}\n` +
-    `args = [${tomlString(shimPath)}, "mcp"]\n` +
+    `args = [${[shimPath, ...args].map(tomlString).join(', ')}]\n` +
     `env_vars = [${ENV_VARS.map(tomlString).join(', ')}]\n` +
     // Only the team tools run without asking, as on the PC.
     `default_tools_approval_mode = "approve"\n` +
@@ -599,15 +620,88 @@ function codexTable(shimPath, node) {
   )
 }
 
-// ~/.codex/config.toml with Tessel's table. -> { text, changed } or { error }
+// What the person put in Tessel's table: everything but the keys Tessel sets (its comments, a
+// server turned off, tools turned off, its sub-tables). It stays.
+const OWN_KEY = /^\s*(?:"|')?(?:command|args|env_vars|startup_timeout_sec|tool_timeout_sec)(?:"|')?\s*=/
+const PLAIN_APPROVAL = /^\s*(?:"|')?default_tools_approval_mode(?:"|')?\s*=\s*"approve"\s*(?:#.*)?$/
+// How many [ a value leaves open after this text (strings and a comment left out).
+function openBrackets(text) {
+  let depth = 0
+  let quote = ''
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i]
+    if (quote) {
+      if (c === '\\' && quote === '"') i++
+      else if (c === quote) quote = ''
+    } else if (c === '"' || c === "'") quote = c
+    else if (c === '#') break
+    else if (c === '[') depth++
+    else if (c === ']') depth--
+  }
+  return depth
+}
+// -> the lines, or null when one of Tessel's keys is written in a way it cannot safely replace.
+function theirLines(ours) {
+  const out = []
+  let seenHeader = false
+  let inSub = false
+  let inOldEnv = false
+  let open = 0
+  for (const line of String(ours || '').split('\n')) {
+    // Still inside the value of one of Tessel's keys, written across lines.
+    if (open > 0) {
+      open += openBrackets(line)
+      continue
+    }
+    if (ANY_HEADER.test(line)) {
+      if (seenHeader) inSub = true
+      seenHeader = true
+      // An env sub-table is what older versions of Tessel wrote there.
+      inOldEnv = inSub && /\.\s*env\s*\]/.test(line)
+      if (!inSub) continue
+    }
+    if (inOldEnv) continue
+    if (inSub) {
+      out.push(line)
+      continue
+    }
+    if (OWN_KEY.test(line)) {
+      if (/"""|'''/.test(line)) return null
+      open = openBrackets(line.slice(line.indexOf('=') + 1))
+      continue
+    }
+    if (line.trim() && !PLAIN_APPROVAL.test(line)) out.push(line)
+  }
+  if (open > 0) return null
+  while (out.length && !out[out.length - 1].trim()) out.pop()
+  return out
+}
+
+// ~/.codex/config.toml with Tessel's tables. -> { text, changed } or { error }
 function mergeCodexToml(text, shimPath, node) {
   const old = String(text || '')
-  const { kept, ours } = splitCodexConfig(old)
-  if (otherForm(kept)) return { error: 'tessel-team is already set another way (inline table or dotted keys), left as it is' }
-  const want = codexTable(shimPath, node)
-  if (ours.trim() === want.trim()) return { text: old, changed: false }
-  const base = kept.replace(/\s*$/, '')
-  return { text: (base ? base + '\n\n' : '') + want, changed: true }
+  let cur = old
+  let changed = false
+  for (const { name, args } of SERVERS) {
+    const { kept, ours } = splitCodexConfig(cur, name)
+    if (otherForm(kept, name)) {
+      // The connectors written another way stop only the connectors.
+      if (name === APPS_NAME) continue
+      return { error: `${name} is already set another way (inline table or dotted keys), left as it is` }
+    }
+    const theirs = theirLines(ours)
+    if (!theirs) {
+      if (name === APPS_NAME) continue
+      return { error: `${name} is written in a way Tessel cannot change, left as it is` }
+    }
+    const table = codexTable(shimPath, node, { name, args })
+    const want = (theirs.some((l) => /default_tools_approval_mode/.test(l)) ? table.replace('default_tools_approval_mode = "approve"\n', '') : table) + (theirs.length ? `${theirs.join('\n')}\n` : '')
+    if (ours.trim() === want.trim()) continue
+    const base = kept.replace(/\s*$/, '')
+    cur = (base ? base + '\n\n' : '') + want
+    changed = true
+  }
+  return changed ? { text: cur, changed: true } : { text: old, changed: false }
 }
 
 // Write through a temporary file and a rename, with the old file's mode. A
@@ -840,7 +934,7 @@ function mergeAccountClaudeJson(cfg, system, shimPath, node, record = {}) {
   const nextCopied = {}
   let touched = false
   for (const name of Object.keys(theirs)) {
-    if (name === SERVER_NAME || !isPlainObject(theirs[name])) continue
+    if (name === SERVER_NAME || name === APPS_NAME || !isPlainObject(theirs[name])) continue
     const want = digestOf(theirs[name])
     if (!Object.hasOwn(own, name)) {
       // Removed from the account after Tessel copied it: left out (and
