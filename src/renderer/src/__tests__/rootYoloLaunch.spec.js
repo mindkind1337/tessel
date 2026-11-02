@@ -113,6 +113,7 @@ function load({ username = 'root', status = { hostId: HOST, claude: '/usr/local/
     FOUND_AFTER_START: [],
     watchFoundSession: () => {},
     safeSessionId,
+    connectorsOffWords: async () => '',
     teamToolsReady: false,
     teamToolsVersion: null,
     showToast: vi.fn(),

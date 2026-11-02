@@ -9,6 +9,7 @@ import { describe, expect, it, vi } from 'vitest'
 import fs from 'fs'
 import vm from 'vm'
 import { safeSessionId } from '../agentResumeLine'
+import { otherConnectorsOff } from '../../../shared/otherConnectors'
 import { join } from 'path'
 import { reactive } from 'vue'
 import { allowDropRetry, droppedRemotePane } from '../projectLauncher'
@@ -205,7 +206,7 @@ describe('after Tessel restarted', () => {
 // this computer's transcripts. Found that way: Claude Code refused the old id
 // ("Session ID ... is already in use") and the agent never started.
 describe('the line the reopened agent starts with', () => {
-  function startLine({ onHost }) {
+  function startLine({ onHost, google = false }) {
     const ctx = {
       window: {
         shellApi: {
@@ -215,6 +216,10 @@ describe('the line the reopened agent starts with', () => {
       },
       sessionKind: (a) => a.id,
       safeSessionId,
+      connectorsOffWords: async (agent) => {
+        const words = otherConnectorsOff(agent, google ? ['google'] : [])
+        return words.length ? ` ${words.join(' ')}` : ''
+      },
       newUuid: () => 'new-uuid',
       claudeStartChoice,
       codexResumes,
@@ -233,6 +238,12 @@ describe('the line the reopened agent starts with', () => {
     return ctx.createLeaf.mock.calls[0][4]
   }
   const run = (env, opts) => env.agentStartLine({ id: 'claude', command: 'claude' }, opts.sessionId || null, !!opts.resume, undefined, { known: false, hostId: opts.remoteHostId || null })
+
+  it("Google connected through Tessel: Claude's own Google connectors stay off, here and on a host", async () => {
+    const opts = await reopenOpts(true)
+    const line = (await run(startLine({ onHost: async () => true, google: true }), opts)).line
+    expect(line).toBe(`claude --resume ${SESSION} --disallowedTools=mcp__claude_ai_Gmail --disallowedTools=mcp__claude_ai_Google_Calendar --disallowedTools=mcp__claude_ai_Google_Drive`)
+  })
 
   it('after a dropped connection: resumed when the host has it (asked there, not here)', async () => {
     const opts = await reopenOpts(true)
