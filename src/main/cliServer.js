@@ -243,7 +243,7 @@ export function validateParams(method, params = {}) {
 // An agent's browser tool (teamMcp/server.cjs): its pane, the operation,
 // flat arguments (strings, numbers, booleans) and the pane's signature.
 // Who may do what is decided by agentBrowser.js.
-const BROWSER_ARG_KEYS = new Set(['page', 'url', 'action', 'ref', 'text', 'key', 'direction', 'amount', 'double', 'limit', 'level', 'selector', 'timeout_ms', 'x', 'y', 'to_x', 'to_y', 'steps', 'button', 'hold_ms', 'repeat', 'saveAs', 'clearDestination', 'cancel', 'credentialId'])
+const BROWSER_ARG_KEYS = new Set(['page', 'url', 'action', 'ref', 'text', 'key', 'direction', 'amount', 'double', 'limit', 'level', 'selector', 'timeout_ms', 'x', 'y', 'to_x', 'to_y', 'steps', 'button', 'hold_ms', 'repeat', 'saveAs', 'clearDestination', 'cancel', 'credentialId', 'reason', 'sender'])
 // fill and type take 20,000 characters, of any kind: a control character is
 // 6 bytes in JSON, so 120,000 bytes, and some room.
 export const MAX_BROWSER_ARGS_BYTES = 128 * 1024
@@ -448,13 +448,13 @@ export function createCliServer({
       const line = buf.slice(0, nl)
       buf = ''
       const busy = () => finish(encodeReply({ ok: false, error: { code: 'busy', message: t('main.cli.busy', 'Tessel is busy with other commands. Try again.') } }))
-      // A terminal or account tool's request, which may wait for the user
-      // (its pane read before anything is checked: only to count it;
-      // handleRequestLine checks it all).
+      // A terminal or account tool's request, which may wait for the user, or
+      // a browser tool's that does (its pane read before anything is checked:
+      // only to count it; handleRequestLine checks it all).
       let pane = null
       try {
         const req = parseRequestLine(line)
-        if (req.method === 'terminal' || req.method === 'accounts') pane = typeof req.params.pane === 'string' ? req.params.pane.slice(0, 100) : ''
+        if (req.method === 'terminal' || req.method === 'accounts' || (req.method === 'browser' && req.params.op === 'fillmailcode')) pane = typeof req.params.pane === 'string' ? req.params.pane.slice(0, 100) : ''
       } catch {
         pane = null
       }

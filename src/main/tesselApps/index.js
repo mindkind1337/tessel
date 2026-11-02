@@ -10,6 +10,7 @@ import { createGoogleTools } from './google'
 import { createLinearTools } from './linear'
 import { createMicrosoftTools } from './microsoft'
 import { createNotionTools } from './notion'
+import { createRecentMail } from './recentMail'
 import { createSentryTools } from './sentry'
 import { AppError, fitted } from './shared'
 import { createStripeTools } from './stripe'
@@ -94,6 +95,8 @@ export function createTesselApps({ dir, safeStorage, openExternal, signedRequest
 
   return {
     connections,
+    // For browser_fill_mail_code only: Tessel reads this itself, and no agent can ask for it by name.
+    recentMail: createRecentMail({ connections, fetchFn }),
     // -> { service, label, provider, writes, describe(input), eachTime(input) } or null
     tool(name) {
       const spec = typeof name === 'string' && Object.hasOwn(tools, name) ? tools[name] : null

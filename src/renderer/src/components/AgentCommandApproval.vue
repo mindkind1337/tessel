@@ -29,17 +29,20 @@ const menuOpen = ref(false)
 const skipEl = ref(null)
 const dialog = ref(null)
 let previousFocus = null
-const { armed, press, mayAllow } = useApprovalArming(props.armMs)
+// A mail code's card with a warning: long enough to be read before it can be allowed.
+const MAIL_CODE_WARN_ARM_MS = 4500
+const warnedMailCode = props.card.kind === 'mailCode' && !(props.card.mailCode && props.card.mailCode.match === true && !props.card.onHost)
+const { armed, press, mayAllow } = useApprovalArming(warnedMailCode && props.armMs > 0 ? MAIL_CODE_WARN_ARM_MS : props.armMs)
 
 // A card for a whole terminal or host (allowed once, or until Tessel restarts).
 const whole = computed(() => ['pane', 'read', 'host', 'logs', 'relay', 'apps'].includes(props.card.kind))
-const editable = computed(() => props.card.kind !== 'send' && !props.card.send && !['read', 'host', 'open', 'logs', 'relay', 'hostRun', 'apps'].includes(props.card.kind))
+const editable = computed(() => props.card.kind !== 'send' && !props.card.send && !['read', 'host', 'open', 'logs', 'relay', 'hostRun', 'apps', 'mailCode'].includes(props.card.kind))
 // Live Share, on a guest's computer: what the host's agent asks to run here.
 const hostRun = computed(() => props.card.kind === 'hostRun')
-// A command that does not fit, or what a connector will do: Allow waits until all of it has been on
+// A command that does not fit, what a connector will do, or a mail code's lines: Allow waits until all of it has been on
 // screen, in one unbroken stretch from its first line, counting only what shows above the buttons and
 // inside the card. So a jump to the end, or an end hidden under the buttons, does not count.
-const gated = computed(() => hostRun.value || (props.card.kind === 'apps' && !!props.card.detail))
+const gated = computed(() => hostRun.value || (props.card.kind === 'apps' && !!props.card.detail) || props.card.kind === 'mailCode')
 const codeEl = ref(null)
 const readAll = ref(true)
 let seenTo = 0
@@ -77,7 +80,24 @@ const notAsciiText = computed(() => t('app.agentTerminal.notAscii', 'Not plain A
 const hostRunText = computed(() =>
   t('app.agentTerminal.hostRunText', 'This comes from the Live Share session of {{host}}, not from you. It runs here in PowerShell with your account and can read or change your files, and what it prints goes back to that agent. Allow it only if you trust {{host}} and understand the command.', { host: props.card.hostName })
 )
-const shown = computed(() => !['read', 'host', 'open', 'logs', 'apps'].includes(props.card.kind))
+const shown = computed(() => !['read', 'host', 'open', 'logs', 'apps', 'mailCode'].includes(props.card.kind))
+// browser_fill_mail_code: what the main process wrote for the card (never the code). Asked every
+// time, so there is nothing to remember. Tessel's own lines come first and the agent's words last:
+// it writes them, and they cannot pass for what Tessel checked.
+const mailCode = computed(() => (props.card.kind === 'mailCode' ? props.card.mailCode || { lines: [], warnings: [] } : null))
+const mailCodeWarns = computed(() => !!mailCode.value && (mailCode.value.match !== true || !!props.card.onHost))
+const mailCodeText = computed(() => t('app.agentTerminal.mailCodeText', 'A code like this is the site asking whether you agree to what this page is doing. Tessel types it and submits this form. It does not hand it to the agent, but the agent controls this browser, and if this site shows the code on a page, the agent can read it. If you did not ask this agent to do this here, deny.'))
+const mailCodeHostText = computed(() => t('app.agentTerminal.mailCodeHostText', 'This agent runs on the server {{host}}: any program it started there can ask in its name.', { host: props.card.onHost }))
+const mailCodeNoMatch = computed(() => t('app.agentTerminal.mailCodeNoMatch', 'Tessel found reasons to be careful with this one. Deny it unless you are sure.'))
+const mailCodeMailRead = computed(() => t('app.agentTerminal.mailCodeMailRead', 'This agent is already allowed to read your Gmail, so it can read this mail and its code itself.'))
+// How long ago, as of when the card opens: it may have waited behind another.
+const mailCodeArrived = (() => {
+  const at = Number(props.card.mailCode && props.card.mailCode.arrivedAt)
+  if (props.card.kind !== 'mailCode' || !at) return ''
+  const minutes = Math.floor(Math.max(0, Date.now() - at) / 60000)
+  return minutes < 1 ? t('app.agentTerminal.mailCodeJustNow', 'Arrived: less than a minute ago') : t('app.agentTerminal.mailCodeMinutesAgo', 'Arrived: {{count}} min ago', { count: minutes })
+})()
+const allowLabel = computed(() => (mailCodeWarns.value ? t('app.agentTerminal.mailCodeAllowAnyway', 'Fill it in on {{site}} anyway', { site: mailCode.value.site }) : mailCode.value ? t('app.agentTerminal.mailCodeAllow', 'Fill it in and submit') : t('app.agentTerminal.allow', 'Allow')))
 // open_terminal: what the agent wants to open, beside its pane.
 const openText = computed(() => {
   const o = props.card.open || {}
@@ -90,6 +110,8 @@ const openText = computed(() => {
 })
 const title = computed(() => {
   const c = props.card
+  if (c.kind === 'mailCode' && c.onHost) return t('app.agentTerminal.mailCodeHostTitle', '{{agent}}, on the server {{host}}, asks Tessel to fill in a code from your mail', { agent: c.agentLabel, host: c.onHost })
+  if (c.kind === 'mailCode') return t('app.agentTerminal.mailCodeTitle', '{{agent}} asks Tessel to fill in a code from your mail', { agent: c.agentLabel })
   if (c.kind === 'apps' && c.onHost && c.writes) return t('app.agentTerminal.appsHostWriteTitle', '{{agent}}, on the server {{host}}, wants to change things in your {{service}} ({{account}})', { agent: c.agentLabel, host: c.onHost, service: c.service, account: c.account })
   if (c.kind === 'apps' && c.onHost) return t('app.agentTerminal.appsHostTitle', '{{agent}}, on the server {{host}}, wants to use your {{service}} ({{account}})', { agent: c.agentLabel, host: c.onHost, service: c.service, account: c.account })
   if (c.kind === 'apps' && c.writes) return t('app.agentTerminal.appsWriteTitle', '{{agent}} wants to change things in your {{service}} ({{account}})', { agent: c.agentLabel, service: c.service, account: c.account })
@@ -209,13 +231,22 @@ onMounted(() => {
     checkRead()
   })
 })
+// The window growing can leave nothing to scroll: what shows now counts as seen too.
+let sizes = null
+onMounted(() => {
+  if (typeof ResizeObserver !== 'function' || !gated.value) return
+  sizes = new ResizeObserver(() => checkRead())
+  if (dialog.value) sizes.observe(dialog.value)
+})
 onUnmounted(() => {
+  sizes?.disconnect()
   if (previousFocus?.isConnected) previousFocus.focus({ preventScroll: true })
 })
 const guard = typingGuard({
   chosen: props.openedByUser,
   back: () => previousFocus?.isConnected && previousFocus.focus({ preventScroll: true }),
-  park: () => emit('park')
+  park: () => emit('park'),
+  denyOnly: props.card.kind === 'mailCode' ? (element) => element === skipEl.value : null
 })
 function trapTab(event) {
   const items = [...(dialog.value?.querySelectorAll('button:not(:disabled), textarea, pre[tabindex]') || [])]
@@ -224,7 +255,7 @@ function trapTab(event) {
   if (event.shiftKey && i <= 0) {
     event.preventDefault()
     // Round to the strongest button only on a card the person means to use.
-    if (guard.mayWrap()) items.at(-1).focus()
+    if (guard.mayWrap() && !mailCodeWarns.value) items.at(-1).focus()
   } else if (!event.shiftKey && i === items.length - 1) {
     event.preventDefault()
     items[0].focus()
@@ -237,7 +268,7 @@ function trapTab(event) {
     <div
       ref="dialog"
       class="help-card confirm-card aca-card"
-      :class="{ 'aca-host': hostRun }"
+      :class="{ 'aca-host': hostRun, 'aca-mail-card': mailCode }"
       role="alertdialog"
       aria-modal="true"
       aria-labelledby="aca-title"
@@ -250,8 +281,22 @@ function trapTab(event) {
     >
       <h2 id="aca-title" class="confirm-title">{{ title }}</h2>
       <p v-if="hostRun" class="confirm-text aca-warn" data-test="agent-host-run">{{ hostRunText }}</p>
-      <p v-if="card.project && card.kind !== 'relay'" class="confirm-text aca-line" data-test="agent-command-project">{{ projectText }}</p>
-      <p v-if="card.explanation" class="confirm-text aca-line" data-test="agent-command-why"><strong>{{ t('app.agentTerminal.why', 'Why') }}:</strong> <bdi>{{ card.explanation }}</bdi></p>
+      <div v-if="mailCode" ref="codeEl" data-test="mail-code-block">
+        <template v-if="mailCodeWarns">
+          <p class="confirm-text aca-warn aca-strong" data-test="mail-code-no-match">{{ mailCodeNoMatch }}</p>
+          <p v-for="(line, i) in mailCode.warnings" :key="`warn${i}`" class="confirm-text aca-warn" data-test="mail-code-warning"><bdi>{{ line }}</bdi></p>
+          <p v-if="card.onHost" class="confirm-text aca-warn" data-test="mail-code-host">{{ mailCodeHostText }}</p>
+        </template>
+        <p v-if="card.project" class="confirm-text aca-line" data-test="agent-command-project">{{ projectText }}</p>
+        <p v-for="(line, i) in mailCode.lines" :key="`line${i}`" class="confirm-text aca-line" data-test="mail-code-line"><bdi>{{ line }}</bdi></p>
+        <p v-if="mailCodeArrived" class="confirm-text aca-line" data-test="mail-code-arrived">{{ mailCodeArrived }}</p>
+        <p v-if="mailCode.accountLine" class="confirm-text aca-line" data-test="mail-code-line"><bdi>{{ mailCode.accountLine }}</bdi></p>
+        <p class="confirm-text aca-line" data-test="mail-code-text">{{ mailCodeText }}</p>
+        <p v-if="mailCode.mailReadAllowed" class="confirm-text aca-warn" data-test="mail-code-mail-read">{{ mailCodeMailRead }}</p>
+        <p v-if="card.explanation" class="confirm-text aca-line" data-test="mail-code-agent-says"><strong>{{ t('app.agentTerminal.mailCodeAgentSays', 'The agent says') }}:</strong> <bdi>{{ card.explanation }}</bdi></p>
+      </div>
+      <p v-if="card.project && card.kind !== 'relay' && !mailCode" class="confirm-text aca-line" data-test="agent-command-project">{{ projectText }}</p>
+      <p v-if="card.explanation && !mailCode" class="confirm-text aca-line" data-test="agent-command-why"><strong>{{ t('app.agentTerminal.why', 'Why') }}:</strong> <bdi>{{ card.explanation }}</bdi></p>
       <p v-if="card.goal" class="confirm-text aca-line"><strong>{{ t('app.agentTerminal.goal', 'Goal') }}:</strong> <bdi>{{ card.goal }}</bdi></p>
       <p v-if="guestText" class="confirm-text aca-warn" data-test="agent-command-guest">
         {{ guestText }}<template v-if="card.pc"> {{ t('app.agentTerminal.guestNotYours', 'This is your computer, not theirs: what the agent finds here says nothing about theirs.') }}</template>
@@ -277,7 +322,7 @@ function trapTab(event) {
       <p v-if="notAscii" class="confirm-text aca-warn" data-test="agent-host-characters">{{ notAsciiText }}</p>
       <p v-if="blockedUnread" class="confirm-text aca-warn" data-test="agent-host-scroll">{{ scrollText }}</p>
       <p v-if="shown && lineCount > 1" class="confirm-text aca-warn" data-test="agent-command-lines">{{ linesText }}</p>
-      <dl v-if="card.folder" class="confirm-details">
+      <dl v-if="card.folder && !mailCode" class="confirm-details">
         <dt>{{ t('app.agentTerminal.folder', 'Folder') }}</dt>
         <dd>{{ card.folder }}</dd>
       </dl>
@@ -285,7 +330,7 @@ function trapTab(event) {
       <p v-for="(d, i) in disclaimers" :key="i" class="confirm-text aca-warn">{{ d }}</p>
       <div class="confirm-actions">
         <button ref="skipEl" class="confirm-btn" data-test="agent-command-skip" @click="answer(false)">
-          {{ whole || hostRun ? t('app.agentTerminal.deny', 'Deny') : t('app.agentTerminal.skip', 'Skip') }}
+          {{ whole || hostRun || mailCode ? t('app.agentTerminal.deny', 'Deny') : t('app.agentTerminal.skip', 'Skip') }}
         </button>
         <button v-if="hostRun" class="confirm-btn" data-test="agent-command-block" @click="emit('answer', { allow: false, block: true })">{{ t('app.agentTerminal.hostRunBlock', 'Do not ask again in this session') }}</button>
         <template v-if="whole">
@@ -293,7 +338,7 @@ function trapTab(event) {
           <button v-if="!asksEachTime" class="confirm-btn primary danger" data-test="agent-command-allow" :disabled="!armed || blockedUnread" @pointerdown="press" @click="allowWith($event, { remember: 'pane' })">{{ allowWholeLabel }}</button>
         </template>
         <div v-else class="aca-split">
-          <button class="confirm-btn primary" data-test="agent-command-allow" :disabled="!armed || blockedUnread" @pointerdown="press" @click="allowWith($event, { remember: 'once' })">{{ t('app.agentTerminal.allow', 'Allow') }}</button>
+          <button class="confirm-btn primary" :class="{ danger: mailCodeWarns }" data-test="agent-command-allow" :disabled="!armed || blockedUnread" @pointerdown="press" @click="allowWith($event, { remember: 'once' })">{{ allowLabel }}</button>
           <button
             v-if="actions.length"
             class="confirm-btn primary aca-more"
@@ -338,7 +383,8 @@ function trapTab(event) {
   max-height: 6.5em;
   overflow: auto;
 }
-.aca-host .confirm-actions {
+.aca-host .confirm-actions,
+.aca-mail-card .confirm-actions {
   position: sticky;
   bottom: -18px;
   margin-bottom: -18px;
@@ -366,6 +412,10 @@ function trapTab(event) {
 .aca-warn {
   color: var(--warning, #d29922);
   font-size: 12px;
+}
+.aca-strong {
+  font-weight: 600;
+  font-size: 13px;
 }
 .aca-split {
   position: relative;

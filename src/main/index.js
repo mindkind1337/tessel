@@ -4060,12 +4060,15 @@ const browserGuests = createBrowserGuests({
   onGuest: (guest) => agentBrowser.watchGuest(guest)
 })
 browserGuests.register(ipcMain)
+// A page something secret may go into: never in a Live Share guest's window, never a page shared
+// in Live Share, only in the browser's own sessions.
+const privateBrowserPage = (guest) => !liveShare?.credentialsGuestSession() && !liveShare?.credentialsPageShared(guest.id) && !guest.isDestroyed() &&
+  (guest.session === browserGuests.browserSession(BROWSER_PARTITION) || guest.session === browserGuests.browserSession(BROWSER_PARTITION_AGENT))
 const passwordManager = registerPasswordManager({
   ipcMain, safeStorage, dialog, dataDir: app.getPath('userData'), getWindow: () => mainWindow,
   guestFor: (event, id) => browserGuests.guestFor(event, id),
   guestSessionActive: () => !!liveShare?.credentialsGuestSession(),
-  allowedPage: (guest) => !liveShare?.credentialsGuestSession() && !liveShare?.credentialsPageShared(guest.id) && !guest.isDestroyed() &&
-    (guest.session === browserGuests.browserSession(BROWSER_PARTITION) || guest.session === browserGuests.browserSession(BROWSER_PARTITION_AGENT))
+  allowedPage: privateBrowserPage
 })
 // Importing cookies from another browser into Tessel's browser session, so the
 // user stays signed in to their sites in the built-in browser
@@ -4155,9 +4158,12 @@ let agentBrowserEnabled = false
 const agentBrowser = createAgentBrowser({
   verify: (body, paneId) => verifyRequest(body, paneId, 'browser'),
   enabled: () => agentBrowserEnabled,
-  ask: (method, params) => cliBridge.ask(method, params),
+  ask: (method, params, opts) => cliBridge.ask(method, params, opts),
   guestById: (id) => browserGuests.guestById(id),
   login: (guest, id) => passwordManager.login(guest, id),
+  recentMail: tesselApps.recentMail,
+  pageAllowed: privateBrowserPage,
+  mailReadAllowed: (pane) => agentTerminal.mayReadApp(pane, 'gmail'),
   downloads: (id, options, allowed) => {
     if (Object.hasOwn(options, 'saveAs')) return browserGuests.downloads.prepare(id, options.saveAs, options.owner, allowed)
     if (options.cancel) browserGuests.downloads.cancel(id, options.cancel)
@@ -6187,7 +6193,7 @@ const cliHandlers = {
   status: async () => ({ version: app.getVersion(), ...(await cliBridge.ask('status', {})) }),
   'task.add': async (params) => cliBridge.ask('addTask', params),
   usage: async () => accountUsage.usage(),
-  browser: async (params) => agentBrowser.handle(params),
+  browser: async (params, opts) => agentBrowser.handle(params, opts),
   terminal: async (params, opts) => agentTerminal.handle(params, opts),
   accounts: async (params, opts) => agentAccounts.handle(params, opts),
   'team-mgmt': async (params) => {

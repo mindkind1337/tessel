@@ -4,6 +4,7 @@ import { join } from 'path'
 import fs from 'fs'
 import os from 'os'
 import { createAgentRelay, relayInboxText } from '../agentRelay'
+import { createTesselApps } from '../tesselApps'
 import { createAgentTerminal, stripAnsi, checkCommand, keyData, keysData, MAX_COMMAND_BYTES, RATE_MAX, PREPARE_MAX } from '../agentTerminal'
 import { handleRequestLine, validateParams, CliError } from '../cliServer'
 import { setTeamSecret, verifyRequest, _resetTeamAuth } from '../teamAuth'
@@ -708,6 +709,32 @@ describe("security review: the user's own computer, asked for by an agent that w
     })
     const use = (tool, input = { id: 'm1' }, extra = {}) => signed('apps', { tool, input: JSON.stringify(input), explanation: 'To read the code', ...extra })
     const allowAll = (p) => ({ allow: true, remember: p.card.kind === 'apps' ? 'pane' : 'once' })
+
+    it('what the mail code card says of a pane is what the allowance gave it: the real tool, for that pane', async () => {
+      // The real table, as index.js asks: agentTerminal.mayReadApp(pane, 'gmail').
+      const dir = fs.mkdtempSync(join(os.tmpdir(), 'tessel-apps-'))
+      const real = createTesselApps({ dir, safeStorage: { isEncryptionAvailable: () => true, encryptString: (t) => Buffer.from(t), decryptString: (b) => b.toString() }, scheme: 'tessel-dev', accountUrl: 'https://tesselcode.com', openExternal: async () => {}, signedRequest: async () => ({}), fetchFn: async () => ({}) })
+      const apps = fakeApps({ tool: (name) => real.tool(name) })
+      const win = fakeWindow({ approve: allowAll })
+      const { at } = make(win, { apps })
+      expect(at.mayReadApp(AGENT, 'gmail')).toBe(false)
+      await at.handle(use('gmail_read'))
+      expect(at.mayReadApp(AGENT, 'gmail')).toBe(true)
+      expect(at.mayReadApp(AGENT, 'calendar')).toBe(false)
+      expect(at.mayReadApp(OTHER, 'gmail')).toBe(false)
+      fs.rmSync(dir, { recursive: true, force: true })
+    })
+
+    it('a yes for that once, or for writing a draft, is no allowance to read', async () => {
+      const once = fakeWindow({ approve: () => ({ allow: true, remember: 'once' }) })
+      const a = make(once, { apps: fakeApps() }).at
+      await a.handle(use('gmail_read'))
+      expect(a.mayReadApp(AGENT, 'gmail')).toBe(false)
+      const write = fakeWindow({ approve: allowAll })
+      const b = make(write, { apps: fakeApps() }).at
+      await b.handle(use('gmail_create_draft', { to: 'a@b.c' }))
+      expect(b.mayReadApp(AGENT, 'gmail')).toBe(false)
+    })
 
     it('asks first, says why and what, then runs; asked once until Tessel restarts', async () => {
       const apps = fakeApps()
@@ -1510,7 +1537,7 @@ describe('the tools tell agents when a terminal helps', () => {
     expect(open.description).toContain('without saying which kind, open the same agent as you, or ask the user if it is unclear')
     expect(open.inputSchema.properties.kind.enum).toEqual(['agent', 'shell'])
     expect(mcp.TERMINAL_OPS.open_terminal).toBe('open')
-    expect(mcp.VERSION).toBe('1.11.16')
+    expect(mcp.VERSION).toBe('1.11.17')
   })
 })
 

@@ -585,7 +585,10 @@ export function createAgentTerminalTargets(deps) {
       if (typeof req.cardId === 'string' && typeof deps.expireApproval === 'function') deps.expireApproval(req.cardId)
       return { ok: true }
     }
-    if (!deps.enabled()) throw refuse('disabled', 'The user turned off "Let agents use terminals" (Tessel Settings > Agents).') // i18n-ignore
+    // A mail code's card belongs to a browser tool (the main process looked at "Let agents use the
+    // browser"): this setting says nothing about it.
+    const forBrowser = req.op === 'mailCodeInfo' || (req.op === 'approve' && typeof req.terminal === 'string' && req.terminal.startsWith('mailcode:'))
+    if (!deps.enabled() && !forBrowser) throw refuse('disabled', 'The user turned off "Let agents use terminals" (Tessel Settings > Agents).') // i18n-ignore
     const { ws, leaf: agentLeaf } = agentOf(req.agent)
     const agentLabel = deps.paneLabel(agentLeaf)
 
@@ -631,8 +634,8 @@ export function createAgentTerminalTargets(deps) {
       return { hostId, local: !hostId, label: hostId ? deps.hostLabel(hostId) : 'this computer', projectHost: (hostId || null) === ((ws.remote && ws.remote.hostId) || null), guests: guestsOf(ws), wroteLast: wroteLast(agentLeaf, ws), ...(wantsGuest ? { wantsGuest: true } : {}) } // i18n-ignore
     }
 
-    // Who asks for a connector: its name, and who is in its project.
-    if (req.op === 'appsInfo') return { agentLabel, guests: guestsOf(ws), shared: projectShared(ws), sharedBefore: !!deps.sharedUntilYouWrote?.(agentLeaf.id, ws && ws.id), onHost: agentLeaf.remoteHostId ? String(deps.hostLabel(agentLeaf.remoteHostId) || 'SSH host') : null, wroteLast: wroteLast(agentLeaf, ws) } // i18n-ignore
+    // Who asks for a connector or a mail code: its name, and who is in its project.
+    if (req.op === 'appsInfo' || req.op === 'mailCodeInfo') return { agentLabel, guests: guestsOf(ws), shared: projectShared(ws), sharedBefore: !!deps.sharedUntilYouWrote?.(agentLeaf.id, ws && ws.id), onHost: agentLeaf.remoteHostId ? String(deps.hostLabel(agentLeaf.remoteHostId) || 'SSH host') : null, wroteLast: wroteLast(agentLeaf, ws) } // i18n-ignore
 
     // A command for the computer of a guest in this project, who answers on their own screen.
     if (req.op === 'guestCommand') {
@@ -656,7 +659,7 @@ export function createAgentTerminalTargets(deps) {
 
     // A card about no terminal yet: another SSH host ("host:<id>"), panes to
     // open ("open:<agent pane>"); shown from the agent's own pane.
-    if (req.op === 'approve' && typeof req.terminal === 'string' && /^(host|open|logs|relay|apps):/.test(req.terminal))
+    if (req.op === 'approve' && typeof req.terminal === 'string' && /^(host|open|logs|relay|apps|mailcode):/.test(req.terminal))
       return plainAnswer(await deps.approve({ ...cardFrom(req.card, agentLeaf, ws), agentLeaf, agentLabel, leaf: agentLeaf, name: agentLabel, ws }))
 
     // Messages between projects: who can be written to, and who a name means.
@@ -795,7 +798,9 @@ export function createAgentTerminalTargets(deps) {
       command: r && typeof r.command === 'string' ? r.command : null,
       // A plain copy: the card's own objects are reactive, which IPC cannot clone.
       action: r && r.action ? JSON.parse(JSON.stringify(r.action)) : null,
-      remember: r && r.remember === 'pane' ? 'pane' : 'once'
+      remember: r && r.remember === 'pane' ? 'pane' : 'once',
+      // Nobody answered, which is not the same as no.
+      ...(r && r.timedOut ? { timedOut: true } : {})
     }
   }
 

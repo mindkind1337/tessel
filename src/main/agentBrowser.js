@@ -64,8 +64,9 @@ import {
 } from './agentBrowserInput'
 import { shortcutOf, quietContextMenu } from './browserGuest'
 import { leaseDebugger } from './pageDebugger'
+import { createMailCode } from './agentBrowserMailCode'
 
-export const AGENT_OPS = ['pages', 'open', 'navigate', 'snapshot', 'click', 'mouse', 'fill', 'type', 'press', 'scroll', 'screenshot', 'console', 'wait', 'downloads', 'login']
+export const AGENT_OPS = ['pages', 'open', 'navigate', 'snapshot', 'click', 'mouse', 'fill', 'type', 'press', 'scroll', 'screenshot', 'console', 'wait', 'downloads', 'login', 'fillmailcode']
 // An answer's text, at most (characters).
 export const MAX_RESULT_CHARS = 64000
 // A screenshot sent back as an image, at most (base64 characters); larger
@@ -201,7 +202,8 @@ export function consoleEntry(args) {
 //   send(channel, payload)     to the window: 'browser:agentControl'
 //   windowState() -> { minimized, visible } | null   Tessel's window (for the answer when a capture fails)
 //   nativeImage, screenshotDir, log
-export function createAgentBrowser({ verify, enabled = () => true, ask, guestById, downloads = () => [], login = () => ({ ok: false, code: 'unavailable' }), send = () => {}, windowState = () => null, nativeImage = null, screenshotDir = null, log = null }) {
+//   recentMail, pageAllowed, mailReadAllowed, mailCodeTiming    browser_fill_mail_code (agentBrowserMailCode.js)
+export function createAgentBrowser({ verify, enabled = () => true, ask, guestById, downloads = () => [], login = () => ({ ok: false, code: 'unavailable' }), send = () => {}, windowState = () => null, nativeImage = null, screenshotDir = null, log = null , recentMail = null, pageAllowed = () => false, mailReadAllowed = () => false, mailCodeTiming = {} }) {
   // guest id -> { refMap, navKey, queue, idle, agent, console: [], attached, listener }
   const pages = new Map()
   const revoked = new Set() // guest ids the user stopped
@@ -209,6 +211,7 @@ export function createAgentBrowser({ verify, enabled = () => true, ask, guestByI
   // under a new guest (moved to another workspace, the window reloaded).
   const revokedPages = new Set()
   const lastPage = new Map() // agent pane id -> browser pane id it drove last
+  const mailCode = createMailCode({ ask, recentMail, pageAllowed, log, mailReadAllowed, timing: mailCodeTiming })
   const warn = (msg) => log && log.warn('agent-browser', msg)
 
   function stateOf(guest) {
@@ -234,7 +237,8 @@ export function createAgentBrowser({ verify, enabled = () => true, ask, guestByI
     if (!guest || typeof guest.on !== 'function') return
     const s = stateOf(guest)
     guest.on('console-message', (...args) => {
-      s.console.push(consoleEntry(args))
+      // (Not while a code from the person's mail is being typed: a page may note each key.)
+      if (!mailCode.busy(guest.id)) s.console.push(consoleEntry(args))
       if (s.console.length > CONSOLE_KEEP) s.console.splice(0, s.console.length - CONSOLE_KEEP)
     })
   }
@@ -321,7 +325,7 @@ export function createAgentBrowser({ verify, enabled = () => true, ask, guestByI
         // An unanswered dialog blocks every command: an alert is closed, a
         // confirm or prompt refused (never accepted for the agent).
         if (method === 'Page.javascriptDialogOpening') {
-          s.console.push({ level: 'dialog', text: `[${params && params.type}] ${String((params && params.message) || '').slice(0, CONSOLE_TEXT)} (dismissed)`, source: '', line: 0, at: Date.now() })
+          if (!mailCode.busy(guest.id)) s.console.push({ level: 'dialog', text: `[${params && params.type}] ${String((params && params.message) || '').slice(0, CONSOLE_TEXT)} (dismissed)`, source: '', line: 0, at: Date.now() })
           sender(guest, sessionId)('Page.handleJavaScriptDialog', { accept: !!params && params.type === 'alert' }).catch(() => {})
         }
       }
@@ -438,6 +442,11 @@ export function createAgentBrowser({ verify, enabled = () => true, ask, guestByI
     return withTimeout(Promise.all(sends), 1000, () => null).catch(() => null)
   }
   function release(id, { stopped = false } = {}) {
+    // (A mail code being typed is emptied through this debugger first.)
+    if (mailCode.busy(id)) {
+      mailCode.whenEnded(id).then(() => release(id, { stopped }))
+      return
+    }
     const s = pages.get(id)
     if (s && s.idle) clearTimeout(s.idle)
     if (s) s.idle = null
@@ -477,16 +486,27 @@ export function createAgentBrowser({ verify, enabled = () => true, ask, guestByI
   // One command at a time per page. A command the page never answers does
   // not hold the page: the next one starts once it timed out, and the user's
   // Stop ends every command still waiting on the page at once.
-  function queued(s, guest, fn) {
-    const go = () => {
+  function queued(s, guest, fn, action = false) {
+    // (Behind a mail code being typed and submitted: nothing reaches a page while that goes on.)
+    const go = async () => {
       allowed(guest)
-      return fn()
+      await mailCode.whenFree()
+      allowed(guest)
+      if (action) return fn()
+      // Its real end, which an answer that ran out of time is not: a mail code waits for that.
+      const running = (async () => fn())()
+      if (!s.running) s.running = new Set()
+      s.running.add(running)
+      const done = () => s.running.delete(running)
+      running.then(done, done)
+      return running
     }
     let cancel
     const cancelled = new Promise((_resolve, reject) => (cancel = reject))
     cancelled.catch(() => {})
     const run = s.queue.then(go, go)
-    const answer = withTimeout(Promise.race([run, cancelled]), COMMAND_TIMEOUT_MS)
+    // (A mail code being typed ends by itself, in its own time, and says how it went.)
+    const answer = action ? Promise.race([run, cancelled]) : withTimeout(Promise.race([run, cancelled]), COMMAND_TIMEOUT_MS)
     if (!s.cancels) s.cancels = new Set()
     s.cancels.add(cancel)
     s.queue = answer.catch(() => {}).finally(() => s.cancels.delete(cancel))
@@ -519,6 +539,7 @@ export function createAgentBrowser({ verify, enabled = () => true, ask, guestByI
   }
 
   async function snapshot(guest, s, pane) {
+    await mailCode.refuseHeld(guest)
     const cdp = await attach(guest, s)
     let contextId = null
     try {
@@ -663,7 +684,12 @@ export function createAgentBrowser({ verify, enabled = () => true, ask, guestByI
     return `${where ? `${where}. Tessel drew it unseen for the capture, but ` : ''}the page gave no picture (it may be frozen by a long script, or crashed). Try again in a moment, or read it with browser_snapshot.`
   }
 
+  // A read that began before a mail code was typed and ended after: it may hold that code.
+  function noFillSince(s, fills) {
+    if ((s.fills || 0) !== fills) throw fail('busy', 'A mail code was being typed into this page, so this was dropped. Try again.')
+  }
   async function screenshot(guest, s, pane) {
+    const fills = s.fills || 0
     // Its viewport first (CSS pixels): coordinates an agent reads on the
     // screenshot are those browser_click / browser_mouse take.
     let vp = null
@@ -674,6 +700,7 @@ export function createAgentBrowser({ verify, enabled = () => true, ask, guestByI
       vp = null
     }
     const { img: shot, painted } = await capturePageImage(guest, s, pane)
+    noFillSince(s, fills)
     if (!shot) throw fail('capture_failed', captureFailure(painted))
     let img = shot
     // One image pixel per CSS pixel (a HiDPI screen or the page's zoom give
@@ -848,11 +875,16 @@ export function createAgentBrowser({ verify, enabled = () => true, ask, guestByI
       throw new BrowserInputError('stale_ref', 'Another agent read this page since your snapshot: call browser_snapshot again.')
     }
     switch (op) {
-      case 'snapshot':
-        return snapshot(guest, s, pane)
+      case 'snapshot': {
+        const fills = s.fills || 0
+        const read = await snapshot(guest, s, pane)
+        noFillSince(s, fills)
+        return read
+      }
       case 'navigate':
         return navigate(guest, s, args)
       case 'screenshot':
+        await mailCode.refuseHeld(guest)
         return screenshot(guest, s, pane)
       case 'console':
         return consoleText(s, args)
@@ -975,6 +1007,7 @@ export function createAgentBrowser({ verify, enabled = () => true, ask, guestByI
         const deadline = Date.now() + PRESS_BUDGET_MS
         const check = () => {
           allowed(guest)
+          if (mailCode.busy(guest.id)) throw fail('busy', 'A mail code is being typed into this page, so the key presses were stopped.')
           if (Date.now() > deadline) throw fail('timeout', 'The key presses took too long and were stopped.')
         }
         const key = await pressKey(cdp, args.key, typeof guest.sendInputEvent === 'function' ? (ev) => guest.sendInputEvent(ev) : null, s, frameList(s), timing, check)
@@ -1005,13 +1038,17 @@ export function createAgentBrowser({ verify, enabled = () => true, ask, guestByI
   }
 
   // params: { pane, op, args, auth } (checked by cliServer.js) -> { text, image?, file? }
-  async function handle(params) {
+  // opts.signal: aborted when the agent's tool call went away.
+  async function handle(params, opts = {}) {
+    const signal = opts && opts.signal ? opts.signal : null
     const { pane, op, args = {}, auth } = params || {}
     const v = verify({ op, args, auth }, pane)
     if (!v || v.unsigned) throw fail('unauthorized', 'This request is not signed by a pane Tessel started: restart the agent from Tessel.')
     if (v.error) throw fail(/no team secret/.test(v.error) ? 'unknown_pane' : 'unauthorized', `Refused: ${v.error}.`)
     if (!AGENT_OPS.includes(op)) throw fail('unknown_method', `Unknown browser operation: ${String(op).slice(0, 40)}`)
     if (!enabled()) throw fail('disabled', 'The user turned off "Let agents use the browser" (Tessel Settings > Agents).')
+    // A mail code being typed and submitted (agentBrowserMailCode.js): every tool of every pane waits.
+    if (op !== 'fillmailcode') await mailCode.whenFree()
 
     if (op === 'pages') {
       const r = targetFrom(await ask('browserTarget', { agent: pane, op: 'list', last: lastPage.get(pane) || null }))
@@ -1043,7 +1080,10 @@ export function createAgentBrowser({ verify, enabled = () => true, ask, guestByI
     s.page = r.page
     controlled(guest, s, r.agent)
     try {
-      const out = await queued(s, guest, () => run(op, guest, s, args, pane))
+      const out =
+        op === 'fillmailcode'
+          ? await mailCode.request({ guest, s, pane, page: r.page, args, signal, inPage: (fn) => queued(s, guest, fn), inAction: (fn) => queued(s, guest, fn, true), running: () => [...(s.running || [])], attach, frameList, allowed, controlled: () => controlled(guest, s, r.agent) })
+          : await queued(s, guest, () => run(op, guest, s, args, pane))
       const downloadHint = s.downloadHintFor !== pane && ['snapshot', 'click', 'mouse', 'press', 'navigate'].includes(op)
         ? '\nDownloads while you control this page save automatically to the local Downloads/Tessel folder, without a dialog. To choose a filename or folder, call browser_downloads with saveAs before clicking. Call browser_downloads afterwards and verify completed plus the saved path; never claim success from the click alone.' : ''
       if (downloadHint) s.downloadHintFor = pane

@@ -361,6 +361,29 @@ describe('security review: terminal requests cannot starve the pipe', () => {
     server.stop()
   })
 
+  it('the browser tool that waits for the user counts with those: many leave room, a pane has its cap, the others are as they were', async () => {
+    const hold = []
+    const { server, token, open } = await setup({
+      browser: (params) => (params.op === 'fillmailcode' ? new Promise((resolve) => hold.push(resolve)) : { text: 'done' }),
+      ping: async () => ({ pong: true })
+    })
+    const mailCode = (pane) => line({ token, method: 'browser', params: { pane, op: 'fillmailcode', args: { ref: '@e1', reason: 'x' }, auth: { nonce: 'n'.repeat(20), at: 1, mac: 'x' } } })
+    for (let i = 0; i < 12; i++) open(mailCode(`pane-${i}`))
+    await vi.waitFor(() => expect(hold.length).toBe(12))
+    const ping = open(line({ token, method: 'ping' }))
+    await vi.waitFor(() => expect(ping.end).toHaveBeenCalled())
+    expect(JSON.parse(ping.answer)).toEqual({ ok: true, result: { pong: true } })
+    const same = []
+    for (let i = 0; i < 6; i++) same.push(open(mailCode('pane-x')))
+    await vi.waitFor(() => expect(same.filter((s) => s.end.mock.calls.length).length).toBe(6 - MAX_TERMINAL_PER_PANE))
+    expect(JSON.parse(same.at(-1).answer).error.code).toBe('busy')
+    // Another browser tool of that pane is not one of them.
+    const other = open(line({ token, method: 'browser', params: { pane: 'pane-x', op: 'snapshot', args: {}, auth: { nonce: 'n'.repeat(20), at: 1, mac: 'x' } } }))
+    await vi.waitFor(() => expect(other.end).toHaveBeenCalled())
+    expect(JSON.parse(other.answer).result).toEqual({ text: 'done' })
+    server.stop()
+  })
+
   it('the client going away cancels its terminal request; its place is freed once the handler is over', async () => {
     const signals = []
     const finish = []

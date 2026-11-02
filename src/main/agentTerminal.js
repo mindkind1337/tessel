@@ -985,5 +985,7 @@ export function createAgentTerminal({ apps = null, verify, settings = () => ({ e
     }
   }
 
-  return { handle, stop, allowAgain, forgetPane, release, releaseAll, _approvedPanes: approvedPanes, _stopped: stopped, _sessions: sessions }
+  // Has this pane an allowance to read this connector until Tessel restarts?
+  const mayReadApp = (pane, service) => [...appPanes].some((k) => k.startsWith(`${pane}|app:${service}:read:`))
+  return { handle, stop, allowAgain, forgetPane, release, releaseAll, mayReadApp, _approvedPanes: approvedPanes, _stopped: stopped, _sessions: sessions }
 }

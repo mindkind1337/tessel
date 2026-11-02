@@ -983,7 +983,8 @@ describe('browser tools in the MCP server', () => {
       'browser_console',
       'browser_wait',
       'browser_downloads',
-      'browser_login'
+      'browser_login',
+      'browser_fill_mail_code'
     ])
     for (const name of names) expect(mcp.TOOLS.some((t) => t.name === name)).toBe(true)
   })

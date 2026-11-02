@@ -894,6 +894,13 @@
       "unknownAccount": "un compte encore sans nom"
     },
     "agentTerminal": {
+      "mailCodeAllow": "Le remplir et l'envoyer",
+      "mailCodeAllowAnyway": "Le remplir quand même sur {{site}}",
+      "mailCodeHostText": "Cet agent tourne sur le serveur {{host}} : n'importe quel programme qu'il y a lancé peut demander en son nom.",
+      "mailCodeHostTitle": "{{agent}}, sur le serveur {{host}}, demande à Tessel de remplir un code venu de vos courriels",
+      "mailCodeNoMatch": "Tessel a trouvé des raisons de se méfier ici. Refusez, à moins d'en être sûr.",
+      "mailCodeText": "Un code comme celui-ci, c'est le site qui demande si vous acceptez ce que cette page est en train de faire. Tessel le tape et envoie ce formulaire. Il ne le donne pas à l'agent, mais l'agent contrôle ce navigateur, et si ce site affiche le code sur une page, l'agent peut le lire. Si vous n'avez pas demandé cela à cet agent ici, refusez.",
+      "mailCodeTitle": "{{agent}} demande à Tessel de remplir un code venu de vos courriels",
       "allow": "Autoriser",
       "allowAgain": "Autoriser à nouveau",
       "allowExact": "Autoriser cette ligne de commande exacte {{scope}}",
@@ -975,7 +982,11 @@
       "relayTextShared": "Un de ces projets est partagé dans Live Share : un invité peut être derrière ce message, ou lire ce qui arrive. La question est posée pour chaque message tant qu'il est partagé.",
       "appsHostTitle": "{{agent}}, sur le serveur {{host}}, veut utiliser votre {{service}} ({{account}})",
       "appsHostWriteTitle": "{{agent}}, sur le serveur {{host}}, veut changer des choses dans votre {{service}} ({{account}})",
-      "appsHostText": "Cet agent tourne sur le serveur {{host}} : ce qu'il lit va là-bas, puis à son fournisseur d'IA, et tout programme qu'il y a lancé peut demander en son nom. On vous le demande à chaque fois."
+      "appsHostText": "Cet agent tourne sur le serveur {{host}} : ce qu'il lit va là-bas, puis à son fournisseur d'IA, et tout programme qu'il y a lancé peut demander en son nom. On vous le demande à chaque fois.",
+      "mailCodeMailRead": "Cet agent a déjà le droit de lire votre Gmail : il peut donc lire lui-même ce courriel et son code.",
+      "mailCodeAgentSays": "L'agent dit",
+      "mailCodeJustNow": "Reçu : il y a moins d'une minute",
+      "mailCodeMinutesAgo": "Reçu : il y a {{count}} min"
     },
     "hostAccount": {
       "refused": "{{agent}} n’a pas été démarré sur son compte sur cet hôte : {{error}} Menu du panneau > Redémarrer sur… le démarre sur un autre.",

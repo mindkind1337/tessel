@@ -22,6 +22,7 @@ const SKIPPED_FILES = {
   'teamAuth.js': 'signed request checks answered to agents',
   'agentBrowser.js': 'answers to the agents’ browser tools',
   'agentBrowserInput.js': 'answers to the agents’ browser tools',
+  'agentBrowserMailCode.js': 'answers to the agents’ browser tools',
   'agentBrowserSnapshot.js': 'page snapshots read by agents',
   'agentTerminal.js': 'answers to the agents’ terminal tools',
   'agentAccounts.js': 'answers to the agents’ account tools',

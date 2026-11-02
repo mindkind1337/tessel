@@ -12495,10 +12495,12 @@ const agentTerminalTargets = createAgentTerminalTargets({
       detail: c.detail,
       eachTime: c.eachTime,
       shared: c.shared,
-      onHost: c.onHost
+      onHost: c.onHost,
+      // A code from the person's mail: what the main process wrote for the card (never the code).
+      mailCode: c.mailCode
     }
     const answer = await askAgentApproval(card, c.agentLeaf.id)
-    if (!answer || !answer.allow) return { allow: false }
+    if (!answer || !answer.allow) return { allow: false, ...(answer && answer.timedOut ? { timedOut: true } : {}) }
     const action = answer.action || null
     // A rule needs auto approve on; "this project" and "always" are saved here.
     if (action && !(await enableTerminalAutoApprove())) return { ...answer, action: null }

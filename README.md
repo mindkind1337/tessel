@@ -330,6 +330,25 @@ working on Tessel itself (see [Build from source](#build-from-source)).
   in Tessel's panes here and on hosts, so agents use Tessel's. Codex keeps its own connector for
   Dropbox, Notion, Linear, Sentry and Stripe. All their other tools stay. Agents already running get the tools after
   a restart.
+- **A code sent by email, typed and submitted for you**: when you asked an agent to sign in to a
+  site in the built-in browser and it asks for a code it sent by email, the agent asks and you
+  allow it on a card, every time. The card names the page with its path, the field, the button,
+  the sender, the subject, how long ago the mail came and the account, and shows the mail's own
+  words around the code with the numbers hidden. It warns when the sender is not that site, when
+  the page is not on the host that site signs people in on, when it is on another port, when the
+  mail is addressed to someone else or answers go to another domain, and when the mail or the page
+  speaks of a payment, an order, a new device, closing something, turning off a protection, a
+  change of password or email, or access for something else. No warning does not mean it is a
+  sign-in: read what the mail says. Tessel reads the code from the Gmail you connected, types it,
+  submits the form and empties the field, all in one step with every browser tool waiting for at
+  most 30 seconds, and its answer to the agent says only whether the form was sent and whether the
+  field was emptied. Tessel does not hand it the code, but the agent controls the browser, so if
+  the site shows the code on a page or writes it to the page's console, the agent can read it. If
+  Tessel cannot confirm the field is empty, it says so and keeps that page out of snapshots and
+  screenshots until it navigates away, closes or the field is empty, for at most 10 minutes. It
+  never types over a browser command still running on that page. Tessel refuses a field that is not made for a
+  code, and everything while the project is shared in Live Share. After you deny, that site and
+  that mail get no new card for 15 minutes, and after two denies in 15 minutes nothing does.
 - **Updating a development copy**: a Tessel started with `npm run dev` checks GitHub
   every 30 minutes (`git fetch` of the branch it follows) and, when there are newer
   builds, shows a yellow `↑ b1700` next to the version. It lists them and, for a copy with

@@ -32,9 +32,9 @@ export function useApprovalArming(armMs = ARM_MS) {
     clearTimeout(timer)
     window.removeEventListener('focus', arm)
   })
-  // @pointerdown on an Allow button.
+  // @pointerdown on an Allow button. A press while it is not armed counts for nothing, even released later.
   function press(event) {
-    pressed = event && event.currentTarget ? event.currentTarget : null
+    pressed = armed.value && event && event.currentTarget ? event.currentTarget : null
   }
   // May this click (on an Allow button) allow?
   function mayAllow(event) {
@@ -56,8 +56,9 @@ export function useApprovalArming(armMs = ARM_MS) {
 // and so does having opened it themselves (chosen). Tab alone does not: someone can press it for
 // another reason (Shift+Tab is an agent's mode key), so after it a letter still parks the card, an
 // Enter only counts a moment after the focus got there, and the focus never wraps from the refusing
-// button round to the strongest one.
-export function typingGuard({ chosen = false, back, park, settleMs = ARM_MS, now = () => Date.now() }) {
+// button round to the strongest one. denyOnly(element): on such a card, until it is clicked or opened
+// on purpose, an Enter does nothing unless it is on the refusing button.
+export function typingGuard({ chosen = false, back, park, settleMs = ARM_MS, now = () => Date.now(), denyOnly = null }) {
   let meant = chosen
   let tabbedAt = 0
   return {
@@ -77,10 +78,20 @@ export function typingGuard({ chosen = false, back, park, settleMs = ARM_MS, now
       // (AltGr reads as Ctrl and Alt together: that is a letter.)
       const letter = String(event.key).length === 1 && !event.metaKey && !!event.ctrlKey === !!event.altKey
       if (event.key === 'Enter' && tabbedAt) {
-        if (now() - tabbedAt >= settleMs) return
+        if (now() - tabbedAt >= settleMs && (!denyOnly || denyOnly(event.target))) return
         event.preventDefault()
         event.stopPropagation()
         return
+      }
+      // A space on a button presses it too. Never by accident: it still puts the card away below, and
+      // the button the Tab reached stays unpressed. On a deny-only card the same rule as Enter.
+      if (event.key === ' ' && tabbedAt) {
+        if (denyOnly && now() - tabbedAt >= settleMs && denyOnly(event.target)) return
+        event.preventDefault()
+        if (denyOnly) {
+          event.stopPropagation()
+          return
+        }
       }
       if (event.key !== 'Enter' && !letter) return
       back()
