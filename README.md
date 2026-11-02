@@ -314,14 +314,20 @@ working on Tessel itself (see [Build from source](#build-from-source)).
   one, creating an issue, a comment or a Notion page, and every request from an agent on an SSH
   host are asked each time, with what will happen. Mail can be read and drafted, never sent.
   Outlook mails an event's guests by itself, so agents make no Outlook event with guests and leave
-  one that has guests alone. Dropbox, Sentry, Vercel and Stripe are read only, and no tool sends
-  mail, deploys, moves money or deletes a repository. What an agent reads from a service is marked
-  as someone else's words, and its size is limited. Disconnecting deletes the tokens and asks the
+  one that has guests, or a whole repeating series, alone. Dropbox, Sentry, Vercel and Stripe are
+  read only, and no tool is there to send mail, deploy, move money or delete a repository. Creating
+  an issue or a comment on GitHub, Linear or Jira does notify the people watching, by email too, and
+  automation may run: its card says so, shows the whole text with every mention, link and image found
+  in it, and what does not fit on the card (4000 characters) is refused. What an agent reads from a
+  service, a service's refusal included, is marked as someone else's words, and its size is limited.
+  Stripe's payment secrets and sign-in-free invoice links never reach an agent. Disconnecting deletes the tokens and asks the
   service to end its access; Microsoft, Atlassian, Sentry and Stripe give apps no way to do that,
   so Tessel says where to end it yourself. Signing out of your Tessel account ends the
-  connections. What you connect here replaces the same service in Claude Code's and Codex's own
-  connectors, in Tessel's panes here and on hosts, so agents use Tessel's. All their other tools
-  stay. Agents already running get the tools after
+  connections, and so does someone else signing in: connections stay with the account that made
+  them. Two accounts of a service with the same address stay two connections. What you connect here
+  replaces the same service in Claude Code's connectors, and in Codex's where Tessel knows its id,
+  in Tessel's panes here and on hosts, so agents use Tessel's. Codex keeps its own connector for
+  Dropbox, Notion, Linear, Sentry and Stripe. All their other tools stay. Agents already running get the tools after
   a restart.
 - **Updating a development copy**: a Tessel started with `npm run dev` checks GitHub
   every 30 minutes (`git fetch` of the branch it follows) and, when there are newer

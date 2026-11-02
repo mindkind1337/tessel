@@ -411,8 +411,10 @@ describe('Gmail', () => {
       asked = url
       return new Response(JSON.stringify(message('m', 'x')), { status: 200 })
     }
-    await apps.run('gmail_read', { id: '../../settings/forwardingAddresses' })
-    expect(asked).toContain('/messages/..%2F..%2Fsettings%2FforwardingAddresses')
+    await expect(apps.run('gmail_read', { id: '../../settings/forwardingAddresses' })).rejects.toMatchObject({ code: 'invalid_argument' })
+    expect(asked).toBeUndefined()
+    await apps.run('gmail_read', { id: 'a/b' })
+    expect(asked).toContain('/messages/a%2Fb')
   })
 
   it('an id cannot mean the folder above', async () => {
@@ -440,7 +442,7 @@ describe('Gmail', () => {
 
   it('Google\'s refusals come through in words', async () => {
     google = async () => new Response(JSON.stringify({ error: { message: 'Not found' } }), { status: 404 })
-    await expect(apps.run('gmail_read', { id: 'x' })).rejects.toMatchObject({ code: 'not_found', message: 'Not found' })
+    await expect(apps.run('gmail_read', { id: 'x' })).rejects.toMatchObject({ code: 'not_found', message: expect.stringMatching(/from outside[\s\S]*Not found[\s\S]*end of what came from outside/) })
     google = async () => {
       throw new Error('down')
     }
@@ -621,8 +623,8 @@ describe('what a card shows for a change', () => {
   it('who is invited comes first, however long the title', async () => {
     const got = await lines('calendar_create_event', { summary: 'T'.repeat(1000), attendees: ['a@b.example'] })
     expect(got[0]).toBe('Invites: a@b.example')
-    expect(got[1]).toContain('[800 more characters]')
-    expect(got[1].length).toBeLessThan(260)
+    // Guests read it: all of it is on the card, and who comes first.
+    expect(got[1]).toBe(`Title: ${'T'.repeat(1000)}`)
   })
 
   it('a change shows where, the time zone, and how much of the text is left out', async () => {

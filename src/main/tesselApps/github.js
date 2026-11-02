@@ -1,5 +1,5 @@
 import { t } from '../i18n'
-import { bad, count, createCall, cut, jsonBody as json, pathId, query, shortened, text } from './shared'
+import { bad, count, createCall, cut, jsonBody as json, notifiedLine, pathId, publishedCard, publishedText, publishedTitle, query, shortened, text } from './shared'
 
 // tessel_apps: GitHub, through a GitHub App: the token can do what the app's registration allows and
 // the person can do, on repositories the app is installed on and public ones. One fixed host. There
@@ -9,7 +9,6 @@ const API = 'https://api.github.com'
 const HEADERS = { accept: 'application/vnd.github+json', 'x-github-api-version': '2022-11-28', 'user-agent': 'Tessel' }
 const MAX_FILE_LIST = 100
 const MAX_COMMENTS = 50
-const WORDS_MAX = 65000 // what GitHub takes in an issue or a comment
 
 // "owner/name": two segments, each one only that.
 function repoOf(args) {
@@ -35,7 +34,19 @@ function filePath(value) {
 const person = (u) => u?.login || '?'
 const issueLine = (i) => `${i.repository_url ? `${i.repository_url.split('/').slice(-2).join('/')}` : ''}#${i.number} [${i.state}] ${i.title}\nBy ${person(i.user)}, changed ${i.updated_at}\n${i.html_url || ''}\n`
 const issueText = (i) => [`#${i.number} [${i.state}] ${i.title}`, `By ${person(i.user)}, changed ${i.updated_at}`, ...(i.labels?.length ? [`Labels: ${i.labels.map((l) => l?.name).filter(Boolean).join(', ')}`] : []), i.html_url || '', '', cut(i.body || '(no text)')].join('\n')
-const commentsText = (list) => (Array.isArray(list) && list.length ? `\n\nComments:\n\n${list.map((c) => `${person(c.user)}, ${c.created_at}:\n${cut(c.body || '')}`).join('\n\n')}` : '')
+// Whatever is left out is said: an agent must not take the start of a list for all of it.
+const moreOf = (total, shown, what) => (Number(total) > shown ? `[${Number(total) - shown} more ${what}]` : '')
+function commentsText(list, total) {
+  const given = Array.isArray(list) ? list : []
+  const more = moreOf(total, given.length, 'comments')
+  const lines = given.map((c) => `${person(c.user)}, ${c.created_at}:\n${cut(c.body || '')}`)
+  return `${given.length ? `\n\nComments:\n\n${lines.join('\n\n')}` : ''}${more ? `\n\n${more}` : ''}`
+}
+const foundText = (found, lines) => {
+  const items = found.items || []
+  const more = moreOf(found.total_count, items.length, 'found: ask for a narrower search')
+  return items.length ? `${items.map(lines).join('\n')}${more ? `\n${more}` : ''}` : 'Nothing found.'
+}
 // GitHub answers 404 for a private repository the app is not installed on.
 const hintOf = (status) =>
   status === 404
@@ -68,17 +79,17 @@ export function createGitHubTools({ connections, fetchFn = fetch }) {
         const kind = text(args.kind, 'kind', { max: 20 }) || 'issues'
         if (kind === 'repos') {
           const found = await call(args.account, `${API}/search/repositories?${query({ q: words, per_page })}`)
-          return (found.items || []).map((r) => `${r.full_name}${r.private ? ' (private)' : ''}: ${r.description || ''}\n${r.html_url}\n`).join('\n') || 'Nothing found.'
+          return foundText(found, (r) => `${r.full_name}${r.private ? ' (private)' : ''}: ${r.description || ''}\n${r.html_url}\n`)
         }
         if (kind === 'code') {
           const found = await call(args.account, `${API}/search/code?${query({ q: words, per_page })}`)
-          return (found.items || []).map((c) => `${c.repository?.full_name}: ${c.path}\n${c.html_url}\n`).join('\n') || 'Nothing found.'
+          return foundText(found, (c) => `${c.repository?.full_name}: ${c.path}\n${c.html_url}\n`)
         }
         if (kind !== 'issues' && kind !== 'prs') throw bad('"kind" is issues, prs, repos or code.')
         // A GitHub App's token has to say which of the two.
         const q = /\bis:(issue|pr|pull-request)\b/i.test(words) ? words : `${words} ${kind === 'prs' ? 'is:pr' : 'is:issue'}`
         const found = await call(args.account, `${API}/search/issues?${query({ q, per_page })}`)
-        return (found.items || []).map(issueLine).join('\n') || 'Nothing found.'
+        return foundText(found, issueLine)
       }
     },
     github_list_repos: {
@@ -102,7 +113,7 @@ export function createGitHubTools({ connections, fetchFn = fetch }) {
         const number = numberOf(args)
         const issue = await call(args.account, `${API}/repos/${repo.path}/issues/${number}`)
         const comments = await call(args.account, `${API}/repos/${repo.path}/issues/${number}/comments?${query({ per_page: MAX_COMMENTS })}`)
-        return `${issueText(issue)}${commentsText(comments)}`
+        return `${issueText(issue)}${commentsText(comments, issue.comments)}`
       }
     },
     github_read_pr: {
@@ -113,8 +124,10 @@ export function createGitHubTools({ connections, fetchFn = fetch }) {
         const pr = await call(args.account, `${API}/repos/${repo.path}/pulls/${number}`)
         const files = await call(args.account, `${API}/repos/${repo.path}/pulls/${number}/files?${query({ per_page: MAX_FILE_LIST })}`)
         const comments = await call(args.account, `${API}/repos/${repo.path}/issues/${number}/comments?${query({ per_page: MAX_COMMENTS })}`)
-        const changes = (Array.isArray(files) ? files : []).map((f) => `${f.status} ${f.filename} (+${f.additions} -${f.deletions})${f.patch ? `\n${f.patch}` : ''}`).join('\n\n')
-        return `${issueText(pr)}\n\nFrom ${pr.head?.label || '?'} into ${pr.base?.label || '?'}${pr.merged_at ? `, merged ${pr.merged_at}` : ''}\n\nFiles:\n\n${cut(changes)}${commentsText(comments)}`
+        const listed = Array.isArray(files) ? files : []
+        const changes = listed.map((f) => `${f.status} ${f.filename} (+${f.additions} -${f.deletions})${f.patch ? `\n${f.patch}` : '\n[GitHub gives no diff for this file]'}`).join('\n\n')
+        const moreFiles = moreOf(pr.changed_files, listed.length, 'files')
+        return `${issueText(pr)}\n\nFrom ${pr.head?.label || '?'} into ${pr.base?.label || '?'}${pr.merged_at ? `, merged ${pr.merged_at}` : ''}\n\nFiles:\n\n${cut(changes)}${moreFiles ? `\n\n${moreFiles}` : ''}${commentsText(comments, pr.comments)}`
       }
     },
     github_read_file: {
@@ -133,12 +146,12 @@ export function createGitHubTools({ connections, fetchFn = fetch }) {
     github_create_issue: {
       service: 'github',
       writes: true,
-      describe: async (args) => [await repoNamed(args), t('main.apps.card.title', 'Title: {{value}}', { value: shortened(args.title) }), args.body ? t('main.apps.card.text', 'Text: {{value}}', { value: shortened(args.body) }) : ''].filter(Boolean).join('\n'),
+      describe: async (args) => publishedCard({ before: [await repoNamed(args), notifiedLine()], title: args.title, body: args.body }),
       // Whoever can read the repository reads this, and is told of it: asked each time.
       eachTime: () => true,
       async run(args) {
         const repo = repoOf(args)
-        const made = await call(args.account, `${API}/repos/${repo.path}/issues`, json('POST', { title: text(args.title, 'title', { required: true, max: 256 }), body: text(args.body, 'body', { max: WORDS_MAX }) }))
+        const made = await call(args.account, `${API}/repos/${repo.path}/issues`, json('POST', { title: publishedTitle(args.title, 'title', { max: 256 }), body: publishedText(args.body, 'body') }))
         return `Issue created: #${made.number} ${made.html_url || ''}`
       }
     },
@@ -154,12 +167,12 @@ export function createGitHubTools({ connections, fetchFn = fetch }) {
         } catch {
           // the value above
         }
-        return [await repoNamed(args), t('main.apps.card.commentOn', 'Comment on: {{value}}', { value: on }), t('main.apps.card.text', 'Text: {{value}}', { value: shortened(args.body) })].join('\n')
+        return publishedCard({ before: [await repoNamed(args), t('main.apps.card.commentOn', 'Comment on: {{value}}', { value: on }), notifiedLine()], body: args.body })
       },
       eachTime: () => true,
       async run(args) {
         const repo = repoOf(args)
-        const made = await call(args.account, `${API}/repos/${repo.path}/issues/${numberOf(args)}/comments`, json('POST', { body: text(args.body, 'body', { required: true, max: WORDS_MAX }) }))
+        const made = await call(args.account, `${API}/repos/${repo.path}/issues/${numberOf(args)}/comments`, json('POST', { body: publishedText(args.body, 'body', { required: true }) }))
         return `Comment added: ${made.html_url || ''}`
       }
     }

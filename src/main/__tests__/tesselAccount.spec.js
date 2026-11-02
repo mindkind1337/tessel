@@ -304,6 +304,18 @@ describe('finding the link in a command line', () => {
   })
 })
 
+describe('who is signed in, for what was connected for them', () => {
+  it('is known in the main process, and not told to the window', async () => {
+    const env = setup()
+    expect(env.account.userId()).toBeNull()
+    await signedIn(env)
+    expect(env.account.userId()).toBe('u1')
+    expect(JSON.stringify(await env.account.status())).not.toContain('u1')
+    await env.account.signOut()
+    expect(env.account.userId()).toBeNull()
+  })
+})
+
 describe('staying signed in', () => {
   it('comes back after a restart', async () => {
     const env = setup()

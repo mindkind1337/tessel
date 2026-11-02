@@ -1,5 +1,5 @@
 import { t } from '../i18n'
-import { bad, count, createCall, cut, jsonBody as json, pathId, query, shortened, text } from './shared'
+import { bad, count, createCall, cut, jsonBody as json, pathId, publishedCard, publishedText, publishedTitle, query, shortened, text } from './shared'
 
 // tessel_apps: Notion, on the pages the person picked on Notion's page. One fixed host. The app's
 // capabilities are to read and to insert content: nothing here changes or deletes a page.
@@ -77,18 +77,22 @@ export function createNotionTools({ connections, fetchFn = fetch }) {
       describe: async (args) => {
         const id = shortened(args.parent, 60)
         let under = t('main.apps.card.notRead', '{{id}} (could not be read)', { id })
+        let onTheWeb = false
         try {
-          under = shortened(titleOf(await call(args.account, `${API}/pages/${pathId(args.parent, 'parent')}`)))
+          const page = await call(args.account, `${API}/pages/${pathId(args.parent, 'parent')}`)
+          under = shortened(titleOf(page))
+          onTheWeb = !!page.public_url
         } catch {
           // the value above
         }
-        return [t('main.apps.card.underPage', 'Under the page: {{value}}', { value: under }), t('main.apps.card.othersRead', 'Others with access can read this.'), t('main.apps.card.title', 'Title: {{value}}', { value: shortened(args.title) }), args.content ? t('main.apps.card.text', 'Text: {{value}}', { value: shortened(args.content) }) : ''].filter(Boolean).join('\n')
+        const who = onTheWeb ? t('main.apps.card.publishedWeb', 'That page is published to the web: anyone can read this.') : t('main.apps.card.othersRead', 'Others with access can read this.')
+        return publishedCard({ before: [t('main.apps.card.underPage', 'Under the page: {{value}}', { value: under }), who], title: args.title, body: args.content })
       },
       // A workspace is shared: whoever can see the page above sees this one.
       eachTime: () => true,
       async run(args) {
-        const title = text(args.title, 'title', { required: true, max: MAX_BLOCK_TEXT })
-        const content = text(args.content, 'content', { max: MAX_NEW_BLOCKS * MAX_BLOCK_TEXT })
+        const title = publishedTitle(args.title, 'title', { max: MAX_BLOCK_TEXT })
+        const content = publishedText(args.content, 'content')
         const made = await call(args.account, `${API}/pages`, json('POST', { parent: { page_id: text(args.parent, 'parent', { required: true, max: 100 }) }, properties: { title: { title: [{ text: { content: title } }] } }, ...(content ? { children: blocksOf(content) } : {}) }))
         return `Page created (id ${made.id}): ${made.url || ''}`
       }

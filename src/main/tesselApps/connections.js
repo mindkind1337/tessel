@@ -35,7 +35,7 @@ export class ConnectionError extends Error {
   }
 }
 
-export function createConnections({ dir, safeStorage, openExternal, signedRequest, publicRequest = signedRequest, accountUrl = 'https://tesselcode.com', scheme = 'tessel', now = () => Date.now(), onChange = () => {} }) {
+export function createConnections({ dir, safeStorage, openExternal, signedRequest, publicRequest = signedRequest, ownerOf = () => null, accountUrl = 'https://tesselcode.com', scheme = 'tessel', now = () => Date.now(), onChange = () => {} }) {
   const file = join(dir, 'connections.json')
   let saved // undefined until read: { [service]: { [account]: { access_token, refresh_token, grant, expires_at, scope, connected_at, reconnect } } }
   let pending = null // the connection waiting for the browser
@@ -179,15 +179,24 @@ export function createConnections({ dir, safeStorage, openExternal, signedReques
       return true
     }
     const got = res.ok ? res.body : null
-    const label = cleanName(got?.account)
-    const account = label.toLowerCase()
-    if (typeof got?.access_token !== 'string' || !got.access_token || !account) {
+    let label = cleanName(got?.account)
+    let account = label.toLowerCase()
+    // (A name that cannot be a key here is refused, not lost: nothing else about it is special.)
+    if (typeof got?.access_token !== 'string' || !got.access_token || !account || account === '__proto__') {
       if (typeof got?.access_token === 'string') revoke(attempt.service, got)
       endPending('failed')
       return true
     }
     if (!accountsOf(attempt.service)) read()[attempt.service] = {}
     const accounts = accountsOf(attempt.service)
+    // Who the service says this is, which a name cannot tell: two accounts can have one address.
+    const subject = typeof got.account_id === 'string' && got.account_id ? got.account_id : null
+    const taken = Object.hasOwn(accounts, account) ? accounts[account] : null
+    if (taken?.subject && subject && taken.subject !== subject) {
+      // Another account with the same name: both stay, and the new one is told apart.
+      label = cleanName(`${label.slice(0, 300)} (${createHash('sha256').update(subject).digest('hex').slice(0, 8)})`)
+      account = label.toLowerCase()
+    }
     const before = Object.hasOwn(accounts, account) ? accounts[account] : null
     accounts[account] = {
       access_token: got.access_token,
@@ -198,6 +207,9 @@ export function createConnections({ dir, safeStorage, openExternal, signedReques
       scope: typeof got.scope === 'string' ? got.scope : null,
       // As the service writes it, for the panel: "Acme Notes" rather than the name it is found by.
       label,
+      subject: subject || before?.subject || null,
+      // The Tessel account it was made for (signedInAs).
+      owner: ownerOf() || before?.owner || null,
       connected_at: now()
     }
     try {
@@ -323,5 +335,22 @@ export function createConnections({ dir, safeStorage, openExternal, signedReques
     return view()
   }
 
-  return { list, view, services, connect, cancel, handleLink, access, disconnect, disconnectAll, close: () => pending && clearTimeout(pending.timer) }
+  // Someone signed in to Tessel. What was connected for another Tessel account ends here: a session
+  // can end without a sign-out (then nothing could ask for it), and connections never pass to whoever
+  // signs in next. One from before Tessel kept whose it was cannot be told apart, so it ends too.
+  async function signedInAs(owner) {
+    if (!owner) return view()
+    const left = []
+    for (const c of list()) {
+      if (accountsOf(c.service)?.[c.account]?.owner === owner) continue
+      await disconnect(c.service, c.account)
+      left.push(...notEnded)
+    }
+    notEnded = left
+    if (left.some((x) => x.how === 'notTold')) lastError = 'notRevoked'
+    onChange()
+    return view()
+  }
+
+  return { list, view, services, connect, cancel, handleLink, access, disconnect, disconnectAll, signedInAs, close: () => pending && clearTimeout(pending.timer) }
 }

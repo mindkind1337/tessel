@@ -185,6 +185,37 @@ describe('the approval card', () => {
       expect(wrapper.find('[data-test="agent-apps-detail"]').text()).toBe('Invites: a@b.c')
     })
 
+    it('asked each time: it never says that allowing it lets it do so again', () => {
+      open({ ...asked, writes: true, eachTime: true })
+      expect(wrapper.text()).toContain('You are asked every time.')
+      expect(wrapper.text()).not.toContain('again until Tessel restarts')
+      wrapper.unmount()
+      open({ ...asked, eachTime: true })
+      expect(wrapper.text()).toContain('You are asked every time.')
+      expect(wrapper.text()).not.toContain('again until Tessel restarts')
+    })
+
+    it('not asked each time: it says how long an agreement lasts', () => {
+      open({ ...asked, writes: true })
+      expect(wrapper.text()).toContain('again until Tessel restarts')
+      wrapper.unmount()
+      open(asked)
+      expect(wrapper.text()).toContain('again until Tessel restarts')
+    })
+
+    it('a guest in the project makes it each time too, and it says so', () => {
+      open({ ...asked, writes: true, guests: ['Alex'] })
+      expect(wrapper.text()).toContain('You are asked every time.')
+      expect(wrapper.text()).not.toContain('again until Tessel restarts')
+    })
+
+    it('what goes out is shown with its lines, in the block that scrolls', () => {
+      open({ ...asked, writes: true, eachTime: true, detail: 'Repository: a/b\nText:\nfirst\nsecond' })
+      const block = wrapper.find('[data-test="agent-apps-detail"]')
+      expect(block.element.tagName).toBe('PRE')
+      expect(block.element.textContent).toBe('Repository: a/b\nText:\nfirst\nsecond')
+    })
+
     it('asked each time, or a project shared with someone who only watches: only this once, and said', () => {
       open({ ...asked, writes: true, eachTime: true })
       expect(wrapper.find('[data-test="agent-command-allow"]').exists()).toBe(false)

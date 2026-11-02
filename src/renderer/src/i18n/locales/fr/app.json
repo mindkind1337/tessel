@@ -914,6 +914,8 @@
       "appsShared": "Ce projet est partagé dans Live Share : une personne invitée peut être derrière cette demande, ou voir ce que l'agent affiche.",
       "appsWriteTitle": "{{agent}} veut changer des choses dans votre {{service}} ({{account}})",
       "appsText": "Il lira ce que ce compte contient, et ce qu'il lit part vers le fournisseur d'IA derrière cet agent. L'autoriser lui permet d'utiliser à nouveau ce service jusqu'au redémarrage de Tessel.",
+      "appsWriteTextEach": "Il créera ou changera des choses avec votre compte. On vous le demande chaque fois.",
+      "appsTextEach": "Il lira ce que ce compte contient, et ce qu'il lit part vers le fournisseur d'IA derrière cet agent. On vous le demande chaque fois.",
       "appsWriteText": "Il créera ou changera des choses avec votre compte. L'autoriser lui permet de recommencer jusqu'au redémarrage de Tessel.",
       "allowApps": "Autoriser {{service}}",
       "hostRunTitle": "{{agent}}, un agent de {{host}}, veut lancer une commande sur votre ordinateur",

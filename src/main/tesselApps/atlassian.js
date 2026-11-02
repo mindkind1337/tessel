@@ -1,13 +1,13 @@
 import { t } from '../i18n'
-import { AppError, bad, count, createCall, cut, htmlToText, jsonBody as json, pathId, query, shortened, shownLine, text } from './shared'
+import { AppError, bad, count, createCall, cut, htmlToText, jsonBody as json, notifiedLine, pathId, publishedCard, publishedText, publishedTitle, query, shortened, shownLine, text } from './shared'
 
 // tessel_apps: Jira and Confluence. One fixed host: api.atlassian.com, with the site's id in the path.
 // That id only ever comes from Atlassian's own list of the sites this token can reach: what an agent
 // gives is matched against that list, and is never put in an address. So no agent can make a token go
 // to another host, or to a site the person did not allow.
 //
-// Atlassian's token can do more than these tools (write:jira-work includes deleting an issue, and its
-// narrower scopes are still in beta). No tool here deletes anything, and an agent never has the token.
+// Writing asks only for Atlassian's narrower scopes, which do not include deleting an issue: the sets
+// its OpenAPI gives for creating an issue and adding a comment (tessel-server: src/connect.js).
 const API = 'https://api.atlassian.com'
 const SITE_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const ISSUE_FIELDS = 'summary,status,assignee,issuetype,priority,updated,project'
@@ -44,8 +44,8 @@ export function createAtlassianTools({ connections, fetchFn = fetch }) {
     if (!sites.length) throw new AppError('not_found', `No ${product === 'jira' ? 'Jira' : 'Confluence'} site was given access. The user chooses one when connecting, in Tessel: Settings > Connections.`)
     const named = text(args.site, 'site', { max: 300 }).trim().toLowerCase()
     const found = named ? sites.filter((s) => String(s.name).toLowerCase() === named || hostOf(s.url) === named) : sites
-    if (named && !found.length) throw new AppError('unknown_site', `That site is not one this connection can reach. It can reach: ${names}.`)
-    if (found.length > 1) throw new AppError('which_site', `Several sites can be reached: ${names}. Ask the user which one, then pass it as "site".`)
+    if (named && !found.length) throw new AppError('unknown_site', 'That site is not one this connection can reach. It can reach the sites named below.', names)
+    if (found.length > 1) throw new AppError('which_site', 'Several sites can be reached, named below. Ask the user which one, then pass it as "site".', names)
     return { ...found[0], base: `${API}/ex/${product}/${found[0].id}` }
   }
   // Where it goes, for the card: the site as Atlassian names it. The agent never sees this answer.
@@ -65,7 +65,8 @@ export function createAtlassianTools({ connections, fetchFn = fetch }) {
       async run(args) {
         const site = await siteOf(args, 'jira')
         const found = await call(args.account, `${site.base}/rest/api/2/search/jql?${query({ jql: text(args.jql, 'jql', { required: true, max: 4000 }), maxResults: count(args.max, 20, 50), fields: ISSUE_FIELDS })}`)
-        return (found.issues || []).map(issueLine).join('\n') || 'No issue found.'
+        const list = (found.issues || []).map(issueLine).join('\n')
+        return list ? `${list}${found.nextPageToken ? '\n[more found: ask for a narrower search]' : ''}` : 'No issue found.'
       }
     },
     jira_read: {
@@ -73,29 +74,26 @@ export function createAtlassianTools({ connections, fetchFn = fetch }) {
       async run(args) {
         const site = await siteOf(args, 'jira')
         const i = await call(args.account, `${site.base}/rest/api/2/issue/${pathId(keyOf(args), 'key')}?${query({ fields: `${ISSUE_FIELDS},description,reporter,labels,comment` })}`)
-        const comments = (i.fields?.comment?.comments || []).map((c) => `${person(c.author)}, ${c.created}:\n${cut(c.body || '')}`).join('\n\n')
-        return `${issueLine(i)}Reported by ${person(i.fields?.reporter)}\n${i.fields?.labels?.length ? `Labels: ${i.fields.labels.join(', ')}\n` : ''}\n${cut(i.fields?.description || '(no text)')}${comments ? `\n\nComments:\n\n${comments}` : ''}`
+        const listed = i.fields?.comment?.comments || []
+        const comments = listed.map((c) => `${person(c.author)}, ${c.created}:\n${cut(c.body || '')}`).join('\n\n')
+        const more = Number(i.fields?.comment?.total) > listed.length ? `\n\n[${Number(i.fields.comment.total) - listed.length} more comments]` : ''
+        return `${issueLine(i)}Reported by ${person(i.fields?.reporter)}\n${i.fields?.labels?.length ? `Labels: ${i.fields.labels.join(', ')}\n` : ''}\n${cut(i.fields?.description || '(no text)')}${comments ? `\n\nComments:\n\n${comments}` : ''}${more}`
       }
     },
     jira_create: {
       service: 'jira',
       writes: true,
       describe: async (args) =>
-        [
-          await siteLine(args, 'jira'),
-          t('main.apps.card.othersRead', 'Others with access can read this.'),
-          t('main.apps.card.project', 'Project: {{value}}', { value: shortened(args.project, 60) }),
-          t('main.apps.card.issueType', 'Type: {{value}}', { value: shortened(args.type || 'Task', 60) }),
-          t('main.apps.card.title', 'Title: {{value}}', { value: shortened(args.summary) }),
-          args.description ? t('main.apps.card.text', 'Text: {{value}}', { value: shortened(args.description) }) : ''
-        ]
-          .filter(Boolean)
-          .join('\n'),
+        publishedCard({
+          before: [await siteLine(args, 'jira'), notifiedLine(), t('main.apps.card.project', 'Project: {{value}}', { value: shortened(args.project, 60) }), t('main.apps.card.issueType', 'Type: {{value}}', { value: shortened(args.type || 'Task', 60) })],
+          title: args.summary,
+          body: args.description
+        }),
       // A project's issues are read by its people, who are told of them: asked each time.
       eachTime: () => true,
       async run(args) {
         const site = await siteOf(args, 'jira')
-        const made = await call(args.account, `${site.base}/rest/api/2/issue`, json('POST', { fields: { project: { key: text(args.project, 'project', { required: true, max: 100 }) }, issuetype: { name: text(args.type, 'type', { max: 100 }) || 'Task' }, summary: text(args.summary, 'summary', { required: true, max: 255 }), ...(args.description ? { description: text(args.description, 'description', { max: 30000 }) } : {}) } }))
+        const made = await call(args.account, `${site.base}/rest/api/2/issue`, json('POST', { fields: { project: { key: text(args.project, 'project', { required: true, max: 100 }) }, issuetype: { name: text(args.type, 'type', { max: 100 }) || 'Task' }, summary: publishedTitle(args.summary, 'summary', { max: 255 }), ...(args.description ? { description: publishedText(args.description, 'description') } : {}) } }))
         return `Issue created: ${made.key || made.id}`
       }
     },
@@ -112,12 +110,12 @@ export function createAtlassianTools({ connections, fetchFn = fetch }) {
         } catch {
           // the value above
         }
-        return [await siteLine(args, 'jira'), t('main.apps.card.commentOn', 'Comment on: {{value}}', { value: on }), t('main.apps.card.othersRead', 'Others with access can read this.'), t('main.apps.card.text', 'Text: {{value}}', { value: shortened(args.body) })].join('\n')
+        return publishedCard({ before: [await siteLine(args, 'jira'), t('main.apps.card.commentOn', 'Comment on: {{value}}', { value: on }), notifiedLine()], body: args.body })
       },
       eachTime: () => true,
       async run(args) {
         const site = await siteOf(args, 'jira')
-        await call(args.account, `${site.base}/rest/api/2/issue/${pathId(keyOf(args), 'key')}/comment`, json('POST', { body: text(args.body, 'body', { required: true, max: 30000 }) }))
+        await call(args.account, `${site.base}/rest/api/2/issue/${pathId(keyOf(args), 'key')}/comment`, json('POST', { body: publishedText(args.body, 'body', { required: true }) }))
         return `Comment added to ${args.key}.`
       }
     },
@@ -130,7 +128,8 @@ export function createAtlassianTools({ connections, fetchFn = fetch }) {
         const cql = args.raw === true ? given : `text ~ "${given.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`
         const found = await call(args.account, `${site.base}/wiki/rest/api/search?${query({ cql, limit: count(args.max, 20, 50) })}`)
         const items = found.results || []
-        return items.length ? items.map((r) => `id: ${r.content?.id || '?'}\n${r.title || r.content?.title || '(no title)'} (changed ${r.lastModified || '?'})\n${r.excerpt ? `${htmlToText(r.excerpt)}\n` : ''}`).join('\n') : 'No page found.'
+        const more = Number(found.totalSize) > items.length ? `\n[${Number(found.totalSize) - items.length} more found: ask for a narrower search]` : ''
+        return items.length ? `${items.map((r) => `id: ${r.content?.id || '?'}\n${r.title || r.content?.title || '(no title)'} (changed ${r.lastModified || '?'})\n${r.excerpt ? `${htmlToText(r.excerpt)}\n` : ''}`).join('\n')}${more}` : 'No page found.'
       }
     },
     confluence_read: {

@@ -18,7 +18,7 @@ export function createVercelTools({ connections, fetchFn = fetch }) {
     if (!named) return undefined
     const teams = (await call(args.account, `${API}/v2/teams?${query({ limit: 100 })}`)).teams || []
     const found = teams.find((x) => x && (x.id === named || x.slug === named))
-    if (!found) throw new AppError('unknown_team', `This connection does not reach that team. It reaches: ${teams.map((x) => shownLine(x?.slug)).join(', ') || 'no team'}.`)
+    if (!found) throw new AppError('unknown_team', 'This connection does not reach that team. It reaches the ones named below.', teams.map((x) => shownLine(x?.slug)).join(', ') || 'no team')
     return found.id
   }
   return {

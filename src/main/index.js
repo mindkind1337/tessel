@@ -3206,6 +3206,8 @@ const tesselAccount = createTesselAccount({
     showMainWindow()
     send('tesselAccount:signedIn')
     settingsSync.wake()
+    // What someone else connected on this computer does not pass to them.
+    tesselApps.connections.signedInAs(tesselAccount.userId()).catch((err) => log.warn('team', `tessel_apps sign-in: ${err && err.message}`)) // i18n-ignore log
   },
   onSignedOut: () => settingsSync.signedOut(),
   onDeleted: (userId) => settingsSync.accountDeleted(userId)
@@ -3217,6 +3219,7 @@ const tesselApps = createTesselApps({
   openExternal: (url) => shell.openExternal(url),
   signedRequest: (path, init) => tesselAccount.signedRequest(path, init),
   publicRequest: (path, init) => tesselAccount.publicRequest(path, init),
+  ownerOf: () => tesselAccount.userId(),
   scheme: APP_LINK_SCHEME,
   accountUrl: ACCOUNT_URL,
   onChange: () => {

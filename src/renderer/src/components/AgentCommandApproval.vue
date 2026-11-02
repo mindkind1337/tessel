@@ -123,8 +123,12 @@ function actionLabel(a) {
 const paneText = computed(() =>
   props.card.kind === 'apps' && props.card.onHost
     ? t('app.agentTerminal.appsHostText', 'This agent runs on the server {{host}}: what it reads goes there, then to its AI provider, and any program it started there can ask in its name. You are asked every time.', { host: props.card.onHost })
+    : props.card.kind === 'apps' && props.card.writes && asksEachTime.value
+    ? t('app.agentTerminal.appsWriteTextEach', 'It will create or change things there with your account. You are asked every time.')
     : props.card.kind === 'apps' && props.card.writes
     ? t('app.agentTerminal.appsWriteText', 'It will create or change things there with your account. Allowing it lets it do so again until Tessel restarts.')
+    : props.card.kind === 'apps' && asksEachTime.value
+    ? t('app.agentTerminal.appsTextEach', 'It will read what this account holds, and what it reads goes to the AI provider behind this agent. You are asked every time.')
     : props.card.kind === 'apps'
     ? t('app.agentTerminal.appsText', 'It will read what this account holds, and what it reads goes to the AI provider behind this agent. Allowing it lets it use this service again until Tessel restarts.')
     : props.card.kind === 'relay' && props.card.relay?.shared

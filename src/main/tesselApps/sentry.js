@@ -14,7 +14,9 @@ function eventText(e) {
     if (entry?.type !== 'exception') continue
     for (const v of entry.data?.values || []) {
       out.push(`${v.type || 'Error'}: ${v.value || ''}`)
-      out.push(...(v.stacktrace?.frames || []).slice(-MAX_FRAMES).map(frameLine))
+      const frames = v.stacktrace?.frames || []
+      if (frames.length > MAX_FRAMES) out.push(`  [${frames.length - MAX_FRAMES} earlier frames]`)
+      out.push(...frames.slice(-MAX_FRAMES).map(frameLine))
     }
   }
   const tags = (e.tags || []).map((x) => `${x.key}=${x.value}`).join(', ')
@@ -31,8 +33,8 @@ export function createSentryTools({ connections, fetchFn = fetch }) {
     const slugs = (Array.isArray(found) ? found : []).map((o) => o?.slug).filter((s) => typeof s === 'string' && s)
     const list = slugs.map(shownLine).join(', ')
     if (!slugs.length) throw new AppError('not_found', 'This connection reaches no organization.')
-    if (named && !slugs.includes(named)) throw new AppError('unknown_organization', `This connection does not reach that organization. It reaches: ${list}.`)
-    if (!named && slugs.length > 1) throw new AppError('which_organization', `Several organizations can be reached: ${list}. Pass one as "organization".`)
+    if (named && !slugs.includes(named)) throw new AppError('unknown_organization', 'This connection does not reach that organization. It reaches the ones named below.', list)
+    if (!named && slugs.length > 1) throw new AppError('which_organization', 'Several organizations can be reached, named below. Pass one as "organization".', list)
     return pathId(named || slugs[0], 'organization')
   }
   return {

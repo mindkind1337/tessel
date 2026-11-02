@@ -1,5 +1,5 @@
 import { t } from '../i18n'
-import { AppError, bad, count, createCall, cut, fileText, htmlToText, jsonBody as json, MAX_FILE_BYTES, pathId, query, shortened, shownAddresses, shownLine, text } from './shared'
+import { AppError, bad, count, createCall, cut, fileText, fitted, htmlToText, jsonBody as json, MAX_FILE_BYTES, pathId, publishable, query, reachLines, shortened, shownAddress, shownAddresses, shownLine, text } from './shared'
 
 // tessel_apps: Outlook mail, Outlook Calendar and OneDrive, through Microsoft Graph. One fixed host:
 // every call is about "me", so no tenant or address comes from anywhere.
@@ -8,8 +8,10 @@ import { AppError, bad, count, createCall, cut, fileText, htmlToText, jsonBody a
 // and Outlook mails guests as soon as an event with guests is created, changed or deleted, with no
 // way to turn that off. So these tools make no event with guests, and leave one that has guests alone.
 const GRAPH = 'https://graph.microsoft.com/v1.0'
-const NO_GUESTS = 'Outlook emails an event\'s guests as soon as it is created, changed or deleted, and Tessel has no tool that sends mail. Make the event without guests, and the user adds them in Outlook.'
-const HAS_GUESTS = 'This event has guests, and Outlook would email them about this. Tessel has no tool that sends mail: the user does it in Outlook.'
+const NO_GUESTS = 'Outlook emails an event\'s guests as soon as it is created, changed or deleted, and these tools send no mail. Make the event without guests, and the user adds them in Outlook.'
+const HAS_GUESTS = 'This event has guests, and Outlook would email them about this. These tools send no mail: the user does it in Outlook.'
+const A_SERIES = 'This is a whole repeating series: its occurrences can have guests of their own, and Outlook would email them. These tools send no mail: the user does it in Outlook.'
+const CHANGED = 'It changed since Tessel read it, so nothing was done. Read it again, then try again.'
 const TEXT_BODY = { prefer: 'outlook.body-content-type="text"' }
 const READABLE = /^(text\/|application\/(json|xml|javascript|x-yaml|x-sh|csv|octet-stream)$)/
 const WHO = 'id,conversationId,subject,from,toRecipients,ccRecipients,receivedDateTime,bodyPreview,isRead'
@@ -58,9 +60,9 @@ function eventBody(args) {
   if (args.attendees !== undefined) throw bad(NO_GUESTS)
   const zone = text(args.timeZone, 'timeZone', { max: 80 })
   const body = {}
-  if (args.summary !== undefined) body.subject = text(args.summary, 'summary', { max: 1000 })
-  if (args.description !== undefined) body.body = { contentType: 'text', content: text(args.description, 'description', { max: 8000 }) }
-  if (args.location !== undefined) body.location = { displayName: text(args.location, 'location', { max: 1000 }) }
+  if (args.summary !== undefined) body.subject = shownLine(text(args.summary, 'summary', { max: 1000 }))
+  if (args.description !== undefined) body.body = { contentType: 'text', content: publishable(text(args.description, 'description', { max: 8000 })) }
+  if (args.location !== undefined) body.location = { displayName: shownLine(text(args.location, 'location', { max: 1000 })) }
   const start = timeOf(args.start, 'start', zone)
   const end = timeOf(args.end, 'end', zone)
   if (start) body.start = start.at
@@ -72,23 +74,43 @@ const eventLine = (e) => {
   const when = (x) => (x?.dateTime ? `${x.dateTime}${x.timeZone ? ` (${x.timeZone})` : ''}` : '?')
   return `id: ${e.id}\n${when(e.start)} to ${when(e.end)}: ${e.subject || '(no title)'}${e.location?.displayName ? `\nWhere: ${e.location.displayName}` : ''}${e.attendees?.length ? `\nWith: ${peopleOf(e.attendees)}` : ''}${e.bodyPreview ? `\n${e.bodyPreview}` : ''}\n`
 }
-// What a change to an event is, for the card that asks.
-function describeEvent(args) {
-  const lines = []
-  const other = otherCalendar(args)
-  if (other) lines.push(t('main.apps.card.calendar', 'Calendar: {{value}}', { value: shortened(other) }))
-  if (args.summary !== undefined) lines.push(t('main.apps.card.title', 'Title: {{value}}', { value: shortened(args.summary) }))
-  if (args.start !== undefined || args.end !== undefined) lines.push(t('main.apps.card.when', 'When: {{start}} to {{end}}', { start: shortened(args.start, 40), end: shortened(args.end, 40) }))
-  if (args.timeZone) lines.push(t('main.apps.card.timeZone', 'Time zone: {{value}}', { value: shortened(args.timeZone, 80) }))
-  if (args.location !== undefined) lines.push(t('main.apps.card.where', 'Where: {{value}}', { value: shortened(args.location) }))
-  if (args.description !== undefined) lines.push(t('main.apps.card.description', 'Description: {{value}}', { value: shortened(args.description) }))
-  return lines.join('\n')
-}
 
 export function createMicrosoftTools({ connections, fetchFn = fetch }) {
-  const call = createCall({ connections, provider: 'microsoft', name: 'Microsoft', hosts: ['graph.microsoft.com'], fetchFn })
+  const call = createCall({ connections, provider: 'microsoft', name: 'Microsoft', hosts: ['graph.microsoft.com'], fetchFn, hintOf: (status) => (status === 412 ? CHANGED : '') })
   const eventUrl = (args) => `${GRAPH}${calendarOf(args)}/events/${pathId(args.id, 'id')}`
   const readEvent = (args) => call(args.account, `${eventUrl(args)}?${query({ $select: 'subject,start,attendees,recurrence,seriesMasterId,type' })}`)
+  // Another calendar, as Outlook names it, with whose it is: an id says nothing to a person.
+  async function calendarLine(args) {
+    const other = otherCalendar(args)
+    if (!other) return ''
+    let value = t('main.apps.card.notRead', '{{id}} (could not be read)', { id: shortened(other, 60) })
+    try {
+      const c = await call(args.account, `${GRAPH}/me/calendars/${pathId(other, 'calendar')}?${query({ $select: 'name,owner' })}`)
+      const owner = [shortened(c.owner?.name, 80), c.owner?.address ? shownAddress(c.owner.address) : ''].filter(Boolean).join(', ')
+      value = owner ? t('main.apps.card.calendarOwned', '{{name}}, owned by {{owner}}', { name: shortened(c.name), owner }) : shortened(c.name)
+    } catch {
+      // the value above
+    }
+    return t('main.apps.card.calendar', 'Calendar: {{value}}', { value })
+  }
+  // What a change to an event is, for the card that asks. When it goes where others can read it, all
+  // of it is on the card, with what in it reaches further.
+  async function describeEvent(args, { goesOut = !!otherCalendar(args) } = {}) {
+    const description = args.description === undefined ? '' : publishable(args.description)
+    const show = goesOut ? shownLine : shortened
+    const lines = [await calendarLine(args)]
+    if (goesOut) lines.push(...reachLines(`${shownLine(args.summary)}\n${shownLine(args.location)}\n${fitted(description)}`))
+    if (args.summary !== undefined) lines.push(t('main.apps.card.title', 'Title: {{value}}', { value: show(args.summary) }))
+    if (args.start !== undefined || args.end !== undefined) lines.push(t('main.apps.card.when', 'When: {{start}} to {{end}}', { start: shortened(args.start, 40), end: shortened(args.end, 40) }))
+    if (args.timeZone) lines.push(t('main.apps.card.timeZone', 'Time zone: {{value}}', { value: shortened(args.timeZone, 80) }))
+    if (args.location !== undefined) lines.push(t('main.apps.card.where', 'Where: {{value}}', { value: show(args.location) }))
+    if (args.description !== undefined) {
+      if (goesOut) lines.push(t('main.apps.card.descriptionHeading', 'Description:'), description)
+      else lines.push(t('main.apps.card.description', 'Description: {{value}}', { value: shortened(args.description) }))
+    }
+    const detail = lines.filter(Boolean).join('\n')
+    return goesOut ? fitted(detail) : detail
+  }
   // An event as the card names it, read by Tessel for the person. The agent never sees this answer.
   async function eventNamed(args, key, english) {
     const id = shortened(args.id, 60)
@@ -102,9 +124,14 @@ export function createMicrosoftTools({ connections, fetchFn = fetch }) {
     }
     return t(key, english, { value })
   }
-  async function refuseWithGuests(args) {
+  // Read just before a change. An event with guests, or a whole series whose occurrences can have
+  // some, is left alone. -> the header that makes Outlook refuse if it changed since.
+  async function aloneAndUnchanged(args) {
     const e = await readEvent(args)
     if (Array.isArray(e.attendees) && e.attendees.length) throw new AppError('has_guests', HAS_GUESTS)
+    if (e.type === 'seriesMaster' || e.recurrence) throw new AppError('a_series', A_SERIES)
+    const tag = e['@odata.etag']
+    return typeof tag === 'string' && tag ? { 'if-match': tag } : {}
   }
 
   return {
@@ -170,7 +197,7 @@ export function createMicrosoftTools({ connections, fetchFn = fetch }) {
     outlook_calendar_create_event: {
       service: 'outlook_calendar',
       writes: true,
-      describe: describeEvent,
+      describe: (args) => describeEvent(args),
       // Someone else can then read it, what the agent wrote in it included: asked each time.
       eachTime: (args) => !!otherCalendar(args),
       async run(args) {
@@ -183,12 +210,13 @@ export function createMicrosoftTools({ connections, fetchFn = fetch }) {
     outlook_calendar_update_event: {
       service: 'outlook_calendar',
       writes: true,
-      describe: async (args) => `${await eventNamed(args, 'main.apps.card.event', 'Event: {{value}}')}\n${describeEvent(args)}`,
+      describe: async (args) => fitted(`${await eventNamed(args, 'main.apps.card.event', 'Event: {{value}}')}\n${await describeEvent(args, { goesOut: true })}`),
       eachTime: () => true,
       async run(args) {
         const body = eventBody(args)
-        await refuseWithGuests(args)
-        const made = await call(args.account, eventUrl(args), json('PATCH', body))
+        const unchanged = await aloneAndUnchanged(args)
+        const change = json('PATCH', body)
+        const made = await call(args.account, eventUrl(args), { ...change, headers: { ...change.headers, ...unchanged } })
         return `Event changed (id ${made.id}).`
       }
     },
@@ -196,13 +224,12 @@ export function createMicrosoftTools({ connections, fetchFn = fetch }) {
       service: 'outlook_calendar',
       writes: true,
       describe: async (args) => {
-        const other = otherCalendar(args)
-        return [await eventNamed(args, 'main.apps.card.delete', 'Delete the event: {{value}}'), other ? t('main.apps.card.calendar', 'Calendar: {{value}}', { value: shortened(other) }) : ''].filter(Boolean).join('\n')
+        return [await eventNamed(args, 'main.apps.card.delete', 'Delete the event: {{value}}'), await calendarLine(args)].filter(Boolean).join('\n')
       },
       eachTime: () => true,
       async run(args) {
-        await refuseWithGuests(args)
-        await call(args.account, eventUrl(args), { method: 'DELETE' })
+        const unchanged = await aloneAndUnchanged(args)
+        await call(args.account, eventUrl(args), { method: 'DELETE', headers: unchanged })
         return 'Event deleted.'
       }
     },

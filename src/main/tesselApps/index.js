@@ -82,11 +82,13 @@ function explain(err, provider) {
     if (err.code === 'offline') return new AppError('offline', 'Could not reach tesselcode.com to renew this connection. Try again in a moment.')
     return new AppError(err.code, err.message)
   }
+  // A service's own words in an error are marked like the rest of what it says.
+  if (err instanceof AppError && err.outside) return new AppError(err.code, `${err.message}\n${fenced(err.outside)}`)
   return err
 }
 
-export function createTesselApps({ dir, safeStorage, openExternal, signedRequest, publicRequest, scheme, accountUrl, fetchFn = fetch, onChange = () => {} }) {
-  const connections = createConnections({ dir, safeStorage, openExternal, signedRequest, publicRequest, scheme, accountUrl, onChange })
+export function createTesselApps({ dir, safeStorage, openExternal, signedRequest, publicRequest, ownerOf, scheme, accountUrl, fetchFn = fetch, onChange = () => {} }) {
+  const connections = createConnections({ dir, safeStorage, openExternal, signedRequest, publicRequest, ownerOf, scheme, accountUrl, onChange })
   const tools = createAllTools({ connections, fetchFn })
 
   return {

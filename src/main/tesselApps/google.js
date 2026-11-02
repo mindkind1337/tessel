@@ -1,5 +1,5 @@
 import { t } from '../i18n'
-import { AppError, bad, count, createCall, cut, fileText, htmlToText, jsonBody as json, MAX_FILE_BYTES, oneLine, pathId, query, shortened, shownAddresses, shownList, text } from './shared'
+import { AppError, bad, count, createCall, cut, fileText, fitted, htmlToText, jsonBody as json, MAX_FILE_BYTES, oneLine, pathId, publishable, query, reachLines, shortened, shownAddresses, shownLine, shownList, text } from './shared'
 
 export { AppError, htmlToText }
 
@@ -79,9 +79,9 @@ function eventBody(args) {
     if (!t) return null
     return /^\d{4}-\d{2}-\d{2}$/.test(t) ? { date: t } : { dateTime: t, ...(args.timeZone ? { timeZone: text(args.timeZone, 'timeZone', { max: 80 }) } : {}) }
   }
-  if (args.summary !== undefined) body.summary = text(args.summary, 'summary', { max: 1000 })
-  if (args.description !== undefined) body.description = text(args.description, 'description', { max: 8000 })
-  if (args.location !== undefined) body.location = text(args.location, 'location', { max: 1000 })
+  if (args.summary !== undefined) body.summary = shownLine(text(args.summary, 'summary', { max: 1000 }))
+  if (args.description !== undefined) body.description = publishable(text(args.description, 'description', { max: 8000 }))
+  if (args.location !== undefined) body.location = shownLine(text(args.location, 'location', { max: 1000 }))
   const start = when(args.start, 'start')
   const end = when(args.end, 'end')
   if (start) body.start = start
@@ -98,10 +98,14 @@ const otherCalendar = (args) => {
   const named = typeof args.calendar === 'string' ? args.calendar.trim() : ''
   return named && named !== 'primary' ? named : null
 }
-// What a change to an event is, for the card that asks: who could read it first.
+// What a change to an event is, for the card that asks: who could read it first. When someone else
+// can read it, all of it is on the card, with what in it reaches further.
 function describeEvent(args, { update = false } = {}) {
   const lines = []
   const other = otherCalendar(args)
+  const goesOut = update || !!other || (Array.isArray(args.attendees) && args.attendees.length > 0)
+  const description = args.description === undefined ? '' : publishable(args.description)
+  const show = goesOut ? shownLine : shortened
   if (other) lines.push(t('main.apps.card.calendar', 'Calendar: {{value}}', { value: shortened(other) }))
   if (Array.isArray(args.attendees) && args.attendees.length) {
     // On an update this list replaces the guests the event has.
@@ -109,12 +113,16 @@ function describeEvent(args, { update = false } = {}) {
     else lines.push(t('main.apps.card.invites', 'Invites: {{value}}', { value: shownList(args.attendees) }))
   }
   else if (update && Array.isArray(args.attendees)) lines.push(t('main.apps.card.removesGuests', 'Removes all guests'))
-  if (args.summary !== undefined) lines.push(t('main.apps.card.title', 'Title: {{value}}', { value: shortened(args.summary) }))
+  if (goesOut) lines.push(...reachLines(`${shownLine(args.summary)}\n${shownLine(args.location)}\n${fitted(description)}`))
+  if (args.summary !== undefined) lines.push(t('main.apps.card.title', 'Title: {{value}}', { value: show(args.summary) }))
   if (args.start !== undefined || args.end !== undefined) lines.push(t('main.apps.card.when', 'When: {{start}} to {{end}}', { start: shortened(args.start, 40), end: shortened(args.end, 40) }))
   if (args.timeZone) lines.push(t('main.apps.card.timeZone', 'Time zone: {{value}}', { value: shortened(args.timeZone, 80) }))
-  if (args.location !== undefined) lines.push(t('main.apps.card.where', 'Where: {{value}}', { value: shortened(args.location) }))
-  if (args.description !== undefined) lines.push(t('main.apps.card.description', 'Description: {{value}}', { value: shortened(args.description) }))
-  return lines.join('\n')
+  if (args.location !== undefined) lines.push(t('main.apps.card.where', 'Where: {{value}}', { value: show(args.location) }))
+  if (args.description !== undefined) {
+    if (goesOut) lines.push(t('main.apps.card.descriptionHeading', 'Description:'), description)
+    else lines.push(t('main.apps.card.description', 'Description: {{value}}', { value: shortened(args.description) }))
+  }
+  return goesOut ? fitted(lines.join('\n')) : lines.join('\n')
 }
 
 // Files Google keeps in its own formats, and what they read as.
@@ -233,7 +241,7 @@ export function createGoogleTools({ connections, fetchFn = fetch }) {
     calendar_update_event: {
       service: 'calendar',
       writes: true,
-      describe: async (args) => `${await eventNamed(args, 'main.apps.card.event', 'Event: {{value}}')}\n${describeEvent(args, { update: true })}`,
+      describe: async (args) => fitted(`${await eventNamed(args, 'main.apps.card.event', 'Event: {{value}}')}\n${describeEvent(args, { update: true })}`),
       // An event can have people on it who would see the change.
       eachTime: () => true,
       async run(args) {

@@ -11,11 +11,17 @@ export const MAX_FILE_BYTES = 2 * 1024 * 1024
 // An answer of a service bigger than this is not read at all: the agent asks for less.
 const MAX_JSON = 16 * 1024 * 1024
 const MAX_HTML = 256 * 1024
+// A refusal is read up to this: it only has a sentence to say.
+const MAX_REFUSAL = 64 * 1024
+// What a card's block holds (APP_DETAIL_MAX in agentTerminal.js).
+export const CARD_MAX = 4000
 
 export class AppError extends Error {
-  constructor(code, message) {
+  // outside: a service's own words in this error, which reach the agent marked as such (index.js).
+  constructor(code, message, outside = '') {
     super(message)
     this.code = code
+    this.outside = outside
   }
 }
 
@@ -33,18 +39,24 @@ export const count = (value, fallback, max) => {
   const n = Number(value)
   return Number.isFinite(n) && n >= 1 ? Math.min(max, Math.floor(n)) : fallback
 }
-// An id goes into a URL's path: one segment, and never one that means the folder above.
+// An id goes into a URL's path: one segment, and never one that means the folder above, even for a
+// service that turns %2F back into a slash.
 export function pathId(value, name) {
   const id = text(value, name, { required: true, max: 1024 })
-  if (id === '.' || id === '..') throw bad(`"${name}" is not valid.`)
+  const plain = id.replace(/%2e/gi, '.').replace(/%2f|%5c/gi, '/')
+  if (plain.split(/[\\/]/).some((part) => part === '.' || part === '..')) throw bad(`"${name}" is not valid.`)
   return encodeURIComponent(id)
 }
 // A header or a card's value: on one line, whatever it was given.
 export const oneLine = (value) => String(value || '').replace(/[\r\n]+/g, ' ').trim()
 
+// Letters that show as nothing, which a pattern does not take for a space.
+const BLANK_LETTERS = /\u115F|\u1160|\u17B4|\u17B5|\u2800|\u3164|\uFFA0/g
+// What shows as nothing at all: format characters, variation selectors, tag characters.
+const UNSEEN = /[\p{Cf}\p{Default_Ignorable_Code_Point}]/gu
 // What a card shows: on one line, with nothing that hides or turns text around, and spaces that
 // cannot push a word to look like a line of its own.
-export const shownLine = (value) => oneLine(value).replace(/\p{Cf}/gu, '').replace(/\s+/g, ' ').trim()
+export const shownLine = (value) => oneLine(value).replace(BLANK_LETTERS, ' ').replace(UNSEEN, '').replace(/\p{Cc}/gu, ' ').replace(/\s+/g, ' ').trim()
 // A value on a card, and if it is cut the card says how much was left out.
 export const shortened = (value, max = 200) => {
   const line = shownLine(value)
@@ -55,7 +67,8 @@ export const shortened = (value, max = 200) => {
 export const shownAddress = (value) => {
   const line = shownLine(value)
   const cut = line.length > 80 ? `${line.slice(0, 30)}...${line.slice(-45)}` : line
-  return /[^\x20-\x7e]/.test(line) ? `${cut} ${t('main.apps.card.notPlain', '[not plain ASCII]')}` : cut
+  // On what was given: a hidden character is what makes it worth saying.
+  return /[^\x20-\x7e]/.test(oneLine(value)) ? `${cut} ${t('main.apps.card.notPlain', '[not plain ASCII]')}` : cut
 }
 const domainOf = (value) => {
   const found = /@([^\s@>,]+)/.exec(shownLine(value))
@@ -69,7 +82,66 @@ export const shownList = (values, most = 20) => {
   return `${list.join(', ')} ${t('main.apps.card.andMore', 'and {{count}} more', { count: hidden.length })}${domains.length ? ` (${domains.join(', ')})` : ''}`
 }
 // A To or Cc line: every address of it, as a list.
-export const shownAddresses = (value) => shownList(shownLine(value).split(/[,;]\s*/).filter(Boolean))
+export const shownAddresses = (value) => shownList(oneLine(value).split(/[,;]\s*/).filter(Boolean))
+
+// What goes out to other people is exactly what its card shows: nothing unseen stays in it, and blank
+// lines or spaces cannot push the rest of it out of sight.
+export const publishable = (value) =>
+  String(value ?? '')
+    .replace(/\r\n?|[\u2028\u2029]/g, '\n')
+    .replace(BLANK_LETTERS, ' ')
+    .replace(UNSEEN, '')
+    .replace(/[^\P{Cc}\n\t]/gu, ' ')
+    .replace(/[^\S\n]{41,}/g, ' '.repeat(40))
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+// A card never hides the end of what it asks about: what does not fit is refused before it is shown.
+export function fitted(detail) {
+  if (detail.length > CARD_MAX) throw new AppError('too_long', `This is too long to show whole on the card the user must agree to: ${detail.length} characters, and a card holds ${CARD_MAX}. Shorten it, or ask the user to post it.`)
+  return detail
+}
+// The words to send for what a card showed. A title is one line of it, a body keeps its lines.
+export function publishedText(value, name, { required = false } = {}) {
+  const words = publishable(text(value, name, { required, max: 200000 }))
+  if (required && !words) throw bad(`Give "${name}".`)
+  return fitted(words)
+}
+export function publishedTitle(value, name, { required = true, max = 1000 } = {}) {
+  const line = shownLine(text(value, name, { required, max }))
+  if (required && !line) throw bad(`Give "${name}".`)
+  return line
+}
+
+// What in a text reaches further than whoever opens it. Over-saying is fine, it is only a warning:
+// the whole text is on the card. Only ever run on a text that fits a card.
+const MENTION = /(?<![A-Za-z0-9])@[A-Za-z0-9][\w.-]*(?:\/[\w.-]+)?|\[~[^\]\s]{1,200}\]|(?<![\w/.-])[\w.-]+\/[\w.-]+#\d+/g
+const LINK = /\b(?:https?|ftps?|mailto|data|javascript|file|ssh|git|tel|sms|irc|magnet):[^\s<>"'`]+|(?<![\w:/])\/\/[a-z0-9][^\s<>"'`)\]]*|\bwww\.[^\s<>"'`)\]]+|\b[a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,}\/[^\s<>"'`)\]]*/gi
+const IMAGE = /!\[[^\]\n]*\]\(\s*<?([^\s)>]+)|<(?:img|image|video|audio|source|iframe|embed)\b[^>]*?\b(?:src|srcset|poster)\s*=\s*["']?([^"'\s>]+)|(?<!\S)!([^\s!|]+)(?:\|[^!\n]*)?!|!\[[^\]\n]*\]\[[^\]\n]*\]/gi
+const unique = (list) => [...new Set(list)]
+const noTail = (url) => url.replace(/[).,;:!?\]|]+$/, '')
+export function reachLines(words) {
+  const images = unique([...words.matchAll(IMAGE)].map((m) => noTail(m[1] || m[2] || m[3] || m[0])))
+  const links = unique([...words.matchAll(LINK)].map((m) => noTail(m[0]))).filter((url) => !images.includes(url))
+  const mentions = unique([...words.matchAll(MENTION)].map((m) => m[0]))
+  return [
+    mentions.length ? t('main.apps.card.mentions', 'Mentions (they are told): {{value}}', { value: shownList(mentions, 10) }) : '',
+    links.length ? t('main.apps.card.links', 'Links: {{value}}', { value: shownList(links, 10) }) : '',
+    images.length ? t('main.apps.card.images', 'Images (they load for whoever reads it): {{value}}', { value: shownList(images, 10) }) : ''
+  ].filter(Boolean)
+}
+// The card for what goes out to others: who gets it, what in it reaches further, then all of it.
+export function publishedCard({ before = [], title, body }) {
+  const line = title === undefined ? '' : shownLine(title)
+  const words = publishable(body)
+  fitted(`${line}${words}`)
+  const lines = [...before.filter(Boolean), ...reachLines(`${line}\n${words}`)]
+  if (title !== undefined) lines.push(t('main.apps.card.title', 'Title: {{value}}', { value: line }))
+  if (words) lines.push(t('main.apps.card.textHeading', 'Text:'), words)
+  return fitted(lines.join('\n'))
+}
+// Writing on GitHub, Linear or Jira is more than leaving something to read.
+export const notifiedLine = () => t('main.apps.card.notifies', 'People watching are notified, by email too, and can read this. Automation may run.')
+
 export const query = (params) => {
   const q = new URLSearchParams()
   for (const [k, v] of Object.entries(params)) if (v !== undefined && v !== null && v !== '') q.set(k, String(v))
@@ -112,7 +184,7 @@ export async function fileText(res, max = MAX_FILE_BYTES) {
   return { text: bytes.toString('utf8'), over }
 }
 
-const refusalCode = (status) => (status === 404 ? 'not_found' : status === 403 ? 'forbidden' : status === 429 ? 'rate_limited' : 'failed')
+const refusalCode = (status) => (status === 404 ? 'not_found' : status === 403 ? 'forbidden' : status === 412 ? 'changed' : status === 429 ? 'rate_limited' : 'failed')
 const refusalWords = (reason) => {
   if (!reason || typeof reason !== 'object') return ''
   if (typeof reason.error?.message === 'string') return reason.error.message
@@ -147,10 +219,15 @@ export function createCall({ connections, provider, name, hosts, fetchFn, header
       throw new AppError('offline', `Could not reach ${name}.`)
     }
     if (!res.ok) {
-      const reason = await res.json().catch(() => null)
-      const words = String(shownLine(wordsOf(reason)) || `${name} answered ${res.status}.`).slice(0, 400)
+      const { bytes } = await readBytes(res, MAX_REFUSAL)
+      let reason = null
+      try {
+        reason = JSON.parse(bytes.toString('utf8'))
+      } catch {
+        // no words of its own
+      }
       const hint = hintOf(res.status, reason)
-      throw new AppError(refusalCode(res.status), hint ? `${words} ${hint}` : words)
+      throw new AppError(refusalCode(res.status), `${name} answered ${res.status}.${hint ? ` ${hint}` : ''}`, shownLine(wordsOf(reason)).slice(0, 400))
     }
     if (raw) return res
     if (res.status === 204) return {}

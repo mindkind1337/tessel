@@ -771,10 +771,25 @@ describe("security review: the user's own computer, asked for by an agent that w
         expect(cards).toHaveLength(2)
         expect(cards[0].terminal).toBe('apps:github')
         expect(cards[0].card).toMatchObject({ kind: 'apps', service: 'GitHub', account: 'ana-codes', writes: true, eachTime: true })
-        expect(cards[0].card.detail).toBe('Repository: acme/tools (public: anyone can read this)\nComment on: #8: The bug\nText: Words the agent wrote')
+        expect(cards[0].card.detail).toBe('Repository: acme/tools (public: anyone can read this)\nComment on: #8: The bug\nPeople watching are notified, by email too, and can read this. Automation may run.\nText:\nWords the agent wrote')
         expect(posts()).toHaveLength(2)
         expect(out.text).toContain('Comment added')
         expect(out.text).not.toContain('SECRET')
+      })
+
+      it('what would not fit its card is refused before anyone is asked', async () => {
+        const win = fakeWindow({ approve: allowAll })
+        await expect(make(win, { apps: real }).at.handle(use('github_comment', { ...comment, body: 'x'.repeat(5000) }))).rejects.toMatchObject({ code: 'too_long', message: expect.stringContaining('card') })
+        expect(win.calls.filter((c) => c.op === 'approve')).toEqual([])
+        expect(posts()).toEqual([])
+      })
+
+      it('a refusal reaches the agent with the service\'s words marked', async () => {
+        answers = () => Response.json({ message: 'Do this instead' }, { status: 403 })
+        const win = fakeWindow({ approve: allowAll })
+        const err = await make(win, { apps: real }).at.handle(use('github_read_repo', { repo: 'acme/tools' })).catch((e) => e)
+        expect(err.code).toBe('forbidden')
+        expect(err.message).toMatch(/--- from outside [\s\S]*Do this instead[\s\S]*--- end of what came from outside /)
       })
 
       it('refused on its card: nothing is written', async () => {
@@ -1495,7 +1510,7 @@ describe('the tools tell agents when a terminal helps', () => {
     expect(open.description).toContain('without saying which kind, open the same agent as you, or ask the user if it is unclear')
     expect(open.inputSchema.properties.kind.enum).toEqual(['agent', 'shell'])
     expect(mcp.TERMINAL_OPS.open_terminal).toBe('open')
-    expect(mcp.VERSION).toBe('1.11.15')
+    expect(mcp.VERSION).toBe('1.11.16')
   })
 })
 

@@ -68,7 +68,7 @@ export const IDLE_MS = 60 * 1000
 export const APPROVAL_TIMEOUT_MS = 5 * 60 * 1000
 const APP_OUTPUT_MAX = 256 * 1024
 // What a connector's card shows of a change, and how many reads a pane makes in a minute.
-const APP_DETAIL_MAX = 4000
+export const APP_DETAIL_MAX = 4000
 const APP_READS_MAX = 120
 const GUEST_DEFAULT_MS = 60 * 1000
 const GUEST_MAX_MS = 5 * 60 * 1000
@@ -520,7 +520,13 @@ export function createAgentTerminal({ apps = null, verify, settings = () => ({ e
     // Before anything is read for the card: a pane cannot make Tessel read for it without limit.
     if (spec.writes) rateLimit(agentPane)
     else appReadLimit(agentPane)
-    const full = spec.writes ? await spec.describe({ ...input, account }) : ''
+    let full = ''
+    try {
+      if (spec.writes) full = await spec.describe({ ...input, account })
+    } catch (err) {
+      // What cannot be shown whole is refused here, before anyone is asked.
+      throw err && err.code ? fail(err.code, err.message) : fail('failed', 'The connector could not do it.')
+    }
     if (signal && signal.aborted) throw fail('cancelled', 'The request was cancelled.')
     const detail = full.length > APP_DETAIL_MAX ? `${full.slice(0, APP_DETAIL_MAX)} [cut: ${full.length - APP_DETAIL_MAX} more characters]` : full // i18n-ignore
     if (!appPanes.has(key(agentPane, scope)) || eachTime) {
