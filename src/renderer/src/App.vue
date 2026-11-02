@@ -1191,6 +1191,21 @@ function setDraftUnknown(id) {
     // storage unavailable: unknown after a reload anyway
   }
 }
+// Someone writing right now, in a terminal, a chat or any field: an agent's card does not open over
+// it. Keys, and input with no key (dictation); a line typed and not sent counts as well.
+const WRITING_MS = 5000
+let lastWriting = 0
+function noteWriting(event) {
+  if (event.type !== 'keydown' || String(event.key).length === 1 || event.key === 'Enter' || event.key === 'Backspace') lastWriting = Date.now()
+}
+for (const type of ['keydown', 'input', 'compositionupdate']) window.addEventListener(type, noteWriting, true)
+onBeforeUnmount(() => {
+  for (const type of ['keydown', 'input', 'compositionupdate']) window.removeEventListener(type, noteWriting, true)
+})
+function userWritingNow() {
+  const id = activeId.value
+  return Date.now() - Math.max(lastWriting, lastUserKey[id] || 0) < WRITING_MS || !!userDraft[id]
+}
 function userIsTyping(id) {
   return !!userDraft[id] || Date.now() - (lastUserKey[id] || 0) < USER_QUIET_MS
 }
@@ -11981,6 +11996,11 @@ const APPROVAL_GAP_MS = 400
 // back a proxy, and the card's own timer, comparing it with its entry, never
 // ended a card: one stayed on screen long after its agent was told no).
 const approvalCard = shallowRef(null) // { card, resolve, agentPane, until, expired }
+// The card waits behind a button in the toolbar: someone was writing when it came, or they put it
+// away. Opening it from there gives it the keyboard; a card that opened by itself does not keep it
+// from someone who goes on writing.
+const approvalParked = ref(false)
+const approvalOpenedByUser = ref(false)
 let approvalClosedAt = 0
 // How long a card that ended without the user's answer stays on screen as
 // "This request expired": a click there no longer seems to do anything.
@@ -12024,6 +12044,8 @@ function askAgentApproval(card, agentPane = null, { ms = AGENT_APPROVAL_MS } = {
     if (Date.now() >= until) return { allow: false, timedOut: true }
     return new Promise((resolve) => {
       const entry = { card, resolve, agentPane, until, expired: false }
+      approvalOpenedByUser.value = false
+      approvalParked.value = userWritingNow()
       approvalCard.value = entry
       // A hidden or minimized window may run this late: a click after its
       // time is checked against the clock too (answerAgentApproval).
@@ -12044,6 +12066,15 @@ function askAgentApproval(card, agentPane = null, { ms = AGENT_APPROVAL_MS } = {
 function expireAgentApproval(answer) {
   const entry = approvalCard.value
   if (!entry || entry.expired) return
+  // Waiting in the toolbar: it never took the screen, and its end does not either.
+  if (approvalParked.value) {
+    approvalParked.value = false
+    approvalCard.value = null
+    approvalClosedAt = Date.now()
+    entry.resolve(answer || { allow: false })
+    if (answer && answer.timedOut) showToast(t('app.toolbar.agentRequestEnded', 'A request from {{agent}} ended without an answer.', { agent: entry.card.agentLabel || entry.card.name || 'an agent' })) // i18n-ignore
+    return
+  }
   const shown = { ...entry, expired: true }
   approvalCard.value = shown
   entry.resolve(answer || { allow: false })
@@ -12074,6 +12105,14 @@ function expireAgentApprovalById(id) {
 function checkAgentApprovalTime() {
   const entry = approvalCard.value
   if (entry && !entry.expired && Date.now() >= entry.until) expireAgentApproval({ allow: false, timedOut: true })
+}
+function parkAgentApproval() {
+  const entry = approvalCard.value
+  if (entry && !entry.expired) approvalParked.value = true
+}
+function openParkedApproval() {
+  approvalOpenedByUser.value = true
+  approvalParked.value = false
 }
 function answerAgentApproval(answer) {
   const entry = approvalCard.value
@@ -12235,7 +12274,13 @@ const agentTerminalTargets = createAgentTerminalTargets({
       agentLabel: c.agentLabel,
       name: c.name,
       where,
-      folder: String(leaf.cwd || leaf.remotePath || leaf.startDir || '')
+      folder: String(leaf.cwd || leaf.remotePath || leaf.startDir || ''),
+      // Where it comes from: its project, the Live Share guests in it, the guest who wrote last.
+      project: c.project,
+      guests: c.guests,
+      fromGuest: c.fromGuest,
+      // So the main process giving up on this card ends it on screen too.
+      cardId: c.cardId
     }
     const answer = await askAgentApproval(card, c.agentLeaf.id)
     if (!answer || !answer.allow) return { allow: false }
@@ -13824,8 +13869,11 @@ function focusActivePane() {
     focusActiveInput()
   })
 }
+// On screen, not waiting in the toolbar.
+const approvalOnScreen = computed(() => !!approvalCard.value && !approvalParked.value)
+const approvalWaitingTitle = computed(() => t('app.toolbar.agentRequestTitle', '{{agent}} is waiting for your answer', { agent: (approvalCard.value && (approvalCard.value.card.agentLabel || approvalCard.value.card.name)) || 'An agent' })) // i18n-ignore
 watch(
-  () => [paletteOpen.value, !!confirmState.value, !!notesView.value, !!reviewTask.value, !!imageView.value, !!fileView.value, !!approvalCard.value],
+  () => [paletteOpen.value, !!confirmState.value, !!notesView.value, !!reviewTask.value, !!imageView.value, !!fileView.value, approvalOnScreen.value],
   (now, before) => {
     if (before && now.some((v, i) => before[i] && !v)) focusActivePane()
   }
@@ -13847,7 +13895,7 @@ function dialogOpen() {
     githubOpen.value ||
     linearOpen.value ||
     !!confirmState.value ||
-    !!approvalCard.value ||
+    approvalOnScreen.value ||
     !!imageView.value ||
     !!fileView.value ||
     launcher.open
@@ -14515,6 +14563,18 @@ onBeforeUnmount(() => {
 
       <!-- Right: create, then icon-only toggles with tooltips. -->
       <div class="tb-right">
+        <button
+          v-if="approvalCard && approvalParked"
+          class="tb-approval"
+          data-test="approval-waiting"
+          :title="approvalWaitingTitle"
+          @click="openParkedApproval"
+        >
+          <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <path d="M8 1.8 13.6 4v3.7c0 3.1-2.2 5.5-5.6 6.5-3.4-1-5.6-3.4-5.6-6.5V4L8 1.8Z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" />
+          </svg>
+          {{ t('app.toolbar.agentRequest', 'Agent request') }}
+        </button>
         <button
           v-if="updateStatus.state === 'ready'"
           class="tb-update"
@@ -15229,17 +15289,21 @@ onBeforeUnmount(() => {
     />
 
     <AgentAccountApproval
-      v-if="approvalCard && !approvalCard.expired && approvalCard.card.kind === 'accounts'"
+      v-if="approvalCard && !approvalParked && !approvalCard.expired && approvalCard.card.kind === 'accounts'"
       :key="approvalCard.card.token"
       :card="approvalCard.card"
+      :opened-by-user="approvalOpenedByUser"
       @answer="answerAgentApproval"
+      @park="parkAgentApproval"
     />
     <HostCommandsPanel v-if="hostCommands.runs.length" :runs="hostCommands.runs" @stop="hostCommands.stop" @dismiss="hostCommands.dismiss" />
     <AgentCommandApproval
-      v-if="approvalCard && !approvalCard.expired && approvalCard.card.kind !== 'accounts'"
+      v-if="approvalCard && !approvalParked && !approvalCard.expired && approvalCard.card.kind !== 'accounts'"
       :key="approvalCard.card.command + approvalCard.card.kind"
       :card="approvalCard.card"
+      :opened-by-user="approvalOpenedByUser"
       @answer="answerAgentApproval"
+      @park="parkAgentApproval"
       @configure="openSettingsAt('agents', 'set-agent-terminal')"
     />
     <AgentApprovalExpired v-if="approvalCard && approvalCard.expired" @close="closeExpiredApproval" />

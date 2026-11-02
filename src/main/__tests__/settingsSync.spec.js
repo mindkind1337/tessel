@@ -18,8 +18,8 @@ const PHRASE = 'correct horse battery staple'
 const MARKER = 'MARKER-Z7Q-a-value-planted-in-the-settings'
 const BOARD_MARKER = 'MARKER-BOARD-a-task-title'
 const HOST_MARKER = 'MARKER-HOST-a-host-label'
-const USER = { id: 'user-1', email: 'me@gmail.com', name: 'Me' }
-const OTHER_USER = { id: 'user-2', email: 'other@gmail.com', name: 'Other' }
+const USER = { id: 'user-1', email: 'me@example.com', name: 'Me' }
+const OTHER_USER = { id: 'user-2', email: 'other@example.com', name: 'Other' }
 
 const sealing = {
   isEncryptionAvailable: () => true,

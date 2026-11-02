@@ -136,6 +136,10 @@ working on Tessel itself (see [Build from source](#build-from-source)).
   from the pane menu. The header shows the model and effort the agent really
   runs with, read from its own conversation, in your language.
 - **Shift+Enter** adds a line to your message to an agent instead of sending it.
+- **Requests wait while you write**: when an agent asks for your OK while you are writing, the
+  request waits behind an **Agent request** button in the toolbar instead of opening over your
+  text, until you click it. If a card opened by itself and you keep typing, or you click beside
+  it, it goes to that button too, and your keys go to what you were writing.
 - **Live state for every agent**: working, waiting for you, approval needed,
   usage limit, interrupted, idle. It comes from the agents' own hooks, with the
   screen as a fallback, and shows as a dot on the agent's logo in its pane and

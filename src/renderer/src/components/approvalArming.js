@@ -49,3 +49,30 @@ export function useApprovalArming(armMs = ARM_MS) {
   }
   return { armed, press, mayAllow }
 }
+
+// A card that opened by itself while someone goes on writing: a letter or an Enter on it is not an
+// answer. back() returns the keyboard at once, so the key reaches what they were writing in, and
+// park() puts the card away in the toolbar. Tab or a click on the card says they mean to use it,
+// and so does having opened it themselves (chosen).
+export function typingGuard({ chosen = false, back, park }) {
+  let meant = chosen
+  return {
+    pointer() {
+      meant = true
+    },
+    key(event) {
+      if (meant) return
+      if (event.key === 'Tab') {
+        meant = true
+        return
+      }
+      const tag = event.target && event.target.tagName
+      if (tag === 'TEXTAREA' || tag === 'INPUT') return
+      // (AltGr reads as Ctrl and Alt together: that is a letter.)
+      const letter = String(event.key).length === 1 && !event.metaKey && !!event.ctrlKey === !!event.altKey
+      if (event.key !== 'Enter' && !letter) return
+      back()
+      park()
+    }
+  }
+}
