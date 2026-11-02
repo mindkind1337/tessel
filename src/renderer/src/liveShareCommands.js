@@ -57,7 +57,8 @@ export function createHostCommands({ api, approve, expire, allowed }) {
     const running = await api()
       ?.commandRunning?.()
       .catch(() => null)
-    if (!running || find(running.id)) return
+    // (Only a real run: an answer without its id is no command, and would show as an empty one.)
+    if (!running || typeof running.id !== 'string' || find(running.id)) return
     runs.push({ id: running.id, hostName: running.host, agent: running.agent, command: running.command, state: 'running', exitCode: null, output: '' })
   }
 
