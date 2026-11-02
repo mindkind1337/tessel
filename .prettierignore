@@ -2,5 +2,5 @@ out
 dist
 node_modules
 package-lock.json
-site/public/demo
+site/demo/public
 web-demo/.vite

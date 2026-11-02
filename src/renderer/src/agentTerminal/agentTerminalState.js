@@ -20,7 +20,7 @@ export function onTerminalControl(ev) {
 export function onTerminalLog(ev) {
   if (!ev || typeof ev.paneId !== 'string') return
   const list = terminalLog[ev.paneId] || (terminalLog[ev.paneId] = [])
-  list.push({ at: Number(ev.at) || Date.now(), agent: String(ev.agent || '').slice(0, 60), kind: ev.kind === 'keys' || ev.kind === 'read' ? ev.kind : 'run', text: String(ev.text || '').slice(0, 2000), yolo: ev.yolo === true })
+  list.push({ at: Number(ev.at) || Date.now(), agent: String(ev.agent || '').slice(0, 60), kind: ev.kind === 'keys' || ev.kind === 'read' ? ev.kind : 'run', text: String(ev.text || '').slice(0, 2000), why: String(ev.why || '').slice(0, 1000), yolo: ev.yolo === true })
   if (list.length > LOG_KEEP) list.splice(0, list.length - LOG_KEEP)
 }
 

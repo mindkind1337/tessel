@@ -821,6 +821,7 @@
       "read": "a lu ce terminal",
       "yolo": "Yolo, sans demander",
       "logTitle": "Lancé par des agents dans ce terminal",
+      "why": "Pourquoi",
       "kindCommand": "Commande",
       "kindKeys": "Touches",
       "kindRead": "Lecture",

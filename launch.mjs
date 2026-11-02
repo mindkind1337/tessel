@@ -6,6 +6,7 @@ import fs from 'fs'
 import path from 'path'
 import { createRequire } from 'module'
 import { fileURLToPath } from 'url'
+import { ensureDeps } from './scripts/devDeps.mjs'
 
 const mode = process.argv[2] || 'dev'
 const env = { ...process.env }
@@ -62,6 +63,9 @@ if (process.argv.includes('--hidden')) {
 const watch = mode === 'dev' && process.env.TESSEL_WATCH === '1'
 const args = watch ? [mode, '--watch'] : [mode]
 if (mode === 'dev' && !watch) console.log('Tessel dev: changes to the background code (src/main, src/preload) wait for you to restart; a banner says when. TESSEL_WATCH=1 restarts on every change.')
+
+// A copy brought up to date without npm install: what its code now imports comes first.
+ensureDeps(path.dirname(fileURLToPath(import.meta.url)), { env })
 
 // Electron's program is downloaded by its own install step during
 // `npm install`, which is sometimes skipped (a network hiccup, a proxy,

@@ -14,6 +14,8 @@
 // auto-approve, SSH proxy commands, host keys, trusted guests and folders) is the
 // "security" part: an import brings it back only if the user ticks it, and otherwise
 // keeps what this computer already has (a file from someone else must not decide it).
+// That covers what a pane would start with: its command, its Yolo pin, its conversation
+// id (typed in its command line) and a folder on a network share.
 // Agent environment variables (they hold API keys) are never exported.
 //
 // The same packing makes the copy an account keeps (settingsSync.js, encrypted there):
@@ -56,7 +58,9 @@ export const SENSITIVE_SETTINGS = [
   'agentTerminalIgnoreDefaultRules', 'agentTerminalYoloNoAsk', 'agentTerminalRules', 'agentTerminalWorkspaceRules',
   'agentFolderTrust', 'agentRelay', 'agentRelayAsk', 'agentRelayMax', 'orchestrationConfirmWorkers',
   'teamWakeUnconfirmed', 'customAgents', 'quickCommands', 'agentPrefs', 'cursorStatusHooks',
-  'agentBrowser', 'agentAccounts', 'browserAgentSeparateSession', 'orchestrationMaxWorkers', 'orchestrationMaxDepth', 'orchestrationWorkerMode', 'allowOsc52Clipboard'
+  'agentBrowser', 'agentAccounts', 'browserAgentSeparateSession', 'orchestrationMaxWorkers', 'orchestrationMaxDepth', 'orchestrationWorkerMode', 'allowOsc52Clipboard',
+  // What they start by themselves: agents' updates, an agent for each project opened.
+  'autoUpdateAgents', 'projectOpen'
 ]
 // What a pane records about how it was started here: what it may do, and its account (a folder
 // of this computer). Its start follows Settings where it comes back.
@@ -68,19 +72,43 @@ const isObject = (v) => !!v && typeof v === 'object' && !Array.isArray(v)
 // A conversation id a sleeping pane can come back with (the window's safeSessionId).
 const SESSION_ID_RE = /^[A-Za-z0-9_][A-Za-z0-9_-]{5,79}$/
 
+// Far beyond anyone's screen. Deeper is refused, not skipped: what walks a layout below
+// stops at this depth, and the start-up restore does not.
+const MAX_DEPTH = 60
+const MAX_PANES = 500
+function withinLimits(node, depth = 0, seen = { panes: 0 }) {
+  if (!node || typeof node !== 'object') return true
+  if (depth > MAX_DEPTH) return false
+  if (!Array.isArray(node) && node.type === 'leaf' && ++seen.panes > MAX_PANES) return false
+  return Object.values(node).every((v) => withinLimits(v, depth + 1, seen))
+}
+
 // The layout file's own shape: what the start-up restore walks. A file that does not look
 // like one is refused before it is staged, not found out at the next start.
 export function layoutOk(layout) {
   if (!isObject(layout)) return false
   if (layout.settings !== undefined && !isObject(layout.settings)) return false
+  // The older format: one tree, no list of projects.
+  if (layout.tree !== undefined && layout.tree !== null && !isObject(layout.tree)) return false
+  if (!withinLimits(layout)) return false
   const spaces = layout.workspaces
   if (spaces === undefined) return true
   if (!Array.isArray(spaces) || spaces.length > 2000) return false
   return spaces.every((w) => isObject(w) && (w.tree === undefined || w.tree === null || isObject(w.tree)))
 }
 
+// How a pane was launched, env included: of no use elsewhere, and it can hold API keys.
+function withoutLaunchSig(node) {
+  if (Array.isArray(node)) return node.map(withoutLaunchSig)
+  if (!isObject(node)) return node
+  const copy = {}
+  for (const [key, value] of Object.entries(node)) if (key !== 'launchSig') copy[key] = withoutLaunchSig(value)
+  return copy
+}
+
 // Agent environment variables hold API keys: never exported.
-function withoutEnv(layout) {
+function withoutEnv(rawLayout) {
+  const layout = withoutLaunchSig(rawLayout)
   const prefs = layout && layout.settings && layout.settings.agentPrefs
   if (!isObject(prefs)) return layout
   const copy = { ...layout, settings: { ...layout.settings, agentPrefs: {} } }
@@ -103,12 +131,23 @@ function agentCommands(node, out = new Set(), depth = 0) {
   }
   return out
 }
-function dropUnknownCommands(node, known, depth = 0) {
-  if (depth > 60 || !node) return
-  if (Array.isArray(node)) node.forEach((n) => dropUnknownCommands(n, known, depth + 1))
+// What a pane of a file from elsewhere starts with, kept only if this computer decided it:
+// a command it knows (anything else than text is no command), a conversation id that cannot
+// add to a command line (agentResumeLine.js safeSessionId), no Yolo pin, no folder on a share
+// (an agent there would run that share's hooks, and even looking at one sends this computer's
+// sign-in to it). Over the whole file: older layouts keep their tree outside `workspaces`.
+const SAFE_SESSION_ID = /^[A-Za-z0-9_][A-Za-z0-9_-]{5,79}$/
+const PANE_POWERS = ['permissions', 'permissionMode', 'launchYolo', 'launchSig', 'rootNoYolo', 'agentMissing']
+const onShare = (p) => typeof p === 'string' && /^\s*[\\/]{2}/.test(p)
+function cleanPanes(node, known, depth = 0) {
+  if (depth > MAX_DEPTH || !node) return
+  if (Array.isArray(node)) node.forEach((n) => cleanPanes(n, known, depth + 1))
   else if (isObject(node)) {
-    if (typeof node.agentCommand === 'string' && !known.has(node.agentCommand)) node.agentCommand = null
-    for (const v of Object.values(node)) if (v && typeof v === 'object') dropUnknownCommands(v, known, depth + 1)
+    if (node.agentCommand !== undefined && node.agentCommand !== null && !(typeof node.agentCommand === 'string' && known.has(node.agentCommand))) node.agentCommand = null
+    if (node.sessionId !== undefined && node.sessionId !== null && !(typeof node.sessionId === 'string' && SAFE_SESSION_ID.test(node.sessionId))) node.sessionId = null
+    for (const key of PANE_POWERS) delete node[key]
+    for (const key of ['cwd', 'startDir', 'path']) if (onShare(node[key])) node[key] = null
+    for (const v of Object.values(node)) if (v && typeof v === 'object') cleanPanes(v, known, depth + 1)
   }
 }
 
@@ -148,12 +187,18 @@ export function withoutSecurity(name, body, currentBody, knownCommands = []) {
         if (current && isObject(current.settings) && Object.prototype.hasOwnProperty.call(current.settings, key)) parsed.settings[key] = current.settings[key]
       }
     }
-    dropUnknownCommands(parsed.workspaces, new Set([...agentCommands(current && current.workspaces), ...knownCommands]))
-    forEachSavedPane(parsed, (pane) => dropKeys(pane, PANE_SECURITY))
+    cleanPanes(parsed, new Set([...agentCommands(current), ...knownCommands]))
+    // A team's message folder, recomputed when it is missing: a file must not choose it.
+    if (Array.isArray(parsed.teams)) for (const team of parsed.teams) if (isObject(team)) delete team.channelDir
     return JSON.stringify(parsed)
   }
   if (name === 'remote-hosts.json' && isObject(parsed) && Array.isArray(parsed.targets)) {
-    for (const target of parsed.targets) if (isObject(target)) delete target.proxyCommand
+    for (const target of parsed.targets) {
+      if (!isObject(target)) continue
+      delete target.proxyCommand
+      delete target.jumpHost
+      if (onShare(target.identityFile)) delete target.identityFile
+    }
     return JSON.stringify(parsed)
   }
   return body

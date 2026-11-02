@@ -63,6 +63,7 @@ import { assessNeeds } from './tesselNeeds'
 import { createClaudeUsageReport } from './claudeUsageReport'
 import { createJobCost } from './jobCost'
 import { resolveFiles, codeGotoArg, listProjectFiles, defaultWslDistro } from './fileOpen'
+import { openFileOutside, codeLaunch, codeCmdFor } from './filesOpen'
 import { statChatPaths, openChatPath, revealChatPath } from './chatFileOpen'
 import { titleBarColors } from '../shared/themePalettes'
 import { createThemedDialog } from './themedDialog'
@@ -183,7 +184,7 @@ import { execFileOff as execFile, spawnOff } from './spawnOffThread'
 import { createCommitMessageGeneration } from './commitMessageGeneration'
 import { createModelLister } from './agentModelList'
 import { takeTeamAcks } from './teamAcks'
-import { writeJsonSafe, readJsonSafe } from './safeJson'
+import { writeJsonSafe, readJsonSafe, writeFileAtomic } from './safeJson'
 import { addNotices, writeCurrentTeams, retireOldTeams } from './teamNotices'
 import { JSON_AGENTS, setJsonAgentServer, teamToolsEntry } from './jsonAgents'
 import { detectAgents, KNOWN_AGENT_IDS } from './agentDetect'
@@ -1843,6 +1844,11 @@ ipcMain.handle('agents:inbox', (_evt, q = {}) =>
 )
 ipcMain.handle('sessions:find', async (_evt, q = {}) => {
   try {
+    // A pane on an SSH host: its conversation is on the host, never in this computer's files.
+    if (q && typeof q.hostId === 'string') {
+      if (q.agent !== 'antigravity' || !remoteHosts.get(q.hostId)) return null
+      return await remoteFs.findAntigravitySession(q.hostId, q)
+    }
     return await accountSessions.find(q || {})
   } catch {
     return null
@@ -1877,6 +1883,7 @@ const sessionExistsAsked = new Map() // host\nagent\nid -> { at, promise }
 ipcMain.handle('remote:agentSessionExists', async (_evt, hostId, agent, id) => {
   try {
     if (typeof hostId !== 'string' || !remoteHosts.get(hostId)) return null
+    if (agent === 'antigravity') return await remoteFs.antigravityConversationExists(hostId, id)
     const key = `${hostId}\n${agent}\n${id}`
     const hit = sessionExistsAsked.get(key)
     if (hit && Date.now() - hit.at < 20_000) return await hit.promise
@@ -3175,6 +3182,10 @@ ipcMain.handle(
 ipcMain.handle(
   'tesselAccount:signIn',
   safe(() => tesselAccount.signIn())
+)
+ipcMain.handle(
+  'tesselAccount:googleClient',
+  safe(() => tesselAccount.googleClient())
 )
 ipcMain.handle(
   'tesselAccount:passwordLink',
@@ -6228,9 +6239,12 @@ Promise.all([acquireInstanceLock(), app.whenReady()]).then(([gotInstanceLock]) =
     const link = findAppLink(argv, APP_LINK_SCHEME)
     if (link) tesselAccount.handleLink(link).catch(() => {})
   })
-  // Windows opens this copy for its links: the way back from logging in on the web page.
-  if (app.isPackaged) app.setAsDefaultProtocolClient(APP_LINK_SCHEME)
-  else app.setAsDefaultProtocolClient(APP_LINK_SCHEME, process.execPath, [app.getAppPath()])
+  // Windows opens this copy for its links: the way back from logging in on the web page. The --
+  // comes before the link: an app that hands a link over unencoded could otherwise add switches
+  // of its own to this command line, and Chromium's can run a program. A test copy with its own
+  // data folder leaves the link to the real one.
+  if (app.isPackaged) app.setAsDefaultProtocolClient(APP_LINK_SCHEME, process.execPath, ['--'])
+  else if (!process.env.TESSEL_USER_DATA) app.setAsDefaultProtocolClient(APP_LINK_SCHEME, process.execPath, [app.getAppPath(), '--'])
   log.info(
     'app',
     `started v${app.getVersion()} (${app.isPackaged ? 'installed' : 'dev'}) electron ${process.versions.electron} node ${process.versions.node} ${process.platform} ${os.release()} ${os.arch()}`

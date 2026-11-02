@@ -38,6 +38,13 @@
 
 export const POINTER = {
   enterDelayMs: 500,
+  // Codex takes an Enter that reaches it soon after a paste as a new line (tested on
+  // 0.166: up to 60 ms after a bracketed paste, up to 250 ms after a plain one). A
+  // stall on the way can close the delay above, so where the box can be read Enter
+  // also waits to see the pointer in it, plus this much.
+  afterShownMs: 400,
+  shownPollMs: 100,
+  shownWaitMs: 3000,
   verifyMs: 4000,
   retryMs: 30000,
   maxRetries: 3
@@ -47,13 +54,34 @@ export const POINTER = {
 // (Codex's "switch to a smaller model? 1. Yes 2. No"), a "1" answered it.
 // The same for messages relayed from other projects (agentRelay.js).
 export const RELAY_POINTER = '[Tessel] You have new messages from other projects: read them with project_inbox.' // i18n-ignore
+// It says who wrote. This is typed into an agent's input box as Tessel's own words, so a name
+// or a project goes in as plain words only, short, with no digit, for the reason above.
+const pointerWords = (text) =>
+  String(text || '')
+    .replace(/[^\p{L}\p{M} ._-]/gu, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 32)
+    .trim()
+export function relayPointerText(senders, count = 1) {
+  const who = (Array.isArray(senders) ? senders : [])
+    .map((s) => {
+      const name = pointerWords(s && s.name)
+      const project = pointerWords(s && s.project)
+      return name && project ? `${name} (project ${project})` : name // i18n-ignore
+    })
+    .filter(Boolean)
+  if (!who.length) return RELAY_POINTER
+  const from = who.length > 2 ? `${who.slice(0, 2).join(', ')} and others` : who.join(' and ') // i18n-ignore
+  return count > 1 ? `[Tessel] New messages from ${from}: read them with project_inbox.` : `[Tessel] New message from ${from}: read it with project_inbox.` // i18n-ignore
+}
 export function pointerText() {
   return '[Tessel] You have new team messages: read them with team_inbox.' // i18n-ignore
 }
 
 // The pointer, whitespace removed (a TUI wraps its input box itself, with
 // its own indentation, so the words can be cut anywhere on screen).
-const POINTER_SQUASHED = /\[Tessel\]Youhave(?:\d+)?new(?:team)?messages?(?:fromotherprojects)?:read(?:it|them)with(?:team|project)_inbox\./
+const POINTER_SQUASHED = /\[Tessel\](?:Youhave(?:\d+)?new(?:team)?messages?(?:fromotherprojects)?|Newmessages?from[^[]{1,220}?):read(?:it|them)with(?:team|project)_inbox\./
 
 // A pointer is still typed in the agent's input box (not sent). The screen
 // cannot always tell the input box from the transcript: an input line shown
@@ -64,6 +92,13 @@ export function pointerStillTyped(pane, inputEmpty) {
   if (inputEmpty === true) return false
   if (!pane || typeof pane.screenText !== 'function') return false
   return POINTER_SQUASHED.test(String(pane.screenText(5) || '').replace(/\s+/g, ''))
+}
+
+// The input box holds a pointer and nothing else, so Enter can only send that
+// pointer. Works after a restart too, when nothing remembers having typed it.
+const POINTER_ALONE = new RegExp(`^${POINTER_SQUASHED.source}$`)
+export function pointerAloneInBox(box) {
+  return typeof box === 'string' && POINTER_ALONE.test(box.replace(/\s+/g, ''))
 }
 
 export function createTeamDelivery(deps) {
@@ -159,7 +194,8 @@ export function createTeamDelivery(deps) {
       if (deps.now() - s.lastAt < cfg.retryMs) return
       retry = true
     }
-    let why = deps.blocked(id, { retry, phase: 'write' }) || ''
+    const own = ownPointer(id, s)
+    let why = deps.blocked(id, { retry, phase: 'write', ownPointer: own }) || ''
     const pane = why ? null : deps.getPane(id)
     if (!why && !pane) return
     // An agent whose input box Tessel can read (Codex): typed only into it
@@ -168,7 +204,7 @@ export function createTeamDelivery(deps) {
     // pointer's keys as its answer.
     if (!why && deps.inputEmpty) {
       const empty = deps.inputEmpty(id)
-      if (empty === false && !(s.outstanding && pointerStillTyped(pane, empty))) why = 'its input box is not shown empty (a menu, a question or a draft may be open)'
+      if (empty === false && !own && !(s.outstanding && pointerStillTyped(pane, empty))) why = 'its input box is not shown empty (a menu, a question or a draft may be open)'
     }
     if (why) {
       if (s.why !== why) log('info', id, `pointer waits: ${why}`) // i18n-ignore
@@ -178,7 +214,7 @@ export function createTeamDelivery(deps) {
     s.why = ''
     s.flying = true
     try {
-      await flight(id, s, pane, mail, retry, gen)
+      await flight(id, s, pane, mail, retry, gen, own)
     } catch (err) {
       log('warn', id, `pointer failed: ${(err && err.message) || err}`) // i18n-ignore
     } finally {
@@ -190,12 +226,23 @@ export function createTeamDelivery(deps) {
     }
   }
 
-  async function flight(id, s, pane, mail, retry, gen) {
+  // Only Tessel's pointer is waiting in the box: pressing Enter on it cannot send
+  // anything of the user's, even with them in the pane. Read from the box when
+  // the pane can (Codex); otherwise no key from them since the pointer was typed.
+  function ownPointer(id, s) {
+    const pane = deps.getPane(id)
+    if (!pane) return false
+    const box = typeof pane.promptBoxText === 'function' && deps.inputEmpty && deps.inputEmpty(id) !== null ? pane.promptBoxText('›') : null
+    if (box !== null) return pointerAloneInBox(box)
+    return !!(s.outstanding && deps.userTypedSince && !deps.userTypedSince(id, s.lastAt) && pointerStillTyped(pane, null))
+  }
+
+  async function flight(id, s, pane, mail, retry, gen, own = false) {
     const n = retry ? s.attempts : 0
     // A pointer from before is still in the input box (its Enter was
     // lost): Enter only, never a second pointer on top of it.
-    const typed = s.outstanding && pointerStillTyped(pane, deps.inputEmpty ? deps.inputEmpty(id) : null)
-    if (!typed) pane.paste(deps.pointerText ? deps.pointerText() : pointerText(mail.count))
+    const typed = own || (s.outstanding && pointerStillTyped(pane, deps.inputEmpty ? deps.inputEmpty(id) : null))
+    if (!typed) pane.paste(deps.pointerText ? deps.pointerText(id) : pointerText(mail.count))
     // The watermark moves as soon as something is in the terminal.
     for (const m of mail.ids || []) s.pointed.add(m)
     s.pointedCount = mail.count
@@ -212,14 +259,17 @@ export function createTeamDelivery(deps) {
       log('info', id, 'Enter left to the user (this agent does not take typed input as sent)') // i18n-ignore
       return
     }
-    if (!typed) await sleep(cfg.enterDelayMs)
+    if (!typed) {
+      await sleep(cfg.enterDelayMs)
+      await waitUntilShown(id, pane)
+    }
     // Checked again at the moment of Enter: same process, still safe.
     const now = deps.getPane(id)
     if (now !== pane || (deps.generation && deps.generation(id) !== gen)) {
       log('warn', id, 'Enter not sent: the pane changed meanwhile') // i18n-ignore
       return
     }
-    const why = deps.blocked(id, { retry, phase: 'enter' }) || ''
+    const why = deps.blocked(id, { retry, phase: 'enter', ownPointer: own || ownPointer(id, s) }) || ''
     if (why) {
       log('warn', id, `Enter not sent: ${why} (the pointer stays in the input box; the next try presses it)`) // i18n-ignore
       return
@@ -231,6 +281,19 @@ export function createTeamDelivery(deps) {
 
   function sleep(ms) {
     return new Promise((resolve) => deps.setTimeout(resolve, ms))
+  }
+
+  async function waitUntilShown(id, pane) {
+    if (typeof pane.promptBoxText !== 'function' || !deps.inputEmpty || deps.inputEmpty(id) === null) return
+    const until = deps.now() + cfg.shownWaitMs
+    while (deps.now() < until) {
+      if (pointerAloneInBox(pane.promptBoxText('›'))) {
+        await sleep(cfg.afterShownMs)
+        return
+      }
+      await sleep(cfg.shownPollMs)
+    }
+    log('info', id, 'the pointer is not shown in its input box yet: Enter anyway') // i18n-ignore
   }
 
   function armRetry(id, s) {
@@ -255,8 +318,11 @@ export function createTeamDelivery(deps) {
       const unread = (raw.count | 0) > 0 && (!ids || ids.some((m) => s.pointed.has(m)))
       if (!unread) return
       if (!pointerStillTyped(pane, deps.inputEmpty ? deps.inputEmpty(id) : null)) return
-      const why = deps.blocked(id, { retry: true, phase: 'verify' }) || ''
-      if (why) return
+      const why = deps.blocked(id, { retry: true, phase: 'verify', ownPointer: ownPointer(id, s) }) || ''
+      if (why) {
+        log('info', id, `the pointer is still in its input box, Enter not sent again: ${why}`) // i18n-ignore
+        return
+      }
       pane.submit()
       log('warn', id, 'the agent did not start and the pointer is still in its input box: Enter sent again')
     }, cfg.verifyMs)

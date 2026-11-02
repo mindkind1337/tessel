@@ -9,6 +9,13 @@ import AgentRunsPanel from '../components/AgentRunsPanel.vue'
 const run = (n, extra = {}) => ({ at: Date.parse('2026-11-01T13:01:47Z') + n * 1000, agent: 'Hardy', kind: 'run', text: `cmd ${n}`, ...extra })
 
 describe('the list of what agents ran', () => {
+  it('says why the agent ran it, when it said', () => {
+    const w = mount(AgentRunsPanel, { props: { runs: [run(1, { why: 'To read the crash log' }), run(2)] } })
+    const reasons = w.findAll('[data-test="arp-why"]')
+    expect(reasons).toHaveLength(1)
+    expect(reasons[0].text()).toContain('To read the crash log')
+  })
+
   it('a card each, newest first, with the agent, the kind, the time and the command', () => {
     const w = mount(AgentRunsPanel, { props: { runs: [run(1), run(2, { kind: 'keys', text: 'Ctrl+C' }), run(3, { kind: 'read', text: '' })] } })
     const cards = w.findAll('[data-test="pane-agent-term-row"]')

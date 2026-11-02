@@ -43,7 +43,9 @@
 
 import { KNOWN_HARNESS_TAG_NAMES } from '../../shared/harnessInjectedTurns.js'
 
-export const SHARE_FEATURES = Object.freeze(['chat', 'agents', 'presence', 'files', 'scm', 'tasks', 'panes2', 'usage', 'history', 'tabs', 'links', 'paste'])
+// 'commands': the host's agent may ask to run a command on the guest's computer,
+// which the guest allows each time on a card (guestCommand.js).
+export const SHARE_FEATURES = Object.freeze(['chat', 'agents', 'presence', 'files', 'scm', 'tasks', 'panes2', 'usage', 'history', 'tabs', 'links', 'paste', 'commands'])
 export const cleanFeatures = (list) => (Array.isArray(list) ? [...new Set(list.filter((f) => typeof f === 'string' && SHARE_FEATURES.includes(f)))] : [])
 
 export const CHAT_LIMITS = Object.freeze({

@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { Terminal } from '@xterm/headless'
-import { promptShowsPlaceholder } from '../promptCheck'
+import { promptBoxText, promptShowsPlaceholder } from '../promptCheck'
 
 // A real terminal buffer, drawn like Codex draws its screen.
 async function screen(writes) {
@@ -43,5 +43,35 @@ describe('promptShowsPlaceholder (real xterm buffer)', () => {
   it('no prompt on the cursor line', async () => {
     const t = await screen(['PS C:\\Tessel> '])
     expect(promptShowsPlaceholder(t)).toBe(false)
+  })
+})
+
+describe('promptBoxText (real xterm buffer)', () => {
+  const FOOTER = '\r\n\r\n  GPT-6-Astra xhigh · C:\\Tessel'
+
+  it('what is typed on the prompt line', async () => {
+    const t = await screen(['• Done.\r\n\r\n', `${PROMPT}hello there`, FOOTER, '\x1b[2A\r\x1b[13C'])
+    expect(promptBoxText(t)).toBe('hello there')
+  })
+
+  it('text wrapped over two lines, the status under them left out', async () => {
+    const t = await screen(['• Done.\r\n\r\n', `${PROMPT}first part\r\n  second part`, FOOTER, '\x1b[2A\r\x1b[13C'])
+    expect(promptBoxText(t).replace(/\s+/g, ' ')).toBe('first part second part')
+  })
+
+  it('an Enter taken as a new line: the cursor one line below the text, and the text still found', async () => {
+    const t = await screen(['• Done.\r\n\r\n', `${PROMPT}hello there\r\n  `, FOOTER, '\x1b[2A\r\x1b[2C'])
+    expect(promptBoxText(t)).toBe('hello there')
+  })
+
+  it('no prompt near the cursor: null', async () => {
+    const t = await screen(['a plain shell line\r\nC:\\> '])
+    expect(promptBoxText(t)).toBe(null)
+    expect(promptBoxText(null)).toBe(null)
+  })
+
+  it('a menu drawn with the same mark gives its own words', async () => {
+    const t = await screen([`${PROMPT}1. Yes, switch\r\n  2. No`])
+    expect(promptBoxText(t).replace(/\s+/g, ' ')).toBe('1. Yes, switch 2. No')
   })
 })

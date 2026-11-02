@@ -208,6 +208,27 @@ export function createAgentTerminalTargets(deps) {
   // has no Tessel tools to read with).
   const relayTarget = (l, me, w) => l && l.type === 'leaf' && l.id !== me.id && (l.kind === 'agent' || (l.kind === 'chat' && !l.remoteHostId && !(w && w.remote))) && l.backend !== 'liveshare'
   const projectShared = (w) => !!(deps.projectShared && w && deps.projectShared(w.id))
+  // A guest picks their own name, and it goes to an agent as Tessel's words:
+  // plain words only, short.
+  const guestWords = (name) =>
+    String(name || '')
+      .replace(/[^\p{L}\p{M}\p{N} ._-]/gu, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, 32)
+      .trim()
+  const guestsOf = (w) => (deps.projectGuests && w ? deps.projectGuests(w.id) : []).map((g) => ({ id: g.id, name: guestWords(g.name) || 'guest' })) // i18n-ignore
+  // Whether a guest wrote to this agent last: { name, id, unsure }, or null.
+  function wroteLast(agentLeaf, w) {
+    // (A chat pane has no terminal for a guest to type in: only you write to it.)
+    const who = deps.guestWhoWrote && w && agentLeaf.kind === 'agent' ? deps.guestWhoWrote(agentLeaf.id, w.id) : null
+    return who ? { id: who.id || null, name: guestWords(who.name), ...(who.unsure ? { unsure: true } : {}), ...(who.gone ? { gone: true } : {}) } : null
+  }
+  // What every card says about where it comes from.
+  const cardFrom = (card, agentLeaf, w) => {
+    const who = wroteLast(agentLeaf, w)
+    return { ...card, project: String((w && w.name) || '').slice(0, 100), guests: guestsOf(w).slice(0, 5).map((g) => g.name), fromGuest: who && !who.unsure ? who.name || 'guest' : null } // i18n-ignore
+  }
   const relayWho = (l, w) => ({
     id: l.id,
     name: deps.paneLabel(l),
@@ -602,9 +623,22 @@ export function createAgentTerminalTargets(deps) {
 
     // Which host a command of its own would run on, opening nothing.
     if (req.op === 'host') {
-      const hostId = hostOf(agentLeaf, ws, req.host)
+      // "guest" or "guest:<name>": a guest's computer, unless an SSH host has that name.
+      const asked = String(req.host || '').trim().toLowerCase()
+      const wantsGuest = /^guest(:|$)/.test(asked) && !deps.hosts().some((h) => h.id.toLowerCase() === asked || String(h.label || '').toLowerCase() === asked)
+      const hostId = hostOf(agentLeaf, ws, wantsGuest ? null : req.host)
       // local: this computer (the PC Tessel runs on), asked for by an agent that works on an SSH host.
-      return { hostId, local: !hostId, label: hostId ? deps.hostLabel(hostId) : 'this computer', projectHost: (hostId || null) === ((ws.remote && ws.remote.hostId) || null) } // i18n-ignore
+      return { hostId, local: !hostId, label: hostId ? deps.hostLabel(hostId) : 'this computer', projectHost: (hostId || null) === ((ws.remote && ws.remote.hostId) || null), guests: guestsOf(ws), wroteLast: wroteLast(agentLeaf, ws), ...(wantsGuest ? { wantsGuest: true } : {}) } // i18n-ignore
+    }
+
+    // A command for the computer of a guest in this project, who answers on their own screen.
+    if (req.op === 'guestCommand') {
+      const guest = guestsOf(ws).find((g) => g.id === req.guestId)
+      if (typeof deps.askGuestCommand !== 'function' || !guest) return { ok: false, code: 'gone', agentLabel }
+      // You see it too: it goes to someone else's computer in your agent's name.
+      deps.guestCommandAsked?.({ agent: agentLabel, guest: guest.name, command: String(req.command || '').replace(/\s+/g, ' ').slice(0, 200) })
+      const r = await deps.askGuestCommand(req.guestId, { agent: agentLabel, project: String(ws.name || '').slice(0, 100), command: String(req.command || ''), why: String(req.why || ''), goal: String(req.goal || ''), timeoutMs: req.timeoutMs }, req.waitMs)
+      return { ...r, agentLabel }
     }
 
     if (req.op === 'prepare') {
@@ -620,7 +654,7 @@ export function createAgentTerminalTargets(deps) {
     // A card about no terminal yet: another SSH host ("host:<id>"), panes to
     // open ("open:<agent pane>"); shown from the agent's own pane.
     if (req.op === 'approve' && typeof req.terminal === 'string' && /^(host|open|logs|relay):/.test(req.terminal))
-      return plainAnswer(await deps.approve({ ...req.card, agentLeaf, agentLabel, leaf: agentLeaf, name: agentLabel, ws }))
+      return plainAnswer(await deps.approve({ ...cardFrom(req.card, agentLeaf, ws), agentLeaf, agentLabel, leaf: agentLeaf, name: agentLabel, ws }))
 
     // Messages between projects: who can be written to, and who a name means.
     if (req.op === 'relayList') {
@@ -636,8 +670,12 @@ export function createAgentTerminalTargets(deps) {
     }
     if (req.op === 'relayResolve') {
       const raw = String(req.to == null ? '' : req.to).trim().toLowerCase()
+      const sharedOnly = projectShared(ws)
       const all = []
-      for (const w of deps.workspaces()) deps.forEachLeaf(w.tree, (l) => relayTarget(l, agentLeaf, w) && all.push({ l, w }))
+      for (const w of deps.workspaces()) {
+        if (sharedOnly && !projectShared(w)) continue
+        deps.forEachLeaf(w.tree, (l) => relayTarget(l, agentLeaf, w) && all.push({ l, w }))
+      }
       const byId = all.filter((x) => x.l.id.toLowerCase() === raw)
       const hits = byId.length ? byId : all.filter((x) => deps.paneLabel(x.l).toLowerCase() === raw)
       if (!hits.length) throw refuse('agent_not_found', `No agent "${String(req.to).slice(0, 60)}" in Tessel: see project_agents.`) // i18n-ignore
@@ -688,7 +726,7 @@ export function createAgentTerminalTargets(deps) {
       return { ...describe(leaf, target.ws, ws, agentLeaf), agentLabel, appCursor, cursorLine: cursor }
     }
 
-    if (req.op === 'approve') return plainAnswer(await deps.approve({ ...req.card, agentLeaf, agentLabel, leaf, name, ws: target.ws }))
+    if (req.op === 'approve') return plainAnswer(await deps.approve({ ...cardFrom(req.card, agentLeaf, ws), agentLeaf, agentLabel, leaf, name, ws: target.ws }))
 
     if (req.op === 'stoppedNotice') {
       deps.stoppedNotice({ agentLeaf, agentLabel, leaf, name })

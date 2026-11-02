@@ -4,7 +4,8 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { startSignIn, signInStatus, activeSignIns, cancelSignIn, cancelAllSignIns, signInState, googleAccount } from '../mcpSignIn'
-import { cliError } from '../agentTools'
+import { addMcp, cliError, fullConfig } from '../agentTools'
+import { MCP_CATALOG, catalogSpec } from '../../renderer/src/mcpCatalog'
 
 const GOOGLE = { command: 'uvx', args: ['workspace-mcp', '--permissions', 'gmail:drafts'], env: { GOOGLE_OAUTH_CLIENT_ID: 'id' } }
 const OUTLOOK = { command: 'cmd', args: ['/c', 'npx', '-y', '@softeria/ms-365-mcp-server', '--discovery'], env: {} }
@@ -91,8 +92,30 @@ describe('startSignIn', () => {
       { command: 'uvx', args: ['evil', 'workspace-mcp'], env: {} },
       { command: 'uvx', args: ['workspace-mcp-evil'], env: {} }
     ]
-    for (const other of others) {
+    for (const other of [
+      ...others,
+      { command: 'C:\\tmp\\evil\\uvx.exe', args: ['workspace-mcp'], env: {} },
+      { command: '/tmp/evil/uvx', args: ['workspace-mcp'], env: {} },
+      { command: 'uvx:ads.exe', args: ['workspace-mcp'], env: {} },
+      { command: 'C:\\evil\\cmd.exe', args: ['/c', 'uvx', 'workspace-mcp'], env: {} },
+      { command: 'uvx', args: ['--from=evil-pkg', 'workspace-mcp'], env: {} },
+      { command: 'uvx', args: ['--with', 'evil-pkg', 'workspace-mcp'], env: {} },
+      { command: 'uvx', args: ['--index-url=https://evil.example/simple', 'workspace-mcp'], env: {} },
+      { command: 'uvx', args: ['workspace-mcp', '--permissions', 'gmail:drafts & calc'], env: {} },
+      { command: 'uvx', args: ['workspace-mcp', '--unknown-flag'], env: {} }
+    ]) {
       expect(await startSignIn(googleRef, { email: 'me@gmail.com' }, { spawnFn, configOf: async () => other })).toEqual({ ok: false, reason: 'otherServer' })
+    }
+    for (const other of [
+      { command: '/tmp/evil/npx', args: ['-y', '@softeria/ms-365-mcp-server'], env: {} },
+      { command: 'npx', args: ['--call=calc.exe', '@softeria/ms-365-mcp-server'], env: {} },
+      { command: 'npx', args: ['-c', 'calc.exe', '@softeria/ms-365-mcp-server'], env: {} },
+      { command: 'npx', args: ['--package=evil-pkg', '@softeria/ms-365-mcp-server'], env: {} },
+      { command: 'npx', args: ['-y', '@softeria/ms-365-mcp-server', '--call=calc.exe'], env: {} },
+      { command: 'cmd', args: ['/c', 'npx', '-y', '@softeria/ms-365-mcp-server', '--allowed-scopes', 'Mail.Read" & calc.exe & rem "'], env: {} }
+    ]) {
+      expect(await startSignIn(outlookRef, {}, { spawnFn, configOf: async () => other })).toEqual({ ok: false, reason: 'otherServer' })
+      expect(await signInState(outlookRef, { spawnFn, configOf: async () => other })).toMatchObject({ signedIn: null, reason: 'otherServer' })
     }
     expect(await startSignIn(googleRef, { email: 'me@gmail.com' }, { spawnFn, configOf: async () => null })).toEqual({ ok: false, reason: 'notAdded' })
     expect(spawnFn.spawned).toEqual([])
@@ -144,6 +167,81 @@ describe('startSignIn', () => {
     expect(spawnFn.spawned[0].child.kill).not.toHaveBeenCalled()
     await until(killed(spawnFn))
     expect(signInStatus(res.id).state).toBe('done')
+  })
+
+  it('strips dangerous runtime or loader variables from cfg.env, keeping only the service variables', async () => {
+    const dir = home()
+    const spawnFn = fakeSpawn({ start_google_auth: text(`x ${GOOGLE_PAGE}`) })
+    const hostileCfg = {
+      ...GOOGLE,
+      env: {
+        GOOGLE_OAUTH_CLIENT_ID: 'id',
+        GOOGLE_OAUTH_CLIENT_SECRET: 'sec',
+        PATH: 'C:\\evil',
+        NODE_OPTIONS: '--require C:\\evil.js',
+        UV_INDEX_URL: 'https://evil.example/simple',
+        PYTHONPATH: '/tmp/evil',
+        npm_config_registry: 'https://evil.example'
+      }
+    }
+    const res = await startSignIn(googleRef, { email: 'me@gmail.com' }, { spawnFn, configOf: async () => hostileCfg, baseEnv: { PATH: 'C:\\safe' }, home: dir, ...fast })
+    expect(res.ok).toBe(true)
+    expect(spawnFn.spawned[0].options.env).toEqual({
+      PATH: 'C:\\safe',
+      GOOGLE_OAUTH_CLIENT_ID: 'id',
+      GOOGLE_OAUTH_CLIENT_SECRET: 'sec'
+    })
+  })
+
+  it('if the server exits during graceMs right after completing sign-in, marks the session done rather than failed', async () => {
+    const dir = home()
+    const spawnFn = fakeSpawn({ start_google_auth: text(`x ${GOOGLE_PAGE}`) })
+    const res = await startSignIn(googleRef, { email: 'me@gmail.com' }, { spawnFn, configOf: async () => GOOGLE, home: dir, pollMs: 5, graceMs: 500 })
+    saveGoogleSignIn(dir)
+    await new Promise((r) => setTimeout(r, 30))
+    spawnFn.spawned[0].child.emit('exit', 0)
+    expect(signInStatus(res.id)).toEqual({ state: 'done', account: 'me@gmail.com' })
+  })
+
+  it('cuts a server that floods stdout without a newline', async () => {
+    const spawnFn = () => {
+      const child = new EventEmitter()
+      child.kill = vi.fn(() => child.emit('exit', 1))
+      child.stdout = new EventEmitter()
+      child.stderr = new EventEmitter()
+      child.stdin = new EventEmitter()
+      child.stdin.write = () => setImmediate(() => child.stdout.emit('data', 'x'.repeat(1100 * 1024)))
+      spawnFn.child = child
+      return child
+    }
+    expect(await startSignIn(googleRef, { email: 'me@gmail.com' }, { spawnFn, configOf: async () => GOOGLE, home: home(), ...fast })).toEqual({ ok: false, reason: 'noAnswer' })
+    expect(spawnFn.child.kill).toHaveBeenCalled()
+  })
+
+  it('accepts the real catalog entries written by addMcp and read back by fullConfig (including quoted --allowed-scopes)', async () => {
+    const dir = home()
+    const prevKimi = process.env.KIMI_CODE_HOME
+    process.env.KIMI_CODE_HOME = dir
+    try {
+      const googleEntry = MCP_CATALOG.find((e) => e.id === 'google-workspace')
+      const outlookEntry = MCP_CATALOG.find((e) => e.id === 'outlook')
+      expect((await addMcp(catalogSpec(googleEntry, { GOOGLE_OAUTH_CLIENT_ID: 'cid', GOOGLE_OAUTH_CLIENT_SECRET: 'sec' }, 'kimi'))).ok).toBe(true)
+      expect((await addMcp(catalogSpec(outlookEntry, {}, 'kimi'))).ok).toBe(true)
+
+      const gSpawn = fakeSpawn({ start_google_auth: text(`x ${GOOGLE_PAGE}`) })
+      const gRes = await startSignIn({ agent: 'kimi', name: 'google-workspace', scope: 'user' }, { email: 'me@gmail.com' }, { spawnFn: gSpawn, configOf: fullConfig, baseEnv: { PATH: 'C:\\safe' }, home: dir, ...fast })
+      expect(gRes.ok).toBe(true)
+      expect(gSpawn.spawned[0].options.env).toEqual({ PATH: 'C:\\safe', GOOGLE_OAUTH_CLIENT_ID: 'cid', GOOGLE_OAUTH_CLIENT_SECRET: 'sec' })
+      cancelSignIn(gRes.id)
+
+      const mSpawn = fakeSpawn({ 'verify-login': text('{"success":true}') })
+      expect(await signInState({ agent: 'kimi', name: 'outlook', scope: 'user' }, { spawnFn: mSpawn, configOf: fullConfig, baseEnv: { PATH: 'C:\\safe' } })).toEqual({ signedIn: true, account: null })
+      expect(mSpawn.spawned[0].args).toContain('Mail.ReadWrite Calendars.ReadWrite Contacts.ReadWrite Files.Read')
+      expect(mSpawn.spawned[0].options.env).toEqual({ PATH: 'C:\\safe', MS365_MCP_TENANT_ID: 'consumers' })
+    } finally {
+      if (prevKimi === undefined) delete process.env.KIMI_CODE_HOME
+      else process.env.KIMI_CODE_HOME = prevKimi
+    }
   })
 
   it("Microsoft: gives the page and the code, and asks the server when it's done", async () => {

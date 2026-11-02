@@ -6,7 +6,7 @@
 // the page never sees one, and the only place one is sent is Google's own
 // token address, to ask whether a sign-in is still alive.
 import { readdirSync, readFileSync, statSync } from 'fs'
-import { join, basename } from 'path'
+import { join } from 'path'
 import os from 'os'
 import { createHash, randomUUID } from 'crypto'
 import { spawnOff, execFileOff } from './spawnOffThread'
@@ -17,7 +17,11 @@ const POLL_MS = 2500
 const EXPIRES_MS = 10 * 60 * 1000
 const GRACE_MS = 1500 // the server still has to answer the browser's page
 const FORGET_MS = 60 * 1000
+const MAX_STDOUT_CHARS = 1024 * 1024
 const EMAIL_RE = /^[A-Za-z0-9._+-]+@[A-Za-z0-9.-]+$/
+// Shell or cmd.exe metacharacters and control characters: never passed as server arguments.
+// eslint-disable-next-line no-control-regex
+const UNSAFE_ARG_RE = /[\u0000-\u001f\u007f"&|<>^%`$;\\]/
 // Fixed here, never the address in the saved file.
 const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token'
 
@@ -89,6 +93,9 @@ const SERVERS = {
   'google-workspace': {
     launcher: 'uvx',
     package: 'workspace-mcp',
+    preFlags: new Set(['-q', '--quiet']),
+    postFlags: new Set(['--permissions', '--tools', '--tool-tier', '--read-only', '--single-user']),
+    envRe: /^(?:GOOGLE_|WORKSPACE_MCP_|USER_GOOGLE_)[A-Z0-9_]+$/,
     needsEmail: true,
     tool: 'start_google_auth',
     args: ({ email }) => ({ service_name: 'gmail', user_google_email: email }),
@@ -113,6 +120,9 @@ const SERVERS = {
   outlook: {
     launcher: 'npx',
     package: '@softeria/ms-365-mcp-server',
+    preFlags: new Set(['-y', '--yes', '-q', '--quiet']),
+    postFlags: new Set(['--discovery', '--allowed-scopes', '--read-only', '--org-mode', '--preset', '--enabled-tools']),
+    envRe: /^MS365_MCP_[A-Z0-9_]+$/,
     needsEmail: false,
     tool: 'login',
     args: () => ({}),
@@ -132,10 +142,10 @@ const defaultKillTree =
 const openServers = new Set()
 
 // One running server: its tools can be called until close().
-function openServer(cfg, baseEnv, spawnFn, killTree = defaultKillTree) {
-  const words = windowsSafeCommand([cfg.command, ...(cfg.args || [])].filter((w) => w !== undefined && w !== ''))
+function openServer(cfg, spec, baseEnv, spawnFn, killTree = defaultKillTree) {
+  const words = windowsSafeCommand(cfg.cleanWords)
   const child = spawnFn(words[0], words.slice(1), {
-    env: { ...baseEnv, ...(cfg.env || {}) },
+    env: { ...baseEnv, ...safeServerEnv(cfg.env, spec) },
     windowsHide: true,
     stdio: ['pipe', 'pipe', 'pipe']
   })
@@ -164,7 +174,7 @@ function openServer(cfg, baseEnv, spawnFn, killTree = defaultKillTree) {
       const id = nextId++
       const timer = setTimeout(() => {
         waiting.delete(id)
-        reject(new Error('no answer'))
+        reject(new Error('no answer')) // i18n-ignore
       }, ANSWER_MS)
       waiting.set(id, { resolve, reject, timer })
       write({ jsonrpc: '2.0', id, method, params })
@@ -174,7 +184,14 @@ function openServer(cfg, baseEnv, spawnFn, killTree = defaultKillTree) {
   if (child.stdin.on) child.stdin.on('error', () => {}) // a closed pipe: the exit reports it
   if (child.stderr) child.stderr.on('data', () => {})
   child.stdout.on('data', (d) => {
+    if (gone) return
     out += d
+    if (out.length > MAX_STDOUT_CHARS && out.indexOf('\n') < 0) {
+      out = ''
+      failAll(new Error('output too large')) // i18n-ignore
+      server.close()
+      return
+    }
     let nl
     while ((nl = out.indexOf('\n')) >= 0) {
       const line = out.slice(0, nl).trim()
@@ -231,14 +248,53 @@ function openServer(cfg, baseEnv, spawnFn, killTree = defaultKillTree) {
   return server
 }
 
-// Whether these settings start the server we know: its launcher, directly or
-// through cmd /c, and its package as the first word that is not a flag.
-function isTheServer(cfg, spec) {
-  if (cfg.transport === 'http') return false
-  let words = [cfg.command, ...(cfg.args || [])].map(String)
-  const program = (w) => basename(w.replace(/\\/g, '/')).replace(/\.(exe|cmd|bat)$/i, '').toLowerCase()
-  if (program(words[0]) === 'cmd' && String(words[1]).toLowerCase() === '/c') words = words.slice(2)
-  return program(words[0] || '') === spec.launcher && words.slice(1).find((w) => !w.startsWith('-')) === spec.package
+// Bare launcher name only (never a path or drive prefix): resolved from baseEnv.PATH.
+function bareProgram(w) {
+  if (typeof w !== 'string' || !w || /[\\/:]/.test(w) || UNSAFE_ARG_RE.test(w)) return ''
+  return w.replace(/\.(exe|cmd|bat)$/i, '').toLowerCase()
+}
+
+// Cleaned launcher + arguments when these settings start the server we know,
+// or null otherwise. Rejects path-spoofed binaries, launcher flags that load
+// other packages (--call, --package, --from, --with, --index-url…), unknown
+// flags after the package, and shell/cmd metacharacters.
+function cleanServerWords(cfg, spec) {
+  if (!cfg || cfg.transport === 'http' || typeof cfg.command !== 'string') return null
+  if (cfg.args !== undefined && !Array.isArray(cfg.args)) return null
+  let raw = [cfg.command, ...(cfg.args || [])]
+  if (raw.some((w) => typeof w !== 'string')) return null
+  raw = raw.filter((w) => w !== '')
+  if (!raw.length) return null
+  if (bareProgram(raw[0]) === 'cmd') {
+    if (String(raw[1] || '').toLowerCase() !== '/c') return null
+    raw = raw.slice(2)
+  }
+  if (bareProgram(raw[0]) !== spec.launcher) return null
+  let i = 1
+  while (i < raw.length && raw[i].startsWith('-')) {
+    if (!spec.preFlags.has(raw[i])) return null
+    i++
+  }
+  if (raw[i] !== spec.package) return null
+  for (let j = i + 1; j < raw.length; j++) {
+    const w = raw[j]
+    if (UNSAFE_ARG_RE.test(w)) return null
+    if (w.startsWith('-')) {
+      const flag = w.includes('=') ? w.slice(0, w.indexOf('=')) : w
+      if (!spec.postFlags.has(flag)) return null
+    }
+  }
+  return raw
+}
+
+// Only the service's own variables from cfg.env (never PATH, NODE_OPTIONS, UV_*, npm_config_*…).
+function safeServerEnv(cfgEnv, spec) {
+  const out = {}
+  if (!cfgEnv || typeof cfgEnv !== 'object' || Array.isArray(cfgEnv)) return out
+  for (const [k, v] of Object.entries(cfgEnv)) {
+    if (spec.envRe.test(k) && typeof v === 'string' && !v.includes('\0')) out[k] = v
+  }
+  return out
 }
 
 // The server's settings for this agent, when it is the server we know. A
@@ -248,7 +304,8 @@ async function configFor(ref, spec, configOf) {
   if (ref.scope === 'project') return { reason: 'projectScope' }
   const cfg = await configOf(ref)
   if (!cfg) return { reason: 'notAdded' }
-  return isTheServer(cfg, spec) ? { cfg } : { reason: 'otherServer' }
+  const cleanWords = cleanServerWords(cfg, spec)
+  return cleanWords ? { cfg: { ...cfg, cleanWords } } : { reason: 'otherServer' }
 }
 
 const sessions = new Map() // id -> { name, state, account, page, code, end }
@@ -271,7 +328,7 @@ export async function startSignIn(ref, input = {}, deps = {}) {
   for (const s of sessions.values()) if (s.name === ref.name) s.end('cancelled')
 
   const before = spec.before ? spec.before(home) : null
-  const server = openServer(cfg, baseEnv, spawnFn, killTree)
+  const server = openServer(cfg, spec, baseEnv, spawnFn, killTree)
   let text
   try {
     text = await server.call(spec.tool, spec.args({ email }))
@@ -314,8 +371,9 @@ export async function startSignIn(ref, input = {}, deps = {}) {
       if (forget.unref) forget.unref()
     }
   }
+  let finished = false
   sessions.set(id, session)
-  server.onExit(() => session.end('failed'))
+  server.onExit(() => session.end(finished ? 'done' : 'failed'))
   expiry = setTimeout(() => session.end('expired'), expiresMs)
   const poll = async () => {
     if (session.state !== 'waiting') return
@@ -327,6 +385,7 @@ export async function startSignIn(ref, input = {}, deps = {}) {
     }
     if (session.state !== 'waiting') return
     if (done) {
+      finished = true
       session.account = done.account
       pollTimer = setTimeout(() => session.end('done'), graceMs)
     } else {
@@ -373,7 +432,7 @@ export async function signInState(ref, deps = {}) {
   if (spec.stateWithoutServer) return spec.stateWithoutServer(home, fetchFn)
   const { cfg, reason } = await configFor(ref, spec, configOf)
   if (!cfg) return { signedIn: null, account: null, reason }
-  const server = openServer(cfg, baseEnv, spawnFn, killTree)
+  const server = openServer(cfg, spec, baseEnv, spawnFn, killTree)
   try {
     return await spec.state(server, home)
   } catch {

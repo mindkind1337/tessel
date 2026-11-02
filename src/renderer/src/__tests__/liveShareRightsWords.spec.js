@@ -6,7 +6,7 @@ import { describe, expect, it } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { RIGHT_IDS } from '../../../shared/liveShareRights'
 import { hasRightWords, rightWords, shownRights, rightsShort, presetLabel, presetRights, rightsSummary } from '../liveShareRights'
-import { initials, inviteName, inviteUses, inviteExpiry, inviteExpiryShort, inviteUsesShort, inviteJoinedShort, viaName, shortCode, grantDiff, accessPeople, accessError, joinedGuests, offlinePeople } from '../liveShareAccess'
+import { guestWhoWroteLast, typingGuestsIn, initials, inviteName, inviteUses, inviteExpiry, inviteExpiryShort, inviteUsesShort, inviteJoinedShort, viaName, shortCode, grantDiff, accessPeople, accessError, joinedGuests, offlinePeople } from '../liveShareAccess'
 import RightsChecks from '../components/liveshare/RightsChecks.vue'
 
 describe('rights: words for the catalog', () => {
@@ -142,5 +142,48 @@ describe('access views: helpers', () => {
     expect(accessError({ ok: false, reason: 'auto-allow' })).toMatch(/needs your yes/)
     expect(accessError(null, 'Fallback.')).toBe('Fallback.')
     expect(accessError({ ok: false, reason: 'trust-full' })).toBe('Trusted list is full (50): remove someone first.')
+  })
+})
+
+describe('who wrote to a pane last', () => {
+  const g = (id, name, projects = ['p1'], rights = { type: true }) => ({ id, name, state: 'joined', projects, rights })
+  const host = (presence, guests = [g('g1', 'Alex')]) => ({ guests, presence })
+  const sent = (id, at, extra = {}) => ({ id: 'a1', guests: [{ id, watching: false, typing: false, reading: false, sentAt: at, ...extra }] })
+
+  it('the guest, when their Enter is the latest', () => {
+    expect(guestWhoWroteLast(host([sent('g1', 200)]), 'a1', 'p1', 100)).toEqual({ id: 'g1', name: 'Alex' })
+  })
+  it('you, when yours is', () => {
+    expect(guestWhoWroteLast(host([sent('g1', 100)]), 'a1', 'p1', 200)).toBeNull()
+  })
+  it('the latest of several guests', () => {
+    const both = { id: 'a1', guests: [{ id: 'g1', sentAt: 100 }, { id: 'g2', sentAt: 300 }] }
+    expect(guestWhoWroteLast(host([both], [g('g1', 'Alex'), g('g2', 'Ada')]), 'a1', 'p1', 50)).toEqual({ id: 'g2', name: 'Ada' })
+  })
+  it('nobody, when they are in another project', () => {
+    expect(guestWhoWroteLast(host([sent('g1', 200)], [g('g1', 'Alex', ['p2'])]), 'a1', 'p1', 0)).toBeNull()
+    expect(guestWhoWroteLast(host([sent('g1', 200)], []), 'a1', 'p1', 0)).toBeNull()
+  })
+  it('nothing known on either side, with a guest in: unsure, not you', () => {
+    expect(guestWhoWroteLast(host([]), 'a1', 'p1', 0)).toEqual({ id: 'g1', name: 'Alex', unsure: true })
+    expect(guestWhoWroteLast(host([], [g('g1', 'Alex'), g('g2', 'Ada')]), 'a1', 'p1', 0)).toEqual({ id: null, name: '', unsure: true })
+  })
+  it('you wrote and no guest has: you', () => {
+    expect(guestWhoWroteLast(host([]), 'a1', 'p1', 100)).toBeNull()
+  })
+  it('a guest with no right to type never counts: they cannot have written, and nothing goes to them', () => {
+    const reader = [g('g1', 'Alex', ['p1'], {})]
+    expect(guestWhoWroteLast(host([], reader), 'a1', 'p1', 0)).toBeNull()
+    expect(guestWhoWroteLast(host([sent('g1', 200)], reader), 'a1', 'p1', 0)).toBeNull()
+    expect(typingGuestsIn(host([], [g('g1', 'J'), g('g2', 'R', ['p1'], {}), { ...g('g3', 'N'), rights: null }]), 'p1').map((x) => x.id)).toEqual(['g1'])
+  })
+  it('a guest who wrote and left: said, not taken for you, unless you wrote since', () => {
+    const gone = [sent('g9', 200, { gone: true, name: 'Alex' })]
+    expect(guestWhoWroteLast(host(gone, []), 'a1', 'p1', 100)).toEqual({ id: null, name: 'Alex', gone: true })
+    expect(guestWhoWroteLast(host(gone, []), 'a1', 'p1', 300)).toBeNull()
+  })
+  it('a guest\'s Enter from before this window, which forgot yours: unsure, so nothing goes to them', () => {
+    expect(guestWhoWroteLast(host([sent('g1', 200)]), 'a1', 'p1', 0, 500)).toEqual({ id: 'g1', name: 'Alex', unsure: true })
+    expect(guestWhoWroteLast(host([sent('g1', 600)]), 'a1', 'p1', 0, 500)).toEqual({ id: 'g1', name: 'Alex' })
   })
 })

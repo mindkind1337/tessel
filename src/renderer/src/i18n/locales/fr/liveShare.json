@@ -5,6 +5,18 @@
     "closeEsc": "Fermer (Échap)",
     "unavailable": "Live Share n'est pas disponible dans cette version.",
     "guest": "Un invité",
+    "hostCommand": {
+      "title": "Sur votre ordinateur, pour {{agent}} ({{host}})",
+      "running": "En cours",
+      "stopped": "Arrêtée",
+      "timeout": "Arrêtée : elle a pris trop de temps",
+      "failed": "N'a pas pu s'exécuter",
+      "done": "Terminée, code de sortie {{code}}",
+      "list": "Commandes lancées sur votre ordinateur",
+      "stop": "Arrêter",
+      "dismiss": "Fermer",
+      "sent": "Ce qu'elle a affiché, renvoyé à cet agent :"
+    },
     "wsName": "{{host}} · Live Share",
     "wsName2": "{{project}} — {{host}}",
     "closeHostPane2": "Ce panneau tourne sur l'ordinateur de {{host}} : {{host}} reçoit la demande de le fermer, pour tous les participants de la session.",

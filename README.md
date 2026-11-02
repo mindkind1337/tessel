@@ -93,6 +93,11 @@ working on Tessel itself (see [Build from source](#build-from-source)).
   CSS, images and fonts load by their paths. As with VS Code's Workspace Trust,
   one question per folder decides whether its scripts run; without trust the
   page shows without them. A link to another site is held back until you click.
+  Trust is specific to the served folder, including case-sensitive SSH paths;
+  changing the served root checks trust again. Static HTML and Markdown previews
+  do not automatically contact Windows network shares; a document opened on a
+  share can load images from that same share. Raw HTML inside Markdown cannot
+  load external media or use inline styles to fetch resources.
 - **Side panel**: Dashboard of agents, agent session history, task history
   (time, tokens and estimated cost per task), files, Source Control and web
   pages; each tab says when it is loading.
@@ -130,6 +135,7 @@ working on Tessel itself (see [Build from source](#build-from-source)).
 - **Model and effort per pane**: pick them when you start an agent or later
   from the pane menu. The header shows the model and effort the agent really
   runs with, read from its own conversation, in your language.
+- **Shift+Enter** adds a line to your message to an agent instead of sending it.
 - **Live state for every agent**: working, waiting for you, approval needed,
   usage limit, interrupted, idle. It comes from the agents' own hooks, with the
   screen as a fallback, and shows as a dot on the agent's logo in its pane and
@@ -174,8 +180,9 @@ working on Tessel itself (see [Build from source](#build-from-source)).
   can sync now or turn it off, and choose to erase the copy on the server too; deleting
   your account erases it as well.
 - **Connections** (Settings → Connections): connect your accounts to your agents:
-  Gmail, Google Calendar and Drive (the first time, with your own free Google
-  Cloud OAuth client), Outlook and OneDrive for personal Microsoft accounts,
+  Gmail, Google Calendar and Drive (nothing to set up with a Tessel account; without
+  one, or if you prefer, with your own free Google Cloud OAuth client; Google warns
+  that Tessel's app is not verified yet), Outlook and OneDrive for personal Microsoft accounts,
   Dropbox, Todoist, Airtable, ClickUp and monday.com. Gmail and Outlook can read
   mail and write drafts, and offer agents no tool to send mail. There is one
   Connect button per service, for all your agents at once. It adds the server to every agent that
@@ -202,12 +209,44 @@ working on Tessel itself (see [Build from source](#build-from-source)).
   are asked first, then for every command, even for an agent in Yolo. The
   `tessel_logs` tool reads Tessel's own logs, filtered and read only, with a
   single approval. Agents already running get these after a restart.
+- **Importing a settings file is safe by default**: unless you tick the security part,
+  a file from elsewhere cannot choose what a pane starts with. Commands this computer
+  does not know, a Yolo pin, a conversation id that is not one, folders on a network
+  share and a host's proxy or jump host are all left out. A layout nested absurdly
+  deep is refused. An export no longer holds how panes were launched.
+- **Antigravity CLI on an SSH host picks its conversation back up**: when its pane restarts,
+  as on your computer. Tessel finds which conversation the pane is in from the host's own
+  files, and resumes it if it is still there. It starts fresh until you have sent it a first
+  message.
+- **An agent says why, and Tessel knows who wrote to it**: `run_in_terminal` and
+  `open_terminal` need a reason, shown under **Why** on the card with the project
+  it comes from, and kept in the terminal's **Agent commands** list and the log.
+  In a project shared with Live Share, Tessel notes who pressed Enter last in each
+  agent's pane, because the person writing to an agent may be on another computer.
+  When that was a guest, `host: "local"` means **their** computer, not yours; the
+  agent reaches yours only with `ownerComputer: true`, on a card that names the
+  guest and is asked every time. `host: "guest"` asks for a guest's computer
+  whoever wrote last.
+- **Commands on a Live Share guest's computer**: the guest sees a card with the whole
+  command, who asks, the project and the reason, starting on **Deny**; nothing runs
+  without that click, each time, with no rule, Yolo or "always" that could skip it.
+  So that what the card shows is what runs, a command holds only plain ASCII and common
+  accented letters: no curly quotes, no-break spaces, invisible marks, other alphabets or
+  letters that pass for another. The card numbers each line, names anything that is not
+  plain ASCII, and **Allow** waits until the end of a long command has been on screen. It
+  runs in a fresh Windows PowerShell, for 60 s by default and 5 minutes at most, and
+  what it prints goes back to the agent. A panel on the guest's screen shows the
+  command, its output and **Stop**. **Do not ask again in this session** ends the
+  questions, and **Settings > Agents** turns them off. Only guests with the right to
+  type can be asked, the person sharing is told each time, and both sides need this
+  version.
 - **Updating a development copy**: a Tessel started with `npm run dev` checks GitHub
   every 30 minutes (`git fetch` of the branch it follows) and, when there are newer
   builds, shows a yellow `↑ b1700` next to **dev**. It lists them and, for a copy with
   no change of its own, brings them in with a fast-forward; with changes of your own
   it touches nothing and gives you the command. It says whether to restart
-  (main process changed) or run `npm install` (packages changed). An installed Tessel
+  (main process changed). `npm run dev` installs the packages the code needs by itself
+  when they are missing or out of date, without changing `package-lock.json`. An installed Tessel
   keeps its own updater: it downloads each release and asks you to restart.
 - **Agents updated while a pane runs them**: when Tessel (or you) updates an agent's
   program, panes still running the old one restart by themselves with their conversation
@@ -280,6 +319,11 @@ on the same conversation:
 - **Task board**: a kanban beside the panes (`Ctrl+Shift+K`). You and the
   agents add and move cards, so you can see who does what. Tasks are saved
   with the workspace, with the tokens, time and estimated cost of each one.
+- **Message alerts**: when an agent has unread messages and is idle, Tessel types
+  a short line in its box and presses Enter. On Codex, Enter waits until the line
+  shows there. If the line stays unsent, Tessel presses Enter again, even with you
+  in the pane or after a restart, as long as the box holds nothing else: what you
+  type is never sent for you.
 - **Conversations**: a tab in the side panel, after Agents, shows what the
   agents of a team say to each other and to you, with who sent each message
   and the model it ran on.
@@ -391,9 +435,9 @@ The installer is not code-signed, so Windows SmartScreen may warn the first
 time; choose **More info → Run anyway**. `npm run dist:dir` builds an unpacked
 copy in `dist/win-unpacked/` without the installer.
 
-The website is in `site/` and its demo in `web-demo/`: `npm run build:site` builds
-the demo into `site/public/demo/` and checks it (no local path, user name, token or
-oversized file). A push to `main` that touches them or the interface puts the site
+The website is in `site/` and its demo in `web-demo/`, on an address of its own
+(`demo.tesselcode.com`): `npm run build:site` builds the demo into `site/demo/public/`
+and checks it (no local path, user name, token or oversized file). A push to `main` that touches them or the interface puts the site
 online (`.github/workflows/site.yml`).
 
 Saved workspaces, settings and tasks live in `%APPDATA%\tessel` for the

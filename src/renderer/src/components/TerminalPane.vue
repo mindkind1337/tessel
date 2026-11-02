@@ -41,7 +41,8 @@ import {
   paneMonitoring,
   monitoring
 } from '../agentStatus'
-import { promptShowsPlaceholder } from '../promptCheck'
+import { promptBoxText, promptShowsPlaceholder } from '../promptCheck'
+import { agentNewlineKey } from '../agentKeys'
 import { detectTaskDone } from '../agentLimit'
 import { modelLabel } from '../../../shared/modelLabel'
 import { paneAccount, accountChoices, accountSubscription, shortAccount } from '../accountChoices'
@@ -3942,7 +3943,7 @@ onMounted(() => {
     if (isAppShortcut(e)) return false
     // Shift+Enter in an agent: a new line in the message, not sending it. The
     // terminal sends the same Enter for both, so each agent gets the key it
-    // reads as "new line": Alt+Enter for Claude Code, Ctrl+J for the others.
+    // reads as "new line" (agentKeys.js).
     if (
       e.type === 'keydown' &&
       e.key === 'Enter' &&
@@ -3953,7 +3954,7 @@ onMounted(() => {
       isAgent.value
     ) {
       e.preventDefault()
-      ctx.routeInput(props.node.id, props.node.agentId === 'claude' ? '\x1b\r' : '\n')
+      ctx.routeInput(props.node.id, agentNewlineKey(props.node.agentId, { remote: !!props.node.remoteHostId, windows: /Windows/i.test(navigator.userAgent) }))
       return false
     }
     // xterm leaves a plain Space to the browser's keypress/input events, but
@@ -4086,6 +4087,7 @@ onMounted(() => {
     screenText,
     // Is its input prompt empty (see promptCheck.js)?
     promptShowsPlaceholder: (promptChar) => promptShowsPlaceholder(term, promptChar),
+    promptBoxText: (promptChar) => promptBoxText(term, promptChar),
     // What the screen shows of its agent: { busy, ready, approval, limit }
     // (an automation's run where no hooks report, e.g. on a remote host).
     agentObservation: () => (term ? agentScreenObservation(term, props.node.agentId, screenText(12)) : null),

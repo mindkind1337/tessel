@@ -314,11 +314,11 @@ describe('hook', () => {
   })
 
   it('refuses more stdin than the limit without running anything', async () => {
-    const t = makeTunnel({ limits: { hookStdinMax: 10 } })
+    const t = makeTunnel({ limits: { hookStdinMax: 10, hookTimeoutMs: 30000 } })
     t.registerPane('h1', 'p1', agent())
     const ch = connect(t, hello({ kind: 'hook', args: ['claude'] }) + '12345')
     ch.push('678901')
-    ch.push(null)
+    // Even without EOF, the channel is cut immediately instead of draining until hookTimeoutMs.
     await closed(ch)
     const r = resultOf(ch)
     expect(r.exit).toBe(1)

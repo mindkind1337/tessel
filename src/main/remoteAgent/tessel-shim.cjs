@@ -15,8 +15,9 @@ const fs = require('fs')
 const os = require('os')
 const net = require('net')
 const path = require('path')
+const crypto = require('crypto')
 
-const VERSION = '1.4.3'
+const VERSION = '1.4.4'
 const PROTOCOL = 1
 const SERVER_NAME = 'tessel-team'
 const SHIM_NAME = 'tessel-shim.cjs'
@@ -144,6 +145,11 @@ function emptyServer(reason) {
   process.stdin.setEncoding('utf8')
   process.stdin.on('data', (chunk) => {
     buf += chunk
+    if (buf.length > MAX_LINE && buf.indexOf('\n') < 0) {
+      buf = ''
+      write({ jsonrpc: '2.0', id: null, error: { code: -32700, message: 'Message too large for Tessel (over 4 MB): it was dropped.' } })
+      return
+    }
     let nl
     while ((nl = buf.indexOf('\n')) >= 0) {
       const line = buf.slice(0, nl).trim()
@@ -409,8 +415,11 @@ function runHook(args, env = process.env) {
   let tooBig = false
   process.stdin.on('data', (c) => {
     size += c.length
-    if (size > MAX_HOOK_INPUT) tooBig = true
-    else chunks.push(c)
+    if (size > MAX_HOOK_INPUT) {
+      tooBig = true
+      return quiet()
+    }
+    chunks.push(c)
   })
   process.stdin.on('error', quiet)
   // The agent stopped reading: nothing more to do.
@@ -421,8 +430,20 @@ function runHook(args, env = process.env) {
     const input = Buffer.concat(chunks)
     open(conn, 'hook', args, (err, socket, rest) => {
       if (err) return quiet()
+      let rxSize = rest.length
+      if (rxSize > MAX_LINE) {
+        socket.destroy()
+        return quiet()
+      }
       const parts = [rest]
-      socket.on('data', (c) => parts.push(c))
+      socket.on('data', (c) => {
+        rxSize += c.length
+        if (rxSize > MAX_LINE) {
+          socket.destroy()
+          return quiet()
+        }
+        parts.push(c)
+      })
       socket.on('error', quiet)
       let done = false
       const onClose = () => {
@@ -605,9 +626,9 @@ function writeAtomic(link, text) {
   } catch {
     // a new file: private
   }
-  const tmp = `${file}.tessel-tmp-${process.pid}`
+  const tmp = `${file}.tessel-tmp-${process.pid}-${crypto.randomBytes(6).toString('hex')}`
   try {
-    fs.writeFileSync(tmp, text, { encoding: 'utf8', mode })
+    fs.writeFileSync(tmp, text, { encoding: 'utf8', mode, flag: 'wx' })
     fs.chmodSync(tmp, mode)
     fs.renameSync(tmp, file)
   } catch (err) {
@@ -620,10 +641,21 @@ function writeAtomic(link, text) {
   }
 }
 
-// The user's file as it was before Tessel's first change, kept once.
+// The user's file as it was before Tessel's first change, kept once (never following a symlink at .tessel-bak).
 function backupOnce(file) {
+  if (!fs.existsSync(file)) return
   const bak = `${file}.tessel-bak`
-  if (fs.existsSync(file) && !fs.existsSync(bak)) fs.copyFileSync(file, bak)
+  try {
+    fs.lstatSync(bak)
+    return
+  } catch (err) {
+    if (!err || err.code !== 'ENOENT') throw err
+  }
+  try {
+    fs.copyFileSync(file, bak, fs.constants.COPYFILE_EXCL)
+  } catch (err) {
+    if (!err || err.code !== 'EEXIST') throw err
+  }
 }
 
 // A command on PATH (an installed agent).

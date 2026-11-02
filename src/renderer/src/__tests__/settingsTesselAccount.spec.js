@@ -56,12 +56,9 @@ describe('Settings > Tessel account', () => {
     expect(w.get('.tessel-account-open').text()).toBe('Sign in to Tessel')
     expect(w.find('input').exists()).toBe(false)
     expect(w.get('[data-included]').text()).toContain('Included with your account')
-    // Your settings everywhere works: only Gmail in one click is still to come.
-    const items = w.findAll('[data-included] li')
-    expect(items[0].text()).toContain('Your settings everywhere')
-    expect(items[0].find('.tag').exists()).toBe(false)
-    expect(items[1].text()).toContain('Gmail in one click')
-    expect(items[1].get('.tag').text()).toBe('Soon')
+    // Your settings everywhere and Gmail in one click both work now: nothing says Soon.
+    expect(w.findAll('[data-included] .tag')).toHaveLength(0)
+    expect(w.get('[data-included]').text()).toContain('Your settings everywhere')
     expect(w.text()).toContain('It is optional')
     expect(w.text()).toContain('Never your mail, calendar or files')
     expect(w.find('.tessel-account-delete').exists()).toBe(false)

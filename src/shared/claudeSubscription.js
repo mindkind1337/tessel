@@ -7,6 +7,7 @@
 // answer): nothing that names a person, and never a link to an invoice or a
 // payment page. Each one is checked for its shape; anything else is dropped.
 export const SUBSCRIPTION_FIELDS = Object.freeze([
+  'plan_display_name',
   'organization_type',
   'rate_limit_tier',
   'seat_tier',
@@ -28,6 +29,13 @@ function word(value) {
   return /^[a-z0-9][a-z0-9_-]{0,59}$/.test(v) ? v : null
 }
 const flag = (value) => (typeof value === 'boolean' ? value : null)
+// The plan's name as the service words it for people ("Ultra"): a short plain
+// name, in any language, kept with its capitals.
+export function planDisplayName(value) {
+  if (typeof value !== 'string') return null
+  const v = value.trim()
+  return /^\p{L}[\p{L}\p{N} +._-]{0,39}$/u.test(v) ? v : null
+}
 // A date (ISO text, or ms since 1970) -> ms, or null.
 function when(value) {
   const ms = typeof value === 'number' ? value : typeof value === 'string' && value.length <= 40 ? Date.parse(value) : NaN
@@ -47,6 +55,7 @@ export function subscriptionFields(profile) {
   for (const key of WORDS) out[key] = word(pick(key))
   for (const key of FLAGS) out[key] = flag(pick(key))
   out.claude_code_trial_ends_at = when(pick('claude_code_trial_ends_at'))
+  out.plan_display_name = planDisplayName(pick('plan_display_name'))
   if (!out.organization_type && !out.subscription_status && out.has_claude_max === null && out.has_claude_pro === null) return null
   return out
 }
@@ -62,22 +71,30 @@ export function cleanSubscription(value) {
   for (const key of WORDS) out[key] = word(value[key])
   for (const key of FLAGS) out[key] = flag(value[key])
   out.claude_code_trial_ends_at = when(value.claude_code_trial_ends_at)
+  out.plan_display_name = planDisplayName(value.plan_display_name)
   if (!out.organization_type && !out.subscription_status && out.has_claude_max === null && out.has_claude_pro === null) return null
   out.checkedAt = checkedAt
   return out
 }
 
-// The plan's name, as Claude's site writes it: Max 20x, Max 5x, Pro, Team,
-// Enterprise, Free. null when the answer does not say.
+// The plan's kind, from the service's type and tier, which keep their old words
+// when a plan is renamed for people: Max 20x, Max 5x, Pro, Team, Enterprise, Free.
+// null when the answer does not say.
 const TYPES = { claude_max: 'Max', claude_pro: 'Pro', claude_team: 'Team', claude_enterprise: 'Enterprise', claude_free: 'Free' }
-export function subscriptionPlan(sub) {
-  if (!object(sub)) return null
+function planKind(sub) {
   const type = typeof sub.organization_type === 'string' ? sub.organization_type : ''
   let name = TYPES[type] || (/enterprise/.test(type) ? 'Enterprise' : /team/.test(type) ? 'Team' : null)
   if (!name) name = sub.has_claude_max === true ? 'Max' : sub.has_claude_pro === true ? 'Pro' : null
   if (name !== 'Max') return name
   const tier = typeof sub.rate_limit_tier === 'string' ? /(?:^|_)max_(\d{1,3})x(?:_|$)/.exec(sub.rate_limit_tier) : null
   return tier ? `Max ${Number(tier[1])}x` : 'Max'
+}
+
+// The plan's name to show: the service's own, so a new name needs no change here;
+// its kind for an answer that does not give one.
+export function subscriptionPlan(sub) {
+  if (!object(sub)) return null
+  return planDisplayName(sub.plan_display_name) || planKind(sub)
 }
 
 // Stripe's words for a subscription that ended, and for one not paid.
@@ -96,7 +113,7 @@ export function subscriptionState(sub, now = Date.now()) {
   const plan = subscriptionPlan(s)
   const status = typeof s.subscription_status === 'string' ? s.subscription_status : ''
   let warn = null
-  if (s.organization_type === 'claude_free' || plan === 'Free') warn = 'none'
+  if (planKind(s) === 'Free') warn = 'none'
   else if (ENDED.has(status)) warn = 'canceled'
   else if (UNPAID.has(status)) warn = 'payment'
   const trial = Number.isFinite(s.claude_code_trial_ends_at) && s.claude_code_trial_ends_at > now ? s.claude_code_trial_ends_at : null

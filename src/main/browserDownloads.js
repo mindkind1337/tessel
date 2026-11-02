@@ -28,10 +28,10 @@ export function createBrowserDownloads({ directory, send, reveal = () => {} }) {
     return [...records.values()].filter((r) => r.webContentsId === page).map((r) => ({ ...r }))
   }
   function accept(item, page, { unattended = false } = {}) {
-    if (active.size >= 8) throw new Error('Too many active downloads')
+    if (active.size >= 8) throw new Error('Too many active downloads') // i18n-ignore
     const destination = destinations.get(page)
     destinations.delete(page)
-    if (destination && (destination.expiresAt <= Date.now() || !destination.allowed())) throw new Error('Download destination expired or revoked')
+    if (destination && (destination.expiresAt <= Date.now() || !destination.allowed())) throw new Error('Download destination expired or revoked') // i18n-ignore
     const silent = !!destination || unattended
     const folder = destination ? path.dirname(destination.saveAs) : unattended ? path.join(directory(), 'Tessel') : directory()
     if (silent) fs.mkdirSync(folder, { recursive: true })

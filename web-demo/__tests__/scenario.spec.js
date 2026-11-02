@@ -190,7 +190,7 @@ describe('the simulator', () => {
   it('the page says no network, and the same in the site\'s headers', () => {
     const page = /Content-Security-Policy"\s+content="([^"]+)"/.exec(src('web-demo/index.html'))[1]
     expect(page).toMatch(/connect-src 'none'/)
-    const headers = /Content-Security-Policy: ([^\r\n]+)/.exec(src('site/public/_headers'))[1]
+    const headers = /Content-Security-Policy: ([^\r\n]+)/.exec(src('web-demo/public/_headers'))[1].replace(/; frame-ancestors [^;]*$/, '')
     const norm = (s) => s.replace(/;\s*$/, '').trim()
     expect(norm(headers)).toBe(norm(page))
   })

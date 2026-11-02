@@ -21,7 +21,7 @@ const { page, searching, shown, go, emit } = useSettingsShell()
     </header>
     <div class="set-group">
       <div v-if="page === 'connections' && !searching" class="set-card set-card-pad">
-        <ConnectionsPanel :agents="agents" :cwd="projectCwd" @run="emit('run-job', $event)" @open-mcp="go('mcp')" />
+        <ConnectionsPanel :agents="agents" :cwd="projectCwd" @run="emit('run-job', $event)" @open-account="go('tessel-account')" @open-mcp="go('mcp')" />
       </div>
       <div v-else class="set-row">
         <div class="set-label">{{ t('settings.connections.services', 'Gmail, Outlook, Dropbox and other accounts') }}

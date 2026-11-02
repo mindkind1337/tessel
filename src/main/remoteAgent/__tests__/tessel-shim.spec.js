@@ -271,6 +271,23 @@ describe('install', () => {
     expect(r.errors[0]).toContain('.claude.json')
     expect(fs.readFileSync(join(home, '.claude.json'), 'utf8')).toBe('{ broken')
   })
+
+  it('never clobbers a pre-existing predictable .tessel-tmp-<pid> file during atomic writes', () => {
+    const decoy = join(home, `.claude.json.tessel-tmp-${process.pid}`)
+    fs.writeFileSync(join(home, '.claude.json'), '{"keep":1}')
+    fs.writeFileSync(decoy, 'do-not-touch')
+    expect(shim.install({ home, shimPath: ABS, env }).errors).toEqual([])
+    expect(fs.readFileSync(decoy, 'utf8')).toBe('do-not-touch')
+    expect(JSON.parse(fs.readFileSync(join(home, '.claude.json'), 'utf8')).keep).toBe(1)
+  })
+
+  it.skipIf(process.platform === 'win32')('never follows a dangling symlink at .tessel-bak', () => {
+    const target = join(home, 'protected-target')
+    fs.writeFileSync(join(home, '.claude.json'), '{"secret":"s"}')
+    fs.symlinkSync(target, join(home, '.claude.json.tessel-bak'))
+    expect(shim.install({ home, shimPath: ABS, env }).errors).toEqual([])
+    expect(fs.existsSync(target)).toBe(false)
+  })
 })
 
 // A fake Tessel on a Unix socket (named pipe on Windows), the shim run for real.
@@ -382,6 +399,14 @@ describe('round trip', () => {
     expect(seen).toEqual([])
   })
 
+  it('emptyServer drops an oversized line without newline (> 4 MB) instead of buffering without bound', async () => {
+    const env = { TESSEL_REMOTE_SOCK: '', TESSEL_REMOTE_TOKEN: '', TESSEL_PANE_ID: '' }
+    const r = await run(['mcp'], { input: 'x'.repeat(5 * 1024 * 1024) + '\n' + JSON.stringify({ jsonrpc: '2.0', id: 9, method: 'ping' }) + '\n', env })
+    const out = answers(r.out)
+    expect(out[0]).toMatchObject({ id: null, error: { code: -32700 } })
+    expect(out.at(-1)).toEqual({ jsonrpc: '2.0', id: 9, result: {} })
+  })
+
   it('mcp with Tessel closed or refusing: the same empty server, the reason only in its instructions', async () => {
     for (const env of [{ TESSEL_REMOTE_SOCK: sock + '-nope' }, { TESSEL_REMOTE_TOKEN: 'cd'.repeat(32) }]) {
       const t0 = Date.now()
@@ -434,6 +459,7 @@ describe('round trip', () => {
   }, 20000)
 
   it('version', async () => {
+    expect(shim.VERSION).toBe('1.4.4')
     expect((await run(['version'])).out).toBe(`${shim.VERSION}\n`)
   })
 })

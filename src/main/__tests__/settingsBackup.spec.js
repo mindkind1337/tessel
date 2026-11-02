@@ -209,8 +209,69 @@ describe('what decides what agents may do', () => {
   })
 
   it('a proxy command of a host is dropped without "security"; the rest of the host stays', () => {
-    const hosts = JSON.stringify({ targets: [{ id: 'h', host: 'x', proxyCommand: 'evil' }] })
+    const hosts = JSON.stringify({ targets: [{ id: 'h', host: 'x', proxyCommand: 'evil', jumpHost: 'evil.example', identityFile: '\\\\evil.example\\share\\key' }] })
     expect(JSON.parse(withoutSecurity('remote-hosts.json', hosts, null)).targets[0]).toEqual({ id: 'h', host: 'x' })
+    const own = JSON.stringify({ targets: [{ id: 'h', host: 'x', identityFile: 'C:\\Users\\me\\.ssh\\id' }] })
+    expect(JSON.parse(withoutSecurity('remote-hosts.json', own, null)).targets[0].identityFile).toBe('C:\\Users\\me\\.ssh\\id')
+  })
+
+  describe('what a pane of the file would start with', () => {
+    const known = layout({}, [{ name: 'mine', tree: { type: 'leaf', kind: 'agent', agentCommand: 'claude' } }])
+    const clean = (tree, extra = {}) => JSON.parse(withoutSecurity('workspace-layout.json', JSON.stringify({ workspaces: [{ name: 'p', tree }], ...extra }), known))
+    const pane = (fields) => ({ type: 'leaf', kind: 'agent', agentId: 'claude', agentCommand: 'claude', ...fields })
+
+    it('a command that is not text is no command', () => {
+      for (const command of [['calc.exe'], { toString: 'x' }, 7, true]) expect(clean(pane({ agentCommand: command })).workspaces[0].tree.agentCommand).toBeNull()
+    })
+
+    it('an older file, with its tree outside the list of projects, is cleaned too', () => {
+      const out = JSON.parse(withoutSecurity('workspace-layout.json', JSON.stringify({ tree: pane({ agentCommand: 'calc.exe', permissions: 'yolo' }) }), known))
+      expect(out.tree.agentCommand).toBeNull()
+      expect(out.tree.permissions).toBeUndefined()
+    })
+
+    it('panes nested in splits are reached', () => {
+      const out = clean({ type: 'split', children: [{ type: 'split', children: [pane({ agentCommand: 'calc.exe' })] }] })
+      expect(out.workspaces[0].tree.children[0].children[0].agentCommand).toBeNull()
+    })
+
+    it('a conversation id cannot add to the command line; a real one stays', () => {
+      for (const id of ['x; calc.exe #', 'abc def1', '../../x', '-rf-xxxx', 7, ['abcdef12']]) expect(clean(pane({ sessionId: id })).workspaces[0].tree.sessionId).toBeNull()
+      expect(clean(pane({ sessionId: '6f1c2a10-77aa-4b1e-9d11-0a1b2c3d4e5f' })).workspaces[0].tree.sessionId).toBe('6f1c2a10-77aa-4b1e-9d11-0a1b2c3d4e5f')
+      expect(clean(pane({ sessionId: 'ses_abc123' })).workspaces[0].tree.sessionId).toBe('ses_abc123')
+    })
+
+    it('a Yolo pin and how it was launched stay this computer\'s to decide', () => {
+      const out = clean(pane({ permissions: 'yolo', permissionMode: 'bypassPermissions', launchYolo: true, launchSig: 'x', rootNoYolo: true })).workspaces[0].tree
+      for (const key of ['permissions', 'permissionMode', 'launchYolo', 'launchSig', 'rootNoYolo']) expect(out[key]).toBeUndefined()
+    })
+
+    it('no folder on a network share, a local one stays', () => {
+      const out = clean(pane({ startDir: '\\\\evil.example\\share', worktree: { path: '//evil.example/share/x', branch: 'b' } }))
+      expect(out.workspaces[0].tree.startDir).toBeNull()
+      expect(out.workspaces[0].tree.worktree.path).toBeNull()
+      const project = JSON.parse(withoutSecurity('workspace-layout.json', JSON.stringify({ workspaces: [{ name: 'p', cwd: ' \\\\evil\\s' }, { name: 'q', cwd: 'C:\\proj' }] }), known))
+      expect(project.workspaces[0].cwd).toBeNull()
+      expect(project.workspaces[1].cwd).toBe('C:\\proj')
+    })
+
+    it('a team\'s message folder is not the file\'s to choose', () => {
+      const out = clean(pane({}), { teams: [{ id: 't', name: 'T', color: '#112233', channelDir: '\\\\evil\\s' }] })
+      expect(out.teams[0]).toEqual({ id: 't', name: 'T', color: '#112233' })
+    })
+
+    it('with "security" ticked, the file is brought as it is', () => {
+      const files = { 'workspace-layout.json': JSON.stringify({ workspaces: [{ name: 'p', tree: pane({ permissions: 'yolo' }) }] }) }
+      stageImport({ dir, files, categories: ['settings', 'security'] })
+      expect(JSON.parse(fs.readFileSync(path.join(dir, PENDING_DIR, 'workspace-layout.json'), 'utf8')).workspaces[0].tree.permissions).toBe('yolo')
+    })
+  })
+
+  it('an export leaves out how panes were launched (it can hold API keys)', () => {
+    put('workspace-layout.json', { settings: {}, workspaces: [{ name: 'p', tree: { type: 'split', children: [{ type: 'leaf', launchSig: 'ANTHROPIC_API_KEY=sk-SECRET', title: 'a' }] } }] })
+    const text = buildBackup({ dir, categories: ['settings'] }).bundle.files['workspace-layout.json']
+    expect(text).not.toContain('SECRET')
+    expect(JSON.parse(text).workspaces[0].tree.children[0].title).toBe('a')
   })
 
   it('staging: without "security" nothing sensitive is staged; with it, the file is brought as it is', () => {
@@ -237,12 +298,36 @@ describe('what decides what agents may do', () => {
 })
 
 describe('a layout that would break the start', () => {
+  const nested = (levels) => {
+    let node = { type: 'leaf', kind: 'agent', agentCommand: 'calc.exe', permissions: 'yolo' }
+    for (let i = 0; i < levels; i++) node = { type: 'split', children: [node] }
+    return node
+  }
+  it('too deep: refused, not skipped (the start-up restore would go down where the checks stop)', () => {
+    expect(layoutOk({ workspaces: [{ tree: nested(10) }] })).toBe(true)
+    for (const levels of [30, 61, 200]) {
+      expect(layoutOk({ workspaces: [{ tree: nested(levels) }] })).toBe(false)
+      expect(layoutOk({ tree: nested(levels) })).toBe(false)
+    }
+  })
+  it('a file with such a layout brings none of it', () => {
+    const body = JSON.stringify({ workspaces: [{ tree: nested(61) }] })
+    const text = JSON.stringify({ app: 'tessel', format: FORMAT, files: { 'workspace-layout.json': body, 'task-board.json': '{"tasks":[]}' } })
+    expect(inspectBackup(text).files).not.toHaveProperty('workspace-layout.json')
+  })
+  it('more panes than anyone has: refused', () => {
+    const many = Array.from({ length: 501 }, () => ({ type: 'leaf' }))
+    expect(layoutOk({ workspaces: [{ tree: { type: 'split', children: many } }] })).toBe(false)
+    expect(layoutOk({ workspaces: [{ tree: { type: 'split', children: many.slice(1) } }] })).toBe(true)
+  })
   it('is refused when the file is read, not found out at the next start', () => {
     expect(layoutOk({ workspaces: [null] })).toBe(false)
     expect(layoutOk({ workspaces: [{ tree: 'x' }] })).toBe(false)
     expect(layoutOk({ workspaces: 'x' })).toBe(false)
     expect(layoutOk({ settings: [] })).toBe(false)
     expect(layoutOk({ workspaces: [{ name: 'a', tree: null }, { name: 'b', tree: { type: 'leaf' } }] })).toBe(true)
+    expect(layoutOk({ tree: 'x' })).toBe(false)
+    expect(layoutOk({ tree: { type: 'leaf' } })).toBe(true)
     const bad = JSON.stringify({ app: 'tessel', format: 1, files: { 'workspace-layout.json': '{"workspaces":[null]}', 'task-board.json': '{"tasks":[]}' } })
     expect(Object.keys(inspectBackup(bad).files)).toEqual(['task-board.json'])
   })

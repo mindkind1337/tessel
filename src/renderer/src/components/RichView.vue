@@ -16,7 +16,7 @@ import DocView from './DocView.vue'
 import MediaView from './MediaView.vue'
 import PdfView from './PdfView.vue'
 import HtmlView from './HtmlView.vue'
-import { resolveFrom } from '../../../shared/viewPaths'
+import { resolveFrom, resolvePreviewImage } from '../../../shared/viewPaths'
 import { openTarget } from '../links/openTarget'
 import { t } from '../i18n'
 
@@ -132,7 +132,7 @@ async function afterRender() {
     })
   }
   for (const img of root.querySelectorAll('img[data-local-src]')) {
-    const target = resolveFrom(props.file, img.getAttribute('data-local-src'))
+    const target = resolvePreviewImage(props.file, img.getAttribute('data-local-src'))
     img.removeAttribute('data-local-src')
     if (!target || !window.shellApi.viewImage) continue
     window.shellApi.viewImage(target).then((r) => {

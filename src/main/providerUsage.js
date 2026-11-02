@@ -9,7 +9,7 @@ import path from 'node:path'
 import { createHash, randomBytes, randomUUID } from 'node:crypto'
 import { t } from './i18n'
 import { retryAfterMs } from './usagePoller'
-import { subscriptionFields } from '../shared/claudeSubscription'
+import { planDisplayName, subscriptionFields } from '../shared/claudeSubscription'
 
 const ENDPOINTS = Object.freeze({
   codex: 'https://chatgpt.com/backend-api/wham/usage',
@@ -344,7 +344,7 @@ export function createProviderUsage({
   log,
   timeoutMs = 10000,
   // claudePlanCheck.js: the plan Anthropic reported for a Claude account
-  // (accountId -> "Max 20x", "Free"... or undefined), which wins over its
+  // (accountId -> "Ultra", "Free"... or undefined), which wins over its
   // login file's; and the account whose usage was refused with no usage
   // limits for it (its plan is checked again).
   livePlan = null,
@@ -627,7 +627,7 @@ export function createProviderUsage({
   function reportedPlan(accountId) {
     try {
       const value = livePlan?.(accountId)
-      return typeof value === 'string' && /^[A-Za-z][A-Za-z0-9 ]{0,23}$/.test(value) ? value : undefined
+      return planDisplayName(value) || undefined
     } catch {
       return undefined
     }

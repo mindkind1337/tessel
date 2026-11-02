@@ -57,6 +57,9 @@
   var WIDTH = 1200; // below this, the window is scaled down
   var HEIGHT = 760;
   var SMALL = 0.6; // below this scale it is too small to use
+  /* On its own address: it ships a whole app, and nothing it runs may share an origin with
+     the log-in pages here. */
+  var DEMO = 'https://demo.tesselcode.com';
   var frame = null;
   var lang = document.documentElement.lang === 'fr' ? 'fr' : 'en';
 
@@ -79,7 +82,7 @@
     frame.title = lang === 'fr' ? 'Démo de Tessel' : 'Tessel demo';
     /* Its own scripts and files, and no popup, no navigation of this page. */
     frame.setAttribute('sandbox', 'allow-scripts allow-same-origin');
-    frame.src = 'demo/?lang=' + lang;
+    frame.src = DEMO + '/?lang=' + lang;
     /* Loaded ahead of being seen: its agents wait until they are. */
     frame.addEventListener('load', tell);
     box.appendChild(frame);
@@ -88,7 +91,7 @@
 
   var seen = false;
   function tell() {
-    if (frame && frame.contentWindow) frame.contentWindow.postMessage({ type: 'tessel-demo', visible: seen }, location.origin);
+    if (frame && frame.contentWindow) frame.contentWindow.postMessage({ type: 'tessel-demo', visible: seen }, DEMO);
   }
 
   fit();
@@ -99,7 +102,7 @@
     lang = e.detail;
     if (frame) {
       frame.title = lang === 'fr' ? 'Démo de Tessel' : 'Tessel demo';
-      frame.src = 'demo/?lang=' + lang;
+      frame.src = DEMO + '/?lang=' + lang;
     }
   });
 

@@ -425,7 +425,7 @@ export function createJobCost({
         if (!hit && !(known && now() - known.at < 30000)) {
           for (const home of folders) {
             if (typeof home !== 'string' || !isAbsolute(home) || isRemote(home)) continue
-            hit = s.agent === 'codex' ? codexRolloutIn(home, s.sessionId) : claudeTranscriptIn(home, s.sessionId)
+            hit = s.agent === 'codex' ? codexRolloutIn(home, s.sessionId, now()) : claudeTranscriptIn(home, s.sessionId)
             if (hit) break
           }
           resolved.set(key, { file: hit, at: now() })

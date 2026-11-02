@@ -263,7 +263,7 @@ export function createClaudePlanCheck({
     }
   }
 
-  // The plan's name for providerUsage's livePlan ("Max 20x", "Free").
+  // The plan's name for providerUsage's livePlan ("Ultra", "Free").
   function planOf(accountId) {
     const entry = kept.get(keyOf(accountId))
     return entry?.sub ? subscriptionPlan(entry.sub) || undefined : undefined

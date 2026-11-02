@@ -2,7 +2,7 @@
 // on a web page in the person's own browser (Google, GitHub, or an address and a
 // password), so no password ever passes through the app. The browser comes back through
 // Tessel's own link (tessel://, RFC 8252) and the code is swapped for a session here, with
-// PKCE, so another program claiming that link gets nothing. The session token is sealed with the OS (safeStorage) and never leaves the
+// PKCE, so another program catching the link of a sign-in Tessel started gets nothing. The session token is sealed with the OS (safeStorage) and never leaves the
 // main process: the window only gets who is signed in. Answers carry codes, which the
 // page words in its language.
 import fs from 'fs'
@@ -134,6 +134,8 @@ export function createTesselAccount({ dir, safeStorage, openExternal, onSignedIn
     lastError = error
   }
 
+  // -> { session } or { error }. Nothing is kept yet: the caller checks first that the
+  // sign-in is still wanted.
   async function swap(code, verifier) {
     let res
     try {
@@ -143,18 +145,12 @@ export function createTesselAccount({ dir, safeStorage, openExternal, onSignedIn
         body: JSON.stringify({ code, verifier })
       })
     } catch {
-      return 'offline'
+      return { error: 'offline' }
     }
-    if (!res.ok) return 'refused'
+    if (!res.ok) return { error: 'refused' }
     const { token, expires_at: expiresAt, user } = (await res.json().catch(() => null)) || {}
-    if (typeof token !== 'string' || !token) return 'refused'
-    try {
-      writeSession({ token, expires_at: expiresAt, user })
-    } catch {
-      return 'noSecureStorage'
-    }
-    offline = false
-    return null
+    if (typeof token !== 'string' || !token) return { error: 'refused' }
+    return { session: { token, expires_at: expiresAt, user } }
   }
 
   // Starts a sign-in and returns at once: the page follows it through status().
@@ -193,13 +189,51 @@ export function createTesselAccount({ dir, safeStorage, openExternal, onSignedIn
     if (!pending || pending.swapping || url.searchParams.get('state') !== pending.state) return
     const code = url.searchParams.get('code')
     if (!code) {
-      endPending({ access_denied: 'denied', account_exists: 'accountExists' }[url.searchParams.get('error')] || 'failed')
+      const reason = url.searchParams.get('error')
+      endPending(reason === 'access_denied' ? 'denied' : reason === 'account_exists' ? 'accountExists' : 'failed')
       return
     }
-    pending.swapping = true
-    const error = await swap(code, pending.verifier)
-    endPending(error)
-    if (!error) onSignedIn()
+    const attempt = pending
+    attempt.swapping = true
+    const { session: made, error } = await swap(code, attempt.verifier)
+    // Cancelled, signed out or started over meanwhile: that wins. The session the server
+    // just opened goes too.
+    if (pending !== attempt) {
+      if (made) request('/auth/logout', { method: 'POST', headers: bearer(made.token) }).catch(() => {})
+      return
+    }
+    if (error) {
+      endPending(error)
+      return
+    }
+    try {
+      writeSession(made)
+    } catch {
+      endPending('noSecureStorage')
+      return
+    }
+    offline = false
+    endPending(null)
+    onSignedIn()
+  }
+
+  // Tessel's Google app, for this account. -> { clientId, clientSecret } or { error }
+  async function googleClient() {
+    const current = readSession()
+    if (!current) return { error: 'signedOut' }
+    let res
+    try {
+      res = await request('/api/google-client', { headers: bearer(current.token) })
+    } catch {
+      return { error: 'offline' }
+    }
+    if (res.status === 401) {
+      forgetSession()
+      return { error: 'signedOut' }
+    }
+    const answer = res.ok ? await res.json().catch(() => null) : null
+    if (typeof answer?.client_id !== 'string' || typeof answer?.client_secret !== 'string') return { error: 'failed' }
+    return { clientId: answer.client_id, clientSecret: answer.client_secret }
   }
 
   function cancelSignIn() {
@@ -238,6 +272,7 @@ export function createTesselAccount({ dir, safeStorage, openExternal, onSignedIn
   // Signs out here whatever the server says: being offline must not keep anyone
   // signed in on this computer. The session then ends by itself on the server.
   async function signOut() {
+    endPending()
     const current = readSession()
     forgetSession()
     lastError = null
@@ -279,5 +314,5 @@ export function createTesselAccount({ dir, safeStorage, openExternal, onSignedIn
     return { ...view(), deleted: true }
   }
 
-  return { status, signIn, handleLink, passwordLink, cancelSignIn, signOut, deleteAccount, userId, authed, close: () => endPending() }
+  return { status, signIn, handleLink, googleClient, passwordLink, cancelSignIn, signOut, deleteAccount, userId, authed, close: () => endPending() }
 }

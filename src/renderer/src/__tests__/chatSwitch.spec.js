@@ -43,6 +43,7 @@ function load(leaf) {
     scheduleSave: () => {},
     showToast: vi.fn(),
     restartingLeaves: new Set(),
+    shellEnterAt: {},
     isRemotePath,
     parseRemotePath,
     remoteRoot,

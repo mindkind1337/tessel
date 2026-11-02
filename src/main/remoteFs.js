@@ -22,6 +22,8 @@
 // - Delete goes to the host user's trash (the freedesktop.org Trash folder,
 //   ~/.local/share/Trash, with its .trashinfo so a file manager or
 //   `gio trash --restore` can put it back), never rm.
+import { AGY_FILES, AGY_HEAD_BYTES, AGY_HISTORY_BYTES, AGY_OUTPUT_CAP, agyHostSessions, parseAgyFind } from './remoteAgent/antigravityOnHost'
+import { pickSession } from './agentResume'
 import crypto from 'crypto'
 import { ACCOUNT_FUNCTIONS } from './remoteAgent/remoteAccounts'
 import { createRemoteSession, sessionArgs, remotePathArg, rawArg, RC, DEFAULT_TIMEOUT_MS } from './remoteShell'
@@ -2417,6 +2419,28 @@ ${root}`, () => gitWorktreesNow(root))
     return rows ? { ok: true, sessions: rows } : unreadable()
   }
 
+  // The conversation an Antigravity pane on this host is in: its folder, started since it did.
+  // Never a sign-in. -> its id, or null (none yet, or it cannot be told).
+  async function findAntigravitySession(hostId, { cwd, since, exclude = [], latest = false, activeSince = 0 } = {}) {
+    if (!hostIdOk(hostId) || typeof cwd !== 'string' || !cwd.startsWith('/') || !Number.isFinite(since) || !connectedQuietly(hostId)) return null
+    const entry = sessions.get(hostId)
+    const open = !!(entry && !entry.closed && entry.session && entry.session.state === 'ready')
+    // A minute before it started: a clock on the host a little behind this computer's.
+    const from = Math.max(0, Math.floor(since / 1000) - 60)
+    const res = await call(hostId, '__t_agyfind', [String(from), String(AGY_FILES), String(AGY_HEAD_BYTES), String(AGY_HISTORY_BYTES)], { cap: AGY_OUTPUT_CAP, timeoutMs: 15_000, op: 'read', background: true, ...guestOr(null, open) })
+    if (!res || res.skipped || res.error || res.rc !== 0) return null
+    return pickSession(agyHostSessions(parseAgyFind(res.out)), { cwd, since, exclude: Array.isArray(exclude) ? exclude : [], latest: latest === true, activeSince: Number(activeSince) || 0 })
+  }
+
+  // Whether an Antigravity conversation is on this host, for a pane starting. Never a sign-in.
+  // -> true | false | null (it cannot be told)
+  async function antigravityConversationExists(hostId, id) {
+    if (!hostIdOk(hostId) || typeof id !== 'string' || !/^[0-9A-Za-z_-]{6,100}$/.test(id) || !connectedQuietly(hostId)) return null
+    const res = await call(hostId, '__t_agyhas', [id], { cap: 1024, timeoutMs: 8_000, op: 'read', background: true, lane: 'pane' })
+    if (!res || res.skipped || res.error) return null
+    return res.rc === 0 ? true : res.rc === RC.MISSING ? false : null
+  }
+
   // One agent conversation file on this host (__t_tread: Claude Code's
   // transcript or a Codex rollout, found by its id in the agent's own folder
   // there), a bounded window of it: offset null = its last `cap` bytes, else
@@ -2708,6 +2732,8 @@ ${q && q.root}`, () => (q && q.background === true ? scmBg : scm).scmStatus(q)),
     agentTools,
     connectedQuietly,
     listAgentSessions,
+    findAntigravitySession,
+    antigravityConversationExists,
     readAgentFile,
     listSubagentFiles,
     readSubagentMetas,

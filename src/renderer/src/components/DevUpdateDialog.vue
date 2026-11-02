@@ -57,7 +57,7 @@ const afterText = computed(() => {
   const r = result.value
   if (!r) return ''
   const parts = []
-  if (r.depsChanged) parts.push(t('app.devUpdate.deps', 'The packages changed: run npm install, then restart.'))
+  if (r.depsChanged) parts.push(t('app.devUpdate.deps', 'The packages changed: they install by themselves when you restart.'))
   else if (r.mainChanged) parts.push(t('app.devUpdate.restart', 'Restart npm run dev to load the changes of the main process.'))
   else parts.push(t('app.devUpdate.reload', 'The window reloads by itself; nothing to restart.'))
   return parts.join(' ')
@@ -76,8 +76,8 @@ async function restart() {
     failed.value = (r && r.reason) || 'spawn'
   }
 }
-// After an update, restarting is offered unless the packages changed (npm install first).
-const canRestartAfter = computed(() => !!result.value && !result.value.depsChanged && result.value.mainChanged !== false)
+// After an update, restarting is offered when it is needed (the packages install as it starts: launch.mjs).
+const canRestartAfter = computed(() => !!result.value && (result.value.depsChanged || result.value.mainChanged !== false))
 const restartFailed = computed(() =>
   failed.value === 'cancelled' ? '' : failed.value ? t('app.devUpdate.restartFailed', 'Tessel could not start the new one: close it and run npm run dev yourself.') : ''
 )
@@ -138,7 +138,7 @@ onMounted(() => cardEl.value && cardEl.value.focus())
         </ul>
         <p v-if="blockedText" class="update-line dim" data-test="dev-update-blocked">{{ blockedText }}</p>
         <p v-if="reasonText && !blockedText" class="update-line dim" data-test="dev-update-error">{{ reasonText }}</p>
-        <p v-if="s.depsChanged" class="update-line dim">{{ t('app.devUpdate.depsWarn', 'These builds change the packages (package.json): you will have to run npm install.') }}</p>
+        <p v-if="s.depsChanged" class="update-line dim">{{ t('app.devUpdate.depsWarn', 'These builds change the packages (package.json): they install by themselves at the next restart.') }}</p>
       </template>
       <template v-else>
         <p class="update-line" data-test="dev-update-after">{{ afterText }}</p>

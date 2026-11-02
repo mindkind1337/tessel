@@ -242,6 +242,58 @@ describe('signing in', () => {
   })
 })
 
+describe('what happens while a code is being swapped', () => {
+  // A server that answers only when told to.
+  function held() {
+    let release
+    const gate = new Promise((resolve) => (release = resolve))
+    const env = setup({
+      answers: {
+        '/auth/token': async () => {
+          await gate
+          return jsonResponse(200, { token: TOKEN, expires_at: Date.now() + 1000000, user: USER })
+        }
+      }
+    })
+    return { env, release }
+  }
+  const logoutCalled = (env) => env.calls.some((c) => c.url === `${API}/auth/logout` && c.headers.authorization === `Bearer ${TOKEN}`)
+
+  it.each([
+    ['Cancel', (account) => account.cancelSignIn()],
+    ['signing out', (account) => account.signOut()]
+  ])('%s wins: no session comes back, and the one the server just opened ends', async (_what, act) => {
+    const { env, release } = held()
+    const { state } = await startedSignIn(env)
+    const swapping = env.account.handleLink(back({ code: 'c', state }))
+    await act(env.account)
+    release()
+    await swapping
+    expect(await env.account.status()).toMatchObject({ signedIn: false, signingIn: false })
+    expect(existsSync(join(env.dir, 'session.json'))).toBe(false)
+    expect(env.onSignedIn).not.toHaveBeenCalled()
+    expect(logoutCalled(env)).toBe(true)
+  })
+
+  it('a new sign-in started meanwhile is not ended by the old one', async () => {
+    const { env, release } = held()
+    const { state } = await startedSignIn(env)
+    const swapping = env.account.handleLink(back({ code: 'c', state }))
+    await env.account.signIn()
+    release()
+    await swapping
+    expect(await env.account.status()).toMatchObject({ signedIn: false, signingIn: true })
+    expect(env.onSignedIn).not.toHaveBeenCalled()
+  })
+
+  it('an odd error in a link shows nothing odd', async () => {
+    const env = setup()
+    const { state } = await startedSignIn(env)
+    await env.account.handleLink(back({ error: 'constructor', state }))
+    expect((await env.account.status()).error).toBe('failed')
+  })
+})
+
 describe('finding the link in a command line', () => {
   it('finds this app\'s link, and no other', () => {
     const link = 'tessel://callback?code=c&state=s'
@@ -349,6 +401,38 @@ describe('signing out and deleting', () => {
     }
     expect(await env.account.deleteAccount()).toMatchObject({ deleted: false, signedIn: true, error: 'offline' })
     expect(existsSync(join(env.dir, 'session.json'))).toBe(true)
+  })
+})
+
+describe("Tessel's Google app", () => {
+  it('comes from the server with the session, and is the same shape for the page', async () => {
+    const env = setup({ answers: { '/api/google-client': () => jsonResponse(200, { client_id: 'id', client_secret: 'secret' }) } })
+    await signedIn(env)
+    expect(await env.account.googleClient()).toEqual({ clientId: 'id', clientSecret: 'secret' })
+    expect(env.calls.at(-1).headers.authorization).toBe(`Bearer ${TOKEN}`)
+  })
+
+  it('without a session it asks nothing', async () => {
+    const env = setup()
+    expect(await env.account.googleClient()).toEqual({ error: 'signedOut' })
+    expect(env.calls).toEqual([])
+  })
+
+  it.each([
+    ['a session that ended', () => jsonResponse(401, {}), 'signedOut'],
+    ['not set up on the server', () => jsonResponse(503, {}), 'failed'],
+    ['an odd answer', () => jsonResponse(200, null), 'failed'],
+    [
+      'being offline',
+      () => {
+        throw new Error('offline')
+      },
+      'offline'
+    ]
+  ])('%s says so', async (_what, answer, error) => {
+    const env = setup({ answers: { '/api/google-client': answer } })
+    await signedIn(env)
+    expect(await env.account.googleClient()).toEqual({ error })
   })
 })
 

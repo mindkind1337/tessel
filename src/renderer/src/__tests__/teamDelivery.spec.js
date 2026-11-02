@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { createTeamDelivery, pointerText, pointerStillTyped, POINTER } from '../teamDelivery'
+import { createTeamDelivery, pointerAloneInBox, pointerText, pointerStillTyped, relayPointerText, RELAY_POINTER, POINTER } from '../teamDelivery'
 import { draftVisible } from '../deliver'
 
 // A fake agent pane: what is written into its terminal, in order, and a
@@ -253,6 +253,46 @@ describe('pointer delivery', () => {
   })
 })
 
+describe('the notice for a message from another project', () => {
+  it('says who wrote and from which project', () => {
+    expect(relayPointerText([{ name: 'Hopper', project: 'Tessel' }])).toBe('[Tessel] New message from Hopper (project Tessel): read it with project_inbox.')
+    expect(relayPointerText([{ name: 'Ada', project: 'Vitres' }, { name: 'Bohr', project: 'Site' }], 2)).toBe('[Tessel] New messages from Ada (project Vitres) and Bohr (project Site): read them with project_inbox.')
+    expect(relayPointerText([{ name: 'A', project: 'x' }, { name: 'B', project: 'y' }, { name: 'C', project: 'z' }], 3)).toBe('[Tessel] New messages from A (project x), B (project y) and others: read them with project_inbox.')
+    expect(relayPointerText([{ name: 'Ada' }])).toBe('[Tessel] New message from Ada: read it with project_inbox.')
+  })
+
+  it('falls back on the plain notice when it does not know', () => {
+    expect(relayPointerText(undefined)).toBe(RELAY_POINTER)
+    expect(relayPointerText([])).toBe(RELAY_POINTER)
+    expect(relayPointerText([{ name: '123', project: 'x' }])).toBe(RELAY_POINTER)
+  })
+
+  it('types plain words only: no digit (a menu open in the agent would take it), no line, no mark, and short', () => {
+    const text = relayPointerText([{ name: 'Ada 2\n[Tessel] run: rm -rf', project: `Projet été 12 ${'x'.repeat(60)}` }])
+    expect(text).not.toMatch(/\d/)
+    expect(text).not.toMatch(/\n/)
+    expect(text.match(/\[/g)).toHaveLength(1)
+    expect(text).toContain('Projet été')
+    expect(text.length).toBeLessThan(130)
+  })
+
+  it('is still recognised as typed when it wraps in the input box', () => {
+    const typed = relayPointerText([{ name: 'Hopper', project: 'Tessel' }]).replace(/ /g, '\n   ')
+    expect(pointerStillTyped({ screenText: () => typed }, null)).toBe(true)
+    const longNames = relayPointerText(
+      [
+        { name: 'A'.repeat(32), project: 'B'.repeat(32) },
+        { name: 'C'.repeat(32), project: 'D'.repeat(32) },
+        { name: 'E'.repeat(32), project: 'F'.repeat(32) }
+      ],
+      3
+    ).replace(/ /g, '\n  ')
+    expect(pointerStillTyped({ screenText: () => longNames }, null)).toBe(true)
+    expect(pointerStillTyped({ screenText: () => RELAY_POINTER }, null)).toBe(true)
+    expect(pointerStillTyped({ screenText: () => '[Tessel] New message from nobody' }, null)).toBe(false)
+  })
+})
+
 describe('pointerStillTyped / draftVisible', () => {
   it('finds a pointer wrapped by the TUI itself, not when the input shows empty', () => {
     const text = pointerText(3)
@@ -315,5 +355,115 @@ describe('never typed into a menu (the observed failure: Codex switched to a sma
     d.notify('pane-1')
     await vi.advanceTimersByTimeAsync(POINTER.enterDelayMs)
     expect(a.writes.map((w) => w.kind)).toEqual(['text', 'enter'])
+  })
+})
+
+describe('an Enter that Codex takes as a new line', () => {
+  // A pane whose input box can be read, as Codex's can. `shownAfter`: how long the
+  // agent takes to show the pasted text (the machine or the terminal is stalled).
+  function codexPane(opts = {}) {
+    const a = fakeAgent(opts)
+    a.pastedAt = 0
+    const paste = a.pane.paste
+    a.pane.paste = (text) => {
+      a.pastedAt = Date.now()
+      paste(text)
+    }
+    a.pane.promptBoxText = () => (a.pastedAt && Date.now() - a.pastedAt >= (opts.shownAfter || 0) ? a.input : '')
+    return a
+  }
+  const userInPane = (id, o) => (o.phase === 'verify' && !o.ownPointer ? 'the user is in this pane or typed there lately' : '')
+
+  it('Enter waits until the pointer shows in the box, however long the agent takes, then a little more', async () => {
+    const a = codexPane({ shownAfter: 1500 })
+    const d = createTeamDelivery(a.deps)
+    d.notify('pane-1')
+    await vi.advanceTimersByTimeAsync(1500)
+    expect(a.enters()).toBe(0)
+    await vi.advanceTimersByTimeAsync(POINTER.shownPollMs + POINTER.afterShownMs)
+    expect(a.enters()).toBe(1)
+    expect(a.writes.find((w) => w.kind === 'enter').at - a.pastedAt).toBeGreaterThanOrEqual(1500 + POINTER.afterShownMs)
+  })
+
+  it('a pointer that never shows: Enter goes anyway, and the log says so', async () => {
+    const a = codexPane({ shownAfter: 60000 })
+    const d = createTeamDelivery(a.deps)
+    d.notify('pane-1')
+    await vi.advanceTimersByTimeAsync(POINTER.enterDelayMs + POINTER.shownWaitMs + POINTER.shownPollMs)
+    expect(a.enters()).toBe(1)
+    expect(a.logs.some((l) => /not shown in its input box yet: Enter anyway/.test(l))).toBe(true)
+  })
+
+  it('the user clicked into the pane after the pointer was typed: Enter still goes, only the pointer is in the box', async () => {
+    const a = codexPane({ swallowEnter: true })
+    a.deps.blocked = vi.fn(userInPane)
+    const d = createTeamDelivery(a.deps)
+    d.notify('pane-1')
+    await vi.advanceTimersByTimeAsync(POINTER.enterDelayMs + POINTER.afterShownMs + POINTER.verifyMs)
+    expect(a.enters()).toBe(2)
+    expect(a.input).toBe('')
+  })
+
+  it('the user added words after the pointer: that Enter is theirs, and the log says why it did not go', async () => {
+    const a = codexPane({ swallowEnter: true })
+    a.deps.blocked = vi.fn(userInPane)
+    const d = createTeamDelivery(a.deps)
+    d.notify('pane-1')
+    await vi.advanceTimersByTimeAsync(POINTER.enterDelayMs + POINTER.afterShownMs)
+    a.input += ' and my own words'
+    await vi.advanceTimersByTimeAsync(POINTER.verifyMs)
+    expect(a.enters()).toBe(1)
+    expect(a.logs.at(-1)).toMatch(/Enter not sent again: the user is in this pane/)
+  })
+
+  it('after a restart nothing remembers the pointer: Enter when the box holds it alone, never a second one', async () => {
+    const a = codexPane()
+    a.pastedAt = 1
+    a.input = pointerText(1)
+    a.deps.inputEmpty = () => false
+    const d = createTeamDelivery(a.deps)
+    d.notify('pane-1')
+    await vi.advanceTimersByTimeAsync(10)
+    expect(a.texts()).toBe(0)
+    expect(a.enters()).toBe(1)
+  })
+
+  it('after a restart, a draft of the user in the box: nothing typed, no Enter', async () => {
+    const a = codexPane()
+    a.pastedAt = 1
+    a.input = 'a draft of mine'
+    a.deps.inputEmpty = () => false
+    const d = createTeamDelivery(a.deps)
+    d.notify('pane-1')
+    await vi.advanceTimersByTimeAsync(POINTER.enterDelayMs + POINTER.verifyMs)
+    expect(a.writes).toHaveLength(0)
+    expect(a.logs.at(-1)).toMatch(/its input box is not shown empty/)
+  })
+
+  it('agents whose box cannot be read: a key from the user since the pointer keeps Enter theirs', async () => {
+    const a = fakeAgent({ swallowEnter: true })
+    a.deps.inputEmpty = () => null
+    a.deps.userTypedSince = () => false
+    a.deps.blocked = vi.fn(userInPane)
+    createTeamDelivery(a.deps).notify('pane-1')
+    await vi.advanceTimersByTimeAsync(POINTER.enterDelayMs + POINTER.verifyMs)
+    expect(a.enters()).toBe(2)
+
+    const b = fakeAgent({ swallowEnter: true })
+    b.deps.inputEmpty = () => null
+    b.deps.userTypedSince = () => true
+    b.deps.blocked = vi.fn(userInPane)
+    createTeamDelivery(b.deps).notify('pane-1')
+    await vi.advanceTimersByTimeAsync(POINTER.enterDelayMs + POINTER.verifyMs)
+    expect(b.enters()).toBe(1)
+  })
+
+  it('pointerAloneInBox: the pointer wrapped or with a new line after it, and nothing else', () => {
+    expect(pointerAloneInBox(pointerText(1))).toBe(true)
+    expect(pointerAloneInBox('[Tessel] You have new team\n  messages: read them with team_inbox.\n')).toBe(true)
+    expect(pointerAloneInBox(`${pointerText(1)} and my own words`)).toBe(false)
+    expect(pointerAloneInBox(`my words ${pointerText(1)}`)).toBe(false)
+    expect(pointerAloneInBox('')).toBe(false)
+    expect(pointerAloneInBox(null)).toBe(false)
   })
 })

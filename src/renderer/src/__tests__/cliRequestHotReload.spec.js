@@ -58,6 +58,7 @@ function makeApp(win, version) {
     agentBrowserTargets: { handle: vi.fn(async () => ({ version })) },
     agentTerminalTargets: { handle: vi.fn(async () => ({ version })), cancelPane: vi.fn() },
     cliRequests: { handle: vi.fn(async () => ({ version })) },
+    createHostCommands: () => ({ onAsk: () => {}, onRun: () => {}, restore: () => {}, runs: [], stop: () => {}, dismiss: () => {} }),
     onTerminalControl: vi.fn(),
     onTerminalLog: vi.fn()
   }

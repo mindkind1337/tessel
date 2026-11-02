@@ -173,7 +173,7 @@ onBeforeUnmount(() => {
             <li>
               <Mail :size="16" aria-hidden="true" />
               <div>
-                <span class="tessel-account-item-name">{{ t('settings.tesselAccount.itemGoogle', 'Gmail in one click') }} <span class="tag">{{ t('settings.tesselAccount.soon', 'Soon') }}</span></span>
+                <span class="tessel-account-item-name">{{ t('settings.tesselAccount.itemGoogle', 'Gmail in one click') }}</span>
                 <span class="set-hint">{{ t('settings.tesselAccount.itemGoogleHint', 'Connect Gmail, Calendar and Drive to your agents without setting up a Google client.') }}</span>
               </div>
             </li>

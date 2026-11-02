@@ -1005,6 +1005,13 @@ body.popup-open .toolbar {
   font-size: 11px;
   font-variant-numeric: tabular-nums;
 }
+.arp-why {
+  margin: 0;
+  font-size: 11.5px;
+  line-height: 1.35;
+  color: var(--text-dim);
+  overflow-wrap: anywhere;
+}
 .arp-body {
   display: grid;
   gap: 4px;
@@ -6361,6 +6368,7 @@ button.act-stat:hover,
 
 .confirm-title {
   margin: 0 0 6px;
+  overflow-wrap: anywhere;
   color: var(--text-strong);
   font-size: 15px;
   font-weight: 600;
@@ -6385,7 +6393,14 @@ button.act-stat:hover,
   font-size: 12px;
   white-space: pre-wrap;
   word-break: break-all;
+  overflow-wrap: anywhere;
   user-select: text;
+}
+/* A long one scrolls by itself: what is said about it and the buttons stay in view. */
+pre.confirm-code {
+  max-height: 38vh;
+  overflow: auto;
+  scrollbar-color: var(--border-strong) transparent;
 }
 .confirm-details {
   display: grid;

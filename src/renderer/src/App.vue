@@ -78,7 +78,7 @@ import LiveShareAsk from './components/LiveShareAsk.vue'
 import HelpDialog from './components/HelpDialog.vue'
 import { createLiveShareWindow, rightsText } from './liveShareWindow'
 import LiveSharePill from './components/LiveSharePill.vue'
-import { guestsIn, personName, viaName, inviteName, joinedGuests, waitingGuests } from './liveShareAccess'
+import { guestsIn, typingGuestsIn, guestWhoWroteLast, personName, viaName, inviteName, joinedGuests, waitingGuests } from './liveShareAccess'
 import { toastText as cookieImportToast } from './browser/cookieImportText'
 import { askQuitRunning } from './quitConfirm'
 import ImageViewer from './components/ImageViewer.vue'
@@ -101,6 +101,8 @@ import { createAgentAccountTargets, AgentAccountError } from './agentAccounts'
 import { onTerminalControl, onTerminalLog, forgetTerminal } from './agentTerminal/agentTerminalState'
 import { rulesOfAction } from '../../shared/terminalRules'
 import AgentCommandApproval from './components/AgentCommandApproval.vue'
+import HostCommandsPanel from './components/HostCommandsPanel.vue'
+import { createHostCommands } from './liveShareCommands'
 import AgentAccountApproval from './components/AgentAccountApproval.vue'
 import AgentApprovalExpired from './components/AgentApprovalExpired.vue'
 import GitHubDialog from './components/GitHubDialog.vue'
@@ -132,7 +134,7 @@ import { setCommitRoots } from './links/commitLinks'
 import { automationsState, applySnapshot as applyAutomations, subscribeAutomations } from './automationsStore'
 import { trackAgent } from '../../shared/tracking'
 import { pasteAndConfirm, turnStarting } from './deliver'
-import { createTeamDelivery, RELAY_POINTER } from './teamDelivery'
+import { createTeamDelivery, relayPointerText } from './teamDelivery'
 import { dropBuffer, exitOf, seedBuffer } from './ptyStore'
 import { prefetchAttaches, terminalLeafIds } from './restoreAttach'
 import { afterStartup, startupBegins, startupFinished } from './startupIdle'
@@ -1010,8 +1012,10 @@ function insertFoundPath({ rel }) {
 function runQuickCommand(id, q) {
   const pane = getPane(id)
   if (!pane || !pane.paste) return
+  if (q.enter) shellEnterAt[id] = Date.now()
   pane.paste(q.text)
-  if (q.enter) setTimeout(() => pane.submit && pane.submit(), 60)
+  // An agent can take an Enter right after a paste as a new line (teamDelivery.js).
+  if (q.enter) setTimeout(() => pane.submit && pane.submit(), findLeaf(id)?.kind === 'agent' ? 500 : 60)
   focusPane(id)
 }
 const mcpOpen = ref(false)
@@ -1329,6 +1333,8 @@ function newUuid() {
 // The command that starts an agent: a fresh conversation, or the pane's own
 // previous one when `resume` is set and it exists.
 async function agentStartLine(agent, sessionId, resume, accountId, { known = false, hostId = null, hostNoDaemon = null } = {}) {
+  // It goes into a command line: whatever cannot be an id never gets there.
+  if (sessionId && !safeSessionId(sessionId)) sessionId = null
   const kind = sessionKind(agent)
   // A pane on an SSH host: its conversations are on the host, never in this
   // computer's transcripts. Asked there (never a sign-in): true / false, or
@@ -1402,7 +1408,10 @@ async function agentStartLine(agent, sessionId, resume, accountId, { known = fal
     const id = sessionId || newUuid()
     return { line: `${agent.command} --session-id ${id}`, sessionId: id, resumed: false } // i18n-ignore
   }
-  const args = sessionId && resume ? await resumeArgs(kind, sessionId, window.shellApi) : null
+  // Antigravity on an SSH host: its conversation is there, so that is where it is asked for.
+  // Not known (a slow answer): resumed all the same, as Claude Code and Codex are.
+  const onThatHost = hostId && kind === 'antigravity' ? { agentResumeTarget: async () => ((await onHost('antigravity')) === false ? null : {}) } : null
+  const args = sessionId && resume ? await resumeArgs(kind, sessionId, onThatHost || window.shellApi) : null
   if (args) return { line: resumeLine(kind, agent.command, args), sessionId, resumed: true }
   return { line: agent.command, sessionId: null, resumed: false }
 }
@@ -1412,22 +1421,29 @@ async function agentStartLine(agent, sessionId, resume, accountId, { known = fal
 // first message: looked for during 30 minutes), so the pane can resume it
 // next time.
 function watchFoundSession(leaf, kind) {
+  // On an SSH host, only Antigravity is looked for this way, and there, not in this computer's
+  // files (Claude Code picks its id, Codex's comes from its hooks).
+  const hostId = leaf.remoteHostId || null
+  if (hostId && kind !== 'antigravity') return
+  const folder = hostId ? leaf.remotePath : leaf.startDir
   const find = window.shellApi.findAgentSession
     ? (q) => window.shellApi.findAgentSession({ ...q, agent: kind, ...(leaf.accountId !== undefined ? { accountId: leaf.accountId } : {}) })
     : kind === 'codex'
       ? window.shellApi.findCodexSession
       : null
-  if (!find || !leaf.startDir) return
+  if (!find || !folder) return
   let tries = 0
   const tick = async () => {
-    if (leaf.sessionId || !findLeaf(leaf.id) || leaf.agentId !== kind || ++tries > 120) return
+    // On a host, a first message may come hours later: it keeps looking, less often.
+    if (leaf.sessionId || !findLeaf(leaf.id) || leaf.agentId !== kind || ++tries > (hostId ? 450 : 120)) return
     const exclude = []
     forEachWsLeaf((l) => {
       if (l.sessionId) exclude.push(l.sessionId)
     })
     try {
       const id = await find({
-        cwd: leaf.startDir,
+        ...(hostId ? { hostId } : {}),
+        cwd: folder,
         since: leaf.launchedAt,
         exclude,
         latest: !!leaf.launchGuessed,
@@ -1440,7 +1456,7 @@ function watchFoundSession(leaf, kind) {
     } catch {
       /* try again */
     }
-    setTimeout(tick, 15000)
+    setTimeout(tick, tries > 120 ? 120000 : 15000)
   }
   setTimeout(tick, 8000)
 }
@@ -2173,7 +2189,7 @@ async function deserializeNode(snap, cwd = null, attaching = null) {
   }
   if (snap.type === 'leaf') {
     const agent =
-      snap.kind === 'agent' && snap.agentCommand
+      snap.kind === 'agent' && typeof snap.agentCommand === 'string' && snap.agentCommand
         ? {
             id: snap.agentId,
             name: snap.title || snap.agentId,
@@ -2230,7 +2246,7 @@ async function deserializeNode(snap, cwd = null, attaching = null) {
       id: savedId,
       ...(savedId && attaching && attaching.get(savedId) ? { attaching: attaching.get(savedId) } : {}),
       savedOutput: snap.id ? savedOutput[snap.id] || '' : '',
-      sessionId: snap.sessionId || null,
+      sessionId: safeSessionId(snap.sessionId) ? snap.sessionId : null,
       accountId:
         snap.accountId === null || (typeof snap.accountId === 'string' && /^[\w.-]{1,80}$/.test(snap.accountId))
           ? snap.accountId
@@ -4888,6 +4904,7 @@ function reviewPrompt(fromLeaf, ws) {
 function sendToPane(fromId, toId, mode, text = '') {
   const target = getPane(toId)
   if (!target) return
+  shellEnterAt[toId] = Date.now()
   const ws = wsOfLeaf(fromId)
   const to = findLeaf(toId)
   if (mode === 'review' && to && to.kind === 'agent') {
@@ -7815,7 +7832,8 @@ const teamPointer = createTeamDelivery({
   setTimeout: (fn, ms) => setTimeout(fn, ms),
   clearTimeout: (h) => clearTimeout(h),
   unread: (id) => ({ count: teamUnread[id] || 0, ids: teamUnreadIds[id] || null }),
-  blocked: (id, { phase } = {}) => pointerBlocked(id) || (phase === 'write' && relayPointer.state(id)?.flying ? 'a relayed message pointer is being typed there' : ''),
+  blocked: (id, { phase, ownPointer } = {}) => pointerBlocked(id, ownPointer) || (phase === 'write' && relayPointer.state(id)?.flying ? 'a relayed message pointer is being typed there' : ''),
+  userTypedSince: (id, at) => (lastUserKey[id] || 0) > at,
   getPane: (id) => {
     const leaf = findLeaf(id)
     return leaf && !leaf.sleeping && !leaf.notConnected ? getPane(id) || null : null
@@ -7846,7 +7864,7 @@ onBeforeUnmount(() => teamPointer.dispose())
 // Messages from agents of other projects (src/main/agentRelay.js): the same
 // pointer rules, its own text. A solo agent has no team poll to wake it: the
 // waiting ones are tried every few seconds.
-const relayUnread = Object.create(null) // leafId -> { count, ids }
+const relayUnread = Object.create(null) // leafId -> { count, ids, senders }
 const relayChatPointed = Object.create(null) // chat leafId -> Set of message ids it was told about
 const relayPointer = createTeamDelivery({
   now: () => Date.now(),
@@ -7855,8 +7873,9 @@ const relayPointer = createTeamDelivery({
   unread: (id) => relayUnread[id] || { count: 0, ids: null },
   // Team mail goes first, but only for a new pointer: Enter on one already typed
   // always goes, or each would wait for the other. Not when the team's pointer gave up.
-  blocked: (id, { phase, retry } = {}) => {
-    const why = pointerBlocked(id)
+  userTypedSince: (id, at) => (lastUserKey[id] || 0) > at,
+  blocked: (id, { phase, retry, ownPointer } = {}) => {
+    const why = pointerBlocked(id, ownPointer)
     if (why) return why
     if (settings.agentTerminal === false) return 'terminal tools are off in Settings (project_inbox would be refused)'
     const team = teamPointer.state(id)
@@ -7880,11 +7899,11 @@ const relayPointer = createTeamDelivery({
   log: (level, text) => {
     if (window.shellApi.log) window.shellApi.log(level, `relay delivery: ${text}`)
   },
-  pointerText: () => RELAY_POINTER
+  pointerText: (id) => relayPointerText(relayUnread[id]?.senders, relayUnread[id]?.count)
 })
 function onRelayUnread(ev) {
   if (!ev || typeof ev.paneId !== 'string') return
-  if (ev.count > 0) relayUnread[ev.paneId] = { count: ev.count, ids: Array.isArray(ev.ids) ? ev.ids : null }
+  if (ev.count > 0) relayUnread[ev.paneId] = { count: ev.count, ids: Array.isArray(ev.ids) ? ev.ids : null, senders: ev.senders }
   else delete relayUnread[ev.paneId]
   // What the agents say to each other stays in sight of the user (the activity
   // log), never of a Live Share guest (scope 'relay': projectActivity skips it).
@@ -7910,7 +7929,7 @@ function pointRelayChat(id) {
   const seen = relayChatPointed[id] || (relayChatPointed[id] = new Set())
   const ids = u.ids || []
   if (!ids.some((m) => !seen.has(m))) return
-  Promise.resolve(api.sendTeam({ paneId: id, messages: [{ id: newId('msg'), from: 'Tessel', text: RELAY_POINTER }] }))
+  Promise.resolve(api.sendTeam({ paneId: id, messages: [{ id: newId('msg'), from: 'Tessel', text: relayPointerText(u.senders, u.count) }] }))
     .then((r) => {
       if (r && r.ok !== false) for (const m of ids) seen.add(m)
     })
@@ -7974,6 +7993,8 @@ let pendingTimer = null
 // meta: { source: 'you' | 'tessel', scope: 'team' | 'workspace' | 'notes' |
 // 'team-change', teamId } for the activity log.
 function deliverToAgent(leafId, text, meta = {}) {
+  // Sent by you: what the agent asks next comes from you (Live Share: guestWhoWroteLast).
+  if (meta.source === 'you' || (meta.source === 'user' && meta.scope !== 'wake')) shellEnterAt[leafId] = Date.now()
   // A chat agent: nothing is typed; the main process gives it a turn.
   if (findLeaf(leafId)?.kind === 'chat') return deliverToChat(leafId, text, meta)
   const item = { text, meta, held: false }
@@ -8514,6 +8535,7 @@ async function startTask(spec, opts = {}) {
     wsId: ws.id,
     branch: started.worktree ? started.worktree.branch : null
   })
+  shellEnterAt[leaf.id] = Date.now()
   deliverToAgent(leaf.id, taskPrompt(started, ws), {
     source: 'tessel',
     scope: 'task',
@@ -9735,6 +9757,7 @@ async function checkRemoteAgentTools(round) {
 // being a shell when the agent quits. Checked once for every shell pane at
 // startup (an agent may still run from before).
 const shellEnterAt = {} // paneId -> last Enter pressed there
+const windowStartedAt = Date.now() // shellEnterAt knows nothing from before this
 const shellCheckedAt = {} // paneId -> last check of what runs under its shell
 const SHELL_EAGER_MS = 12000
 let detectBusy = false
@@ -10249,6 +10272,7 @@ const switchingLeaves = new Set()
 // A message (not a command) waits for the end of the agent's turn as a card
 // (onQueued(controls): heldDelivery's; onTyped(): its paste starts).
 function sendFromChatView(leafId, text, { onDelivered, onFailed, onQueued, onTyped, images, command } = {}) {
+  shellEnterAt[leafId] = Date.now()
   const leaf = findLeaf(leafId)
   const files = Array.isArray(images) ? images : []
   if (!leaf || leaf.kind !== 'agent' || !leaf.chatView || leaf.sleeping || !files.every(isPastedImageCopy) || (files.length && !chatViewTakesImages(leaf.agentId)) || (command && command !== 'paste' && command !== 'type')) {
@@ -10591,7 +10615,9 @@ function typeWake(leaf, count, unconfirmed) {
 // and the user away from it. A state not confirmed yet: only with
 // Settings > Orchestration > wake agents even without confirmation, and not
 // just after its launch.
-function pointerBlocked(id) {
+// ownPointer: only Tessel's own pointer waits in the input box, so the Enter
+// that sends it may go even with the user in the pane.
+function pointerBlocked(id, ownPointer = false) {
   const leaf = findLeaf(id)
   if (!leaf) return 'pane closed'
   if (!settings.teamWakeUps) return 'wake-ups are off in Settings'
@@ -10621,7 +10647,7 @@ function pointerBlocked(id) {
   if (approvals[id]) return 'waiting for an approval'
   if (limits[id]) return 'at its usage limit'
   if (pendingMessages[id] || unsent[id] || delivering.has(id)) return 'another message is being typed there'
-  if (!wakeAllowed(id, unconfirmed)) return 'the user is in this pane or typed there lately'
+  if (!ownPointer && !wakeAllowed(id, unconfirmed)) return 'the user is in this pane or typed there lately'
   return ''
 }
 
@@ -11446,6 +11472,7 @@ function resolveDecision(taskId, answer, { guest = null } = {}) {
   const text = String(answer || '').trim()
   if (!task || !task.gate || task.gate.status !== 'pending' || !text) return
   const by = typeof guest === 'string' && guest ? guest.slice(0, 40) : null
+  if (!by && task.gate.by) shellEnterAt[task.gate.by] = Date.now()
   updateTask(task.id, { gate: { ...task.gate, status: 'resolved', answer: text.slice(0, 500), resolvedAt: Date.now(), ...(by ? { answeredBy: by } : {}) } })
   recordActivity({ type: 'task', action: 'decided', paneId: task.gate.by, title: task.title, wsId: task.wsId, detail: text })
   const asker = task.gate.by ? findLeaf(task.gate.by) : null
@@ -12051,6 +12078,11 @@ const agentTerminalTargets = createAgentTerminalTargets({
   hostLabel: (id) => remoteHostLabel(id),
   agentName: (leaf) => programLabel(leaf),
   projectShared: (id) => !!(liveHostOn.value && liveShare.isShared(id)),
+  // Who is in a shared project now, and whether one of them wrote to this agent last.
+  projectGuests: (id) => (liveHostOn.value && liveShare.isShared(id) ? typingGuestsIn(liveShare.state.host, id).map((g) => ({ id: g.id, name: personName(g) })) : []),
+  askGuestCommand: (guestId, ask, waitMs) => window.shellApi.liveShare.askGuestCommand({ guestId, ask, waitMs }),
+  guestCommandAsked: ({ agent, guest, command }) => showToast(t('app.agentTerminal.guestCommandAsked', '{{agent}} asks {{guest}} to run this on their computer: {{command}}', { agent, guest, command }), { timeout: 15000 }),
+  guestWhoWrote: (paneId, projectId) => (liveHostOn.value && liveShare.isShared(projectId) ? guestWhoWroteLast(liveShare.state.host, paneId, projectId, shellEnterAt[paneId] || 0, windowStartedAt) : null),
   // From the pane's own launch state (Tessel's), never from the agent's request.
   agentYolo: (leaf) => paneRunsYolo(leaf),
   userTyping: (id) => userIsTyping(id),
@@ -12302,6 +12334,13 @@ watch(
 // Every listener below is removed when this window's app goes away (the dev
 // server's hot reload of App.vue makes a new one: a listener left behind
 // keeps the old code answering).
+// Live Share, as a guest: a command of the host's agent, asked of you on a card.
+const hostCommands = createHostCommands({
+  api: () => window.shellApi.liveShare,
+  approve: (card) => askAgentApproval(card),
+  expire: (id) => expireAgentApprovalById(id),
+  allowed: () => settings.liveShareHostCommands !== false
+})
 const offTerminalAgent = []
 {
   const api = window.shellApi && window.shellApi.terminalAgent
@@ -12314,6 +12353,11 @@ const offTerminalAgent = []
       })
     )
   if (api && typeof api.onLog === 'function') offTerminalAgent.push(api.onLog(onTerminalLog))
+  const shareApi = window.shellApi.liveShare
+  if (shareApi && typeof shareApi.onCommandAsk === 'function') {
+    offTerminalAgent.push(shareApi.onCommandAsk(hostCommands.onAsk), shareApi.onCommandRun(hostCommands.onRun))
+    hostCommands.restore()
+  }
   if (api && typeof api.onRelayUnread === 'function') offTerminalAgent.push(api.onRelayUnread(onRelayUnread))
   // What waited through a restart of the window.
   if (api && typeof api.relayUnread === 'function')
@@ -13575,6 +13619,7 @@ async function shareProjectNotes(wsId) {
         'Before editing a file another agent may be editing, check the notes. Do not commit that file.', // i18n-ignore
       { source: 'tessel', scope: 'notes' }
     )
+    shellEnterAt[leaf.id] = Date.now()
   }
   const limited = agents.filter((l) => limits[l.id])
   const told = agents.length - limited.length
@@ -15124,6 +15169,7 @@ onBeforeUnmount(() => {
       :card="approvalCard.card"
       @answer="answerAgentApproval"
     />
+    <HostCommandsPanel v-if="hostCommands.runs.length" :runs="hostCommands.runs" @stop="hostCommands.stop" @dismiss="hostCommands.dismiss" />
     <AgentCommandApproval
       v-if="approvalCard && !approvalCard.expired && approvalCard.card.kind !== 'accounts'"
       :key="approvalCard.card.command + approvalCard.card.kind"
