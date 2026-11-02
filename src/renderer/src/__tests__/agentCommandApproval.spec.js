@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { nextTick } from 'vue'
 import { mount, flushPromises } from '@vue/test-utils'
 import AgentCommandApproval from '../components/AgentCommandApproval.vue'
+import { ARM_MS, typingGuard } from '../components/approvalArming'
 
 describe('the approval card', () => {
   let wrapper
@@ -46,17 +47,55 @@ describe('the approval card', () => {
       }
     })
 
-    it('Tab or a click on the card says it is for the card: Enter answers then', async () => {
-      const skip = await openBy()
-      await skip.trigger('keydown', { key: 'Tab' })
-      await skip.trigger('keydown', { key: 'Enter' })
-      expect(wrapper.emitted('park')).toBeUndefined()
-      wrapper.unmount()
-      field.remove()
+    it('a click on the card says it is for the card: letters no longer put it away', async () => {
       const again = await openBy()
       await wrapper.find('[role="alertdialog"]').trigger('pointerdown')
       await again.trigger('keydown', { key: 'a' })
       expect(wrapper.emitted('park')).toBeUndefined()
+    })
+
+    it('Tab alone does not: a letter or a space after it still puts the card away, nothing is allowed', async () => {
+      for (const key of ['f', ' ']) {
+        const skip = await openBy()
+        await skip.trigger('keydown', { key: 'Tab' })
+        await skip.trigger('keydown', { key })
+        expect(wrapper.emitted('park')).toHaveLength(1)
+        expect(wrapper.emitted('answer')).toBeUndefined()
+        expect(document.activeElement).toBe(field)
+        wrapper.unmount()
+        wrapper = null
+        field.remove()
+      }
+    })
+
+    it('Shift+Tab from the refusing button does not go round to the strongest one', async () => {
+      const skip = await openBy()
+      const before = document.activeElement
+      await skip.trigger('keydown', { key: 'Tab', shiftKey: true })
+      expect(document.activeElement).toBe(before)
+      await wrapper.find('[role="alertdialog"]').trigger('pointerdown')
+      await skip.trigger('keydown', { key: 'Tab', shiftKey: true })
+      expect(document.activeElement).not.toBe(before)
+    })
+
+    it('an Enter right after Tab does nothing; a moment later it is an answer by someone who means it', () => {
+      vi.useFakeTimers()
+      try {
+        const parked = vi.fn()
+        const guard = typingGuard({ back: () => {}, park: parked })
+        const enter = () => {
+          const event = { key: 'Enter', target: { tagName: 'BUTTON' }, preventDefault: vi.fn(), stopPropagation: vi.fn() }
+          guard.key(event)
+          return event
+        }
+        guard.key({ key: 'Tab', target: { tagName: 'BUTTON' } })
+        expect(enter().preventDefault).toHaveBeenCalled()
+        vi.advanceTimersByTime(ARM_MS)
+        expect(enter().preventDefault).not.toHaveBeenCalled()
+        expect(parked).not.toHaveBeenCalled()
+      } finally {
+        vi.useRealTimers()
+      }
     })
 
     it("on a Live Share guest's computer, the same: their keys stay theirs, and nothing is answered for them", async () => {

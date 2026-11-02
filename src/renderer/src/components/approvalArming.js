@@ -50,26 +50,38 @@ export function useApprovalArming(armMs = ARM_MS) {
   return { armed, press, mayAllow }
 }
 
-// A card that opened by itself while someone goes on writing: a letter or an Enter on it is not an
-// answer. back() returns the keyboard at once, so the key reaches what they were writing in, and
-// park() puts the card away in the toolbar. Tab or a click on the card says they mean to use it,
-// and so does having opened it themselves (chosen).
-export function typingGuard({ chosen = false, back, park }) {
+// A card that opened by itself while someone goes on writing: a letter, a space or an Enter on it
+// is not an answer. back() returns the keyboard at once, so the key reaches what they were writing
+// in, and park() puts the card away in the toolbar. A click on the card says they mean to use it,
+// and so does having opened it themselves (chosen). Tab alone does not: someone can press it for
+// another reason (Shift+Tab is an agent's mode key), so after it a letter still parks the card, an
+// Enter only counts a moment after the focus got there, and the focus never wraps from the refusing
+// button round to the strongest one.
+export function typingGuard({ chosen = false, back, park, settleMs = ARM_MS, now = () => Date.now() }) {
   let meant = chosen
+  let tabbedAt = 0
   return {
     pointer() {
       meant = true
     },
+    // May Tab go round from one end of the card to the other?
+    mayWrap: () => meant,
     key(event) {
       if (meant) return
       if (event.key === 'Tab') {
-        meant = true
+        tabbedAt = now()
         return
       }
       const tag = event.target && event.target.tagName
       if (tag === 'TEXTAREA' || tag === 'INPUT') return
       // (AltGr reads as Ctrl and Alt together: that is a letter.)
       const letter = String(event.key).length === 1 && !event.metaKey && !!event.ctrlKey === !!event.altKey
+      if (event.key === 'Enter' && tabbedAt) {
+        if (now() - tabbedAt >= settleMs) return
+        event.preventDefault()
+        event.stopPropagation()
+        return
+      }
       if (event.key !== 'Enter' && !letter) return
       back()
       park()

@@ -32,7 +32,7 @@ function load(extra) {
     Promise,
     setTimeout: (...a) => globalThis.setTimeout(...a)
   }
-  vm.runInNewContext(`${CODE}\nthis.api = { approvalParked, approvalOpenedByUser, parkAgentApproval, openParkedApproval, askAgentApproval, answerAgentApproval, dismissAgentApprovals, expireAgentApprovalById, checkAgentApprovalTime, closeExpiredApproval, approvalCard, APPROVAL_GAP_MS, APPROVAL_EXPIRED_SHOW_MS }`, ctx)
+  vm.runInNewContext(`${CODE}\nthis.api = { approvalsBehind, approvalParked, approvalOpenedByUser, parkAgentApproval, openParkedApproval, askAgentApproval, answerAgentApproval, dismissAgentApprovals, expireAgentApprovalById, checkAgentApprovalTime, closeExpiredApproval, approvalCard, APPROVAL_GAP_MS, APPROVAL_EXPIRED_SHOW_MS }`, ctx)
   return ctx.api
 }
 const shown = (api) => (api.approvalCard.value && !api.approvalCard.value.expired ? api.approvalCard.value.card.name : null)
@@ -184,6 +184,24 @@ describe('the approval cards\' queue', () => {
       expect(api.approvalParked.value).toBe(false)
       api.answerAgentApproval({ allow: false })
       await next
+    })
+
+    it('requests behind a parked one are counted, and one that ends behind it is said', async () => {
+      toasts.length = 0
+      const api = load({ writing: () => true })
+      const first = api.askAgentApproval({ name: 'one', agentLabel: 'Ada', command: 'a', cardId: 'c1' }, 'p1')
+      await vi.waitFor(() => expect(shown(api)).toBe('one'))
+      expect(api.approvalsBehind.value).toBe(0)
+      const second = api.askAgentApproval({ name: 'two', agentLabel: 'Bob', command: 'b', cardId: 'c2' }, 'p2', { ms: 50 })
+      expect(api.approvalsBehind.value).toBe(1)
+      await vi.advanceTimersByTimeAsync(200)
+      api.openParkedApproval()
+      api.answerAgentApproval({ allow: false })
+      await vi.advanceTimersByTimeAsync(5000)
+      await first
+      expect(await second).toEqual({ allow: false, timedOut: true })
+      expect(api.approvalsBehind.value).toBe(0)
+      expect(toasts).toEqual(['A request from Bob ended without an answer.'])
     })
 
     it('put away by the person, it waits too', async () => {

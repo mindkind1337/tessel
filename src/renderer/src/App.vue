@@ -11957,6 +11957,8 @@ const approvalId = (card) => (card && (card.token || card.cardId)) || null
 // not counted against it.
 const approvalLanes = { terminal: Promise.resolve(), accounts: Promise.resolve() }
 let terminalCardsWaiting = 0
+// Requests behind the one on screen or in the toolbar: its button says how many.
+const approvalsBehind = ref(0)
 // Agents whose tool call went away: their waiting cards are answered no.
 const droppedApprovals = new Map() // agent pane -> time
 // opts.ms: its own time (an account switch: 2 minutes or less). Not
@@ -11969,9 +11971,13 @@ function askAgentApproval(card, agentPane = null, { ms = AGENT_APPROVAL_MS } = {
   const dropped = () => (agentPane && (droppedApprovals.get(agentPane) || 0) >= asked) || (id && expiredApprovals.has(id))
   let waiting = lane === 'terminal'
   if (waiting) terminalCardsWaiting++
+  approvalsBehind.value++
+  let behind = true
   const doneWaiting = () => {
     if (waiting) terminalCardsWaiting--
     waiting = false
+    if (behind) approvalsBehind.value--
+    behind = false
   }
   const busy = () => confirmState.value || approvalCard.value || Date.now() - approvalClosedAt < APPROVAL_GAP_MS || (lane === 'accounts' && terminalCardsWaiting > 0)
   const run = async () => {
@@ -11983,7 +11989,11 @@ function askAgentApproval(card, agentPane = null, { ms = AGENT_APPROVAL_MS } = {
     }
     doneWaiting()
     if (dropped()) return { allow: false }
-    if (Date.now() >= until) return { allow: false, timedOut: true }
+    if (Date.now() >= until) {
+      // It never showed: it waited behind another. Said, not lost in silence.
+      showToast(t('app.toolbar.agentRequestEnded', 'A request from {{agent}} ended without an answer.', { agent: card.agentLabel || card.name || 'an agent' })) // i18n-ignore
+      return { allow: false, timedOut: true }
+    }
     return new Promise((resolve) => {
       const entry = { card, resolve, agentPane, until, expired: false }
       approvalOpenedByUser.value = false
@@ -14500,7 +14510,7 @@ onBeforeUnmount(() => {
           <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true">
             <path d="M8 1.8 13.6 4v3.7c0 3.1-2.2 5.5-5.6 6.5-3.4-1-5.6-3.4-5.6-6.5V4L8 1.8Z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" />
           </svg>
-          {{ t('app.toolbar.agentRequest', 'Agent request') }}
+          {{ t('app.toolbar.agentRequest', 'Agent request') }}<span v-if="approvalsBehind > 0" class="tb-approval-count" data-test="approval-behind">+{{ approvalsBehind }}</span>
         </button>
         <button
           v-if="updateStatus.state === 'ready'"

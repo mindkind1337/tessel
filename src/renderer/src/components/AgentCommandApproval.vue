@@ -199,7 +199,8 @@ function trapTab(event) {
   const i = items.indexOf(document.activeElement)
   if (event.shiftKey && i <= 0) {
     event.preventDefault()
-    items.at(-1).focus()
+    // Round to the strongest button only on a card the person means to use.
+    if (guard.mayWrap()) items.at(-1).focus()
   } else if (!event.shiftKey && i === items.length - 1) {
     event.preventDefault()
     items[0].focus()
