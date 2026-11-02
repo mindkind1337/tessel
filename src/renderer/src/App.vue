@@ -3829,6 +3829,14 @@ async function readBuild() {
 }
 readBuild()
 window.addEventListener('focus', readBuild)
+// The window often keeps the focus while the repository moves (a pull in a pane,
+// a merge by an agent, a renderer-only change that reloads nothing): a dev copy
+// reads it again every 15 s and when the page is shown again.
+if (isDev) {
+  const buildTimer = setInterval(readBuild, 15000)
+  onBeforeUnmount(() => clearInterval(buildTimer))
+  document.addEventListener('visibilitychange', () => document.visibilityState === 'visible' && readBuild())
+}
 // A development copy: GitHub has newer builds (src/main/devUpdate.js). A yellow
 // button next to "dev" opens the list; it is the same on every dev copy.
 const devUpdate = ref({ state: 'disabled' })
@@ -3902,7 +3910,10 @@ async function applyDevUpdate(resolve) {
 function initDevUpdate() {
   const api = window.shellApi.devUpdate
   if (!isDev || !api) return
-  api.onStatus((s) => (devUpdate.value = s || { state: 'disabled' }))
+  api.onStatus((s) => {
+    devUpdate.value = s || { state: 'disabled' }
+    readBuild() // an update just brought in new commits
+  })
   api.status().then((s) => (devUpdate.value = s || { state: 'disabled' })).catch(() => {})
 }
 initDevUpdate()
