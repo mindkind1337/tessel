@@ -22,6 +22,8 @@ const emit = defineEmits(['run', 'open-mcp', 'open-account'])
 const m = useMcpState(props, emit)
 
 const entries = MCP_CATALOG.filter((e) => e.category === 'Productivity')
+// Google is connected once, in Tessel's connectors at the top: not a second time here.
+const shownEntries = entries.filter((e) => !(e.id === 'google-workspace' && window.shellApi?.tesselApps))
 const POLL_MS = 2500
 const EMAIL_RE = /^[A-Za-z0-9._+-]+@[A-Za-z0-9.-]+$/
 const isLocal = (entry) => entry.transport === 'stdio'
@@ -332,7 +334,7 @@ onBeforeUnmount(() => {
     <p v-if="m.message.text" :class="m.message.kind === 'error' ? 'mcp-error' : 'mcp-notice'" role="status">{{ m.message.text }}</p>
     <ul class="sl-list" :aria-label="t('settings.connections.list', 'Services')">
       <SettingsListItem
-        v-for="entry in entries"
+        v-for="entry in shownEntries"
         :key="entry.id"
         :open="rows[entry.id].open"
         :name="entry.name"
