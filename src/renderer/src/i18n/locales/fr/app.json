@@ -908,6 +908,7 @@
       "why": "Pourquoi",
       "guestCommandAsked": "{{agent}} demande à {{guest}} de lancer ceci sur son ordinateur : {{command}}",
       "notAscii": "Pas de l'ASCII simple dans cette commande : {{list}}",
+      "scrollToAllowApps": "Tout cela n'a pas encore été affiché en entier : faites-le défiler jusqu'au bout pour l'autoriser.",
       "scrollToAllow": "Cette commande n'a pas encore été affichée en entier : faites-la défiler jusqu'au bout pour l'autoriser.",
       "notAsciiMore": "et {{count}} de plus",
       "appsTitle": "{{agent}} veut utiliser votre {{service}} ({{account}})",

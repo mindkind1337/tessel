@@ -1,5 +1,5 @@
 import { t } from '../i18n'
-import { AppError, bad, count, createCall, cut, fileText, fitted, htmlToText, jsonBody as json, MAX_FILE_BYTES, pathId, publishable, query, reachLines, shortened, shownAddress, shownAddresses, shownLine, text } from './shared'
+import { AppError, bad, count, createCall, cut, fileText, fitted, htmlToText, jsonBody as json, MAX_FILE_BYTES, moreWhen, pathId, publishable, query, reachLines, shortened, shownAddress, shownAddresses, shownLine, text } from './shared'
 
 // tessel_apps: Outlook mail, Outlook Calendar and OneDrive, through Microsoft Graph. One fixed host:
 // every call is about "me", so no tenant or address comes from anywhere.
@@ -99,7 +99,7 @@ export function createMicrosoftTools({ connections, fetchFn = fetch }) {
     const description = args.description === undefined ? '' : publishable(args.description)
     const show = goesOut ? shownLine : shortened
     const lines = [await calendarLine(args)]
-    if (goesOut) lines.push(...reachLines(`${shownLine(args.summary)}\n${shownLine(args.location)}\n${fitted(description)}`))
+    if (goesOut) lines.push(...reachLines(fitted(`${shownLine(args.summary)}\n${shownLine(args.location)}\n${description}`)))
     if (args.summary !== undefined) lines.push(t('main.apps.card.title', 'Title: {{value}}', { value: show(args.summary) }))
     if (args.start !== undefined || args.end !== undefined) lines.push(t('main.apps.card.when', 'When: {{start}} to {{end}}', { start: shortened(args.start, 40), end: shortened(args.end, 40) }))
     if (args.timeZone) lines.push(t('main.apps.card.timeZone', 'Time zone: {{value}}', { value: shortened(args.timeZone, 80) }))
@@ -131,7 +131,8 @@ export function createMicrosoftTools({ connections, fetchFn = fetch }) {
     if (Array.isArray(e.attendees) && e.attendees.length) throw new AppError('has_guests', HAS_GUESTS)
     if (e.type === 'seriesMaster' || e.recurrence) throw new AppError('a_series', A_SERIES)
     const tag = e['@odata.etag']
-    return typeof tag === 'string' && tag ? { 'if-match': tag } : {}
+    if (typeof tag !== 'string' || !tag) throw new AppError('changed', 'Outlook did not say which version of this event it read, so nothing was done.')
+    return { 'if-match': tag }
   }
 
   return {
@@ -145,7 +146,7 @@ export function createMicrosoftTools({ connections, fetchFn = fetch }) {
         else params.$orderby = 'receivedDateTime desc'
         const found = await call(args.account, `${GRAPH}/me/messages?${query(params)}`)
         const list = found.value || []
-        return list.length ? list.map((m) => [...firstLines(m), `Subject: ${m.subject || '(none)'}`, ...(m.bodyPreview ? [`Snippet: ${m.bodyPreview}`] : []), ''].join('\n')).join('\n') : 'No message found.'
+        return list.length ? `${list.map((m) => [...firstLines(m), `Subject: ${m.subject || '(none)'}`, ...(m.bodyPreview ? [`Snippet: ${m.bodyPreview}`] : []), ''].join('\n')).join('\n')}${moreWhen(found['@odata.nextLink'])}` : 'No message found.'
       }
     },
     outlook_mail_read: {
@@ -163,8 +164,8 @@ export function createMicrosoftTools({ connections, fetchFn = fetch }) {
       // Saved, not sent: what the person sends is theirs to read in Outlook.
       describe: (args) =>
         [
-          t('main.apps.card.to', 'To: {{value}}', { value: shownAddresses(args.to) }),
-          args.cc ? t('main.apps.card.cc', 'Cc: {{value}}', { value: shownAddresses(args.cc) }) : '',
+          t('main.apps.card.to', 'To: {{value}}', { value: shownAddresses(args.to, Infinity) }),
+          args.cc ? t('main.apps.card.cc', 'Cc: {{value}}', { value: shownAddresses(args.cc, Infinity) }) : '',
           t('main.apps.card.subject', 'Subject: {{value}}', { value: shortened(args.subject) })
         ]
           .filter(Boolean)
@@ -180,7 +181,8 @@ export function createMicrosoftTools({ connections, fetchFn = fetch }) {
       service: 'outlook_calendar',
       async run(args) {
         const found = await call(args.account, `${GRAPH}/me/calendars?${query({ $select: 'id,name,isDefaultCalendar,canEdit' })}`)
-        return (found.value || []).map((c) => `${c.id}: ${c.name}${c.isDefaultCalendar ? ' (main)' : ''}${c.canEdit === false ? ' [read only]' : ''}`).join('\n') || 'No calendar.'
+        const list = (found.value || []).map((c) => `${c.id}: ${c.name}${c.isDefaultCalendar ? ' (main)' : ''}${c.canEdit === false ? ' [read only]' : ''}`).join('\n')
+        return list ? `${list}${moreWhen(found['@odata.nextLink'])}` : 'No calendar.'
       }
     },
     outlook_calendar_events: {
@@ -191,7 +193,7 @@ export function createMicrosoftTools({ connections, fetchFn = fetch }) {
         const until = text(args.to, 'to', { max: 40 }) || new Date(Date.parse(from) + 30 * 24 * 3600 * 1000).toISOString()
         const found = await call(args.account, `${GRAPH}${calendarOf(args)}/calendarView?${query({ startDateTime: from, endDateTime: until, $top: count(args.max, 20, 100), $orderby: 'start/dateTime', $select: EVENT_FIELDS })}`, { headers: TEXT_BODY })
         const events = found.value || []
-        return events.length ? events.map(eventLine).join('\n') : 'No event.'
+        return events.length ? `${events.map(eventLine).join('\n')}${moreWhen(found['@odata.nextLink'])}` : 'No event.'
       }
     },
     outlook_calendar_create_event: {
@@ -236,10 +238,12 @@ export function createMicrosoftTools({ connections, fetchFn = fetch }) {
     onedrive_search: {
       service: 'onedrive',
       async run(args) {
-        const words = text(args.query, 'query', { required: true, max: 500 })
+        // It sits in the address, between quotes. A slash separates words there anyway, and nothing in
+        // it can then read as a path.
+        const words = text(args.query, 'query', { required: true, max: 500 }).replace(/[\\/]+/g, ' ')
         const found = await call(args.account, `${GRAPH}/me/drive/root/search(q='${encodeURIComponent(words.replace(/'/g, "''"))}')?${query({ $top: count(args.max, 20, 100), $select: 'id,name,size,file,folder,lastModifiedDateTime,webUrl' })}`)
         const files = found.value || []
-        return files.length ? files.map((f) => `id: ${f.id}\n${f.name} (${f.folder ? 'folder' : f.file?.mimeType || 'file'}${f.size ? `, ${f.size} bytes` : ''}, changed ${f.lastModifiedDateTime})\n${f.webUrl || ''}\n`).join('\n') : 'No file found.'
+        return files.length ? `${files.map((f) => `id: ${f.id}\n${f.name} (${f.folder ? 'folder' : f.file?.mimeType || 'file'}${f.size ? `, ${f.size} bytes` : ''}, changed ${f.lastModifiedDateTime})\n${f.webUrl || ''}\n`).join('\n')}${moreWhen(found['@odata.nextLink'])}` : 'No file found.'
       }
     },
     onedrive_read: {

@@ -185,6 +185,86 @@ describe('the approval card', () => {
       expect(wrapper.find('[data-test="agent-apps-detail"]').text()).toBe('Invites: a@b.c')
     })
 
+    describe('what it will do does not fit', () => {
+      const realRect = HTMLElement.prototype.getBoundingClientRect
+      const heights = {}
+      const stubHeight = (name, value) => {
+        heights[name] = Object.getOwnPropertyDescriptor(HTMLElement.prototype, name)
+        Object.defineProperty(HTMLElement.prototype, name, { configurable: true, get: value })
+      }
+      beforeEach(() => {
+        stubHeight('scrollHeight', function () {
+          return this.tagName === 'PRE' ? 1000 : 0
+        })
+        stubHeight('clientHeight', function () {
+          return this.tagName === 'PRE' ? 100 : 0
+        })
+        HTMLElement.prototype.getBoundingClientRect = function () {
+          if (this.tagName === 'PRE') return { top: 100, bottom: 200 }
+          return this.classList.contains('confirm-actions') ? { top: 500, bottom: 540 } : { top: 0, bottom: 800 }
+        }
+      })
+      afterEach(() => {
+        HTMLElement.prototype.getBoundingClientRect = realRect
+        for (const name of Object.keys(heights)) delete HTMLElement.prototype[name]
+      })
+      const scrollTo = async (top) => {
+        const box = wrapper.find('[data-test="agent-apps-detail"]')
+        box.element.scrollTop = top
+        await box.trigger('scroll')
+        await nextTick()
+      }
+      const long = { ...asked, writes: true, eachTime: true, detail: Array(400).fill('.').join('\n\n') }
+
+      it('Allow waits until all of it has been on screen, and says so', async () => {
+        open(long, 0)
+        await flushPromises()
+        expect(wrapper.find('[data-test="agent-host-scroll"]').text()).toContain('Not all of this has been on screen')
+        expect(wrapper.find('[data-test="agent-command-once"]').attributes('disabled')).toBeDefined()
+        for (let top = 100; top <= 900; top += 100) await scrollTo(top)
+        expect(wrapper.find('[data-test="agent-host-scroll"]').exists()).toBe(false)
+        expect(wrapper.find('[data-test="agent-command-once"]').attributes('disabled')).toBeUndefined()
+      })
+
+      it('a jump to the end does not count', async () => {
+        open(long, 0)
+        await flushPromises()
+        await scrollTo(900)
+        expect(wrapper.find('[data-test="agent-host-scroll"]').exists()).toBe(true)
+        expect(wrapper.find('[data-test="agent-command-once"]').attributes('disabled')).toBeDefined()
+      })
+
+      it('a click while it waits does nothing', async () => {
+        open(long, 0)
+        await flushPromises()
+        await wrapper.find('[data-test="agent-command-once"]').trigger('click')
+        expect(wrapper.emitted('answer')).toBeUndefined()
+      })
+
+      it('the button that remembers waits too', async () => {
+        open({ ...asked, writes: true, detail: long.detail }, 0)
+        await flushPromises()
+        expect(wrapper.find('[data-test="agent-command-allow"]').attributes('disabled')).toBeDefined()
+      })
+
+      it('it can be scrolled from the keyboard', async () => {
+        open(long, 0)
+        await flushPromises()
+        expect(wrapper.find('[data-test="agent-apps-detail"]').attributes('tabindex')).toBe('0')
+      })
+    })
+
+    it('what fits is not held back, and a card with nothing to show has nothing to wait for', async () => {
+      open({ ...asked, writes: true, eachTime: true, detail: 'Title: T' }, 0)
+      await flushPromises()
+      expect(wrapper.find('[data-test="agent-host-scroll"]').exists()).toBe(false)
+      expect(wrapper.find('[data-test="agent-command-once"]').attributes('disabled')).toBeUndefined()
+      wrapper.unmount()
+      open(asked, 0)
+      await flushPromises()
+      expect(wrapper.find('[data-test="agent-host-scroll"]').exists()).toBe(false)
+    })
+
     it('asked each time: it never says that allowing it lets it do so again', () => {
       open({ ...asked, writes: true, eachTime: true })
       expect(wrapper.text()).toContain('You are asked every time.')

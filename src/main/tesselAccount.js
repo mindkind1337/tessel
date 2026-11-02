@@ -70,7 +70,7 @@ export function createTesselAccount({ dir, safeStorage, openExternal, onSignedIn
     fs.rmSync(file, { force: true })
   }
 
-  const request = (path, { timeoutMs = requestMs, ...options } = {}) => fetchFn(`${apiUrl}${path}`, { ...options, signal: AbortSignal.timeout(timeoutMs) })
+  const request = (path, { timeoutMs = requestMs, ...options } = {}) => fetchFn(`${apiUrl}${path}`, { ...options, redirect: 'manual', signal: AbortSignal.timeout(timeoutMs) })
   const bearer = (token) => ({ authorization: `Bearer ${token}` })
 
   function view() {

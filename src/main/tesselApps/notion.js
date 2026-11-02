@@ -1,5 +1,5 @@
 import { t } from '../i18n'
-import { bad, count, createCall, cut, jsonBody as json, pathId, publishedCard, publishedText, publishedTitle, query, shortened, text } from './shared'
+import { bad, count, createCall, cut, jsonBody as json, moreWhen, pathId, publishedCard, publishedText, publishedTitle, query, shortened, text } from './shared'
 
 // tessel_apps: Notion, on the pages the person picked on Notion's page. One fixed host. The app's
 // capabilities are to read and to insert content: nothing here changes or deletes a page.
@@ -45,7 +45,7 @@ export function createNotionTools({ connections, fetchFn = fetch }) {
         const words = text(args.query, 'query', { max: 500 })
         const found = await call(args.account, `${API}/search`, json('POST', { ...(words ? { query: words } : {}), page_size: count(args.max, 20, 100) }))
         const items = found.results || []
-        return items.length ? items.map((p) => `id: ${p.id}\n${titleOf(p)} (${p.object}${p.last_edited_time ? `, changed ${p.last_edited_time}` : ''})\n${p.url || ''}\n`).join('\n') : 'Nothing found. The user chooses which pages Tessel can see, on Notion\'s page or in Notion.'
+        return items.length ? `${items.map((p) => `id: ${p.id}\n${titleOf(p)} (${p.object}${p.last_edited_time ? `, changed ${p.last_edited_time}` : ''})\n${p.url || ''}\n`).join('\n')}${moreWhen(found.has_more || found.request_status?.type === 'incomplete')}` : 'Nothing found. The user chooses which pages Tessel can see, on Notion\'s page or in Notion.'
       }
     },
     notion_read_page: {
@@ -77,15 +77,14 @@ export function createNotionTools({ connections, fetchFn = fetch }) {
       describe: async (args) => {
         const id = shortened(args.parent, 60)
         let under = t('main.apps.card.notRead', '{{id}} (could not be read)', { id })
-        let onTheWeb = false
+        let who = t('main.apps.card.couldNotTell', 'Tessel could not tell who can read this.')
         try {
           const page = await call(args.account, `${API}/pages/${pathId(args.parent, 'parent')}`)
           under = shortened(titleOf(page))
-          onTheWeb = !!page.public_url
+          who = page.public_url ? t('main.apps.card.publishedWeb', 'That page is published to the web: anyone can read this.') : t('main.apps.card.othersRead', 'Others with access can read this.')
         } catch {
-          // the value above
+          // the values above
         }
-        const who = onTheWeb ? t('main.apps.card.publishedWeb', 'That page is published to the web: anyone can read this.') : t('main.apps.card.othersRead', 'Others with access can read this.')
         return publishedCard({ before: [t('main.apps.card.underPage', 'Under the page: {{value}}', { value: under }), who], title: args.title, body: args.content })
       },
       // A workspace is shared: whoever can see the page above sees this one.

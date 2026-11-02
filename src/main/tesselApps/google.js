@@ -1,5 +1,5 @@
 import { t } from '../i18n'
-import { AppError, bad, count, createCall, cut, fileText, fitted, htmlToText, jsonBody as json, MAX_FILE_BYTES, oneLine, pathId, publishable, query, reachLines, shortened, shownAddresses, shownLine, shownList, text } from './shared'
+import { AppError, bad, count, createCall, cut, fileText, fitted, htmlToText, jsonBody as json, MAX_FILE_BYTES, moreWhen, oneLine, pathId, publishable, query, reachLines, shortened, shownAddress, shownAddresses, shownLine, shownList, text } from './shared'
 
 export { AppError, htmlToText }
 
@@ -100,20 +100,21 @@ const otherCalendar = (args) => {
 }
 // What a change to an event is, for the card that asks: who could read it first. When someone else
 // can read it, all of it is on the card, with what in it reaches further.
-function describeEvent(args, { update = false } = {}) {
+function describeEvent(args, { update = false, calendarLine = '' } = {}) {
   const lines = []
   const other = otherCalendar(args)
   const goesOut = update || !!other || (Array.isArray(args.attendees) && args.attendees.length > 0)
   const description = args.description === undefined ? '' : publishable(args.description)
   const show = goesOut ? shownLine : shortened
-  if (other) lines.push(t('main.apps.card.calendar', 'Calendar: {{value}}', { value: shortened(other) }))
+  if (calendarLine) lines.push(calendarLine)
+  // Everyone who would get it: leaving some out would read as the whole list.
   if (Array.isArray(args.attendees) && args.attendees.length) {
     // On an update this list replaces the guests the event has.
-    if (update) lines.push(t('main.apps.card.guestsBecome', 'Guests after this change: {{value}}', { value: shownList(args.attendees) }))
-    else lines.push(t('main.apps.card.invites', 'Invites: {{value}}', { value: shownList(args.attendees) }))
+    if (update) lines.push(t('main.apps.card.guestsBecome', 'Guests after this change: {{value}}', { value: shownList(args.attendees, Infinity) }))
+    else lines.push(t('main.apps.card.invites', 'Invites: {{value}}', { value: shownList(args.attendees, Infinity) }))
   }
   else if (update && Array.isArray(args.attendees)) lines.push(t('main.apps.card.removesGuests', 'Removes all guests'))
-  if (goesOut) lines.push(...reachLines(`${shownLine(args.summary)}\n${shownLine(args.location)}\n${fitted(description)}`))
+  if (goesOut) lines.push(...reachLines(fitted(`${shownLine(args.summary)}\n${shownLine(args.location)}\n${description}`)))
   if (args.summary !== undefined) lines.push(t('main.apps.card.title', 'Title: {{value}}', { value: show(args.summary) }))
   if (args.start !== undefined || args.end !== undefined) lines.push(t('main.apps.card.when', 'When: {{start}} to {{end}}', { start: shortened(args.start, 40), end: shortened(args.end, 40) }))
   if (args.timeZone) lines.push(t('main.apps.card.timeZone', 'Time zone: {{value}}', { value: shortened(args.timeZone, 80) }))
@@ -138,6 +139,21 @@ const READABLE = /^(text\/|application\/(json|xml|javascript|x-yaml|x-sh|csv|x-w
 export function createGoogleTools({ connections, fetchFn = fetch }) {
   // Google's refusals say why under error.message.
   const call = createCall({ connections, provider: 'google', name: 'Google', hosts: ['gmail.googleapis.com', 'www.googleapis.com'], fetchFn })
+  // Another calendar, as the person's list names it, with whose it is: an id says nothing to a person,
+  // and one not on their list is said to be unknown. The agent never sees this answer.
+  async function calendarLine(args) {
+    const other = otherCalendar(args)
+    if (!other) return ''
+    let value = t('main.apps.card.notRead', '{{id}} (could not be read)', { id: shortened(other, 120) })
+    try {
+      const c = await call(args.account, `${CALENDAR}/users/me/calendarList/${pathId(other, 'calendar')}?fields=summary,summaryOverride,dataOwner`)
+      const name = shortened(c.summaryOverride || c.summary)
+      if (name) value = c.dataOwner ? t('main.apps.card.calendarOwned', '{{name}}, owned by {{owner}}', { name, owner: shownAddress(c.dataOwner) }) : name
+    } catch {
+      // the value above
+    }
+    return t('main.apps.card.calendar', 'Calendar: {{value}}', { value })
+  }
   // An event as the card names it: its title and date, read by Tessel for the person. An opaque
   // id says nothing about what they agree to change. The agent never sees this answer.
   async function eventNamed(args, key, english) {
@@ -165,7 +181,7 @@ export function createGoogleTools({ connections, fetchFn = fetch }) {
         const ids = (found.messages || []).map((m) => m.id)
         if (!ids.length) return 'No message found.'
         const list = await Promise.all(ids.map((id) => call(args.account, `${GMAIL}/messages/${encodeURIComponent(id)}?${query({ format: 'metadata' })}&metadataHeaders=From&metadataHeaders=To&metadataHeaders=Subject&metadataHeaders=Date`)))
-        return list.map(summary).join('\n')
+        return `${list.map(summary).join('\n')}${moreWhen(found.nextPageToken)}`
       }
     },
     gmail_read: {
@@ -194,8 +210,8 @@ export function createGoogleTools({ connections, fetchFn = fetch }) {
       // Saved, not sent: what the person sends is theirs to read in Gmail.
       describe: (args) =>
         [
-          t('main.apps.card.to', 'To: {{value}}', { value: shownAddresses(args.to) }),
-          args.cc ? t('main.apps.card.cc', 'Cc: {{value}}', { value: shownAddresses(args.cc) }) : '',
+          t('main.apps.card.to', 'To: {{value}}', { value: shownAddresses(args.to, Infinity) }),
+          args.cc ? t('main.apps.card.cc', 'Cc: {{value}}', { value: shownAddresses(args.cc, Infinity) }) : '',
           t('main.apps.card.subject', 'Subject: {{value}}', { value: shortened(args.subject) })
         ]
           .filter(Boolean)
@@ -212,7 +228,8 @@ export function createGoogleTools({ connections, fetchFn = fetch }) {
       service: 'calendar',
       async run(args) {
         const found = await call(args.account, `${CALENDAR}/users/me/calendarList`)
-        return (found.items || []).map((c) => `${c.id}: ${c.summary}${c.primary ? ' (main)' : ''} [${c.accessRole}]`).join('\n') || 'No calendar.'
+        const list = (found.items || []).map((c) => `${c.id}: ${c.summary}${c.primary ? ' (main)' : ''} [${c.accessRole}]`).join('\n')
+        return list ? `${list}${moreWhen(found.nextPageToken)}` : 'No calendar.'
       }
     },
     calendar_events: {
@@ -221,13 +238,13 @@ export function createGoogleTools({ connections, fetchFn = fetch }) {
         const id = calendarOf(args)
         const found = await call(args.account, `${CALENDAR}/calendars/${id}/events?${query({ timeMin: text(args.from, 'from', { max: 40 }) || new Date().toISOString(), timeMax: text(args.to, 'to', { max: 40 }), q: text(args.query, 'query', { max: 500 }), maxResults: count(args.max, 20, 100), singleEvents: 'true', orderBy: 'startTime' })}`)
         const events = found.items || []
-        return events.length ? events.map(eventLine).join('\n') : 'No event.'
+        return events.length ? `${events.map(eventLine).join('\n')}${moreWhen(found.nextPageToken)}` : 'No event.'
       }
     },
     calendar_create_event: {
       service: 'calendar',
       writes: true,
-      describe: describeEvent,
+      describe: async (args) => describeEvent(args, { calendarLine: await calendarLine(args) }),
       // Someone else can then read it, what the agent wrote in it included: asked each time.
       eachTime: (args) => (Array.isArray(args.attendees) && args.attendees.length > 0) || !!otherCalendar(args),
       async run(args) {
@@ -241,7 +258,7 @@ export function createGoogleTools({ connections, fetchFn = fetch }) {
     calendar_update_event: {
       service: 'calendar',
       writes: true,
-      describe: async (args) => fitted(`${await eventNamed(args, 'main.apps.card.event', 'Event: {{value}}')}\n${describeEvent(args, { update: true })}`),
+      describe: async (args) => fitted(`${await eventNamed(args, 'main.apps.card.event', 'Event: {{value}}')}\n${describeEvent(args, { update: true, calendarLine: await calendarLine(args) })}`),
       // An event can have people on it who would see the change.
       eachTime: () => true,
       async run(args) {
@@ -253,10 +270,7 @@ export function createGoogleTools({ connections, fetchFn = fetch }) {
     calendar_delete_event: {
       service: 'calendar',
       writes: true,
-      describe: async (args) => {
-        const other = otherCalendar(args)
-        return [await eventNamed(args, 'main.apps.card.delete', 'Delete the event: {{value}}'), other ? t('main.apps.card.calendar', 'Calendar: {{value}}', { value: shortened(other) }) : ''].filter(Boolean).join('\n')
-      },
+      describe: async (args) => [await eventNamed(args, 'main.apps.card.delete', 'Delete the event: {{value}}'), await calendarLine(args)].filter(Boolean).join('\n'),
       eachTime: () => true,
       async run(args) {
         const id = calendarOf(args)
@@ -270,9 +284,9 @@ export function createGoogleTools({ connections, fetchFn = fetch }) {
         // Drive's own query language, or plain words looked for in the files.
         const given = text(args.query, 'query', { max: 1000 })
         const q = args.raw === true ? given : given ? `fullText contains '${given.replace(/\\/g, '\\\\').replace(/'/g, "\\'")}' and trashed = false` : 'trashed = false'
-        const found = await call(args.account, `${DRIVE}/files?${query({ q, pageSize: count(args.max, 20, 100), fields: 'files(id,name,mimeType,modifiedTime,size,webViewLink)', orderBy: given ? undefined : 'modifiedTime desc' })}`)
+        const found = await call(args.account, `${DRIVE}/files?${query({ q, pageSize: count(args.max, 20, 100), fields: 'nextPageToken,files(id,name,mimeType,modifiedTime,size,webViewLink)', orderBy: given ? undefined : 'modifiedTime desc' })}`)
         const files = found.files || []
-        return files.length ? files.map((f) => `id: ${f.id}\n${f.name} (${f.mimeType}${f.size ? `, ${f.size} bytes` : ''}, changed ${f.modifiedTime})\n${f.webViewLink || ''}\n`).join('\n') : 'No file found.'
+        return files.length ? `${files.map((f) => `id: ${f.id}\n${f.name} (${f.mimeType}${f.size ? `, ${f.size} bytes` : ''}, changed ${f.modifiedTime})\n${f.webViewLink || ''}\n`).join('\n')}${moreWhen(found.nextPageToken)}` : 'No file found.'
       }
     },
     drive_read: {

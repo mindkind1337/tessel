@@ -304,6 +304,29 @@ describe('finding the link in a command line', () => {
   })
 })
 
+describe('its requests', () => {
+  it('follow no redirect: the session and a refresh token stay with the address they were meant for', async () => {
+    const env = setup()
+    await signedIn(env)
+    env.answers['/api/connect/refresh'] = () => jsonResponse(200, {})
+    env.answers['/api/connect/services'] = () => jsonResponse(200, { services: [] })
+    await env.account.signedRequest('/api/connect/refresh', { method: 'POST', body: '{"refresh_token":"R"}' })
+    await env.account.publicRequest('/api/connect/services')
+    await env.account.status({ check: true })
+    for (const call of env.calls) expect(call.redirect, call.url).toBe('manual')
+    expect(env.calls.length).toBeGreaterThan(2)
+  })
+
+  it('an answer that points elsewhere is not followed, and does not end the session', async () => {
+    const env = setup()
+    await signedIn(env)
+    env.answers['/api/connect/refresh'] = () => new Response(null, { status: 302, headers: { location: 'https://evil.test/' } })
+    const res = await env.account.signedRequest('/api/connect/refresh', { method: 'POST', body: '{}' })
+    expect(res).toMatchObject({ status: 302, ok: false })
+    expect(env.account.userId()).toBe('u1')
+  })
+})
+
 describe('who is signed in, for what was connected for them', () => {
   it('is known in the main process, and not told to the window', async () => {
     const env = setup()

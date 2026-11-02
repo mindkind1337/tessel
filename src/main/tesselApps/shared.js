@@ -1,5 +1,6 @@
 import { t } from '../i18n'
 import { ConnectionError } from './connections'
+import { BLANK_LETTERS, seenLine, withoutUnseen } from './unseen'
 
 // What every provider's tools share (google.js, microsoft.js, github.js...): checking what an agent
 // gave, showing it on a card, reading text someone else wrote, and the one way a token leaves this
@@ -43,6 +44,7 @@ export const count = (value, fallback, max) => {
 // service that turns %2F back into a slash.
 export function pathId(value, name) {
   const id = text(value, name, { required: true, max: 1024 })
+  if (!id.isWellFormed()) throw bad(`"${name}" is not valid.`)
   const plain = id.replace(/%2e/gi, '.').replace(/%2f|%5c/gi, '/')
   if (plain.split(/[\\/]/).some((part) => part === '.' || part === '..')) throw bad(`"${name}" is not valid.`)
   return encodeURIComponent(id)
@@ -50,13 +52,9 @@ export function pathId(value, name) {
 // A header or a card's value: on one line, whatever it was given.
 export const oneLine = (value) => String(value || '').replace(/[\r\n]+/g, ' ').trim()
 
-// Letters that show as nothing, which a pattern does not take for a space.
-const BLANK_LETTERS = /\u115F|\u1160|\u17B4|\u17B5|\u2800|\u3164|\uFFA0/g
-// What shows as nothing at all: format characters, variation selectors, tag characters.
-const UNSEEN = /[\p{Cf}\p{Default_Ignorable_Code_Point}]/gu
 // What a card shows: on one line, with nothing that hides or turns text around, and spaces that
 // cannot push a word to look like a line of its own.
-export const shownLine = (value) => oneLine(value).replace(BLANK_LETTERS, ' ').replace(UNSEEN, '').replace(/\p{Cc}/gu, ' ').replace(/\s+/g, ' ').trim()
+export const shownLine = (value) => seenLine(value || '')
 // A value on a card, and if it is cut the card says how much was left out.
 export const shortened = (value, max = 200) => {
   const line = shownLine(value)
@@ -82,17 +80,21 @@ export const shownList = (values, most = 20) => {
   return `${list.join(', ')} ${t('main.apps.card.andMore', 'and {{count}} more', { count: hidden.length })}${domains.length ? ` (${domains.join(', ')})` : ''}`
 }
 // A To or Cc line: every address of it, as a list.
-export const shownAddresses = (value) => shownList(oneLine(value).split(/[,;]\s*/).filter(Boolean))
+export const shownAddresses = (value, most) => shownList(oneLine(value).split(/[,;]\s*/).filter(Boolean), most)
 
 // What goes out to other people is exactly what its card shows: nothing unseen stays in it, and blank
-// lines or spaces cannot push the rest of it out of sight.
+// lines or spaces cannot push the rest of it out of sight. (Runs are shortened before what ends a line
+// is taken off, so that pattern never walks a long run. A line that only looks full, like a dot on
+// each, is what the card's own wait for scrolling is for.)
 export const publishable = (value) =>
-  String(value ?? '')
-    .replace(/\r\n?|[\u2028\u2029]/g, '\n')
-    .replace(BLANK_LETTERS, ' ')
-    .replace(UNSEEN, '')
+  withoutUnseen(
+    String(value ?? '')
+      .replace(/\r\n?|[\u2028\u2029]/g, '\n')
+      .replace(BLANK_LETTERS, ' ')
+  )
     .replace(/[^\P{Cc}\n\t]/gu, ' ')
     .replace(/[^\S\n]{41,}/g, ' '.repeat(40))
+    .replace(/[^\S\n]+$/gm, '')
     .replace(/\n{3,}/g, '\n\n')
     .trim()
 // A card never hides the end of what it asks about: what does not fit is refused before it is shown.
@@ -115,7 +117,7 @@ export function publishedTitle(value, name, { required = true, max = 1000 } = {}
 // What in a text reaches further than whoever opens it. Over-saying is fine, it is only a warning:
 // the whole text is on the card. Only ever run on a text that fits a card.
 const MENTION = /(?<![A-Za-z0-9])@[A-Za-z0-9][\w.-]*(?:\/[\w.-]+)?|\[~[^\]\s]{1,200}\]|(?<![\w/.-])[\w.-]+\/[\w.-]+#\d+/g
-const LINK = /\b(?:https?|ftps?|mailto|data|javascript|file|ssh|git|tel|sms|irc|magnet):[^\s<>"'`]+|(?<![\w:/])\/\/[a-z0-9][^\s<>"'`)\]]*|\bwww\.[^\s<>"'`)\]]+|\b[a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,}\/[^\s<>"'`)\]]*/gi
+const LINK = /\b(?:https?|ftps?|mailto|data|javascript|file|ssh|git|tel|sms|irc|magnet):[^\s<>"'`]+|(?<![\w:/])\/\/[a-z0-9][^\s<>"'`)\]]*|\bwww\.[^\s<>"'`)\]]+|(?<![a-z0-9.-])[a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,}(?::\d+)?\/[^\s<>"'`)\]]*/gi
 const IMAGE = /!\[[^\]\n]*\]\(\s*<?([^\s)>]+)|<(?:img|image|video|audio|source|iframe|embed)\b[^>]*?\b(?:src|srcset|poster)\s*=\s*["']?([^"'\s>]+)|(?<!\S)!([^\s!|]+)(?:\|[^!\n]*)?!|!\[[^\]\n]*\]\[[^\]\n]*\]/gi
 const unique = (list) => [...new Set(list)]
 const noTail = (url) => url.replace(/[).,;:!?\]|]+$/, '')
@@ -148,6 +150,11 @@ export const query = (params) => {
   return q.toString()
 }
 export const jsonBody = (method, body) => ({ method, headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
+
+// A list that goes on past what was asked for says so: an agent must not take the start of a list for
+// all of it. (Link: a next page, which Sentry says with results="false" when there is none.)
+export const moreWhen = (more) => (more ? '\n[there are more than these: ask for a narrower list]' : '')
+const saysNext = (link) => [...String(link || '').matchAll(/<[^>]*>([^<]*)/g)].some((m) => /\brel="?next"?/i.test(m[1]) && !/\bresults="?false"?/i.test(m[1]))
 
 // A long text the agent reads: cut, and saying so.
 export const cut = (value, max = MAX_BODY) => {
@@ -199,10 +206,11 @@ const refusalWords = (reason) => {
 // a redirect, and renewed once if the service says it ended. Anything else an agent can pass goes in
 // a path segment (pathId) or a query, so no id, tenant or site can send a token anywhere else.
 //   raw: the Response, for a file. A download that answers with a redirect is followed without the token.
+//   paged: { answer, more }, for a service that says in a Link header that there is more.
 export function createCall({ connections, provider, name, hosts, fetchFn, headers = {}, wordsOf = refusalWords, hintOf = () => '' }) {
-  return async function call(account, url, init = {}, { raw = false } = {}) {
+  return async function call(account, url, init = {}, { raw = false, paged = false } = {}) {
     const target = new URL(url)
-    if (target.protocol !== 'https:' || !hosts.includes(target.host)) throw new AppError('failed', `Tessel does not send a ${name} token to that address.`)
+    if (target.protocol !== 'https:' || target.username || target.password || !hosts.includes(target.host)) throw new AppError('failed', `Tessel does not send a ${name} token to that address.`)
     const got = await connections.access(provider, account)
     const ask = (token) => fetchFn(url, { ...init, headers: { ...headers, ...(init.headers || {}), authorization: `Bearer ${token}` }, redirect: 'manual', signal: AbortSignal.timeout(CALL_MS) })
     let res
@@ -230,13 +238,14 @@ export function createCall({ connections, provider, name, hosts, fetchFn, header
       throw new AppError(refusalCode(res.status), `${name} answered ${res.status}.${hint ? ` ${hint}` : ''}`, shownLine(wordsOf(reason)).slice(0, 400))
     }
     if (raw) return res
-    if (res.status === 204) return {}
+    const done = (answer) => (paged ? { answer, more: saysNext(res.headers.get('link')) } : answer)
+    if (res.status === 204) return done({})
     const { bytes, over } = await readBytes(res, MAX_JSON)
     if (over) throw new AppError('too_big', `${name} answered with too much at once: ask for less.`)
     const words = bytes.toString('utf8')
-    if (!words.trim()) return {}
+    if (!words.trim()) return done({})
     try {
-      return JSON.parse(words)
+      return done(JSON.parse(words))
     } catch {
       throw new AppError('failed', `${name} answered with something Tessel cannot read.`)
     }

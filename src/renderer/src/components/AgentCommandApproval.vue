@@ -36,16 +36,17 @@ const whole = computed(() => ['pane', 'read', 'host', 'logs', 'relay', 'apps'].i
 const editable = computed(() => props.card.kind !== 'send' && !props.card.send && !['read', 'host', 'open', 'logs', 'relay', 'hostRun', 'apps'].includes(props.card.kind))
 // Live Share, on a guest's computer: what the host's agent asks to run here.
 const hostRun = computed(() => props.card.kind === 'hostRun')
-// A command that does not fit: Allow waits until all of it has been on screen, in one unbroken
-// stretch from its first line, counting only what shows above the buttons and inside the card. So
-// a jump to the end, or an end hidden under the buttons, does not count.
+// A command that does not fit, or what a connector will do: Allow waits until all of it has been on
+// screen, in one unbroken stretch from its first line, counting only what shows above the buttons and
+// inside the card. So a jump to the end, or an end hidden under the buttons, does not count.
+const gated = computed(() => hostRun.value || (props.card.kind === 'apps' && !!props.card.detail))
 const codeEl = ref(null)
 const readAll = ref(true)
 let seenTo = 0
 let sawEnd = false
 function checkRead() {
   const el = codeEl.value
-  if (!hostRun.value || !el || sawEnd) return
+  if (!gated.value || !el || sawEnd) return
   const box = el.getBoundingClientRect()
   const card = dialog.value?.getBoundingClientRect()
   const buttons = dialog.value?.querySelector('.confirm-actions')?.getBoundingClientRect()
@@ -57,7 +58,12 @@ function checkRead() {
   sawEnd = seenTo >= el.scrollHeight - 2
   readAll.value = sawEnd
 }
-const blockedUnread = computed(() => hostRun.value && !readAll.value)
+const blockedUnread = computed(() => gated.value && !readAll.value)
+const scrollText = computed(() =>
+  hostRun.value
+    ? t('app.agentTerminal.scrollToAllow', 'Not all of this command has been on screen: scroll down through it to allow it.')
+    : t('app.agentTerminal.scrollToAllowApps', 'Not all of this has been on screen: scroll down through it to allow it.')
+)
 const commandLines = computed(() => String(props.card.command || '').split('\n'))
 // Anything but plain ASCII is named, so that a letter that looks like another shows for what it is.
 const notAscii = computed(() => {
@@ -253,7 +259,7 @@ function trapTab(event) {
       <p v-if="whole" class="confirm-text aca-line">
         {{ paneText }}
       </p>
-      <pre v-if="card.kind === 'apps' && card.detail" class="confirm-code" data-test="agent-apps-detail">{{ card.detail }}</pre>
+      <pre v-if="card.kind === 'apps' && card.detail" ref="codeEl" class="confirm-code" tabindex="0" data-test="agent-apps-detail" @scroll="checkRead">{{ card.detail }}</pre>
       <p v-if="card.kind === 'open'" class="confirm-text aca-line" data-test="agent-open-text">
         {{ openText }}<template v-if="card.open && card.open.name"> ({{ card.open.name }})</template>
       </p>
@@ -269,7 +275,7 @@ function trapTab(event) {
       <pre v-else-if="hostRun" ref="codeEl" class="confirm-code aca-numbered" tabindex="0" data-test="agent-command-text" @scroll="checkRead"><span v-for="(line, i) in commandLines" :key="i" class="aca-l">{{ line || ' ' }}</span></pre>
       <pre v-else-if="shown" class="confirm-code" data-test="agent-command-text">{{ card.command }}</pre>
       <p v-if="notAscii" class="confirm-text aca-warn" data-test="agent-host-characters">{{ notAsciiText }}</p>
-      <p v-if="blockedUnread" class="confirm-text aca-warn" data-test="agent-host-scroll">{{ t('app.agentTerminal.scrollToAllow', 'Not all of this command has been on screen: scroll down through it to allow it.') }}</p>
+      <p v-if="blockedUnread" class="confirm-text aca-warn" data-test="agent-host-scroll">{{ scrollText }}</p>
       <p v-if="shown && lineCount > 1" class="confirm-text aca-warn" data-test="agent-command-lines">{{ linesText }}</p>
       <dl v-if="card.folder" class="confirm-details">
         <dt>{{ t('app.agentTerminal.folder', 'Folder') }}</dt>
@@ -283,8 +289,8 @@ function trapTab(event) {
         </button>
         <button v-if="hostRun" class="confirm-btn" data-test="agent-command-block" @click="emit('answer', { allow: false, block: true })">{{ t('app.agentTerminal.hostRunBlock', 'Do not ask again in this session') }}</button>
         <template v-if="whole">
-          <button class="confirm-btn" data-test="agent-command-once" :disabled="!armed" @pointerdown="press" @click="allowWith($event, { remember: 'once' })">{{ t('app.agentTerminal.allowOnce', 'Allow this time') }}</button>
-          <button v-if="!asksEachTime" class="confirm-btn primary danger" data-test="agent-command-allow" :disabled="!armed" @pointerdown="press" @click="allowWith($event, { remember: 'pane' })">{{ allowWholeLabel }}</button>
+          <button class="confirm-btn" data-test="agent-command-once" :disabled="!armed || blockedUnread" @pointerdown="press" @click="allowWith($event, { remember: 'once' })">{{ t('app.agentTerminal.allowOnce', 'Allow this time') }}</button>
+          <button v-if="!asksEachTime" class="confirm-btn primary danger" data-test="agent-command-allow" :disabled="!armed || blockedUnread" @pointerdown="press" @click="allowWith($event, { remember: 'pane' })">{{ allowWholeLabel }}</button>
         </template>
         <div v-else class="aca-split">
           <button class="confirm-btn primary" data-test="agent-command-allow" :disabled="!armed || blockedUnread" @pointerdown="press" @click="allowWith($event, { remember: 'once' })">{{ t('app.agentTerminal.allow', 'Allow') }}</button>

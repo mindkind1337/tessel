@@ -1,4 +1,4 @@
-import { bad, count, createCall, cut, fileText, jsonBody as json, MAX_FILE_BYTES, text } from './shared'
+import { bad, count, createCall, cut, fileText, jsonBody as json, MAX_FILE_BYTES, moreWhen, text } from './shared'
 
 // tessel_apps: Dropbox, read only: the token's scopes allow nothing else. Two fixed hosts; a file's id
 // or path travels in a JSON body or header, never in an address.
@@ -24,7 +24,7 @@ export function createDropboxTools({ connections, fetchFn = fetch }) {
       async run(args) {
         const found = await call(args.account, `${API}/files/search_v2`, json('POST', { query: text(args.query, 'query', { required: true, max: 1000 }), options: { max_results: count(args.max, 20, 100) } }))
         const files = (found.matches || []).map((m) => m.metadata?.metadata).filter(Boolean)
-        return files.length ? files.map((f) => `id: ${f.id}\n${f.path_display || f.name} (${f['.tag']}${f.size ? `, ${f.size} bytes` : ''}${f.server_modified ? `, changed ${f.server_modified}` : ''})\n`).join('\n') : 'No file found.'
+        return files.length ? `${files.map((f) => `id: ${f.id}\n${f.path_display || f.name} (${f['.tag']}${f.size ? `, ${f.size} bytes` : ''}${f.server_modified ? `, changed ${f.server_modified}` : ''})\n`).join('\n')}${moreWhen(found.has_more)}` : 'No file found.'
       }
     },
     dropbox_read: {

@@ -12,6 +12,7 @@ import fs from 'fs'
 import { createHash, randomBytes, randomUUID } from 'crypto'
 import { join } from 'path'
 import { secureStorageAvailable } from '../credentialProtection'
+import { seenLine } from './unseen'
 
 const CONNECT_MS = 15 * 60 * 1000
 const MAX_FILE = 1024 * 1024
@@ -25,7 +26,7 @@ const NO_REVOKE = new Set(['microsoft', 'atlassian', 'sentry', 'stripe'])
 const base64url = (bytes) => Buffer.from(bytes).toString('base64url')
 // An account's name can be someone else's words (who named that workspace?): on one line, and with
 // nothing that hides or turns text around, wherever it is shown.
-const cleanName = (value) => (typeof value === 'string' ? value.replace(/\p{Cf}/gu, '').replace(/\s+/g, ' ').trim().slice(0, 320) : '')
+const cleanName = (value) => (typeof value === 'string' ? seenLine(value).slice(0, 320) : '')
 const JSON_POST = { method: 'POST', headers: { 'content-type': 'application/json' } }
 
 export class ConnectionError extends Error {
@@ -42,6 +43,9 @@ export function createConnections({ dir, safeStorage, openExternal, signedReques
   let lastError = null
   let notEnded = [] // after disconnecting: [{ service, how: 'notTold' | 'byHand' }]
   const renewing = new Map()
+  // A token with nothing to renew it that was just refused: said for now, and asked again next time.
+  // One 401 is not worth losing a connection over, so this is never saved.
+  const refusedNow = new Set()
 
   function read() {
     if (saved !== undefined) return saved
@@ -89,7 +93,7 @@ export function createConnections({ dir, safeStorage, openExternal, signedReques
   function list() {
     const out = []
     for (const [service, accounts] of Object.entries(read())) {
-      for (const [account, r] of Object.entries(accounts)) out.push({ service, account, label: r.label || account, connectedAt: r.connected_at || null, reconnect: !!r.reconnect })
+      for (const [account, r] of Object.entries(accounts)) out.push({ service, account, label: r.label || account, connectedAt: r.connected_at || null, reconnect: !!r.reconnect || refusedNow.has(`${service}\n${account}`) })
     }
     return out
   }
@@ -191,13 +195,17 @@ export function createConnections({ dir, safeStorage, openExternal, signedReques
     const accounts = accountsOf(attempt.service)
     // Who the service says this is, which a name cannot tell: two accounts can have one address.
     const subject = typeof got.account_id === 'string' && got.account_id ? got.account_id : null
-    const taken = Object.hasOwn(accounts, account) ? accounts[account] : null
-    if (taken?.subject && subject && taken.subject !== subject) {
-      // Another account with the same name: both stay, and the new one is told apart.
-      label = cleanName(`${label.slice(0, 300)} (${createHash('sha256').update(subject).digest('hex').slice(0, 8)})`)
+    // Another account with the same name: both stay, and the new one is told apart. (A name made to
+    // look like one told apart is another account like any, so this goes on until the place is free.
+    // An answer that does not say who it is cannot be taken for the one that is there.)
+    const given = label.slice(0, 300)
+    const seed = subject || randomUUID()
+    for (let tries = 0; Object.hasOwn(accounts, account) && accounts[account].subject && accounts[account].subject !== subject; tries++) {
+      label = cleanName(`${given} (${createHash('sha256').update(`${seed}\n${tries}`).digest('hex').slice(0, 8)})`)
       account = label.toLowerCase()
     }
     const before = Object.hasOwn(accounts, account) ? accounts[account] : null
+    refusedNow.delete(`${attempt.service}\n${account}`)
     accounts[account] = {
       access_token: got.access_token,
       // Connected again without a new one: the one it had stays good.
@@ -245,14 +253,9 @@ export function createConnections({ dir, safeStorage, openExternal, signedReques
     const key = `${service}\n${name}`
     if (renewing.has(key)) return renewing.get(key)
     const work = (async () => {
-      // Nothing to renew it with (a token that was not meant to end): the panel says so too.
+      // Nothing to renew it with (a token that was not meant to end): the panel says so for now.
       if (!record.refresh_token) {
-        record.reconnect = true
-        try {
-          write()
-        } catch {
-          // said for now; it is said again at the next call
-        }
+        refusedNow.add(key)
         onChange()
         throw new ConnectionError('reconnect', 'reconnect')
       }
@@ -284,6 +287,7 @@ export function createConnections({ dir, safeStorage, openExternal, signedReques
   async function access(service, account) {
     const { name, record } = recordOf(service, account)
     if (record.reconnect) throw new ConnectionError('reconnect', 'reconnect')
+    if (refusedNow.delete(`${service}\n${name}`)) onChange()
     const fresh = record.expires_at === null || record.expires_at === undefined || record.expires_at - now() > EARLY_MS
     const token = fresh && record.access_token ? record.access_token : await renew(service, name, record)
     // (Disconnected while it renewed: nothing is used.)
@@ -298,6 +302,7 @@ export function createConnections({ dir, safeStorage, openExternal, signedReques
     const name = String(account || '').trim().toLowerCase()
     const record = accounts && Object.hasOwn(accounts, name) ? accounts[name] : null
     if (!record) return view()
+    refusedNow.delete(`${service}\n${name}`)
     delete accounts[name]
     if (!Object.keys(accounts).length) delete saved[service]
     try {

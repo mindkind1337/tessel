@@ -1,4 +1,4 @@
-import { AppError, count, createCall, cut, pathId, query, shownLine, text } from './shared'
+import { AppError, count, createCall, cut, moreWhen, pathId, query, shownLine, text } from './shared'
 
 // tessel_apps: Sentry, read only: the token's scopes read organizations, projects, issues and events,
 // for the one organization the person picked. One fixed host, and which organization comes only from
@@ -41,15 +41,17 @@ export function createSentryTools({ connections, fetchFn = fetch }) {
     sentry_list_projects: {
       service: 'sentry',
       async run(args) {
-        const found = await call(args.account, `${API}/organizations/${await organizationOf(args)}/projects/`)
-        return (Array.isArray(found) ? found : []).map((p) => `${p.slug}: ${p.name}${p.platform ? ` (${p.platform})` : ''}`).join('\n') || 'No project.'
+        const { answer: found, more } = await call(args.account, `${API}/organizations/${await organizationOf(args)}/projects/`, {}, { paged: true })
+        const list = (Array.isArray(found) ? found : []).map((p) => `${p.slug}: ${p.name}${p.platform ? ` (${p.platform})` : ''}`).join('\n')
+        return list ? `${list}${moreWhen(more)}` : 'No project.'
       }
     },
     sentry_issues: {
       service: 'sentry',
       async run(args) {
-        const found = await call(args.account, `${API}/organizations/${await organizationOf(args)}/issues/?${query({ query: text(args.query, 'query', { max: 1000 }), limit: count(args.max, 20, 100), statsPeriod: text(args.period, 'period', { max: 10 }), project: text(args.project, 'project', { max: 100 }) })}`)
-        return (Array.isArray(found) ? found : []).map(issueLine).join('\n') || 'No issue found.'
+        const { answer: found, more } = await call(args.account, `${API}/organizations/${await organizationOf(args)}/issues/?${query({ query: text(args.query, 'query', { max: 1000 }), limit: count(args.max, 20, 100), statsPeriod: text(args.period, 'period', { max: 10 }), project: text(args.project, 'project', { max: 100 }) })}`, {}, { paged: true })
+        const list = (Array.isArray(found) ? found : []).map(issueLine).join('\n')
+        return list ? `${list}${moreWhen(more)}` : 'No issue found.'
       }
     },
     sentry_read_issue: {
@@ -61,8 +63,9 @@ export function createSentryTools({ connections, fetchFn = fetch }) {
     sentry_issue_events: {
       service: 'sentry',
       async run(args) {
-        const found = await call(args.account, `${API}/organizations/${await organizationOf(args)}/issues/${pathId(args.id, 'id')}/events/?${query({ limit: count(args.max, 20, 100) })}`)
-        return (Array.isArray(found) ? found : []).map((e) => `id: ${e.eventID || e.id}\n${e.title || ''} (${e.dateCreated || '?'})\n`).join('\n') || 'No event.'
+        const { answer: found, more } = await call(args.account, `${API}/organizations/${await organizationOf(args)}/issues/${pathId(args.id, 'id')}/events/?${query({ limit: count(args.max, 20, 100) })}`, {}, { paged: true })
+        const list = (Array.isArray(found) ? found : []).map((e) => `id: ${e.eventID || e.id}\n${e.title || ''} (${e.dateCreated || '?'})\n`).join('\n')
+        return list ? `${list}${moreWhen(more)}` : 'No event.'
       }
     },
     sentry_read_event: {

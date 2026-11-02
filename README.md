@@ -318,7 +318,8 @@ working on Tessel itself (see [Build from source](#build-from-source)).
   read only, and no tool is there to send mail, deploy, move money or delete a repository. Creating
   an issue or a comment on GitHub, Linear or Jira does notify the people watching, by email too, and
   automation may run: its card says so, shows the whole text with every mention, link and image found
-  in it, and what does not fit on the card (4000 characters) is refused. What an agent reads from a
+  in it, and what does not fit on the card (4000 characters) is refused. When what a card shows does
+  not fit on screen, Allow waits until all of it has been on screen. What an agent reads from a
   service, a service's refusal included, is marked as someone else's words, and its size is limited.
   Stripe's payment secrets and sign-in-free invoice links never reach an agent. Disconnecting deletes the tokens and asks the
   service to end its access; Microsoft, Atlassian, Sentry and Stripe give apps no way to do that,

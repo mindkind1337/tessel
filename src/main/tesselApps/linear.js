@@ -1,5 +1,5 @@
 import { t } from '../i18n'
-import { AppError, count, createCall, cut, jsonBody as json, notifiedLine, publishedCard, publishedText, publishedTitle, shortened, shownLine, text } from './shared'
+import { AppError, count, createCall, cut, jsonBody as json, moreWhen, notifiedLine, publishedCard, publishedText, publishedTitle, shortened, shownLine, text } from './shared'
 
 // tessel_apps: Linear, through its one GraphQL address. What an agent gives goes in variables, so it
 // cannot change a query. The token's scopes read, and create issues and comments.
@@ -38,8 +38,9 @@ export function createLinearTools({ connections, fetchFn = fetch }) {
     linear_list_teams: {
       service: 'linear',
       async run(args) {
-        const found = await ask(args.account, 'query Teams { teams(first: 100) { nodes { id key name } } }', {})
-        return (found.teams?.nodes || []).map((x) => `${x.id}: ${x.key} ${x.name}`).join('\n') || 'No team.'
+        const found = await ask(args.account, 'query Teams { teams(first: 100) { pageInfo { hasNextPage } nodes { id key name } } }', {})
+        const list = (found.teams?.nodes || []).map((x) => `${x.id}: ${x.key} ${x.name}`).join('\n')
+        return list ? `${list}${moreWhen(found.teams?.pageInfo?.hasNextPage)}` : 'No team.'
       }
     },
     linear_create_issue: {

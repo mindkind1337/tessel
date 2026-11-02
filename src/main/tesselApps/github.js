@@ -1,5 +1,5 @@
 import { t } from '../i18n'
-import { bad, count, createCall, cut, jsonBody as json, notifiedLine, pathId, publishedCard, publishedText, publishedTitle, query, shortened, text } from './shared'
+import { bad, count, createCall, cut, jsonBody as json, moreWhen, notifiedLine, pathId, publishedCard, publishedText, publishedTitle, query, shortened, text } from './shared'
 
 // tessel_apps: GitHub, through a GitHub App: the token can do what the app's registration allows and
 // the person can do, on repositories the app is installed on and public ones. One fixed host. There
@@ -47,9 +47,13 @@ const foundText = (found, lines) => {
   const more = moreOf(found.total_count, items.length, 'found: ask for a narrower search')
   return items.length ? `${items.map(lines).join('\n')}${more ? `\n${more}` : ''}` : 'Nothing found.'
 }
+// GitHub lists at most this many in a folder, with nothing to say there are more.
+const MAX_IN_FOLDER = 1000
 // GitHub answers 404 for a private repository the app is not installed on.
 const hintOf = (status) =>
-  status === 404
+  status === 301 || status === 302 || status === 307 || status === 308
+    ? 'This repository has moved, probably renamed: use its new name.'
+    : status === 404
     ? 'If it is a private repository, the user may need to install Tessel\'s GitHub app on it: https://github.com/settings/installations'
     : status === 403
       ? 'The user may need to install Tessel\'s GitHub app on this repository (https://github.com/settings/installations). Tessel does not ask GitHub for the right to comment on pull requests, only on issues.'
@@ -95,8 +99,9 @@ export function createGitHubTools({ connections, fetchFn = fetch }) {
     github_list_repos: {
       service: 'github',
       async run(args) {
-        const found = await call(args.account, `${API}/user/repos?${query({ sort: 'updated', per_page: count(args.max, 30, 100) })}`)
-        return (Array.isArray(found) ? found : []).map((r) => `${r.full_name}${r.private ? ' (private)' : ''}: ${r.description || ''}`).join('\n') || 'No repository.'
+        const { answer: found, more } = await call(args.account, `${API}/user/repos?${query({ sort: 'updated', per_page: count(args.max, 30, 100) })}`, {}, { paged: true })
+        const list = (Array.isArray(found) ? found : []).map((r) => `${r.full_name}${r.private ? ' (private)' : ''}: ${r.description || ''}`).join('\n')
+        return list ? `${list}${moreWhen(more)}` : 'No repository.'
       }
     },
     github_read_repo: {
@@ -135,7 +140,10 @@ export function createGitHubTools({ connections, fetchFn = fetch }) {
       async run(args) {
         const repo = repoOf(args)
         const found = await call(args.account, `${API}/repos/${repo.path}/contents/${filePath(args.path)}?${query({ ref: text(args.ref, 'ref', { max: 250 }) })}`)
-        if (Array.isArray(found)) return found.map((f) => `${f.type === 'dir' ? `${f.path}/` : f.path}`).join('\n') || 'An empty folder.'
+        if (Array.isArray(found)) {
+          const list = found.map((f) => `${f.type === 'dir' ? `${f.path}/` : f.path}`).join('\n')
+          return list ? `${list}${found.length >= MAX_IN_FOLDER ? `\n[GitHub lists at most ${MAX_IN_FOLDER} in a folder: there may be more]` : ''}` : 'An empty folder.'
+        }
         if (found.type !== 'file') return `"${found.path}" is a ${found.type}: it cannot be read here. ${found.html_url || ''}`
         if (found.encoding !== 'base64') return `"${found.path}" is too big to read here (${found.size} bytes). ${found.html_url || ''}`
         const bytes = Buffer.from(String(found.content), 'base64')

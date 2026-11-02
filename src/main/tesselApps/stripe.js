@@ -16,9 +16,16 @@ const kindOf = (args) => {
 }
 // What must not reach an agent even in the account's own data: what confirms a payment, and links
 // that open an invoice, a receipt or a payment page to anyone who has them, with no sign-in.
-const NEVER_SHOWN = new Set(['client_secret', 'secret', 'hosted_invoice_url', 'invoice_pdf', 'receipt_url', 'hosted_voucher_url', 'next_action', 'url_token'])
-const OPEN_PAGE = /^https?:\/\/(?:[a-z0-9-]+\.)*stripe\.com\//i
-const withoutSecrets = (key, value) => (NEVER_SHOWN.has(key) || (typeof value === 'string' && (OPEN_PAGE.test(value) || value.includes('_secret_'))) ? undefined : value)
+const NEVER_SHOWN = new Set(['hosted_invoice_url', 'invoice_pdf', 'receipt_url', 'hosted_voucher_url', 'next_action', 'url_token'])
+// A Stripe address anywhere in a value, however it is written: not one that only starts like it.
+const OPEN_PAGE = /(?:^|[^a-z0-9.-])(?:[a-z0-9-]+\.)*stripe\.com(?:[:/?#\s)\]"']|$)/i
+// Keys of any kind, wherever someone left one.
+const A_KEY = /_secret_|\b(?:sk|rk|ek)_(?:live|test)_|\bwhsec_/i
+const withoutSecrets = (key, value) => {
+  const name = String(key).toLowerCase()
+  if (name.includes('secret') || NEVER_SHOWN.has(name)) return undefined
+  return typeof value === 'string' && (OPEN_PAGE.test(value) || A_KEY.test(value)) ? undefined : value
+}
 const shown = (value) => cut(JSON.stringify(value, withoutSecrets, 1))
 
 export function createStripeTools({ connections, fetchFn = fetch }) {

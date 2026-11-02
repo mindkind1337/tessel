@@ -1150,6 +1150,7 @@
         "links": "Liens : {{value}}",
         "images": "Images (elles se chargent pour qui le lit) : {{value}}",
         "calendarOwned": "{{name}}, propriété de {{owner}}",
+        "couldNotTell": "Tessel n'a pas pu savoir qui peut lire ceci.",
         "publishedWeb": "Cette page est publiée sur le Web : tout le monde peut lire ceci.",
         "underPage": "Sous la page : {{value}}",
         "othersRead": "Les autres personnes qui y ont accès peuvent lire ceci.",

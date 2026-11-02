@@ -9,6 +9,7 @@ import os from 'node:os'
 import { join } from 'node:path'
 import { createAllTools, createTesselApps, SERVICE_LABELS } from '../tesselApps'
 import { AppError, CARD_MAX, createCall, fileText, pathId, publishable, reachLines, shownAddress, shownLine } from '../tesselApps/shared'
+import { withoutUnseen } from '../tesselApps/unseen'
 import { APP_DETAIL_MAX } from '../agentTerminal'
 import { headerJson } from '../tesselApps/dropbox'
 
@@ -239,6 +240,17 @@ describe('the one way a token leaves', () => {
     expect(touched).toBe(false)
   })
 
+  it('an address with a name and a password in it goes nowhere', async () => {
+    let touched = false
+    const call = callOf(async () => {
+      touched = true
+      return json({})
+    })
+    await expect(call(undefined, 'https://user:pw@api.x.test/a')).rejects.toBeInstanceOf(AppError)
+    await expect(call(undefined, 'https://user@evil.test@api.x.test/a')).rejects.toBeInstanceOf(AppError)
+    expect(touched).toBe(false)
+  })
+
   it('a redirect on a call is a failure: nothing goes on to where it points', async () => {
     const urls = []
     const call = callOf(async (url) => {
@@ -366,7 +378,7 @@ describe('Outlook mail', () => {
 describe('Outlook Calendar', () => {
   beforeEach(() => connect('microsoft'))
   const card = async (tool, input) => (await apps.tool(tool).describe({ account: 'someone at acme', ...input })).split('\n')
-  const event = (attendees = []) => ({ id: 'e1', subject: 'Review', start: { dateTime: '2026-11-03T10:00:00' }, attendees })
+  const event = (attendees = []) => ({ '@odata.etag': 'W/"tag"', id: 'e1', subject: 'Review', start: { dateTime: '2026-11-03T10:00:00' }, attendees })
 
   it('lists from now for 30 days by default, on the main calendar or a named one', async () => {
     respond = () => json({ value: [{ id: 'e1', subject: 'Dentiste', start: { dateTime: 'a', timeZone: 'UTC' }, end: { dateTime: 'b', timeZone: 'UTC' }, location: { displayName: 'Room' }, attendees: [{ emailAddress: { address: 'x@y.example' } }] }] })
@@ -435,10 +447,10 @@ describe('Outlook Calendar', () => {
 describe('OneDrive', () => {
   beforeEach(() => connect('microsoft'))
 
-  it('search keeps quotes and slashes inside the words', async () => {
+  it('search keeps quotes inside the words, and a slash is only a space between them', async () => {
     respond = () => json({ value: [{ id: 'f1', name: 'Plan', size: 3, file: { mimeType: 'text/plain' }, lastModifiedDateTime: 't', webUrl: 'https://x' }] })
-    const out = await apps.run('onedrive_search', { query: "l'été/../x" })
-    expect(asked[0].url).toContain("/me/drive/root/search(q='l''%C3%A9t%C3%A9%2F..%2Fx')?")
+    const out = await apps.run('onedrive_search', { query: "l'été/../x\\y" })
+    expect(asked[0].url).toContain("/me/drive/root/search(q='l''%C3%A9t%C3%A9%20..%20x%20y')?")
     expect(out).toContain('id: f1')
   })
 
@@ -989,12 +1001,16 @@ describe('what is said after disconnecting', () => {
     expect(apps.connections.view().notEnded).toEqual([])
   })
 
-  it('a token that ended with nothing to renew it says so in the panel too', async () => {
+  it('a token with nothing to renew it that is refused once: said for now, tried again next time, never saved', async () => {
     await connect('notion', { refresh_token: null, grant: null, expires_in: null })
     respond = () => new Response('', { status: 401 })
     await expect(apps.run('notion_search', {})).rejects.toMatchObject({ code: 'reconnect' })
     expect(apps.connections.list()[0].reconnect).toBe(true)
-    expect(make().connections.list()[0].reconnect).toBe(true)
+    expect(make().connections.list()[0].reconnect).toBe(false)
+    respond = () => json({ results: [] })
+    expect(await apps.run('notion_search', {})).toContain('Nothing found')
+    expect(apps.connections.list()[0].reconnect).toBe(false)
+    expect(safeStorage.decryptString(Buffer.from(JSON.parse(fs.readFileSync(join(dir, 'connections.json'), 'utf8')).ciphertext, 'base64'))).not.toContain('reconnect')
   })
 })
 
@@ -1105,6 +1121,7 @@ describe('a card shows all of what goes out', () => {
     for (const url of ['https://img.example/1.png', '//img.example/2.png', 'https://img.example/3.png', 'https://img.example/4.png']) expect(images).toContain(url)
     expect(links).not.toContain('img.example/1.png')
     expect(reachLines('Nothing to see here, a@b.example.')).toEqual([])
+    expect(reachLines('see evil.example:8080/x')[0]).toContain('evil.example:8080/x')
   })
 
   it('a long list says how many are left out', () => {
@@ -1429,6 +1446,10 @@ describe('an id in a path', () => {
     for (const id of ['.', '..', '../x', 'x/..', 'x/../y', '..\\x', 'x\\..\\y', '%2e%2e/x', '%2E%2E%2Fx', '..%5cx', '.%2e/x', 'a%2f..%2fb']) expect(() => pathId(id, 'id'), id).toThrow('is not valid')
   })
 
+  it('text that cannot be written in an address is refused as such', () => {
+    expect(() => pathId('\uD800', 'id')).toThrow('is not valid')
+  })
+
   it('anything else stays one segment', () => {
     expect(pathId('AAMk-a_b=', 'id')).toBe('AAMk-a_b%3D')
     expect(pathId('a/b', 'id')).toBe('a%2Fb')
@@ -1454,10 +1475,11 @@ describe('an Outlook change', () => {
     await expect(apps.run('outlook_calendar_update_event', { id: 'e', summary: 'New' })).rejects.toMatchObject({ code: 'changed', message: expect.stringContaining('It changed since Tessel read it') })
   })
 
-  it('no tag in the answer: nothing made up', async () => {
+  it('no tag in the answer: nothing is written without one', async () => {
     respond = (_url, init) => (init.method ? json({ id: 'e' }) : json({ subject: 'E', attendees: [] }))
-    await apps.run('outlook_calendar_update_event', { id: 'e', summary: 'New' })
-    expect(asked.at(-1).init.headers['if-match']).toBeUndefined()
+    await expect(apps.run('outlook_calendar_update_event', { id: 'e', summary: 'New' })).rejects.toMatchObject({ code: 'changed', message: expect.stringContaining('nothing was done') })
+    await expect(apps.run('outlook_calendar_delete_event', { id: 'e' })).rejects.toMatchObject({ code: 'changed' })
+    expect(asked.filter((a) => a.init.method)).toEqual([])
   })
 
   it('a whole series is left alone, guests or not; one occurrence is not', async () => {
@@ -1498,5 +1520,361 @@ describe('what an agent is offered', () => {
     await connect('atlassian')
     expect(apps.connectedTools()).toEqual(expect.arrayContaining(['jira_search', 'confluence_read', 'stripe_list']))
     expect(apps.connectedTools()).not.toContain('github_comment')
+  })
+})
+
+describe('text hidden below the fold of a card', () => {
+  const hide = `Harmless note.${'\n '.repeat(1500)}\n/deploy production`
+
+  it('lines holding only something blank fold like empty ones', () => {
+    expect(publishable(hide)).toBe('Harmless note.\n\n/deploy production')
+    for (const blank of ['\u00a0', '\u3000', '\u3164', '\u2800', '\uFFA0', '\u115F', '\t', '\u2003', '\u200b', ' \u200b ']) expect(publishable(`x${`\n${blank}`.repeat(300)}\nend`), JSON.stringify(blank)).toBe('x\n\nend')
+  })
+
+  it('what ends a line goes, and what starts one stays', () => {
+    expect(publishable('a  b  \n\n  indented\nc\t')).toBe('a  b\n\n  indented\nc')
+  })
+
+  it('a long run of spaces inside a line does not make it slow', () => {
+    const t0 = performance.now()
+    expect(publishable(`a${' '.repeat(190000)}b`)).toBe(`a${' '.repeat(40)}b`)
+    expect(performance.now() - t0).toBeLessThan(500)
+  })
+
+  it('a card of it is short, with the end in sight', async () => {
+    await connect('github')
+    respond = () => json({ private: false, number: 5, title: 'T' })
+    const card = await apps.tool('github_comment').describe({ repo: 'a/b', number: 5, body: hide })
+    expect(card.split('\n').length).toBeLessThan(10)
+    expect(card).toContain('/deploy production')
+  })
+})
+
+describe('an invite says who receives it', () => {
+  const many = [...Array.from({ length: 20 }, (_, i) => `u${i}@corp.example`), ...['a', 'b', 'c', 'd', 'e'].map((d) => `x@${d}.example`), 'thief@attacker.example']
+
+  it.each([['calendar_create_event', { summary: 'S', start: '2026-01-01', end: '2026-01-02' }], ['calendar_update_event', { id: 'e' }]])('%s: everyone, with no count that reads as the rest', async (tool, input) => {
+    await connect('google')
+    respond = () => json({})
+    const card = await apps.tool(tool).describe({ ...input, attendees: many })
+    for (const person of many) expect(card).toContain(person)
+    expect(card).not.toMatch(/and \d+ more/)
+  })
+
+  it('too many to show is refused, not cut', async () => {
+    await connect('google')
+    respond = () => json({})
+    const lots = Array.from({ length: 100 }, (_, i) => `person${i}@${'d'.repeat(60)}.example`)
+    await expect(apps.tool('calendar_create_event').describe({ summary: 'S', attendees: lots })).rejects.toMatchObject({ code: 'too_long' })
+  })
+
+  it.each([['google', 'gmail_create_draft'], ['microsoft', 'outlook_mail_create_draft']])('%s %s: a draft shows everyone it is addressed to', async (provider, tool) => {
+    await connect(provider)
+    const card = await apps.tool(tool).describe({ to: many.join(', '), cc: many.join('; '), subject: 'S' })
+    expect(card.split('\n')[0]).toContain('thief@attacker.example')
+    expect(card.split('\n')[1]).toContain('thief@attacker.example')
+    expect(card).not.toMatch(/and \d+ more/)
+  })
+})
+
+describe('no card is ever cut', () => {
+  it.each([['google', 'gmail_create_draft'], ['microsoft', 'outlook_mail_create_draft']])('%s %s: addresses that do not fit are refused, the subject never lost', async (provider, tool) => {
+    await connect(provider)
+    const to = Array.from({ length: 90 }, (_, i) => `person${i}@${'d'.repeat(30)}.example`).join(', ')
+    await expect(apps.tool(tool).describe({ to, cc: to, subject: 'S' })).rejects.toMatchObject({ code: 'too_long' })
+  })
+
+  it('whatever a tool writes on its card, past the limit it is refused', async () => {
+    await connect('google')
+    await expect(apps.tool('gmail_create_draft').describe({ to: 'a@b.example', subject: 'x'.repeat(5000) })).resolves.toContain('more characters')
+    const hostile = Array.from({ length: 300 }, (_, i) => `p${i}@e.example`).join(',')
+    await expect(apps.tool('gmail_create_draft').describe({ to: hostile, subject: 'S' })).rejects.toMatchObject({ code: 'too_long' })
+  })
+})
+
+describe('a card cannot freeze Tessel', () => {
+  const slow = 'a.'.repeat(30000)
+
+  it.each([
+    ['calendar_update_event', { id: 'e', summary: slow }],
+    ['calendar_update_event', { id: 'e', location: slow }],
+    ['calendar_create_event', { summary: slow, attendees: ['a@b.example'] }],
+    ['outlook_calendar_update_event', { id: 'e', summary: slow }],
+    ['outlook_calendar_update_event', { id: 'e', location: slow }],
+    ['outlook_calendar_create_event', { calendar: 'c', location: slow }],
+    ['github_comment', { repo: 'a/b', number: 1, body: slow }],
+    ['github_create_issue', { repo: 'a/b', title: slow }],
+    ['linear_comment', { id: 'i', body: slow }],
+    ['jira_comment', { key: 'A-1', body: slow }],
+    ['notion_create_page', { parent: 'p', title: 'T', content: slow }]
+  ])('%s %j: too long is said at once', async (tool, input) => {
+    await connect(apps.tool(tool).provider)
+    respond = () => json({})
+    const t0 = performance.now()
+    await expect(apps.tool(tool).describe(input)).rejects.toMatchObject({ code: 'too_long' })
+    expect(performance.now() - t0).toBeLessThan(300)
+  })
+
+  it.each([
+    ['a.a.a.', 'a.'.repeat(2000)],
+    ['a-a-', 'a-'.repeat(2000)],
+    ['![![', '!['.repeat(2000)],
+    ['<img <img', '<img '.repeat(800)],
+    [' !a', ' !a'.repeat(1333)],
+    ['@a.a.', `@${'a.'.repeat(2000)}`],
+    ['a/a/', 'a/'.repeat(2000)]
+  ])('%s: what fits a card is looked through quickly, whatever its shape', (_name, words) => {
+    const t0 = performance.now()
+    reachLines(words)
+    expect(performance.now() - t0).toBeLessThan(300)
+  })
+
+  it('nothing looks through text that was not measured first', () => {
+    for (const file of ['google', 'microsoft']) {
+      const code = fs.readFileSync(join(process.cwd(), `src/main/tesselApps/${file}.js`), 'utf8')
+      expect(code.match(/reachLines\(/g)).toHaveLength(1)
+      expect(code).toContain('reachLines(fitted(')
+    }
+    for (const file of ['github', 'linear', 'atlassian', 'notion', 'dropbox', 'sentry', 'vercel', 'stripe']) expect(fs.readFileSync(join(process.cwd(), `src/main/tesselApps/${file}.js`), 'utf8')).not.toContain('reachLines(')
+  })
+})
+
+describe('every list says when there is more', () => {
+  const site = [{ id: SITE_A, name: 'S', url: 'https://s.atlassian.net', scopes: ['read:jira-work'] }]
+  const withOrg = (answer) => (url) => (url.endsWith('/organizations/') ? json([{ slug: 'o' }]) : answer())
+  const link = (value) => ({ headers: { link: value } })
+  const linked = (body, value) => new Response(JSON.stringify(body), { status: 200, ...link(value) })
+  const SENTRY_MORE = '<x>; rel="previous"; results="false"; cursor="0", <x>; rel="next"; results="true"; cursor="1"'
+  const SENTRY_END = '<x>; rel="previous"; results="true"; cursor="0", <x>; rel="next"; results="false"; cursor="1"'
+  // provider, tool, input, an answer that says there is more, the same with nothing more.
+  const LISTS = [
+    ['notion', 'notion_search', {}, () => json({ results: [{ id: '1', object: 'page' }], has_more: true, next_cursor: 'c' }), () => json({ results: [{ id: '1', object: 'page' }], has_more: false })],
+    ['dropbox', 'dropbox_search', { query: 'q' }, () => json({ matches: [{ metadata: { metadata: { id: 'id:1', name: 'n', '.tag': 'file' } } }], has_more: true }), () => json({ matches: [{ metadata: { metadata: { id: 'id:1', name: 'n', '.tag': 'file' } } }], has_more: false })],
+    ['microsoft', 'outlook_mail_search', {}, () => json({ value: [{ id: '1' }], '@odata.nextLink': 'https://graph.microsoft.com/next' }), () => json({ value: [{ id: '1' }] })],
+    ['microsoft', 'outlook_calendar_events', {}, () => json({ value: [{ id: '1' }], '@odata.nextLink': 'https://graph.microsoft.com/next' }), () => json({ value: [{ id: '1' }] })],
+    ['microsoft', 'outlook_calendar_list', {}, () => json({ value: [{ id: '1', name: 'n' }], '@odata.nextLink': 'https://graph.microsoft.com/next' }), () => json({ value: [{ id: '1', name: 'n' }] })],
+    ['microsoft', 'onedrive_search', { query: 'q' }, () => json({ value: [{ id: '1', name: 'n' }], '@odata.nextLink': 'https://graph.microsoft.com/next' }), () => json({ value: [{ id: '1', name: 'n' }] })],
+    ['github', 'github_list_repos', {}, () => linked([{ full_name: 'a/b' }], '<https://api.github.com/user/repos?page=2>; rel="next", <https://api.github.com/user/repos?page=9>; rel="last"'), () => linked([{ full_name: 'a/b' }], '<https://api.github.com/user/repos?page=1>; rel="prev"')],
+    ['sentry', 'sentry_issues', {}, withOrg(() => linked([{ id: '1', title: 't' }], SENTRY_MORE)), withOrg(() => linked([{ id: '1', title: 't' }], SENTRY_END))],
+    ['sentry', 'sentry_list_projects', {}, withOrg(() => linked([{ slug: 'p', name: 'n' }], SENTRY_MORE)), withOrg(() => linked([{ slug: 'p', name: 'n' }], SENTRY_END))],
+    ['sentry', 'sentry_issue_events', { id: '1' }, withOrg(() => linked([{ id: '1', title: 't' }], SENTRY_MORE)), withOrg(() => linked([{ id: '1', title: 't' }], SENTRY_END))],
+    ['vercel', 'vercel_list_projects', {}, () => json({ projects: [{ id: '1', name: 'n' }], pagination: { next: 123 } }), () => json({ projects: [{ id: '1', name: 'n' }], pagination: { next: null } })],
+    ['vercel', 'vercel_list_deployments', {}, () => json({ deployments: [{ uid: '1' }], pagination: { next: 123 } }), () => json({ deployments: [{ uid: '1' }], pagination: { next: null } })],
+    ['vercel', 'vercel_list_teams', {}, () => json({ teams: [{ id: '1', name: 'n', slug: 's' }], pagination: { next: 123 } }), () => json({ teams: [{ id: '1', name: 'n', slug: 's' }], pagination: {} })],
+    ['google', 'gmail_search', {}, (u) => (u.includes('/messages?') ? json({ messages: [{ id: '1' }], nextPageToken: 'n' }) : json({ id: '1' })), (u) => (u.includes('/messages?') ? json({ messages: [{ id: '1' }] }) : json({ id: '1' }))],
+    ['google', 'drive_search', {}, () => json({ files: [{ id: '1', name: 'n' }], nextPageToken: 'n' }), () => json({ files: [{ id: '1', name: 'n' }] })],
+    ['google', 'calendar_events', {}, () => json({ items: [{ id: '1' }], nextPageToken: 'n' }), () => json({ items: [{ id: '1' }] })],
+    ['google', 'calendar_list', {}, () => json({ items: [{ id: '1', summary: 's' }], nextPageToken: 'n' }), () => json({ items: [{ id: '1', summary: 's' }] })],
+    ['linear', 'linear_list_teams', {}, () => json({ data: { teams: { pageInfo: { hasNextPage: true }, nodes: [{ id: '1', key: 'K', name: 'n' }] } } }), () => json({ data: { teams: { pageInfo: { hasNextPage: false }, nodes: [{ id: '1', key: 'K', name: 'n' }] } } })],
+    ['stripe', 'stripe_list', { kind: 'customers' }, () => json({ data: [{ id: '1' }], has_more: true }), () => json({ data: [{ id: '1' }], has_more: false })],
+    ['atlassian', 'jira_search', { jql: 'x' }, (u) => (u.includes('accessible') ? json(site) : json({ issues: [{ key: 'K-1' }], nextPageToken: 'x' })), (u) => (u.includes('accessible') ? json(site) : json({ issues: [{ key: 'K-1' }] }))]
+  ]
+  it.each(LISTS)('%s %s', async (provider, tool, input, more, none) => {
+    await connect(provider)
+    respond = (u) => more(u)
+    expect(await apps.run(tool, input)).toMatch(/more|narrower/i)
+    respond = (u) => none(u)
+    expect(await apps.run(tool, input)).not.toMatch(/there are more|more found/i)
+  })
+
+  it('drive_search asks for what says so', async () => {
+    await connect('google')
+    respond = () => json({ files: [] })
+    await apps.run('drive_search', {})
+    expect(lastUrl().searchParams.get('fields')).toContain('nextPageToken')
+  })
+
+  it('a folder at what GitHub lists says there may be more', async () => {
+    await connect('github')
+    respond = () => json(Array.from({ length: 1000 }, (_, i) => ({ type: 'file', path: `f${i}` })))
+    expect(await apps.run('github_read_file', { repo: 'a/b' })).toContain('at most 1000 in a folder')
+    respond = () => json([{ type: 'file', path: 'f' }])
+    expect(await apps.run('github_read_file', { repo: 'a/b' })).not.toContain('at most')
+  })
+
+  it('a log at its limit says there may be earlier lines', async () => {
+    await connect('vercel')
+    respond = () => json(Array.from({ length: 200 }, () => ({ created: 1700000000000, text: 'x' })))
+    expect(await apps.run('vercel_logs', { id: 'd' })).toContain('there may be earlier ones')
+    respond = () => json([{ created: 1700000000000, text: 'x' }])
+    expect(await apps.run('vercel_logs', { id: 'd' })).not.toContain('earlier ones')
+  })
+})
+
+describe('another Google calendar on a card', () => {
+  beforeEach(() => connect('google'))
+  const card = async (tool, input) => (await apps.tool(tool).describe(input)).split('\n')
+
+  it('is named from the person\'s own list, with whose it is', async () => {
+    respond = (url) => (url.includes('/calendarList/') ? json({ summary: 'Team plans', dataOwner: 'ana@corp.example' }) : json({ summary: 'E', start: { date: '2026-01-01' } }))
+    const id = 'c_abc@group.calendar.google.com'
+    expect(await card('calendar_create_event', { calendar: id, summary: 'x' })).toContain('Calendar: Team plans, owned by ana@corp.example')
+    expect(asked.at(-1).url).toContain(`/users/me/calendarList/${encodeURIComponent(id)}?`)
+    expect(await card('calendar_update_event', { calendar: id, id: 'e', summary: 'x' })).toContain('Calendar: Team plans, owned by ana@corp.example')
+    expect(await card('calendar_delete_event', { calendar: id, id: 'e' })).toContain('Calendar: Team plans, owned by ana@corp.example')
+  })
+
+  it('the name the person gave it comes first, and a look-alike owner is said', async () => {
+    respond = () => json({ summary: 'Theirs', summaryOverride: 'Mine', dataOwner: 'b\u043ess@corp.example' })
+    const lines = await card('calendar_create_event', { calendar: 'c', summary: 'x' })
+    expect(lines[0]).toContain('Calendar: Mine, owned by')
+    expect(lines[0]).toContain('[not plain ASCII]')
+  })
+
+  it('one not on their list is said to be unknown, and asked each time', async () => {
+    respond = () => json({ error: { message: 'Not Found' } }, 404)
+    expect(await card('calendar_create_event', { calendar: 'stranger@mail.example', summary: 'x' })).toContain('Calendar: stranger@mail.example (could not be read)')
+    expect(apps.tool('calendar_create_event').eachTime({ calendar: 'stranger@mail.example' })).toBe(true)
+  })
+
+  it('the main calendar asks nothing', async () => {
+    respond = () => {
+      throw new Error('nothing to read')
+    }
+    expect(await card('calendar_create_event', { summary: 'x' })).toEqual(['Title: x'])
+  })
+})
+
+describe('Stripe links and secrets, however they are written', () => {
+  beforeEach(() => connect('stripe'))
+  const read = async (body) => {
+    respond = () => json(body)
+    return apps.run('stripe_read', { kind: 'invoices', id: 'in_1' })
+  }
+
+  it.each(['Pay here: https://invoice.stripe.com/i/x thanks', ' https://buy.stripe.com/abc', 'https://invoice.stripe.com:443/i', 'https://billing.stripe.com?x=1', 'invoice.stripe.com/i/acct', '[pay](https://buy.stripe.com/abc)', '(https://PAY.STRIPE.COM/x)', 'see https://checkout.stripe.com#y'])('%s does not reach the agent', async (value) => {
+    const out = await read({ id: 'in_1', note: value, keep: 'this stays' })
+    expect(out).not.toMatch(/stripe\.com/i)
+    expect(out).toContain('this stays')
+  })
+
+  it.each(['https://stripe.com.evil.example/x', 'https://notstripe.com/x', 'plain words', 'stripe.community'])('%s is not one of its links', async (value) => {
+    expect(await read({ id: 'in_1', note: value })).toContain(value)
+  })
+
+  it('keys of any kind, wherever someone left one', async () => {
+    const out = await read({ id: 'in_1', metadata: { a: 'ek_live_FAKE', b: 'sk_test_FAKE', c: 'rk_live_FAKE', d: 'whsec_FAKE', e: 'keep this' } })
+    expect(out).not.toContain('FAKE')
+    expect(out).toContain('keep this')
+  })
+
+  it('key names and values in any case', async () => {
+    const out = await read({ id: 'in_1', webhook_secret: 'AAA', CLIENT_SECRET: 'BBB', Hosted_Invoice_URL: 'CCC', a: 'pi_1_SECRET_abc', b: { Secret: 'DDD' }, kept: 'EEE' })
+    for (const hidden of ['AAA', 'BBB', 'CCC', 'SECRET', 'DDD']) expect(out).not.toContain(hidden)
+    expect(out).toContain('EEE')
+  })
+})
+
+describe('one way of taking out what is unseen', () => {
+  const same = ['\uE000', '\u{F0000}', '\u0378', '\uFFFE', '\u{1D173}', '\u034F', '\u{E0100}', '\u180E', '\u2062', '\u{1BCA0}', '\u{13430}', '\u061C', '\u{E0041}', '\u200B', '\u202E', '\uFEFF', '\u00AD', '\uD800']
+
+  it.each(same.map((c) => [c.codePointAt(0).toString(16), c]))('U+%s goes everywhere', async (_code, c) => {
+    expect(shownLine(`a${c}b`)).toBe('ab')
+    expect(publishable(`a${c}b`)).toBe('ab')
+    expect(withoutUnseen(`a${c}b`)).toBe('ab')
+  })
+
+  it('from a fence too', async () => {
+    await connect('github')
+    respond = () => json({ full_name: 'a/b', description: 'x\uE000y\u0378z\u202Ew' })
+    expect(await apps.run('github_read_repo', { repo: 'a/b' })).toContain('xyzw')
+  })
+
+  it('from an account\'s name too, and blank letters are spaces there', async () => {
+    await connect('notion', { account: 'Acme\u3164\u2800Notes\uE000\u0378\uFE0F\u034F (12345678)' })
+    expect(apps.connections.list()[0].label).toBe('Acme Notes (12345678)')
+  })
+
+  it('a name that only looks like __proto__ once cleaned is refused', async () => {
+    for (const account of ['__PROTO__', ' __proto__ ', '__proto__\u200b', '\u202e__proto__', '__proto__\uE000']) {
+      await connect('linear', { account })
+      expect(apps.connections.view().error, account).toBe('failed')
+      expect(apps.connections.list()).toEqual([])
+    }
+  })
+})
+
+describe('real text keeps what it needs', () => {
+  const FAMILY = '\u{1F468}\u200D\u{1F469}\u200D\u{1F467}'
+  const FLAG = '\u{1F3F3}\uFE0F\u200D\u{1F308}'
+  const KEYCAP = '1\uFE0F\u20E3'
+  const HEART = '\u2764\uFE0F'
+  const SKIN = '\u{1F9D1}\u{1F3FD}\u200D\u{1F4BB}'
+  const PERSIAN = '\u0645\u06CC\u200C\u062E\u0648\u0627\u0647\u0645'
+  const HINDI = '\u0915\u094D\u200D\u0937'
+
+  it.each([['a family', FAMILY], ['a flag', FLAG], ['a keycap', KEYCAP], ['a heart', HEART], ['a skin tone', SKIN], ['Persian', PERSIAN], ['Hindi', HINDI]])('%s stays whole, on a card and in what is sent', (_name, words) => {
+    expect(withoutUnseen(words)).toBe(words)
+    expect(publishable(`Hi ${words} there`)).toBe(`Hi ${words} there`)
+    expect(shownLine(`Hi ${words} there`)).toBe(`Hi ${words} there`)
+  })
+
+  it.each([
+    ['between plain letters', 'a\u200Db', 'ab'],
+    ['ZWNJ between plain letters', 'a\u200Cb', 'ab'],
+    ['after a mention', '@att\u200Dacker', '@attacker'],
+    ['in an address', 'ht\u200Dtps://x.example', 'https://x.example'],
+    ['at the start', '\u200D\u{1F468}', '\u{1F468}'],
+    ['at the end of a word', '\u0645\u200C', '\u0645'],
+    ['in a run', '\u0645\u200C\u200C\u062E', '\u0645\u062E'],
+    ['after a plain letter', 'k\uFE0Fl', 'kl'],
+    ['repeated', '\u2764\uFE0F\uFE0F\uFE0F', '\u2764\uFE0F'],
+    ['on a digit with no keycap', '1\uFE0Fa', '1a'],
+    ['a joiner between a letter and an emoji', 'a\u200D\u{1F468}', 'a\u{1F468}']
+  ])('anywhere else they go: %s', (_name, given, left) => {
+    expect(withoutUnseen(given)).toBe(left)
+  })
+
+  it('so a mention hidden with a joiner is seen on the card', () => {
+    expect(reachLines(publishable('cc @att\u200Dacker'))[0]).toContain('@attacker')
+  })
+})
+
+describe('two accounts with one name, when the answer does not say who it is', () => {
+  it('it is not taken for the one that is there', async () => {
+    await connect('dropbox', { account: 'same@x.example', account_id: 'dbid:A', refresh_token: 'RA', access_token: 'A' })
+    await connect('dropbox', { account: 'same@x.example', refresh_token: null, grant: null, access_token: 'NO-ID' })
+    const list = apps.connections.list()
+    expect(list).toHaveLength(2)
+    expect((await apps.connections.access('dropbox', 'same@x.example')).token).toBe('A')
+  })
+
+  it('a name made to look like one told apart takes nothing from it', async () => {
+    await connect('dropbox', { account: 'same@x.example', account_id: 'dbid:A', access_token: 'A' })
+    await connect('dropbox', { account: 'same@x.example', account_id: 'dbid:B', access_token: 'B' })
+    const told = apps.connections.list()[1].account
+    await connect('dropbox', { account: told, account_id: 'dbid:C', access_token: 'C' })
+    expect(apps.connections.list()).toHaveLength(3)
+    expect((await apps.connections.access('dropbox', told)).token).toBe('B')
+  })
+
+  it('and the other way round: a place already taken by such a name does not pass to the real one', async () => {
+    await connect('dropbox', { account: 'same@x.example', account_id: 'dbid:A', access_token: 'A' })
+    await connect('dropbox', { account: 'same@x.example', account_id: 'dbid:B', access_token: 'B' })
+    const told = apps.connections.list()[1].account
+    await apps.connections.disconnect('dropbox', told)
+    await connect('dropbox', { account: told, account_id: 'dbid:C', access_token: 'C' })
+    await connect('dropbox', { account: 'same@x.example', account_id: 'dbid:B', access_token: 'B2' })
+    const tokens = await Promise.all(apps.connections.list().map(async (c) => (await apps.connections.access('dropbox', c.account)).token))
+    expect(tokens.sort()).toEqual(['A', 'B2', 'C'])
+  })
+})
+
+describe('a Notion page whose parent cannot be read', () => {
+  it('says Tessel could not tell, rather than who can read it', async () => {
+    await connect('notion')
+    respond = () => new Response('', { status: 403 })
+    const lines = (await apps.tool('notion_create_page').describe({ parent: 'p1', title: 'T' })).split('\n')
+    expect(lines).toContain('Tessel could not tell who can read this.')
+    expect(lines).not.toContain('Others with access can read this.')
+  })
+})
+
+describe('a renamed GitHub repository', () => {
+  it('says so in plain words', async () => {
+    await connect('github')
+    respond = () => json({ message: 'Moved Permanently', url: 'https://api.github.com/repositories/1' }, 301)
+    await expect(apps.run('github_read_repo', { repo: 'a/old' })).rejects.toMatchObject({ code: 'failed', message: expect.stringContaining('probably renamed: use its new name') })
+    expect(asked).toHaveLength(1)
   })
 })
