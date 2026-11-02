@@ -90,13 +90,24 @@ onBeforeUnmount(() => off && off())
 .tcx-title {
   margin: 0;
 }
+/* The name with its button on one line, each account under it with its own: all at the right edge. */
 .tcx-row {
   display: grid;
-  gap: 6px;
-  justify-items: start;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px 12px;
+  align-items: center;
   padding: 10px 12px;
   border: 1px solid var(--border);
   border-radius: 8px;
+}
+.tcx-row > .mcp-btn {
+  grid-column: 2;
+  grid-row: 1;
+  justify-self: end;
+}
+.tcx-row > .set-hint,
+.tcx-accounts {
+  grid-column: 1 / -1;
 }
 .tcx-accounts {
   display: grid;
@@ -108,10 +119,14 @@ onBeforeUnmount(() => off && off())
 .tcx-accounts li {
   display: flex;
   align-items: center;
-  flex-wrap: wrap;
   gap: 8px;
 }
 .tcx-account {
+  min-width: 0;
   overflow-wrap: anywhere;
+}
+.tcx-accounts li .mcp-btn {
+  flex: none;
+  margin-left: auto;
 }
 </style>
