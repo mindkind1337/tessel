@@ -131,20 +131,23 @@ function writeThen(stream, data, then) {
 // Tessel closed: a valid MCP server without tools, quietly, so the agent does
 // not list tessel_team as failed. reason: said to the agent when it was in a
 // Tessel pane but Tessel did not answer.
+// The answer to an initialize made here, without Tessel (the reason, when
+// the agent is in a Tessel pane, goes in the instructions).
+function noToolsInit(params, reason, name) {
+  const result = {
+    protocolVersion: (params && typeof params.protocolVersion === 'string' && params.protocolVersion) || '2025-06-18',
+    capabilities: { tools: {} },
+    serverInfo: { name, version: VERSION }
+  }
+  if (reason) result.instructions = `Tessel's tools, including its browser (a real Chromium on the user's computer), are not reachable right now (${reason}). Do not fall back to curl or a headless browser on this server for web pages: tell the user the Tessel tools are not connected and that they can restart this agent from Tessel (right-click its pane, Restart) or click Retry in the pane.`
+  return result
+}
 function emptyServer(reason, name = SERVER_NAME) {
   const write = (obj) => process.stdout.write(JSON.stringify(obj) + '\n')
   const answer = (msg) => {
     if (!msg || typeof msg !== 'object' || msg.id === undefined || msg.id === null) return // a notification
     const { id, method, params } = msg
-    if (method === 'initialize') {
-      const result = {
-        protocolVersion: (params && typeof params.protocolVersion === 'string' && params.protocolVersion) || '2025-06-18',
-        capabilities: { tools: {} },
-        serverInfo: { name, version: VERSION }
-      }
-      if (reason) result.instructions = `Tessel's tools, including its browser (a real Chromium on the user's computer), are not reachable right now (${reason}). Do not fall back to curl or a headless browser on this server for web pages: tell the user the Tessel tools are not connected and that they can restart this agent from Tessel (right-click its pane, Restart) or click Retry in the pane.`
-      return write({ jsonrpc: '2.0', id, result })
-    }
+    if (method === 'initialize') return write({ jsonrpc: '2.0', id, result: noToolsInit(params, reason, name) })
     if (method === 'tools/list') return write({ jsonrpc: '2.0', id, result: { tools: [] } })
     if (method === 'ping') return write({ jsonrpc: '2.0', id, result: {} })
     write({ jsonrpc: '2.0', id, error: { code: -32601, message: `Method not found: ${method}` } })
@@ -209,10 +212,18 @@ function linkProblem(err) {
 // instead of "Transport closed".
 // The first link: the pane's socket may not be bound yet when the agent starts
 // its servers (Tessel binds it again after a dropped connection), so a missing
-// or refusing socket, or "busy", is tried again a few times (3 s in all)
-// before this agent gets a server without tools for the rest of its life.
+// or refusing socket, or "busy", is tried again a few times (3 s in all).
+// Still none (the agent started while the SSH link was down, or Tessel was
+// restarting): the proxy runs all the same, without a link, as after a later
+// drop: its first call opens one, and meanwhile it tries again by itself
+// (RELINK_MS) and tells the agent's client when the tools are there. Only a
+// refusal that will not change (bad token, unknown pane) gives this agent a
+// server without tools for the rest of its life.
 const FIRST_RETRY_MS = [500, 1000, 1500]
 const firstRetry = (err) => /^(ENOENT|ECONNREFUSED|busy)$/.test(safeReason(err))
+// Every 5 s for 10 min, then every minute: a link back after a long outage
+// still brings the tools, without hammering a dead socket for days.
+const RELINK_MS = (n) => (n < 120 ? 5000 : 60000)
 function runMcp(argv, env = process.env) {
   const apps = argv.includes('--apps')
   const args = apps ? ['--apps'] : []
@@ -223,13 +234,15 @@ function runMcp(argv, env = process.env) {
   const attempt = () =>
     open(conn, 'mcp', args, (err, socket, rest) => {
       if (err && tries < FIRST_RETRY_MS.length && firstRetry(err)) return setTimeout(attempt, FIRST_RETRY_MS[tries++])
-      if (err) return emptyServer(safeReason(err), name)
-      proxyMcp(conn, socket, rest, args)
+      if (err && !firstRetry(err)) return emptyServer(safeReason(err), name)
+      if (err) return proxyMcp(conn, null, null, args, name)
+      proxyMcp(conn, socket, rest, args, name)
     })
   attempt()
 }
 
-function proxyMcp(conn, first, firstRest, args = []) {
+// first: the open link, or null when none could be made yet (runMcp).
+function proxyMcp(conn, first, firstRest, args = [], name = SERVER_NAME) {
   const out = (line) => process.stdout.write(line.endsWith('\n') ? line : line + '\n') // false: stdout is full
   const note = (text) => process.stderr.write(`tessel-shim: ${text}\n`)
   let sock = null
@@ -238,6 +251,11 @@ function proxyMcp(conn, first, firstRest, args = []) {
   let exiting = false
   let initLine = null // the client's initialize request (parsed)
   let initializedLine = null // its notifications/initialized
+  let initSent = false // the initialize went to Tessel with its own id, or was answered here
+  let localInit = false // answered here, without a link: the client is told when the tools come
+  let linked = false // a link was made at least once
+  let relinks = 0
+  let relinkTimer = null
   let replays = 0
   let queued = 0 // bytes in the queue
   const replayPrefix = `tessel-reinit-${require('crypto').randomBytes(8).toString('hex')}-`
@@ -266,6 +284,9 @@ function proxyMcp(conn, first, firstRest, args = []) {
 
   function attach(s, rest) {
     sock = s
+    linked = true
+    clearTimeout(relinkTimer)
+    relinkTimer = null
     let buf = Buffer.alloc(0)
     let waitingDrain = false
     const onBytes = (chunk) => {
@@ -341,19 +362,46 @@ function proxyMcp(conn, first, firstRest, args = []) {
           const items = queue
           queue = []
           queued = 0
-          for (const { msgs } of items) for (const m of msgs) if (isRequest(m)) failure(m.id, m.method, linkProblem(err))
-          note(`could not reopen the link: ${safeReason(err)}`)
-          if (inEnded) exit(0)
+          // No link yet: the client gets a server without tools for now (an
+          // initialize that fails would end this server for good) and hears
+          // of the tools (tools/list_changed) once a link is made.
+          if (initLine && !initSent) {
+            initSent = true
+            localInit = true
+            out(JSON.stringify({ jsonrpc: '2.0', id: initLine.id, result: noToolsInit(initLine.params, safeReason(err), name) }))
+          }
+          for (const { msgs } of items)
+            for (const m of msgs) {
+              if (!isRequest(m)) continue
+              if (!linked && m.method === 'tools/list') out(JSON.stringify({ jsonrpc: '2.0', id: m.id, result: { tools: [] } }))
+              else failure(m.id, m.method, linkProblem(err))
+            }
+          if (linked) note(`could not reopen the link: ${safeReason(err)}`)
+          else if (!relinks) note(`no link to Tessel yet (${safeReason(err)}); tried again every few seconds and at the next call`)
+          if (inEnded) return exit(0)
+          if (linked) return
+          relinkTimer = setTimeout(() => {
+            relinkTimer = null
+            if (!inEnded && !sock) connect()
+          }, RELINK_MS(relinks++))
           return
         }
         attach(socket, rest)
-        if (initLine) {
+        if (initLine && !initSent) {
+          // The first link: the client's own initialize, answered to it.
+          initSent = true
+          write(JSON.stringify(initLine), [initLine])
+        } else if (initLine) {
           let id
           do id = `${replayPrefix}${++replays}`
           while (pending.has(id))
           swallow.add(id)
           sock.write(JSON.stringify({ ...initLine, id }) + '\n')
           if (initializedLine) sock.write(initializedLine + '\n')
+        }
+        if (localInit) {
+          localInit = false
+          out(JSON.stringify({ jsonrpc: '2.0', method: 'notifications/tools/list_changed' }))
         }
         const items = queue
         queue = []
@@ -367,12 +415,21 @@ function proxyMcp(conn, first, firstRest, args = []) {
 
   function fromClient(line) {
     const msgs = parse(line)
+    let held = false
     for (const m of msgs) {
       if (!m || typeof m !== 'object') continue
-      if (m.method === 'initialize' && m.id !== undefined) initLine = m
-      else if (m.method === 'notifications/initialized') initializedLine = line
+      if (m.method === 'initialize' && m.id !== undefined) {
+        initLine = m
+        // Before any link: sent by the link itself, or answered here (connect).
+        if (sock) initSent = true
+        else if (!initSent) held = true
+      } else if (m.method === 'notifications/initialized') {
+        initializedLine = line
+        if (!sock) held = true // replayed with the initialize
+      }
     }
     if (sock) return write(line, msgs)
+    if (held && msgs.length === 1) return connect()
     if (queue.length >= MAX_QUEUE || queued + line.length > MAX_LINE) {
       for (const m of msgs) if (isRequest(m)) failure(m.id, m.method, 'Too many calls are waiting for the link to Tessel. Retry in a moment.')
       return
@@ -382,7 +439,7 @@ function proxyMcp(conn, first, firstRest, args = []) {
     connect()
   }
 
-  attach(first, firstRest)
+  if (first) attach(first, firstRest)
   let inBuf = ''
   process.stdin.setEncoding('utf8')
   process.stdin.on('data', (chunk) => {
@@ -406,7 +463,7 @@ function proxyMcp(conn, first, firstRest, args = []) {
     if (sock) {
       sock.end()
       setTimeout(() => exit(0), 3000).unref()
-    } else if (!connecting) exit(0)
+    } else if (!connecting) exit(0) // a relink waiting goes with the process
   }
   process.stdin.on('end', stdinGone)
   process.stdin.on('error', stdinGone)

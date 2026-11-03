@@ -87,8 +87,10 @@ byte in either direction for 30 min is closed (its server.cjs killed).
 server.cjs runs with cwd = the pane env's `TESSEL_PROJECT_DIR` (when absolute).
 
 ### Shim modes (`node tessel-shim.cjs <mode>`)
-- `mcp` – connect, hello, pipe stdio. No socket/env, or Tessel unreachable (an agent
-  started outside Tessel, e.g. VS Code) → a silent empty MCP server (no tools).
+- `mcp` – connect, hello, pipe stdio. No socket/env (an agent started outside
+  Tessel, e.g. VS Code), or Tessel refusing (bad token, unknown pane) → a silent
+  empty MCP server (no tools). Socket missing or refusing (the link is down) →
+  the proxy without a link, see 1.5.0 below.
 - `hook <args...>` – connect, send stdin, print stdout/stderr, exit with code.
   Unreachable Tessel → exit 0 silently (a hook must never block the agent).
 - `install` – idempotent: Claude `~/.claude.json` `mcpServers["tessel_team"]` =
@@ -206,3 +208,14 @@ tools. server.cjs of a remote pane keeps `.tessel/agents/<pane>.json` when it
 stops (the tunnel ends it when idle or on a drop): Tessel's proof-of-life check
 (App.vue `checkRemoteAgentTools`) counts tools that ran since the agent started,
 so an idle agent is not reported as disconnected.
+
+1.5.0: an agent started while the link is down (the socket still missing or
+refusing after those 3 s) no longer gets a server without tools for life: the
+proxy runs without a link, its first call tries to open one (3 tries), and it
+tries again by itself every 5 s (every minute after 10 min). Until then the
+client's `initialize` is answered by the shim (no tools, the reason in the
+instructions, so a failing initialize never ends the server for good) and
+`tools/list` is empty; once a link is made the initialize is replayed
+(swallowed) and the client gets `notifications/tools/list_changed`, so it asks
+for the tools again. The first link made by the client's own initialize forwards
+it under its own id (no replay). Antigravity's MCP servers are registered too.

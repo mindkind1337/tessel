@@ -518,22 +518,24 @@ describe('round trip', () => {
     expect(out.at(-1)).toEqual({ jsonrpc: '2.0', id: 9, result: {} })
   })
 
-  it('mcp with Tessel closed or refusing: the same empty server, the reason only in its instructions', async () => {
+  it('mcp with Tessel closed or refusing: a server without tools for now, the reason only in its instructions', async () => {
     for (const env of [{ TESSEL_REMOTE_SOCK: sock + '-nope' }, { TESSEL_REMOTE_TOKEN: 'cd'.repeat(32) }]) {
       const t0 = Date.now()
       const r = await run(['mcp'], { input: session, env })
       expect(r.code).toBe(0)
-      expect(r.err).toBe('')
+      // No socket: the proxy stays, says so once on stderr (never the path); a refusal is quiet.
+      if (env.TESSEL_REMOTE_SOCK) expect(r.err).toBe('tessel-shim: no link to Tessel yet (ENOENT); tried again every few seconds and at the next call\n')
+      else expect(r.err).toBe('')
       const [init, list] = answers(r.out)
       expect(init.result.serverInfo.name).toBe('tessel_team')
       expect(init.result.instructions).toMatch(/not reachable/)
       expect(list.result).toEqual({ tools: [] })
-      // No socket: tried again for 3 s first; a refusal is final at once.
+      // No socket: tried again for 3 s first, then by the first call; a refusal is final at once.
       if (env.TESSEL_REMOTE_SOCK) expect(Date.now() - t0).toBeGreaterThanOrEqual(2900)
     }
     // The refusal was asked once, never again.
     expect(seen.map((h) => h.token)).toEqual(['cd'.repeat(32)])
-  }, 20000)
+  }, 30000)
 
   it('mcp started before its socket is bound: the first link waits for it (a few tries) instead of giving up for good', async () => {
     const late = sockPath()
@@ -702,8 +704,10 @@ describe('mcp proxy across a dropped link', () => {
   let ids
   let conns
   let mode // 'echo' | 'hang' | 'refuse'
+  let handler // the fake Tessel's side of one link
+  let paths = 0
   const sockPath = () =>
-    process.platform === 'win32' ? `\\\\.\\pipe\\tessel-shim-proxy-${process.pid}-${Date.now()}` : join(fs.mkdtempSync(join(os.tmpdir(), 'tsp-')), 's.sock')
+    process.platform === 'win32' ? `\\\\.\\pipe\\tessel-shim-proxy-${process.pid}-${Date.now()}-${++paths}` : join(fs.mkdtempSync(join(os.tmpdir(), 'tsp-')), 's.sock')
 
   beforeEach(async () => {
     hellos = []
@@ -711,7 +715,7 @@ describe('mcp proxy across a dropped link', () => {
     conns = []
     mode = 'echo'
     sock = sockPath()
-    server = net.createServer({ allowHalfOpen: true }, (c) => {
+    handler = (c) => {
       conns.push(c)
       let buf = ''
       let hello = false
@@ -747,7 +751,8 @@ describe('mcp proxy across a dropped link', () => {
       })
       c.on('end', () => c.end())
       c.on('error', () => {})
-    })
+    }
+    server = net.createServer({ allowHalfOpen: true }, handler)
     await new Promise((r) => server.listen(sock, r))
   })
   afterEach(async () => {
@@ -755,15 +760,17 @@ describe('mcp proxy across a dropped link', () => {
     await new Promise((r) => server.close(r))
   })
 
-  const start = () => {
+  const start = (env = {}) => {
     const child = spawn(process.execPath, [SHIM, 'mcp'], {
-      env: { PATH: process.env.PATH, TESSEL_PANE_ID: 'pane-7', TESSEL_REMOTE_SOCK: sock, TESSEL_REMOTE_TOKEN: TOKEN },
+      env: { PATH: process.env.PATH, TESSEL_PANE_ID: 'pane-7', TESSEL_REMOTE_SOCK: sock, TESSEL_REMOTE_TOKEN: TOKEN, ...env },
       stdio: ['pipe', 'pipe', 'pipe']
     })
     child.stdin.on('error', () => {})
     const lines = []
     const waiters = []
     let buf = ''
+    let err = ''
+    child.stderr.on('data', (d) => (err += d))
     child.stdout.on('data', (d) => {
       buf += d
       let nl
@@ -774,11 +781,11 @@ describe('mcp proxy across a dropped link', () => {
       for (const w of [...waiters]) w()
     })
     const send = (m) => child.stdin.write(JSON.stringify(m) + '\n')
-    const reply = (id) =>
+    const reply = (id, ms = 8000, found = (l) => l.id === id) =>
       new Promise((res, rej) => {
-        const t = setTimeout(() => rej(new Error(`no reply ${id}`)), 8000)
+        const t = setTimeout(() => rej(new Error(`no reply ${id}`)), ms)
         const check = () => {
-          const m = lines.find((l) => l.id === id)
+          const m = lines.find(found)
           if (m) {
             clearTimeout(t)
             waiters.splice(waiters.indexOf(check), 1)
@@ -789,7 +796,7 @@ describe('mcp proxy across a dropped link', () => {
         check()
       })
     const exited = new Promise((r) => child.on('exit', (code) => r(code)))
-    return { child, lines, send, reply, exited }
+    return { child, lines, send, reply, exited, err: () => err }
   }
   const INIT = { jsonrpc: '2.0', id: 0, method: 'initialize', params: { protocolVersion: '2025-03-26' } }
   const dropAll = async () => {
@@ -868,7 +875,7 @@ describe('mcp proxy across a dropped link', () => {
     await new Promise((r) => q.on('exit', r))
     expect(out).toMatch(/not reachable/)
     expect(out).not.toContain('tessel-shim-proxy')
-  })
+  }, 20000) // the missing socket is tried for 3 s, then by the initialize for 3 s more
 
   it('an answer over 4 MB drops the link (destroyed) and fails the running call; the next call reconnects', async () => {
     const p = start()
@@ -914,4 +921,62 @@ describe('mcp proxy across a dropped link', () => {
     })
     p.child.kill()
   })
+
+  // The agent started while the SSH link was down (its socket not bound):
+  // the shim keeps the agent's stdio and makes its first link later.
+  const lateServer = async (path, afterMs) => {
+    await new Promise((r) => setTimeout(r, afterMs))
+    const s = net.createServer({ allowHalfOpen: true }, handler)
+    await new Promise((r) => s.listen(path, r))
+    return s
+  }
+
+  it('started before its socket exists, past the first 3 s: the first call makes the link and goes through', async () => {
+    const late = sockPath()
+    const p = start({ TESSEL_REMOTE_SOCK: late })
+    p.send(INIT)
+    const coming = lateServer(late, 3600) // after the first window, during the call's own tries
+    try {
+      const init = await p.reply(0, 15000)
+      expect(init.result.method).toBe('initialize') // Tessel's answer, under the client's own id
+      p.send({ jsonrpc: '2.0', method: 'notifications/initialized' })
+      p.send({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'browser_pages' } })
+      expect((await p.reply(1)).result.n).toBe(1)
+      expect(hellos).toHaveLength(1)
+      expect(ids).toEqual([0, 1]) // nothing replayed: the initialize went once
+      expect(p.err()).not.toContain(late)
+    } finally {
+      p.child.kill()
+      const s = await coming
+      await new Promise((r) => s.close(r))
+    }
+  }, 30000)
+
+  it('no link for its first calls: a server without tools, then the tools announced when the link is back', async () => {
+    const late = sockPath()
+    const p = start({ TESSEL_REMOTE_SOCK: late })
+    p.send(INIT)
+    const init = await p.reply(0, 15000)
+    expect(init.result.serverInfo.name).toBe('tessel_team')
+    expect(init.result.instructions).toMatch(/not reachable right now \((ENOENT|ECONNREFUSED)\)/)
+    expect(init.result.instructions).not.toContain(late)
+    p.send({ jsonrpc: '2.0', method: 'notifications/initialized' })
+    p.send({ jsonrpc: '2.0', id: 1, method: 'tools/list', params: {} })
+    expect((await p.reply(1, 15000)).result).toEqual({ tools: [] }) // not an error: the client keeps this server
+    expect(hellos).toEqual([])
+    const s = await lateServer(late, 0)
+    try {
+      // The link made by itself: the client is told to ask for the tools again.
+      await p.reply('list_changed', 15000, (l) => l.method === 'notifications/tools/list_changed')
+      expect(hellos).toHaveLength(1)
+      expect(ids.filter((i) => String(i).startsWith('tessel-reinit-'))).toHaveLength(1) // the initialize replayed, its answer swallowed
+      expect(p.lines.filter((l) => l.id === 0)).toHaveLength(1)
+      p.send({ jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'browser_pages' } })
+      expect((await p.reply(2)).result.n).toBe(1)
+      expect(p.err()).toBe('tessel-shim: no link to Tessel yet (ENOENT); tried again every few seconds and at the next call\n')
+    } finally {
+      p.child.kill()
+      await new Promise((r) => s.close(r))
+    }
+  }, 45000)
 })
