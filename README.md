@@ -118,10 +118,13 @@ working on Tessel itself (see [Build from source](#build-from-source)).
 
 - Hosts from `~/.ssh/config` or Settings → SSH Hosts; one shared connection per
   host for terminals, files and git, the password asked once.
-- **Agents run on the host**: Claude Code and Codex start on the server, in
-  the project's folder, with **all of Tessel's tools** (team, task board,
-  browser, terminals) through a small helper Tessel puts in your home folder
-  there (no root needed). A missing agent shows a card in its pane to install it.
+- **Agents run on the host**: Claude Code, Codex and Antigravity start on the
+  server, in the project's folder, with **all of Tessel's tools** (team, task
+  board, browser, terminals, connectors) through a small helper Tessel puts in
+  your home folder there (no root needed; Antigravity gets the tools, not yet
+  its live status). An agent started while the connection was down gets its
+  tools as soon as it is back, without a restart. A missing agent shows a card
+  in its pane to install it.
 - **No "trust this folder?" question in your remote projects**: with Settings →
   Agents → "Trust the folder when Tessel starts an agent" on, Tessel marks the
   folder of a project you added on the host as trusted in Claude Code's own
@@ -318,7 +321,7 @@ working on Tessel itself (see [Build from source](#build-from-source)).
   type can be asked, the person sharing is told each time, and both sides need this
   version.
 - **Tessel's own connectors (`tessel_apps`)**: Gmail, Google Calendar and Google Drive for
-  every agent on your computer, and for Claude Code and Codex on your SSH hosts, connected in
+  every agent on your computer, and for Claude Code, Codex and Antigravity on your SSH hosts, connected in
   **Settings > Connections**. The same panel lists Outlook mail, Outlook Calendar, OneDrive,
   GitHub, Dropbox, Notion, Linear, Jira, Confluence, Sentry, Vercel and Stripe; the server tells
   it which can be connected, and one whose app is not registered yet says **Not available yet**
