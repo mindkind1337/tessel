@@ -41,6 +41,12 @@ describe('parseSshConfig', () => {
     ])
   })
 
+  it('keeps the first IdentityFile of a block, the main key (OpenSSH tries them in order)', () => {
+    const hosts = parseSshConfig(['Host prod', '  IdentityFile ~/.ssh/id_primary', '  IdentityFile ~/.ssh/id_fallback'].join('
+'), { home: '/home/me' })
+    expect(hosts).toEqual([{ host: 'prod', identityFile: '/home/me/.ssh/id_primary' }])
+  })
+
   it('skips wildcard and negated patterns, keeps the concrete aliases of a line', () => {
     const hosts = parseSshConfig(['Host *', '  User everyone', 'Host web-? !bad a b', '  User ops', 'Host *.corp'].join('\n'))
     expect(hosts.map((h) => h.host)).toEqual(['a', 'b'])

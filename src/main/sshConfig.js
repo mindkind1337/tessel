@@ -81,7 +81,8 @@ export function parseSshConfig(content, { home = os.homedir() } = {}) {
           h.user ??= value
           break
         case 'identityfile':
-          h.identityFile = resolveSshConfigHomePath(value, home)
+          // Several: OpenSSH tries them in order, the first is the main key.
+          h.identityFile ??= resolveSshConfigHomePath(value, home)
           break
         case 'identityagent':
           h.identityAgent ??= resolveSshConfigHomePath(value, home)
