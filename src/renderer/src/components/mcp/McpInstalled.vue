@@ -4,7 +4,7 @@
 // test; its details under it: what it runs, its variables (names only), one
 // line per agent (scope, Test, Remove) and one "Add to…" menu for the others.
 import { ref, computed } from 'vue'
-import { ChevronRight, Copy, Check, RefreshCw } from 'lucide-vue-next'
+import { ChevronRight, Copy, Check, RefreshCw, X } from 'lucide-vue-next'
 import BrandIcon from '../BrandIcon.vue'
 import PanelState from '../ui/PanelState.vue'
 import McpAddToMenu from './McpAddToMenu.vue'
@@ -75,7 +75,7 @@ const offEverywhere = (row) => row.agents.every((a) => row.by[a].enabled === fal
 
 const DOT_LABEL = {
   ok: () => t('mcp.installed.dotOk', 'Last test: connected'),
-  auth: () => t('mcp.installed.dotAuth', 'Last test: needs sign-in'),
+  auth: () => t('mcp.installed.dotAuth', 'Last test: signs in from the agent'),
   error: () => t('mcp.installed.dotError', 'Last test: failed'),
   testing: () => t('mcp.test.testing', 'Testing…')
 }
@@ -249,9 +249,29 @@ function clearFilters() {
           <div class="sl-section-head">
             <span>{{ t('mcp.installed.usedBy', 'Used by') }}</span>
             <span class="sl-actions">
+              <!-- One Sign in for the whole card: each agent's own sign-in, in turn. -->
+              <button
+                v-if="m.isRemote(row) && m.needsSignIn(row)"
+                type="button"
+                class="exit-btn small mcpi-signin"
+                :title="t('mcp.installed.signInAllHint', 'Each agent signs in on its own: a pane opens for those with a command, the card says how for the others.')"
+                @click="m.signInAll(row)"
+              >
+                {{ t('mcp.installed.signIn', 'Sign in') }}
+              </button>
               <button type="button" class="exit-btn small" @click="m.testServer(row)">{{ t('mcp.installed.test', 'Test') }}</button>
               <McpAddToMenu :agents="others(row)" :disabled="!!m.busy" @pick="(a) => m.copyTo(row, a)" />
             </span>
+          </div>
+          <div v-if="m.cardMessage[row.name]" class="set-callout mcpi-card-message" :class="m.cardMessage[row.name].kind === 'error' ? 'danger' : 'info'" role="status">
+            <span class="set-callout-text">{{ m.cardMessage[row.name].text }}</span>
+            <button type="button" class="tb-icon mcpi-dismiss" :aria-label="t('mcp.dismiss', 'Dismiss')" :title="t('mcp.dismiss', 'Dismiss')" @click="m.sayCard(row.name, '')">
+              <X :size="12" aria-hidden="true" />
+            </button>
+            <details v-if="m.cardMessage[row.name].detail" class="set-more mcpi-raw">
+              <summary>{{ t('mcp.details', 'Details') }}</summary>
+              <p>{{ m.cardMessage[row.name].detail }}</p>
+            </details>
           </div>
           <ul class="sl-subs">
             <li v-for="agent in row.agents" :key="agent" class="sl-sub" :data-agent="agent">
@@ -270,14 +290,7 @@ function clearFilters() {
                 >
                 <McpTokenTag :server="row.name" :agent="agent" :scope="row.by[agent].scope" :cwd="cwd" variant="details" />
                 <span class="sl-actions">
-                  <button
-                    v-if="testState(m.testOf(agent, row.by[agent])) === 'auth'"
-                    type="button"
-                    class="exit-btn small"
-                    @click="m.signIn(agent, row.name)"
-                  >
-                    {{ t('mcp.installed.signIn', 'Sign in') }}
-                  </button>
+                  <!-- Sign in is the card's one button above (every agent at once). -->
                   <button type="button" class="exit-btn small" :title="testOnLabel(agent)" @click="m.test(agent, row.by[agent])">
                     {{ t('mcp.installed.test', 'Test') }}
                   </button>
@@ -453,6 +466,17 @@ function clearFilters() {
 }
 .mcpi-agent-name {
   color: var(--text-strong);
+}
+.mcpi-card-message {
+  position: relative;
+  margin: 6px 0 8px;
+}
+.mcpi-card-message .set-callout-text {
+  white-space: pre-line;
+}
+.mcpi-dismiss {
+  width: 22px;
+  height: 22px;
 }
 .mcpi-foot {
   margin: 12px 0 0;

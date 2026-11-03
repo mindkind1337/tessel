@@ -34,6 +34,7 @@
       "browse": "Parcourir le catalogue",
       "command": "commande",
       "signIn": "Se connecter",
+      "signInAllHint": "Chaque agent se connecte de son côté : un panneau s'ouvre pour ceux qui ont une commande, la carte explique comment faire pour les autres.",
       "test": "Tester",
       "notInstalled": "Non installé",
       "turnedOff": "Désactivé",
@@ -42,7 +43,7 @@
       "attention": "À vérifier",
       "connects": "Se connecte à",
       "copyTarget": "Copier ce que lance {{name}}",
-      "dotAuth": "Dernier test : connexion requise",
+      "dotAuth": "Dernier test : connexion par l'agent",
       "dotError": "Dernier test : échec",
       "dotNone": "Pas encore testé",
       "dotOk": "Dernier test : connecté",
@@ -69,6 +70,8 @@
       "connected_one": "Connecté · {{count}} outil",
       "connected_other": "Connecté · {{count}} outils",
       "needsSignIn": "Connexion requise",
+      "agentSignsIn": "Connexion par l'agent",
+      "agentSignsInHint": "Le serveur demande une connexion. Le test de Tessel n'a pas de jeton : il ne peut pas savoir si l'agent s'est déjà connecté, chaque agent garde le sien.",
       "failed": "Échec",
       "answered": "{{server}} a répondu en {{secs}} s.\nOutils : {{tools}}",
       "server": "Le serveur",
@@ -90,7 +93,11 @@
       "pane": "Connexion : {{name}}",
       "other": "Connectez-vous à « {{name}} » depuis un panneau {{agent}} (avec sa propre commande MCP), ou définissez la clé d'API du serveur.",
       "claude": "Dans un panneau Claude Code, tapez /mcp, choisissez « {{name}} » puis Authenticate. Votre navigateur s'ouvre pour vous connecter.",
-      "gemini": "Dans un panneau {{agent}}, tapez /mcp auth {{name}}. Votre navigateur s'ouvre pour vous connecter."
+      "gemini": "Dans un panneau {{agent}}, tapez /mcp auth {{name}}. Votre navigateur s'ouvre pour vous connecter.",
+      "howClaude": "dans un panneau Claude Code, tapez /mcp, choisissez « {{name}} » puis Authenticate",
+      "howGemini": "dans un panneau {{agents}}, tapez /mcp auth {{name}}",
+      "slash": "Pour vous connecter : {{how}}. Votre navigateur s'ouvre pour vous connecter.",
+      "rest": "{{agents}} se connectent depuis leur propre panneau ; Tessel ne peut pas le faire à leur place."
     },
     "hooks": {
       "checkFailed": "Vérification impossible : {{error}}",

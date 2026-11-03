@@ -20,6 +20,9 @@ export function useMcpState(props, emit) {
   const loaded = ref(false) // a first read has answered
   const busy = ref('') // key of the action in progress
   const message = reactive({ text: '', kind: 'ok', detail: '' })
+  // A message about one server, shown in its own card (the top callout is
+  // off-screen when the user is down at a card): name -> { text, kind, detail }.
+  const cardMessage = reactive({})
   const tests = reactive({}) // "agent:scope:name" -> result
   const haveCmd = reactive({}) // 'node' / 'uvx' -> bool
 
@@ -64,6 +67,12 @@ export function useMcpState(props, emit) {
     message.kind = kind
     message.detail = detail || ''
   }
+  // The same, in the card of server `name` (empty text clears it). A card's
+  // message goes away with the next action on that server.
+  function sayCard(name, text, kind = 'ok', detail = '') {
+    if (!text) delete cardMessage[name]
+    else cardMessage[name] = { text, kind, detail: detail || '' }
+  }
 
   async function refresh() {
     loading.value = true
@@ -103,6 +112,7 @@ export function useMcpState(props, emit) {
 
   async function test(agent, s) {
     const key = testKey(agent, s)
+    sayCard(s.name, '')
     tests[key] = { status: 'testing' }
     try {
       tests[key] = await window.shellApi.mcpTest({ agent, name: s.name, scope: s.scope, cwd: props.cwd })
@@ -120,11 +130,17 @@ export function useMcpState(props, emit) {
     for (const s of ['testing', 'error', 'auth']) if (states.includes(s)) return s
     return 'ok'
   }
+  // A remote server (http / sse): the one kind whose probe can answer "sign
+  // in" (a 401 / 403), since Tessel's probe carries no token.
+  const isRemote = (row) => row.types.some((ty) => ty && ty !== 'stdio')
+  // Whether an agent's last test of this server asked for a sign-in.
+  const needsSignIn = (row) => row.agents.some((a) => testState(testOf(a, row.by[a])) === 'auth')
 
   async function copyTo(row, to) {
     // From an agent that has it (the first one shown).
     const from = row.agents.find((a) => a !== to)
     if (!from) return
+    sayCard(row.name, '')
     busy.value = `copy:${row.name}:${to}` // i18n-ignore
     try {
       const res = await window.shellApi.mcpCopy({ from, to, name: row.name, scope: row.by[from].scope, cwd: props.cwd })
@@ -157,6 +173,7 @@ export function useMcpState(props, emit) {
       danger: true
     })
     if (!ok) return
+    sayCard(s.name, '')
     busy.value = `rm:${agent}:${s.name}` // i18n-ignore
     try {
       const res = await window.shellApi.mcpRemove({ agent, name: s.name, scope: s.scope, cwd: props.cwd })
@@ -174,12 +191,19 @@ export function useMcpState(props, emit) {
   // Signing in opens a browser and waits for its redirect: it runs in a pane
   // the user sees (never in a hidden process), for the CLIs that have a
   // command for it. Names are letters, digits, - and _ (checked when added).
+  // Each CLI keeps its own token: Tessel cannot sign in once for all of them.
+  const SIGN_IN_COMMAND = {
+    codex: (name) => `codex mcp login ${name}`, // i18n-ignore
+    opencode: (name) => `opencode mcp auth ${name}` // i18n-ignore
+  }
+  // The agents with a slash command for it, in their own pane.
+  const SLASH_SIGN_IN = ['claude', 'gemini', 'qwen']
+  const signInLabel = (name) => t('mcp.signIn.pane', 'Sign in: {{name}}', { name })
+
   function signIn(agent, name) {
     if (!/^[A-Za-z0-9_-]{1,64}$/.test(String(name))) return
-    if (agent === 'codex') {
-      emit('run', { label: t('mcp.signIn.pane', 'Sign in: {{name}}', { name }), command: `codex mcp login ${name}` }) // i18n-ignore
-    } else if (agent === 'opencode') {
-      emit('run', { label: t('mcp.signIn.pane', 'Sign in: {{name}}', { name }), command: `opencode mcp auth ${name}` }) // i18n-ignore
+    if (SIGN_IN_COMMAND[agent]) {
+      emit('run', { label: signInLabel(name), command: SIGN_IN_COMMAND[agent](name) })
     } else if (agent === 'gemini' || agent === 'qwen') {
       say(t('mcp.signIn.gemini', 'In a {{agent}} pane, type /mcp auth {{name}}. Your browser opens to sign in.', { name, agent: AGENT_NAME[agent] }))
     } else if (agent !== 'claude') {
@@ -187,6 +211,31 @@ export function useMcpState(props, emit) {
     } else {
       say(t('mcp.signIn.claude', 'In a Claude Code pane, type /mcp, pick "{{name}}" and choose Authenticate. Your browser opens to sign in.', { name }))
     }
+  }
+
+  // The card's one Sign in button: every agent that has the server. Those
+  // with a command (Codex, OpenCode) sign in one after the other in one pane
+  // (one 'run' with steps); the others are told how, in the card.
+  function signInAll(row) {
+    const name = row.name
+    if (!/^[A-Za-z0-9_-]{1,64}$/.test(String(name))) return
+    const steps = row.agents.filter((a) => SIGN_IN_COMMAND[a]).map((a) => SIGN_IN_COMMAND[a](name))
+    const slash = row.agents.filter((a) => SLASH_SIGN_IN.includes(a))
+    const rest = row.agents.filter((a) => !SIGN_IN_COMMAND[a] && !SLASH_SIGN_IN.includes(a))
+    const lines = []
+    if (slash.length) {
+      const how = []
+      if (slash.includes('claude')) how.push(t('mcp.signIn.howClaude', 'in a Claude Code pane, type /mcp, pick "{{name}}" and choose Authenticate', { name }))
+      const geminiLike = slash.filter((a) => a !== 'claude').map((a) => AGENT_NAME[a])
+      if (geminiLike.length) how.push(t('mcp.signIn.howGemini', 'in a {{agents}} pane, type /mcp auth {{name}}', { name, agents: agentList(geminiLike) }))
+      lines.push(t('mcp.signIn.slash', 'To sign in: {{how}}. Your browser opens to sign in.', { how: how.join('; ') }))
+    }
+    if (rest.length) {
+      lines.push(t('mcp.signIn.rest', '{{agents}} sign in from their own pane; Tessel cannot do it for them.', { agents: agentList(rest.map((a) => AGENT_NAME[a])) }))
+    }
+    // The pane opens over Settings; the card's text waits for the user's return.
+    sayCard(name, lines.join('\n'))
+    if (steps.length) emit('run', { label: signInLabel(name), steps })
   }
 
   // The agents that already have a server of this name.
@@ -256,6 +305,7 @@ export function useMcpState(props, emit) {
     loaded,
     busy,
     message,
+    cardMessage,
     tests,
     haveCmd,
     installed,
@@ -266,6 +316,7 @@ export function useMcpState(props, emit) {
     rows,
     catalogById,
     say,
+    sayCard,
     refresh,
     checkTools,
     testKey,
@@ -274,9 +325,12 @@ export function useMcpState(props, emit) {
     testServer,
     testAll,
     rowState,
+    isRemote,
+    needsSignIn,
     copyTo,
     remove,
     signIn,
+    signInAll,
     addedTo,
     fullyAdded,
     addToAgents,

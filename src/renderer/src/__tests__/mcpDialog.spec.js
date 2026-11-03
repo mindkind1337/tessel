@@ -128,6 +128,65 @@ describe('MCP servers dialog', () => {
     expect(removed).toEqual([{ agent: 'codex', name: 'ctx', scope: 'user', cwd: null }])
   })
 
+  it('a remote server the probe cannot enter: "Signs in from the agent" (not "Needs sign-in"), one Sign in on the card that runs each CLI sign-in in turn and tells the rest how, in the card', async () => {
+    const s = (scope = 'user') => ({ name: 'cf', scope, type: 'http', target: 'https://mcp.cloudflare.com/mcp' })
+    const w = mountWith(
+      {
+        mcpList: async () => ({
+          claude: [s('project')],
+          codex: [s()],
+          others: { gemini: { servers: [s()] }, opencode: { servers: [s()] }, cursor: { servers: [s()] } }
+        }),
+        mcpTest: async () => ({ ok: false, status: 'auth', error: 'needs you to sign in' })
+      },
+      { agents: agentsOf(['claude', 'codex', 'gemini', 'opencode', 'cursor']) }
+    )
+    await flushPromises()
+    const r = await openRow(w, 'cf')
+    // Before a test: no Sign in anywhere.
+    expect(button(r, 'Sign in')).toBeUndefined()
+    await button(r.get('.sl-section-head'), 'Test').trigger('click')
+    await flushPromises()
+    // The honest tag, with why, and the amber dot; the per-agent lines have no Sign in of their own.
+    const tag = sub(r, 'claude').get('.tag-warn')
+    expect(tag.text()).toBe('Signs in from the agent')
+    expect(tag.attributes('title')).toContain('cannot tell whether the agent has already signed in')
+    expect(row(w, 'cf').get('.mcpi-dot').attributes('title')).toBe('Last test: signs in from the agent')
+    expect(w.text()).not.toContain('Needs sign-in')
+    expect(r.findAll('.sl-sub').every((line) => !button(line, 'Sign in'))).toBe(true)
+    // One Sign in on the card: Codex then OpenCode in one pane, the others told how, in the card.
+    await r.get('.sl-section-head .mcpi-signin').trigger('click')
+    expect(w.emitted('run')).toHaveLength(1)
+    expect(w.emitted('run')[0][0]).toEqual({ label: 'Sign in: cf', steps: ['codex mcp login cf', 'opencode mcp auth cf'] })
+    const card = r.get('.mcpi-card-message')
+    expect(card.text()).toContain('in a Claude Code pane, type /mcp, pick "cf" and choose Authenticate; in a Gemini CLI pane, type /mcp auth cf')
+    expect(card.text()).toContain('Cursor CLI sign in from their own pane; Tessel cannot do it for them.')
+    // Not in the top callout, which is off-screen from a card.
+    expect(w.find('.mcpd-message').exists()).toBe(false)
+    // Dismissed by its ×, and gone with the next action on that server.
+    await card.get('.mcpi-dismiss').trigger('click')
+    expect(r.find('.mcpi-card-message').exists()).toBe(false)
+    await r.get('.sl-section-head .mcpi-signin').trigger('click')
+    expect(r.find('.mcpi-card-message').exists()).toBe(true)
+    await button(sub(r, 'gemini'), 'Test').trigger('click')
+    expect(r.find('.mcpi-card-message').exists()).toBe(false)
+  })
+
+  it('a local server never gets the card Sign in: its probe runs the command itself', async () => {
+    const w = mountWith(
+      {
+        mcpList: async () => ({ claude: [{ name: 'fs', scope: 'user', type: 'stdio', target: 'npx fs' }], codex: [] }),
+        mcpTest: async () => ({ ok: false, status: 'auth', error: 'odd' })
+      },
+      { agents: agentsOf(['claude']) }
+    )
+    await flushPromises()
+    const r = await openRow(w, 'fs')
+    await button(r.get('.sl-section-head'), 'Test').trigger('click')
+    await flushPromises()
+    expect(r.find('.mcpi-signin').exists()).toBe(false)
+  })
+
   it('"Add to…" is one menu with the installed agents that lack the server', async () => {
     const copies = []
     const w = mountWith(

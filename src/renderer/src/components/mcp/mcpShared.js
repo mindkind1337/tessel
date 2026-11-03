@@ -60,13 +60,19 @@ export function testLabel(res) {
       ? t('mcp.test.connected', 'Connected · {{count}} tool', { count })
       : t('mcp.test.connected', 'Connected · {{count}} tools', { count })
   }
-  if (state === 'auth') return t('mcp.test.needsSignIn', 'Needs sign-in')
+  // Only a remote server's probe answers 'auth' (a 401 / 403 to a request
+  // with no token): the agent may well have signed in already, Tessel cannot
+  // tell, so the tag says who signs in rather than "needs sign-in".
+  if (state === 'auth') return t('mcp.test.agentSignsIn', 'Signs in from the agent')
   return t('mcp.test.failed', 'Failed')
 }
 
 // The whole answer, for a title or a Details disclosure.
 export function testTitle(res) {
   if (!res) return ''
+  if (res.status === 'auth') {
+    return t('mcp.test.agentSignsInHint', "The server asks for a sign-in. Tessel's test carries no token, so it cannot tell whether the agent has already signed in: each agent keeps its own.")
+  }
   if (res.status === 'connected') {
     const secs = (Math.round((res.ms || 0) / 100) / 10).toLocaleString(intlLocale())
     return t('mcp.test.answered', '{{server}} answered in {{secs}}s.\nTools: {{tools}}', {
