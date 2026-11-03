@@ -3,7 +3,7 @@
 // SshTargetCard.tsx (MIT, Copyright (c) 2026 Lovecast Inc.). Hosts found in
 // ~/.ssh/config are synced when the page opens (Import brings back the ones
 // you removed); Connect opens a terminal pane running ssh on the host.
-import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
+import { ref, computed, nextTick, onMounted, onBeforeUnmount } from 'vue'
 import { Plus, Upload, Server, ServerOff, Pencil, Trash2, MonitorSmartphone, LoaderCircle } from 'lucide-vue-next'
 import ConfirmDialog from '../ConfirmDialog.vue'
 import RemoteHostForm from './RemoteHostForm.vue'
@@ -94,6 +94,10 @@ function closeForm() {
 async function save(form) {
   const payload = buildSavePayload(form)
   if (!payload.ok) {
+    // Cleared first: the same error twice in a row (the form was changed and
+    // submitted again) must show again, and the form only reacts to a change.
+    formError.value = ''
+    await nextTick()
     formError.value = payload.error
     return
   }

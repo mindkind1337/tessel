@@ -236,6 +236,24 @@ describe('Settings > SSH Hosts', () => {
     w.unmount()
   })
 
+  it('the same error shows again after the form was changed and submitted again', async () => {
+    const w = mount(RemoteHostsSettings, { attachTo: document.body })
+    await flushPromises()
+    await w.find('[data-test="remote-add"]').trigger('click')
+    await w.find('form').trigger('submit')
+    await flushPromises()
+    expect(w.find('.rh-form-error').text()).toBe('Host or SSH config alias is required')
+    // A change clears it (it no longer says what is wrong with what is typed)...
+    await w.find('#ssh-target-label').setValue('Prod')
+    await flushPromises()
+    expect(w.find('.rh-form-error').exists()).toBe(false)
+    // ...and the next refused submit, with the very same error, shows it again.
+    await w.find('form').trigger('submit')
+    await flushPromises()
+    expect(w.find('.rh-form-error').text()).toBe('Host or SSH config alias is required')
+    w.unmount()
+  })
+
   it('edits a host (Advanced opens when it has a jump host)', async () => {
     api.state.targets = [{ ...BOX, jumpHost: 'bastion' }]
     const w = mount(RemoteHostsSettings, { attachTo: document.body })
