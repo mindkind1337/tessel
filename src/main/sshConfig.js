@@ -361,8 +361,14 @@ async function resolveIncludePaths(pattern, context) {
 }
 
 function expandIncludeTokens(input, context) {
+  const max = context.limits.maxIncludePathBytes
   let out = ''
   for (let i = 0; i < input.length; i++) {
+    // Bounded as it grows: %d repeated amplifies a short line by the home path.
+    if (out.length > max) {
+      overBudget(context)
+      return null
+    }
     const c = input[i]
     if (c !== '%') {
       out += c

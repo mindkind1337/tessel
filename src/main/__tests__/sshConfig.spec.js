@@ -111,6 +111,16 @@ Host only
     }
   })
 
+  it('an Include of %d repeated (the home path, amplified) stops the parse too', async () => {
+    const longHome = join(home, 'h'.repeat(200))
+    mkdirSync(join(longHome, '.ssh'), { recursive: true })
+    writeFileSync(join(longHome, '.ssh', 'config'), `Include ${'%d'.repeat(1000)}/x
+Host only
+`)
+    const { truncated } = await expandSshConfigIncludesDetailed(join(longHome, '.ssh', 'config'), { home: longHome })
+    expect(truncated).toBe(true)
+  })
+
   it('skips an Include with a target-dependent token or a missing variable', async () => {
     writeFileSync(join(home, '.ssh', 'config'), 'Include conf.d/%h.conf\nInclude ${TESSEL_NO_SUCH_VAR_X}/x\nHost only\n')
     writeFileSync(join(home, '.ssh', 'conf.d', '%h.conf'), 'Host bad\n')
