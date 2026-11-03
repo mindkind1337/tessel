@@ -212,6 +212,15 @@ onMounted(() => nextTick(() => hostEl.value && hostEl.value.focus()))
                   />
                   <p class="rh-field-hint">{{ t('remote.form.jumpHint', 'Optional. Equivalent to ProxyJump / ssh -J.') }}</p>
                 </div>
+                <div class="rh-field">
+                  <label class="rh-check" for="add-ssh-persistent">
+                    <input id="add-ssh-persistent" v-model="form.persistentSessions" type="checkbox" class="set-switch" />
+                    <span>{{ t('remote.form.persistentSessions', 'Keep sessions alive on the server (tmux)') }}</span>
+                  </label>
+                  <p class="rh-field-hint">
+                    {{ t('remote.form.persistentHint', 'A lost connection re-attaches to the same session instead of starting a new shell, so what runs there (an agent) survives. Needs tmux on the server.') }}
+                  </p>
+                </div>
               </div>
             </div>
           </div>

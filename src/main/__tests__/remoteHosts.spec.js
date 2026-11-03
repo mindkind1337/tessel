@@ -122,6 +122,25 @@ describe('the host store', () => {
     expect(service().list()).toEqual([])
   })
 
+  it('persistentSessions (tmux on the host) is off unless saved as true, and survives a config refresh', async () => {
+    expect(sanitizeTarget({ host: 'srv' }).target.persistentSessions).toBeUndefined()
+    expect(sanitizeTarget({ host: 'srv', persistentSessions: true }).target.persistentSessions).toBe(true)
+    for (const bad of ['true', 1, 'yes', {}, null]) expect(sanitizeTarget({ host: 'srv', persistentSessions: bad }).target.persistentSessions).toBeUndefined()
+    const s = service()
+    const { target } = s.add({ host: 'srv', persistentSessions: true })
+    expect(target.persistentSessions).toBe(true)
+    expect(s.get(target.id).persistentSessions).toBe(true)
+    expect(s.update(target.id, { persistentSessions: false }).target.persistentSessions).toBeUndefined()
+    expect(s.update(target.id, { persistentSessions: true }).target.persistentSessions).toBe(true)
+    // An imported host keeps the option through a config sync.
+    writeFileSync(join(home, '.ssh', 'config'), 'Host prod\n  HostName prod.example.com\n')
+    const imported = await s.importConfig()
+    const prod = imported.all.find((x) => x.configHost === 'prod')
+    s.update(prod.id, { persistentSessions: true })
+    await s.importConfig()
+    expect(s.get(prod.id).persistentSessions).toBe(true)
+  })
+
   it('never stores a password field', () => {
     const s = service()
     const res = s.add({ host: 'srv', password: 'hunter2', passphrase: 'x' })

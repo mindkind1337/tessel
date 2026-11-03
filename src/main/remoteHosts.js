@@ -89,6 +89,9 @@ export function sanitizeTarget(input, { id } = {}) {
   if (identityFile) target.identityFile = identityFile
   if (jumpHost) target.jumpHost = jumpHost
   if (proxyCommand) target.proxyCommand = proxyCommand
+  // Terminals on this host run inside a tmux session that a lost connection
+  // re-attaches to (sshHostBridge.js). A boolean true only; off otherwise.
+  if (src.persistentSessions === true) target.persistentSessions = true
   return { target }
 }
 

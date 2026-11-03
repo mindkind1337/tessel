@@ -13,6 +13,8 @@
       "algorithms": "Les algorithmes définis pour {{host}} dans votre configuration SSH ({{detail}}) ne sont pas pris en charge par le client SSH de Tessel.",
       "lost": "Connexion à {{host}} perdue. Reconnexion…",
       "reconnected": "Reconnecté à {{host}} : un nouveau shell a été lancé.",
+      "reconnectedSame": "Reconnecté à {{host}} : de retour dans la même session.",
+      "noTmux": "tmux n’est pas installé sur {{host}} : cette session ne survivra pas à une connexion perdue.",
       "gaveUp": "Impossible de se reconnecter à {{host}}.",
       "authFailed": "La connexion à {{host}} a échoué (accès refusé).",
       "authCancelled": "La connexion à {{host}} a été annulée.",

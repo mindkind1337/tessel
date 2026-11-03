@@ -124,6 +124,12 @@ working on Tessel itself (see [Build from source](#build-from-source)).
   there (no root needed). A missing agent shows a card in its pane to install it.
 - Their conversations, history, model, cost and skills are read on the host;
   file links open the host's files.
+- **Sessions that survive a dropped connection** (per host, Advanced → *Keep
+  sessions alive on the server*): the host's terminals run inside a `tmux`
+  session on the server, with no status bar, and a lost connection re-attaches
+  to the same session instead of starting a new shell, so an agent running there
+  keeps going. Needs `tmux` on the server (the pane says so when it is missing,
+  and works as before). Closing the pane ends its session.
 - **Stable on slow or dropped links**: your clicks go first, every remote call
   has a time limit, a slow host says so, and when the connection comes back
   the project's panes reopen and agents resume their conversations. A stall of

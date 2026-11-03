@@ -12,6 +12,7 @@ import {
   buildSavePayload,
   emptyForm,
   formFromTarget,
+  hasAdvancedValues,
   overallStatus,
   connectVerb,
   statusLabel,
@@ -64,8 +65,17 @@ describe('host input and the save payload (Orca ssh-target-draft)', () => {
     draft = applyParsedSshHostInput({ ...draft, host: '51.79.12.34' })
     expect(buildSavePayload(draft)).toEqual({
       ok: true,
-      target: { label: 'Website AfterlifeRP', configHost: '51.79.12.34', host: '51.79.12.34', port: 22, username: 'afterlife', identityFile: '', proxyCommand: '', jumpHost: '' }
+      target: { label: 'Website AfterlifeRP', configHost: '51.79.12.34', host: '51.79.12.34', port: 22, username: 'afterlife', identityFile: '', proxyCommand: '', jumpHost: '', persistentSessions: false }
     })
+  })
+
+  it('"Keep sessions alive on the server" is a boolean of the form, saved true only when ticked', () => {
+    expect(emptyForm().persistentSessions).toBe(false)
+    expect(formFromTarget({ ...BOX, persistentSessions: true }).persistentSessions).toBe(true)
+    expect(formFromTarget(BOX).persistentSessions).toBe(false)
+    expect(hasAdvancedValues({ ...emptyForm(), persistentSessions: true })).toBe(true)
+    expect(buildSavePayload({ ...emptyForm(), host: 'srv', persistentSessions: true }).target.persistentSessions).toBe(true)
+    expect(buildSavePayload({ ...emptyForm(), host: 'srv', persistentSessions: 'yes' }).target.persistentSessions).toBe(false)
   })
 
   it('invisible characters pasted with an IP or a username go', () => {
@@ -94,7 +104,7 @@ describe('host input and the save payload (Orca ssh-target-draft)', () => {
     const ok = buildSavePayload({ ...emptyForm(), host: 'deploy@srv:2200', identityFile: ' ~/.ssh/k ' })
     expect(ok).toEqual({
       ok: true,
-      target: { label: 'deploy@srv', configHost: 'srv', host: 'srv', port: 2200, username: 'deploy', identityFile: '~/.ssh/k', proxyCommand: '', jumpHost: '' }
+      target: { label: 'deploy@srv', configHost: 'srv', host: 'srv', port: 2200, username: 'deploy', identityFile: '~/.ssh/k', proxyCommand: '', jumpHost: '', persistentSessions: false }
     })
   })
 

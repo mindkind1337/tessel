@@ -8,6 +8,8 @@ export function sshTemplates(t) {
   return {
     lost: t('main.ssh.lost', 'Connection to {{host}} lost. Reconnecting…'),
     reconnected: t('main.ssh.reconnected', 'Reconnected to {{host}}: a new shell was started.'),
+    reconnectedSame: t('main.ssh.reconnectedSame', 'Reconnected to {{host}}: back in the same session.'),
+    noTmux: t('main.ssh.noTmux', 'tmux is not installed on {{host}}: this session will not survive a lost connection.'),
     gaveUp: t('main.ssh.gaveUp', 'Could not reconnect to {{host}}.'),
     notConnected: t('main.ssh.notConnected', 'Not connected to {{host}}: what you type is not sent until the new shell starts.'),
     codes: {

@@ -7,7 +7,8 @@
 // Messages (newline-delimited JSON on the host's pipe, token-authenticated
 // like every other op; see ptyHost.js):
 //   app -> host
-//     create { ..., ssh: { hostId, spec, remotePath?, texts } }   a remote terminal
+//     create { ..., ssh: { hostId, spec, remotePath?, texts, persistent? } }   a remote terminal
+//                                     (persistent: inside a tmux session, see createPty)
 //     ssh-exec { ch, hostId, spec, onlyLive? }   the Files session: `exec /bin/sh`
 //                                     (the only command an exec channel may run);
 //                                     onlyLive: on a live connection only, never a
@@ -28,7 +29,8 @@
 //
 // What this process enforces itself (whatever the app sends):
 // - an exec channel only ever runs `exec /bin/sh`, a terminal a login shell
-//   or `cd -- '<path>' && exec "$SHELL" -l` built here (remoteProject.js);
+//   or `cd -- '<path>' && exec "$SHELL" -l` built here (remoteProject.js), or
+//   that command inside a tmux session named after the pane (tmuxCommand);
 // - the spec is checked field by field (no control characters, bounded);
 // - output to the app is paused while the pipe holds more than OUT_HIGH_WATER;
 // - a question waits CREDENTIAL_TIMEOUT_MS at most; answers are bounded.
@@ -37,7 +39,7 @@ import { StringDecoder } from 'string_decoder'
 import { createSshManager } from './sshManager'
 import { createHostKeyStore } from './hostKeyStore'
 import { formatSshError, formatSshText } from './sshMessages'
-import { remoteCdCommand, validateRemotePath } from '../remoteProject'
+import { remoteCdCommand, validateRemotePath, shellQuote } from '../remoteProject'
 import { createRemoteAgentTunnel, validateRemoteAgent, sourcePrefix } from '../remoteAgent/remoteAgentTunnel'
 
 export const SSH_FEATURE = 1
@@ -59,6 +61,43 @@ const ID_RE = /^[A-Za-z0-9_.:-]{1,80}$/
 // A remote-agent pane waits this long for its socket before its shell opens
 // (then it opens anyway: the agent's team tools say the socket is missing).
 export const AGENT_BIND_WAIT_MS = 10_000
+// Persistent sessions (a host with "Keep sessions alive on the server"): the
+// pane's shell runs inside a tmux session on the host, on a tmux server of
+// Tessel's own (socket name TMUX_SOCKET, so its options never touch the
+// user's own tmux), and a reconnect re-attaches to it instead of starting a
+// new shell. The probe for tmux waits this long at most.
+export const TMUX_SOCKET = 'tessel'
+export const TMUX_PROBE = 'command -v tmux >/dev/null 2>&1'
+export const TMUX_PROBE_TIMEOUT_MS = 15_000
+const TMUX_SESSION_MAX = 40
+
+// The tmux session name of a pane: only [A-Za-z0-9_-], so it is never read as
+// an option or a target pattern. -> 'tessel-<pane>'
+export function tmuxSessionName(paneId) {
+  return `tessel-${String(paneId).replace(/[^A-Za-z0-9_-]/g, '')}`.slice(0, TMUX_SESSION_MAX)
+}
+
+// The command that runs `inner` (a POSIX sh command) inside the pane's tmux
+// session, or attaches to it when it already exists (-A: the inner command is
+// then ignored by tmux). The options are globals of Tessel's own tmux server
+// (-L), set before the first window exists (history-limit applies to windows
+// created after it): no status bar, so the pane looks as it does today;
+// screen-256color is on every host and matches the pane's xterm-256color.
+// Nothing here is interpolated unquoted: the name is sanitized, the inner
+// command single-quoted.
+export function tmuxCommand(paneId, inner) {
+  const name = tmuxSessionName(paneId)
+  return (
+    `exec tmux -u -L ${TMUX_SOCKET} set-option -g status off \\; set-option -g history-limit 50000 \\; ` +
+    `set-option -g default-terminal screen-256color \\; new-session -A -s ${name} ${shellQuote(inner)}`
+  )
+}
+
+// Ends the pane's session on the host (the pane was closed, or its client
+// left and the session is of no use to anyone).
+export function tmuxKillCommand(paneId) {
+  return `tmux -L ${TMUX_SOCKET} kill-session -t ${tmuxSessionName(paneId)} >/dev/null 2>&1`
+}
 
 function cleanStr(v, max) {
   return typeof v === 'string' && v.length > 0 && v.length <= max && !CONTROL.test(v) ? v : null
@@ -112,6 +151,8 @@ function cleanTexts(raw) {
   if (raw && typeof raw === 'object') {
     out.lost = s(raw.lost)
     out.reconnected = s(raw.reconnected)
+    out.reconnectedSame = s(raw.reconnectedSame)
+    out.noTmux = s(raw.noTmux)
     out.gaveUp = s(raw.gaveUp)
     out.notConnected = s(raw.notConnected)
     out.label = s(raw.label).slice(0, 120)
@@ -304,7 +345,12 @@ export function createSshHostBridge({
   // TESSEL_PANE_ID / TESSEL_REMOTE_SOCK / TESSEL_REMOTE_TOKEN /
   // TESSEL_AGENT_PROVIDER, and the pane and its token are known to the
   // tunnel until the pane exits. (The token is never logged.)
-  function createPty({ hostId, spec: rawSpec, remotePath, texts: rawTexts, cols, rows, paneId, remoteAgent: rawAgent }) {
+  //
+  // persistent (the host's "Keep sessions alive on the server"): the shell
+  // runs inside a tmux session named after the pane (tmuxCommand). A lost
+  // connection re-attaches to it, so what ran there (an agent) survives; a
+  // host without tmux gets the plain command, and the pane says so once.
+  function createPty({ hostId, spec: rawSpec, remotePath, texts: rawTexts, cols, rows, paneId, remoteAgent: rawAgent, persistent: rawPersistent }) {
     const spec = validateSpec(rawSpec)
     const texts = cleanTexts(rawTexts)
     const label = texts.label || (spec && spec.host) || ''
@@ -317,13 +363,18 @@ export function createSshHostBridge({
     if (!spec || !cleanStr(hostId, 80)) throw new Error('invalid ssh spec') // i18n-ignore internal
     const agent = rawAgent == null ? null : validateRemoteAgent(rawAgent)
     if (rawAgent != null && (!agent || typeof paneId !== 'string' || !ID_RE.test(paneId))) throw new Error('invalid remote agent') // i18n-ignore internal
+    const persistent = rawPersistent === true
+    if (persistent && (typeof paneId !== 'string' || !ID_RE.test(paneId))) throw new Error('invalid persistent pane') // i18n-ignore internal
     // The command of each (re)opened shell: the pane's variables come from
     // the env file the tunnel writes just before (writeEnv).
-    const commandFor = () =>
+    const plainCommandFor = () =>
       agent
         ? sourcePrefix(paneId) +
           (cdCommand || 'exec "$SHELL" -l')
         : cdCommand
+    // tmux: the same command runs inside the session (the env file is sourced
+    // in there, where the agent starts); a plain pane gets a login shell.
+    const commandFor = (useTmux) => (useTmux ? tmuxCommand(paneId, plainCommandFor() || 'exec "$SHELL" -l') : plainCommandFor())
     const dataFns = []
     const exitFns = []
     const size = { cols: Math.max(2, cols | 0), rows: Math.max(1, rows | 0) }
@@ -336,9 +387,57 @@ export function createSshHostBridge({
     let attempt = 0
     let openedAt = 0
     let notConnectedShown = false
+    let noTmuxShown = false
+    // The shell open now (or the last one) runs inside the pane's tmux session.
+    let inTmux = false
     let queued = []
     let queuedBytes = 0
     const self = { pid: null, hostId, noReconnect: false }
+
+    // One command on an exec channel of the host's connection -> Promise<exit
+    // code | null> (null: no status, or nothing within timeoutMs). Rejects as
+    // manager.open does (not connected, refused...).
+    function runExec(command, timeoutMs, opts = {}) {
+      return manager.open(hostId, spec, 'exec', { command, ...opts }).then(
+        ({ stream: s, release: rel }) =>
+          new Promise((resolve) => {
+            let done = false
+            const settle = (code) => {
+              if (done) return
+              done = true
+              timers.clearTimeout(timer)
+              rel()
+              resolve(code)
+            }
+            const timer = timers.setTimeout(() => {
+              try {
+                s.close()
+              } catch {
+                /* gone */
+              }
+              settle(null)
+            }, timeoutMs)
+            s.on('data', () => {})
+            if (s.stderr) s.stderr.on('data', () => {})
+            s.on('error', () => {})
+            const onClose = () => {
+              const exit = exitOf(s)
+              settle(exit ? exit.code : null)
+            }
+            if (s.tesselClosed) timers.setTimeout(onClose, 0)
+            else s.once('close', () => timers.setTimeout(onClose, 0))
+          })
+      )
+    }
+    // Is tmux on the host? Asked before each (re)open of a persistent pane,
+    // so a tmux installed since is used. A probe that hangs counts as no
+    // tmux: the pane opens as it does today rather than not at all.
+    const hasTmux = () => runExec(TMUX_PROBE, TMUX_PROBE_TIMEOUT_MS).then((code) => code === 0)
+    // Best effort, on a live connection only (closing a pane never asks for
+    // a password), and nothing waits for it.
+    function killSession() {
+      runExec(tmuxKillCommand(paneId), TMUX_PROBE_TIMEOUT_MS, { onlyLive: true }).catch(() => {})
+    }
 
     const emit = (text) => {
       if (!text) return
@@ -379,12 +478,13 @@ export function createSshHostBridge({
 
     function open(isReconnect) {
       agentReady()
-        .then(() => {
+        .then(() => (persistent && !killed && !exited ? hasTmux() : false))
+        .then((useTmux) => {
           if (killed || exited) return { stream: null }
-          const command = commandFor()
+          const command = commandFor(useTmux)
           const asked = { ...pty, cols: size.cols, rows: size.rows }
           const opts = command ? { command, pty: asked } : { pty: asked }
-          return manager.open(hostId, spec, command ? 'exec' : 'shell', opts).then((res) => ({ ...res, asked }))
+          return manager.open(hostId, spec, command ? 'exec' : 'shell', opts).then((res) => ({ ...res, asked, useTmux }))
         })
         .then((res) => {
           if (!res.stream) return
@@ -403,7 +503,18 @@ export function createSshHostBridge({
           decoder = new StringDecoder('utf8')
           openedAt = Date.now()
           notConnectedShown = false
-          if (isReconnect && texts.reconnected) emit(dim(formatSshText(texts.reconnected, { host: label })))
+          const wasTmux = inTmux
+          inTmux = res.useTmux === true
+          if (isReconnect) {
+            // Back in the same tmux session (its program still running), or a
+            // new shell as before. (tmux redraws the screen as it re-attaches.)
+            const text = wasTmux && inTmux ? texts.reconnectedSame : texts.reconnected
+            if (text) emit(dim(formatSshText(text, { host: label })))
+          }
+          if (persistent && !inTmux && !noTmuxShown && texts.noTmux) {
+            noTmuxShown = true
+            emit(dim(formatSshText(texts.noTmux, { host: label })))
+          }
           s.on('data', (d) => emit(decoder.write(d)))
           s.stderr.on('data', (d) => emit(decoder.write(d)))
           s.on('error', () => {})
@@ -412,7 +523,12 @@ export function createSshHostBridge({
             if (stream === s) stream = null
             if (killed) return finish(0)
             const exit = exitOf(s)
-            if (exit) return finish(exit.code, 0)
+            if (exit) {
+              // The tmux client left with a status: its session ended, or the
+              // user detached. Either way nothing shows it any more.
+              if (inTmux) killSession()
+              return finish(exit.code, 0)
+            }
             // No exit status: the connection went away under the shell (a
             // reconnect), or the host closed the channel (the end).
             timers.setTimeout(() => {
@@ -519,6 +635,9 @@ export function createSshHostBridge({
             /* gone */
           }
         }
+        // The pane was closed: its session on the host goes too (a lost
+        // connection never comes here, so a detached session stays).
+        if (inTmux) killSession()
         // node-pty reports an exit after kill: so does this.
         timers.setTimeout(() => finish(0), 0)
       },

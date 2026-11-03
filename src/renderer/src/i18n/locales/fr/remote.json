@@ -64,6 +64,8 @@
       "jumpHost": "Hôte de rebond",
       "jumpPlaceholder": "bastion.example.com",
       "jumpHint": "Facultatif. Équivalent à ProxyJump / ssh -J.",
+      "persistentSessions": "Garder les sessions actives sur le serveur (tmux)",
+      "persistentHint": "Une connexion perdue se rattache à la même session au lieu de lancer un nouveau shell : ce qui y tourne (un agent) survit. Nécessite tmux sur le serveur.",
       "cancel": "Annuler",
       "saveChanges": "Enregistrer les modifications",
       "addTarget": "Ajouter une cible"

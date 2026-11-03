@@ -199,7 +199,8 @@ export const EMPTY_FORM = Object.freeze({
   username: '',
   identityFile: '',
   proxyCommand: '',
-  jumpHost: ''
+  jumpHost: '',
+  persistentSessions: false
 })
 
 export function emptyForm() {
@@ -221,7 +222,8 @@ export function formFromTarget(target) {
     username: target.username || '',
     identityFile: target.identityFile || '',
     proxyCommand: target.proxyCommand || '',
-    jumpHost: target.jumpHost || ''
+    jumpHost: target.jumpHost || '',
+    persistentSessions: target.persistentSessions === true
   }
 }
 
@@ -287,7 +289,7 @@ export function draftConnectionFields(draft) {
 }
 
 export function hasAdvancedValues(form) {
-  return form.proxyCommand.trim().length > 0 || form.jumpHost.trim().length > 0
+  return form.proxyCommand.trim().length > 0 || form.jumpHost.trim().length > 0 || form.persistentSessions === true
 }
 
 export function isFormDirty(current, baseline) {
@@ -322,7 +324,8 @@ export function buildSavePayload(form) {
       // Empty strings clear what an edit removed.
       identityFile: form.identityFile.trim(),
       proxyCommand: form.proxyCommand.trim(),
-      jumpHost: form.jumpHost.trim()
+      jumpHost: form.jumpHost.trim(),
+      persistentSessions: form.persistentSessions === true
     }
   }
 }

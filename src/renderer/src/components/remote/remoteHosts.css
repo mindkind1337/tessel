@@ -333,6 +333,12 @@
   gap: 16px;
   padding-top: 12px;
 }
+.rh-field label.rh-check {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+}
 .rh-dialog-foot {
   display: flex;
   justify-content: flex-end;

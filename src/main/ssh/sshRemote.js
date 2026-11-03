@@ -114,12 +114,14 @@ export function createSshRemote({ host, hosts, send = () => {}, log = null, t, s
   }
 
   // What a remote terminal needs (pty:create): its texts in the interface's
-  // language, the spec, the folder.
+  // language, the spec, the folder, and whether its shell runs inside a tmux
+  // session on the host (the host's "Keep sessions alive on the server").
   function terminalRequest(target, spec, remotePath) {
     return {
       hostId: target.id,
       spec,
       ...(remotePath ? { remotePath } : {}),
+      ...(target.persistentSessions === true ? { persistent: true } : {}),
       texts: { ...templates(), label: target.label || target.host }
     }
   }
