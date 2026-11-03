@@ -8,7 +8,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import fs from 'fs'
 import os from 'os'
 import { join } from 'path'
-import { createSshHostBridge, validateSpec, FILES_COMMAND, TMUX_PROBE, tmuxCommand, tmuxKillCommand, tmuxSessionName } from '../ssh/sshHostBridge'
+import { createSshHostBridge, validateSpec, FILES_COMMAND, TMUX_PROBE, tmuxCommand, tmuxKillCommand, tmuxSessionName, parseTmuxVersion } from '../ssh/sshHostBridge'
 import ssh2 from 'ssh2'
 import { startSshServer, makeKey } from './fixtures/sshServer'
 
@@ -56,14 +56,19 @@ let answers
 // The fake host has tmux (persistent sessions): the probe says so, and the
 // tmux command behaves like a shell (stays up, exits on "exit").
 let tmuxOnHost
+let tmuxVersion
+let rejectProbe
 beforeEach(async () => {
   dir = fs.mkdtempSync(join(os.tmpdir(), 'tessel-sshb-'))
   logs = []
   broadcasts = []
   tmuxOnHost = true
+  tmuxVersion = 'tmux 3.4'
+  rejectProbe = false
   answers = { hostkey: ['yes'], password: [PASSWORD] }
   server = await startSshServer({
     auth: { password: PASSWORD, methods: ['password'] },
+    rejectExec: (command) => rejectProbe && command === TMUX_PROBE,
     onExec: (command, stream) => {
       // The Files session's shell: echoes what it is sent.
       if (command === FILES_COMMAND) {
@@ -75,11 +80,12 @@ beforeEach(async () => {
         return
       }
       if (command === TMUX_PROBE) {
+        if (tmuxOnHost) stream.write(`${tmuxVersion}\n`)
         stream.exit(tmuxOnHost ? 0 : 1)
         stream.end()
         return
       }
-      if (command.startsWith('exec tmux ')) {
+      if (command.includes('new-session ')) {
         stream.write('tmux-welcome\r\n')
         stream.on('data', (d) => {
           if (d.toString().includes('exit')) {
@@ -369,27 +375,52 @@ describe('persistent sessions (tmux)', () => {
   const ptexts = { ...texts, reconnectedSame: 'SAME {{host}}', noTmux: 'NO TMUX {{host}}' }
   const execs = () => server.events.channels.filter((c) => c.kind === 'exec').map((c) => c.command)
   const PLAIN = `cd -- '/srv/it'\\''s here' && exec "$SHELL" -l`
+  const LOGIN = 'exec "$SHELL" -l'
+  const OPTS =
+    `set-option -g status off \\; set-option -g history-limit 50000 \\; set-option -g default-terminal screen-256color \\; ` +
+    `set-option -g escape-time 10 \\; set-option -g focus-events on \\; set-option -ga terminal-overrides ',xterm-256color:RGB'`
+  const v34 = { major: 3, minor: 4 }
 
-  it('builds the tmux command: sanitized session name, the inner command single-quoted, Tessel-only options', () => {
+  it('builds the tmux commands: a fresh session on a first open (the old one killed, no -A), -A -D on a reconnect, exact targets', () => {
     expect(tmuxSessionName('pane.1:a')).toBe('tessel-pane1a')
     expect(tmuxSessionName("x; rm -rf / #'")).toBe('tessel-xrm-rf')
     expect(tmuxSessionName('a'.repeat(100))).toHaveLength(40)
-    const cmd = tmuxCommand('pane.1:a', PLAIN)
-    expect(cmd).toBe(
-      `exec tmux -u -L tessel set-option -g status off \\; set-option -g history-limit 50000 \\; set-option -g default-terminal screen-256color \\; new-session -A -s tessel-pane1a 'cd -- '\\''/srv/it'\\''\\'\\'''\\''s here'\\'' && exec "$SHELL" -l'`
+    expect(tmuxKillCommand('pane.1:a')).toBe('tmux -L tessel kill-session -t =tessel-pane1a >/dev/null 2>&1')
+    const first = tmuxCommand('pane.1:a', PLAIN, { version: v34 })
+    expect(first).toBe(
+      `tmux -L tessel kill-session -t =tessel-pane1a >/dev/null 2>&1; exec tmux -u -L tessel ${OPTS} \\; set-option -g prefix None \\; ` +
+        `new-session -s tessel-pane1a 'cd -- '\\''/srv/it'\\''\\'\\'''\\''s here'\\'' && exec "$SHELL" -l'`
     )
-    expect(cmd).not.toMatch(/mouse/)
+    expect(first).not.toMatch(/new-session -A/)
+    const again = tmuxCommand('pane.1:a', PLAIN, { reattach: true, version: v34 })
+    expect(again).toBe(`exec tmux -u -L tessel ${OPTS} \\; set-option -g prefix None \\; new-session -A -D -s tessel-pane1a ${first.slice(first.indexOf(" 'cd -- ") + 1)}`)
+    expect(again).not.toMatch(/kill-session/)
+    for (const c of [first, again, tmuxKillCommand('p')]) {
+      expect(c).not.toMatch(/mouse/)
+      // Every -t target names the session exactly (=name).
+      for (const m of c.matchAll(/-t (\S+)/g)) expect(m[1]).toMatch(/^=tessel-/)
+    }
     // An agent's env file is sourced inside the session, where the agent starts.
-    expect(tmuxCommand('p1', `[ -r "$HOME"/.tessel-p1.env ] && . "$HOME"/.tessel-p1.env; ${PLAIN}`)).toContain(`new-session -A -s tessel-p1 '[ -r "$HOME"/.tessel-p1.env ] && . "$HOME"/.tessel-p1.env; cd -- `)
-    expect(tmuxKillCommand('pane.1:a')).toBe('tmux -L tessel kill-session -t tessel-pane1a >/dev/null 2>&1')
+    expect(tmuxCommand('p1', `[ -r "$HOME"/.tessel-p1.env ] && . "$HOME"/.tessel-p1.env; ${PLAIN}`)).toContain(`new-session -s tessel-p1 '[ -r "$HOME"/.tessel-p1.env ] && . "$HOME"/.tessel-p1.env; cd -- `)
   })
 
-  it('a persistent pane probes for tmux, then runs the shell inside the session; the pane ends as today when it exits', async () => {
+  it('the version decides "prefix None" (tmux 3.2+ only)', () => {
+    expect(parseTmuxVersion('tmux 3.4\n')).toEqual({ major: 3, minor: 4 })
+    expect(parseTmuxVersion('tmux 3.3a')).toEqual({ major: 3, minor: 3 })
+    expect(parseTmuxVersion('tmux next-3.5')).toEqual({ major: 3, minor: 5 })
+    expect(parseTmuxVersion('tmux 2.9a')).toEqual({ major: 2, minor: 9 })
+    expect(parseTmuxVersion('')).toBe(null)
+    expect(parseTmuxVersion('tmux master')).toBe(null)
+    for (const v of [{ major: 3, minor: 2 }, { major: 3, minor: 4 }, { major: 4, minor: 0 }]) expect(tmuxCommand('p', LOGIN, { version: v })).toContain('set-option -g prefix None')
+    for (const v of [{ major: 3, minor: 1 }, { major: 2, minor: 9 }, null]) expect(tmuxCommand('p', LOGIN, { version: v })).not.toContain('prefix')
+  })
+
+  it('a persistent pane probes for tmux (and its version), then starts a fresh session; the pane ends as today when it exits', async () => {
     makeBridge()
     const { pty, out } = terminal({ paneId: 'pane.1:a', persistent: true, remotePath: "/srv/it's here", texts: ptexts })
     await until(() => out.text.includes('tmux-welcome'))
-    expect(execs()).toEqual([TMUX_PROBE, tmuxCommand('pane.1:a', PLAIN)])
-    expect(server.events.channels.find((c) => c.kind === 'exec' && c.command.startsWith('exec tmux')).pty).toMatchObject({ term: 'xterm-256color' })
+    expect(execs()).toEqual([TMUX_PROBE, tmuxCommand('pane.1:a', PLAIN, { version: v34 })])
+    expect(server.events.channels.find((c) => c.kind === 'exec' && c.command.includes('new-session')).pty).toMatchObject({ term: 'xterm-256color' })
     expect(out.text).not.toContain('NO TMUX')
     pty.write('exit\n')
     await until(() => out.exit)
@@ -398,18 +429,20 @@ describe('persistent sessions (tmux)', () => {
     await until(() => execs().includes(tmuxKillCommand('pane.1:a')))
   }, 30000)
 
-  it('a plain pane (no folder) gets a login shell inside the session; the flag must be a boolean true', async () => {
+  it('an older tmux: no "prefix None"; a plain pane (no folder) gets a login shell; the flag must be a boolean true', async () => {
+    tmuxVersion = 'tmux 2.9a'
     makeBridge()
     const { out } = terminal({ paneId: 'p2', persistent: true, texts: ptexts })
     await until(() => out.text.includes('tmux-welcome'))
-    expect(execs()).toEqual([TMUX_PROBE, tmuxCommand('p2', 'exec "$SHELL" -l')])
+    expect(execs()).toEqual([TMUX_PROBE, tmuxCommand('p2', LOGIN, { version: { major: 2, minor: 9 } })])
+    expect(execs()[1]).not.toContain('prefix')
     expect(() => bridge.createPty({ hostId: 'h1', spec: spec(), texts, persistent: true })).toThrow()
     const b = terminal({ paneId: 'p3', persistent: 'true' })
     await until(() => b.out.text.includes('welcome'))
     expect(execs()).toHaveLength(2)
   }, 30000)
 
-  it('a lost connection re-attaches to the same session: the same command and name, "same session" said, nothing killed', async () => {
+  it('a lost connection re-attaches to the same session (-A -D), "same session" said, nothing killed', async () => {
     makeBridge()
     const { out } = terminal({ paneId: 'p4', persistent: true, texts: ptexts })
     await until(() => out.text.includes('tmux-welcome'))
@@ -420,18 +453,22 @@ describe('persistent sessions (tmux)', () => {
     expect(out.text).not.toContain('BACK box')
     expect(out.exit).toBe(null)
     expect(server.events.connections).toBe(2)
-    const tmux = execs().filter((c) => c.startsWith('exec tmux'))
-    expect(tmux).toEqual([tmuxCommand('p4', 'exec "$SHELL" -l'), tmuxCommand('p4', 'exec "$SHELL" -l')])
-    expect(execs()).not.toContain(tmuxKillCommand('p4'))
+    const tmux = execs().filter((c) => c.includes('new-session'))
+    expect(tmux).toEqual([tmuxCommand('p4', LOGIN, { version: v34 }), tmuxCommand('p4', LOGIN, { reattach: true, version: v34 })])
+    expect(tmux[1]).toContain('new-session -A -D -s tessel-p4')
+    // The first open ended any old session of that name; the reconnect kills nothing.
+    expect(tmux[0].startsWith(tmuxKillCommand('p4'))).toBe(true)
+    expect(tmux[1]).not.toContain('kill-session')
+    expect(execs().filter((c) => c === tmuxKillCommand('p4'))).toHaveLength(0)
   }, 30000)
 
-  it('closing the pane kills its session on the host', async () => {
+  it('closing the pane kills its session on the host (exact target)', async () => {
     makeBridge()
     const { pty, out } = terminal({ paneId: 'p5', persistent: true, texts: ptexts })
     await until(() => out.text.includes('tmux-welcome'))
     pty.kill()
     await until(() => out.exit)
-    await until(() => execs().includes(tmuxKillCommand('p5')))
+    await until(() => execs().includes('tmux -L tessel kill-session -t =tessel-p5 >/dev/null 2>&1'))
     expect(out.exit).toEqual({ exitCode: 0, signal: 0 })
   }, 30000)
 
@@ -443,6 +480,17 @@ describe('persistent sessions (tmux)', () => {
     expect(execs()).toEqual([TMUX_PROBE, PLAIN])
     expect(out.text.split('NO TMUX box').length).toBe(2)
     expect(out.text).toContain(`ran:${PLAIN}`)
+  }, 30000)
+
+  it('a probe the host refuses on a first open: the command used today, the pane opens', async () => {
+    rejectProbe = true
+    makeBridge()
+    const { out } = terminal({ paneId: 'p8', persistent: true, remotePath: "/srv/it's here", texts: ptexts })
+    await until(() => out.exit)
+    expect(execs()).toEqual([PLAIN])
+    expect(out.text).toContain(`ran:${PLAIN}`)
+    expect(out.text).toContain('NO TMUX box')
+    expect(out.exit).toEqual({ exitCode: 0, signal: 0 })
   }, 30000)
 
   it('off (the default): no probe, no tmux, as before', async () => {

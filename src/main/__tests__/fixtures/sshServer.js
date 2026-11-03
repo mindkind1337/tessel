@@ -30,7 +30,7 @@ function same(a, b) {
 // onExec(command, stream, info): optional; default writes "ran:<command>".
 // onPty(info): optional; called as a channel's PTY request arrives (before
 // it is answered), so a test can act while the client is opening it.
-export function startSshServer({ hostKey = makeKey().private, auth = {}, onExec, onShell, onPty, maxSessions = 0 } = {}) {
+export function startSshServer({ hostKey = makeKey().private, auth = {}, onExec, onShell, onPty, rejectExec = null, maxSessions = 0 } = {}) {
   const events = { connections: 0, auth: [], channels: [], windowChanges: [], sessions: 0 }
   const clients = new Set()
   const allowed = (auth.publicKeys || []).map((k) => utils.parseKey(k))
@@ -92,7 +92,9 @@ export function startSshServer({ hostKey = makeKey().private, auth = {}, onExec,
             } else stream.write(`echo:${s}`)
           })
         })
-        session.on('exec', (ok, _no, info) => {
+        session.on('exec', (ok, no, info) => {
+          // rejectExec(command): the server refuses that exec request.
+          if (rejectExec && rejectExec(info.command)) return no()
           const stream = ok()
           events.channels.push({ kind: 'exec', command: info.command, pty: ptyInfo, connection: events.connections })
           if (onExec) return onExec(info.command, stream, { pty: ptyInfo })

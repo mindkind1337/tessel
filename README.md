@@ -129,7 +129,8 @@ working on Tessel itself (see [Build from source](#build-from-source)).
   session on the server, with no status bar, and a lost connection re-attaches
   to the same session instead of starting a new shell, so an agent running there
   keeps going. Needs `tmux` on the server (the pane says so when it is missing,
-  and works as before). Closing the pane ends its session.
+  and works as before). Closing the pane ends its session. Hosts reached through
+  a jump host or a proxy command use the system `ssh` and are not covered.
 - **Stable on slow or dropped links**: your clicks go first, every remote call
   has a time limit, a slow host says so, and when the connection comes back
   the project's panes reopen and agents resume their conversations. A stall of

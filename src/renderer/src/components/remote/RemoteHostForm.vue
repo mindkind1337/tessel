@@ -218,7 +218,7 @@ onMounted(() => nextTick(() => hostEl.value && hostEl.value.focus()))
                     <span>{{ t('remote.form.persistentSessions', 'Keep sessions alive on the server (tmux)') }}</span>
                   </label>
                   <p class="rh-field-hint">
-                    {{ t('remote.form.persistentHint', 'A lost connection re-attaches to the same session instead of starting a new shell, so what runs there (an agent) survives. Needs tmux on the server.') }}
+                    {{ t('remote.form.persistentHint', 'A lost connection re-attaches to the same session instead of starting a new shell, so what runs there (an agent) survives. Needs tmux on the server. Not used with a Jump Host or a Proxy Command (those hosts go through the system ssh).') }}
                   </p>
                 </div>
               </div>
