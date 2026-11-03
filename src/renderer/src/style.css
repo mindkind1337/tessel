@@ -2972,7 +2972,19 @@ kbd {
   box-shadow: 0 10px 28px rgba(0, 0, 0, 0.5);
   color: var(--text);
   font-size: 12px;
-  white-space: nowrap;
+  /* A narrow pane: the words wrap and the buttons go to a second line,
+     the box never wider than the pane (it used to overflow both sides). */
+  box-sizing: border-box;
+  max-width: calc(100% - 24px);
+  flex-wrap: wrap;
+  justify-content: center;
+  text-align: center;
+  white-space: normal;
+}
+
+.exit-overlay > span {
+  flex: 1 1 auto;
+  min-width: 0;
 }
 
 .exit-btn {
