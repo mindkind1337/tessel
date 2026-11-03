@@ -10477,7 +10477,7 @@ body.osb-project-dragging * {
 
 .osb-run.current {
   border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
-  background: color-mix(in srgb, var(--accent) 9%, transparent);
+  background: color-mix(in srgb, var(--accent) 5%, transparent);
 }
 
 .osb-group {
