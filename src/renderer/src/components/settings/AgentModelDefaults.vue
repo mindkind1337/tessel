@@ -90,8 +90,10 @@ function modelListText() {
   // No built-in list (OpenCode: its providers are the account's own).
   if (!list && !modelsFor(a.id).length) return t('settings.agents.modelsNone', 'No list yet. Refresh asks {{name}} for the models it offers.', { name: a.name })
   if (!list) return t('settings.agents.modelsBuiltIn', 'Built-in list. Refresh asks {{name}} for the models your account has.', { name: a.name })
-  return t('settings.agents.modelsListed', '{{count}} models listed by {{name}} on {{date}}.', {
-    count: list.models.length,
+  // One model: the singular (English here, French through its _one key).
+  const count = list.models.length
+  return t('settings.agents.modelsListed', count === 1 ? '{{count}} model listed by {{name}} on {{date}}.' : '{{count}} models listed by {{name}} on {{date}}.', {
+    count,
     name: a.name,
     date: new Date(list.fetchedAt).toLocaleString(intlLocale(), { dateStyle: 'medium', timeStyle: 'short' })
   })

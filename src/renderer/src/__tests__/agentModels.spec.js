@@ -122,7 +122,7 @@ describe('Settings > Agents: default model and effort', () => {
     await flushPromises()
     expect(probes).toEqual([{ agent: 'claude', command: '' }])
     expect((await selectOptions(select('agent-model-claude'))).map((o) => o.text())).toEqual(["Agent's own default", 'Opus (1M context)'])
-    expect(wrapper.get('[data-test="agent-models-status-claude"]').text()).toMatch(/1 models listed by Claude Code/)
+    expect(wrapper.get('[data-test="agent-models-status-claude"]').text()).toMatch(/1 model listed by Claude Code/)
     await wrapper.get('[data-test="agent-models-refresh-codex"]').trigger('click')
     await flushPromises()
     expect(wrapper.get('[data-test="agent-models-status-codex"]').text()).toContain('Codex CLI could not list its models: 1: not signed in')
