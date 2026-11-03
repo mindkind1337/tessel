@@ -39,6 +39,14 @@ describe('catalog -> launch arguments', () => {
     expect(sessionOptionLaunchText('cursor', { model: 'gpt-5.3-codex', effort: 'high', fastMode: true })).toBe('--model gpt-5.3-codex-high-fast')
   })
 
+  it("Cursor's seed Thinking switch shows what launches: off until picked (the launch adds no default)", () => {
+    const opus = catalogModelsFor('cursor').find((m) => m.id === 'claude-opus-4-8')
+    const thinking = opus.options.find((o) => o.id === 'thinking')
+    expect(thinking.kind.defaultValue).toBe(false)
+    expect(sessionOptionLaunchText('cursor', { model: 'claude-opus-4-8' })).toBe('--model claude-opus-4-8')
+    expect(sessionOptionLaunchText('cursor', { model: 'claude-opus-4-8', thinking: true })).toBe('--model claude-opus-4-8-thinking')
+  })
+
   it("Orca's resolver adds the catalog defaults when asked (Tessel never asks)", () => {
     expect(resolveAgentSessionOptionLaunch('claude', { model: 'opus' }).args).toEqual(['--model', 'opus', '--effort', 'high'])
     expect(resolveAgentSessionOptionLaunch('claude', { model: 'opus' }, [], false).args).toEqual(['--model', 'opus'])

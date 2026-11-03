@@ -302,11 +302,14 @@ const CURSOR_FAST = {
   kind: { type: 'boolean', defaultValue: false },
   apply: { composedIntoModel: true }
 }
+// Off by default, like the launch: Tessel never adds a catalog default the
+// user did not pick, so a switch shown on while the model launched without
+// -thinking would lie (one tap then recorded "off", a second one turned it on).
 const CURSOR_THINKING = {
   id: 'thinking',
   label: 'Thinking',
   category: 'model_config',
-  kind: { type: 'boolean', defaultValue: true },
+  kind: { type: 'boolean', defaultValue: false },
   apply: { composedIntoModel: true }
 }
 
