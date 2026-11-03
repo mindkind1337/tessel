@@ -212,7 +212,9 @@ so an idle agent is not reported as disconnected.
 1.5.0: an agent started while the link is down (the socket still missing or
 refusing after those 3 s) no longer gets a server without tools for life: the
 proxy runs without a link, its first call tries to open one (3 tries), and it
-tries again by itself every 5 s (every minute after 10 min). Until then the
+tries again by itself every 5 s (every minute after 10 min; one chain however
+many calls failed meanwhile; none after a refusal, bad token or unknown pane,
+which stays final). Until then the
 client's `initialize` is answered by the shim (no tools, the reason in the
 instructions, so a failing initialize never ends the server for good) and
 `tools/list` is empty; once a link is made the initialize is replayed

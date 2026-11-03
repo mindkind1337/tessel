@@ -9950,7 +9950,10 @@ async function checkRemoteAgentTools(round) {
     if (!leaf) continue
     if (alive.has(id)) {
       remoteToolsMisses.delete(leaf)
-      if (remoteToolsNoted.delete(leaf)) delete leaf.remoteToolsNote
+      // Any note goes, this check's or the launch's (tunnel-timeout, failed):
+      // the tools ran since, so it is false now (the shim relinks by itself).
+      remoteToolsNoted.delete(leaf)
+      delete leaf.remoteToolsNote
       continue
     }
     const misses = (remoteToolsMisses.get(leaf) || 0) + 1

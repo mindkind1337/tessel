@@ -376,10 +376,15 @@ function proxyMcp(conn, first, firstRest, args = [], name = SERVER_NAME) {
               if (!linked && m.method === 'tools/list') out(JSON.stringify({ jsonrpc: '2.0', id: m.id, result: { tools: [] } }))
               else failure(m.id, m.method, linkProblem(err))
             }
+          // A refusal that will not change: no tools for life, as promised above.
+          const refused = /bad-token|unknown-pane/.test(safeReason(err))
           if (linked) note(`could not reopen the link: ${safeReason(err)}`)
+          else if (refused) note(`Tessel refused the link (${safeReason(err)}): no tools until this agent is restarted from Tessel`)
           else if (!relinks) note(`no link to Tessel yet (${safeReason(err)}); tried again every few seconds and at the next call`)
           if (inEnded) return exit(0)
-          if (linked) return
+          if (linked || refused) return
+          // One chain of relinks, however many calls failed meanwhile.
+          if (relinkTimer) return
           relinkTimer = setTimeout(() => {
             relinkTimer = null
             if (!inEnded && !sock) connect()

@@ -51,8 +51,8 @@ describe('the note it puts in the pane', () => {
     const team = src.slice(src.indexOf('async function checkTeamTools('), src.indexOf('async function checkRemoteAgentTools('))
     expect(team).toContain('for (const id of ids) if (toolsRanSince(res, id, findLeaf(id))) alive.add(id)')
   })
-  it('goes by itself once the tools connect, only when this check put it', () => {
-    expect(check).toMatch(/if \(remoteToolsNoted\.delete\(leaf\)\) delete leaf\.remoteToolsNote/)
+  it('goes by itself once the tools connect, the launch-time note too', () => {
+    expect(check).toMatch(/remoteToolsNoted\.delete\(leaf\)\r?\n\s*delete leaf\.remoteToolsNote/)
     expect(check).toMatch(/leaf\.remoteToolsNote = t\('app\.remoteAgents\.toolsNotRunning'[^\n]*\r?\n\s*remoteToolsNoted\.add\(leaf\)/)
     // Kept per pane object: a pane started again in place counts from nothing.
     expect(src).toContain('const remoteToolsMisses = new WeakMap()')
@@ -60,6 +60,44 @@ describe('the note it puts in the pane', () => {
   })
   it('each pane says which launch is its own (toolsAlive tells the tools of a previous launch apart)', () => {
     expect(src.split('window.shellApi.team.toolsAlive({ dir, ids, launches: launchTokens(ids) })').length - 1).toBe(2)
+  })
+
+  // The check itself, run from the source on one pane whose tools prove alive.
+  const runCheck = async (leaf, res) => {
+    const list = src.slice(src.indexOf('const REMOTE_TOOLS_AGENTS = ['), src.indexOf('\n', src.indexOf('const REMOTE_TOOLS_AGENTS = [')))
+    const checkSrc = src.slice(src.indexOf('const remoteToolsMisses = new WeakMap()'), src.indexOf('// Agents started by hand in a shell pane'))
+    const calls = []
+    const stubs = {
+      forEachWsLeaf: (cb) => cb(leaf),
+      teamToolsVersion: 'v1',
+      wsOfLeaf: () => 'ws1',
+      wsDataDir: () => '/data',
+      launchTokens: () => ({}),
+      roundGone: () => false,
+      findLeaf: () => leaf,
+      remoteHostLabel: () => 'Box',
+      t: (_k, en) => en,
+      window: { shellApi: { team: { toolsAlive: async (q) => (calls.push(q), res) }, log: () => {} } },
+      Date
+    }
+    // eslint-disable-next-line no-new-func
+    const fn = new Function(...Object.keys(stubs), `${list}; ${fnSrc}; ${checkSrc}; return checkRemoteAgentTools`)(...Object.values(stubs))
+    await fn(1)
+    return calls
+  }
+  it('a note put at the launch (tunnel-timeout, failed) goes too once the tools ran: the shim made its link by itself', async () => {
+    const launchedAt = Date.now() - 120_000
+    for (const agentId of ['claude', 'antigravity']) {
+      const leaf = { id: 'p1', kind: 'agent', agentId, remoteHostId: 'ssh-box', launchedAt, teamTools: true, toolsVersion: 'v1', remoteToolsNote: 'Tessel tools are not connected on Box: the socket was not ready in time.' }
+      const calls = await runCheck(leaf, { ok: true, alive: { p1: { at: Date.now() } }, seen: { p1: Date.now() } })
+      expect(calls).toEqual([{ dir: '/data', ids: ['p1'], launches: {} }])
+      expect(leaf.remoteToolsNote).toBeUndefined()
+    }
+  })
+  it('tools still not seen: the launch-time note stays as it is (no second note over it)', async () => {
+    const leaf = { id: 'p1', kind: 'agent', agentId: 'codex', remoteHostId: 'ssh-box', launchedAt: Date.now() - 120_000, teamTools: true, toolsVersion: 'v1', remoteToolsNote: 'launch note' }
+    await runCheck(leaf, { ok: true, alive: { p1: null }, seen: { p1: null } })
+    expect(leaf.remoteToolsNote).toBe('launch note')
   })
 })
 

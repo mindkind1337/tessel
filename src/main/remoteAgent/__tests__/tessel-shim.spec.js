@@ -717,6 +717,7 @@ describe('mcp proxy across a dropped link', () => {
     sock = sockPath()
     handler = (c) => {
       conns.push(c)
+      if (mode === 'drop') return c.destroy() // the link dies before the hello is answered
       let buf = ''
       let hello = false
       c.setEncoding('utf8')
@@ -951,6 +952,54 @@ describe('mcp proxy across a dropped link', () => {
       await new Promise((r) => s.close(r))
     }
   }, 30000)
+
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+
+  it('several calls failing while unlinked arm one chain of relinks, not one each', async () => {
+    const late = sockPath()
+    const p = start({ TESSEL_REMOTE_SOCK: late })
+    p.send(INIT)
+    mode = 'drop'
+    const s = await lateServer(late, 3600) // from here every attempt is seen (and dropped)
+    try {
+      await p.reply(0, 15000) // answered here: no link
+      // Two more calls, each failing on its own tries, while the chain runs.
+      p.send({ jsonrpc: '2.0', id: 1, method: 'tools/list' })
+      await p.reply(1, 15000)
+      p.send({ jsonrpc: '2.0', id: 2, method: 'tools/list' })
+      await p.reply(2, 15000)
+      // A quiet window: one chain makes 3 attempts per 5 s (the call's own 3 tries are over).
+      await sleep(1000)
+      const before = conns.length
+      await sleep(11000)
+      const made = conns.length - before
+      expect(made).toBeGreaterThanOrEqual(3)
+      expect(made).toBeLessThanOrEqual(9)
+      expect(hellos).toEqual([])
+    } finally {
+      p.child.kill()
+      await new Promise((r) => s.close(r))
+    }
+  }, 60000)
+
+  it('a refusal that will not change (unknown pane, bad token): no relinks, a server without tools for life', async () => {
+    const late = sockPath()
+    const p = start({ TESSEL_REMOTE_SOCK: late })
+    p.send(INIT)
+    mode = 'refuse'
+    const s = await lateServer(late, 3600)
+    try {
+      const init = await p.reply(0, 15000)
+      expect(init.result.instructions).toMatch(/not reachable right now \(unknown-pane\)/)
+      expect(hellos).toHaveLength(1)
+      await sleep(7000) // past the 5 s a relink would take
+      expect(hellos).toHaveLength(1)
+      expect(p.err()).toBe('tessel-shim: Tessel refused the link (unknown-pane): no tools until this agent is restarted from Tessel\n')
+    } finally {
+      p.child.kill()
+      await new Promise((r) => s.close(r))
+    }
+  }, 40000)
 
   it('no link for its first calls: a server without tools, then the tools announced when the link is back', async () => {
     const late = sockPath()
