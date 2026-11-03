@@ -14,6 +14,7 @@ describe('remoteToolsReason', () => {
     expect(why('system-ssh')).toMatch(/system ssh/)
     expect(why('skipped', 'codex')).toMatch(/^Codex has no settings/)
     expect(why('skipped', 'claude')).toMatch(/^Claude Code has no settings/)
+    expect(why('skipped', 'antigravity')).toMatch(/^Antigravity has no settings/)
     expect(why('bind')).toMatch(/AllowStreamLocalForwarding/)
     expect(why('config', '/root/.claude.json: not a JSON object')).toMatch(/\/root\/\.claude\.json: not a JSON object/)
     expect(why('failed', 'boom\u0007\nnext')).toBe('they could not be set up on the host (boom next).')
@@ -28,6 +29,9 @@ describe('remoteInstallErrorFor', () => {
     expect(remoteInstallErrorFor(result, 'claude')).toBe('')
     expect(remoteInstallErrorFor(result, 'codex')).toBe('/root/.codex/config.toml: bad')
     expect(remoteInstallErrorFor({ errors: ['/root/.claude.json: not a JSON object, left as it is'] }, 'claude')).toMatch(/claude\.json/)
+    const agy = { errors: ['/root/.gemini/config/mcp_config.json: not a JSON object, left as it is'] }
+    expect(remoteInstallErrorFor(agy, 'antigravity')).toMatch(/mcp_config\.json/)
+    expect(remoteInstallErrorFor(agy, 'claude')).toBe('')
     expect(remoteInstallErrorFor(null, 'claude')).toBe('')
   })
 })

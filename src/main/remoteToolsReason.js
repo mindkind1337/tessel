@@ -2,6 +2,7 @@
 // Tessel tools there, in words for its pane ("Tessel tools are not connected
 // on <host>: <reason>", App.vue noteRemoteToolsMissing). Pure, for the tests.
 // t: main's i18n; noNodeError: nodePath.js's text for no node on this computer.
+const AGENT_NAMES = { claude: 'Claude Code', codex: 'Codex', antigravity: 'Antigravity' }
 export function remoteToolsReason(t, reason, detail = '', { noNodeError = () => '' } = {}) {
   // eslint-disable-next-line no-control-regex
   const more = String(detail || '').replace(/[\u0000-\u001f\u007f]+/g, ' ').trim().slice(0, 200)
@@ -11,7 +12,7 @@ export function remoteToolsReason(t, reason, detail = '', { noNodeError = () => 
   if (reason === 'old-host') return t('main.remoteAgent.reason.oldHost', "Tessel's terminal host was started by an older version. Quit Tessel completely and start it again.")
   if (reason === 'local-node') return noNodeError()
   if (reason === 'system-ssh') return t('main.remoteAgent.reason.systemSsh', 'this host is opened with the system ssh (a jump host or a proxy), which cannot carry them yet.')
-  if (reason === 'skipped') return t('main.remoteAgent.reason.skipped', '{{agent}} has no settings on the host yet. Start it there once, then Retry.', { agent: detail === 'codex' ? 'Codex' : 'Claude Code' })
+  if (reason === 'skipped') return t('main.remoteAgent.reason.skipped', '{{agent}} has no settings on the host yet. Start it there once, then Retry.', { agent: AGENT_NAMES[detail] || 'Claude Code' })
   // The tunnel in the terminal host (remote-tools events).
   if (reason === 'bind') return t('main.remoteAgent.reason.bind', "the host's sshd refused to forward Tessel's socket (AllowStreamLocalForwarding or DisableForwarding in its sshd_config).")
   if (reason === 'prep' || reason === 'home') return t('main.remoteAgent.reason.prep', "Tessel's folder on the host (~/.tessel-server) could not be prepared.")
@@ -23,9 +24,11 @@ export function remoteToolsReason(t, reason, detail = '', { noNodeError = () => 
 // The codes the terminal host's tunnel sends (remote-tools events).
 export const REMOTE_TOOLS_CODES = new Set(['bind', 'prep', 'home', 'env', 'tunnel-timeout', 'failed'])
 // The install's error about the file that registers this agent's MCP server
-// (~/.claude.json, ~/.codex/config.toml): its tools were not registered.
+// (~/.claude.json, ~/.codex/config.toml, ~/.gemini/config/mcp_config.json):
+// its tools were not registered.
+const MCP_FILES = { codex: /\/\.codex\/config\.toml:/, antigravity: /\/\.gemini\/config\/mcp_config\.json:/ }
 export function remoteInstallErrorFor(result, provider) {
   const errors = result && Array.isArray(result.errors) ? result.errors : []
-  const mine = provider === 'codex' ? /\/\.codex\/config\.toml:/ : /\/\.claude\.json:/
+  const mine = MCP_FILES[provider] || /\/\.claude\.json:/
   return errors.find((e) => typeof e === 'string' && mine.test(e)) || ''
 }

@@ -9832,7 +9832,8 @@ let teamToolsReady = false
 // team with no such sign for a minute after it started gets a warning on its
 // row and a message once; both go when the tools are back.
 const MCP_AGENT_IDS = ['claude', 'codex', 'gemini', 'qwen', 'copilot', 'opencode', 'cline', 'antigravity', 'muse']
-const REMOTE_TOOLS_AGENTS = ['claude', 'codex']
+// The agents the host's shim gives Tessel's tools (main: REMOTE_AGENT_PROVIDERS).
+const REMOTE_TOOLS_AGENTS = ['claude', 'codex', 'antigravity']
 const toolsDown = reactive({}) // paneId -> true
 const toolsWarned = new Set()
 let toolsCheckAt = 0

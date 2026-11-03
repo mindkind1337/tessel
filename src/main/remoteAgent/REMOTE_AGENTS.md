@@ -1,7 +1,8 @@
 # Agents on an SSH host (remote agents)
 
-Goal: an agent (Claude Code, Codex) started in a Tessel SSH pane works like a
-local one: team tools (tessel_team MCP), status from hooks, board, messages.
+Goal: an agent (Claude Code, Codex, Antigravity) started in a Tessel SSH pane works like a
+local one: team tools (tessel_team MCP), status from hooks (Claude Code and
+Codex: Antigravity's hooks are not carried yet), board, messages.
 Same idea as VS Code Remote-SSH: Tessel puts a small helper on the server and
 talks back through the SSH connection it already holds.
 
@@ -53,7 +54,7 @@ when the pane exits (if the host is still connected). The variables:
 - `TESSEL_PANE_ID` – the pane id.
 - `TESSEL_REMOTE_SOCK` – absolute path of the socket.
 - `TESSEL_REMOTE_TOKEN` – 64 hex chars, random per pane launch.
-- `TESSEL_AGENT_PROVIDER` – `claude` / `codex` when Tessel launched an agent.
+- `TESSEL_AGENT_PROVIDER` – `claude` / `codex` / `antigravity` when Tessel launched an agent.
 Never the team secret: it stays on the PC.
 
 ### Wire protocol on the socket (v1)
@@ -97,7 +98,11 @@ server.cjs runs with cwd = the pane env's `TESSEL_PROJECT_DIR` (when absolute).
   given: that node everywhere; else `node`); Codex
   `~/.codex/config.toml` `[mcp_servers.tessel_team]` with `env_vars =
   ["TESSEL_PANE_ID","TESSEL_REMOTE_SOCK","TESSEL_REMOTE_TOKEN","TESSEL_AGENT_PROVIDER"]`
-  and `~/.codex/hooks.json`. Only touches files that exist or whose agent is
+  and `~/.codex/hooks.json`; Antigravity (1.5.0: `~/.gemini/antigravity-cli`,
+  `~/.gemini/config/mcp_config.json` or `agy` on PATH) `~/.gemini/config/mcp_config.json`
+  `mcpServers.tessel_team` / `tessel_apps` = `{command, args}` only (it hands the
+  pane's whole environment to the server and never expands `$VAR`; a server
+  turned off there stays off; no hooks). Only touches files that exist or whose agent is
   installed; writes atomically (tmp + rename), keeps a `.tessel-bak` once,
   never removes the user's other entries. Prints one JSON line with what it did.
   Since 1.3.0 also the account folders below (marker checked): Claude's

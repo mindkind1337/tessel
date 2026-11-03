@@ -7,7 +7,9 @@
 import crypto from 'crypto'
 import { join } from 'path'
 
-export const REMOTE_AGENT_PROVIDERS = ['claude', 'codex']
+// The agents whose Tessel tools the shim registers on the host (its install):
+// Claude Code and Codex with their hooks, Antigravity its MCP servers only.
+export const REMOTE_AGENT_PROVIDERS = ['claude', 'codex', 'antigravity']
 export const INSTALL_TIMEOUT_MS = 60_000
 
 // The shim's version, read from its source (`const VERSION = '…'`). -> string | null

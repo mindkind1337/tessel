@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 // Tessel's helper on an SSH server (src/main/remoteAgent/REMOTE_AGENTS.md). An agent there
-// (Claude Code, Codex) runs it instead of the team tools: it pipes its stdio
+// (Claude Code, Codex, Antigravity) runs it instead of the team tools: it pipes its stdio
 // through the pane's Unix socket (TESSEL_REMOTE_SOCK), which sshd forwards to
 // Tessel on the PC, where the real tessel_team server runs.
 //   node tessel-shim.cjs mcp                     the tessel_team MCP server
 //   node tessel-shim.cjs hook <provider> <Event> an agent hook
-//   node tessel-shim.cjs install [--node <abs>]  set up Claude Code and Codex (and Tessel's account folders)
+//   node tessel-shim.cjs install [--node <abs>]  set up Claude Code, Codex and Antigravity (and Tessel's account folders)
 //   node tessel-shim.cjs sessions [limit]       past Claude Code / Codex conversations
 //   node tessel-shim.cjs version
 // One file, Node >= 18, no dependencies.
@@ -17,7 +17,7 @@ const net = require('net')
 const path = require('path')
 const crypto = require('crypto')
 
-const VERSION = '1.4.6'
+const VERSION = '1.5.0'
 const PROTOCOL = 1
 const SERVER_NAME = 'tessel_team'
 // Its name until 2026-11: moved to the new name by install.
@@ -530,6 +530,31 @@ function mergeClaudeJson(cfg, shimPath, node) {
   return { value, changed: true }
 }
 
+// ~/.gemini/config/mcp_config.json (the Antigravity CLI's servers, not Gemini
+// CLI's settings.json) with Tessel's servers, as `agy mcp add` writes them:
+// command and args, no env (Antigravity hands its whole environment, the
+// pane's, to the server, and never expands $VAR), a server the person turned
+// off stays off. -> { value, changed }
+function mergeAntigravityJson(cfg, shimPath, node) {
+  const value = isPlainObject(cfg) ? { ...cfg } : {}
+  const servers = isPlainObject(value.mcpServers) ? { ...value.mcpServers } : {}
+  let changed = false
+  if (Object.hasOwn(servers, OLD_NAME)) {
+    delete servers[OLD_NAME]
+    changed = true
+  }
+  for (const { name, args } of SERVERS) {
+    const want = { command: node || 'node', args: [shimPath, ...args] }
+    const have = servers[name]
+    if (isPlainObject(have) && have.command === want.command && JSON.stringify(have.args) === JSON.stringify(want.args)) continue
+    servers[name] = isPlainObject(have) && have.disabled === true ? { ...want, disabled: true } : want
+    changed = true
+  }
+  if (!changed) return { value: cfg, changed: false }
+  value.mcpServers = servers
+  return { value, changed: true }
+}
+
 const isOurHook = (h) => isPlainObject(h) && typeof h.command === 'string' && h.command.includes(SHIM_NAME)
 
 // A hooks file ({ hooks: { Event: [{ matcher, hooks: [{ type, command }] }] } })
@@ -797,7 +822,8 @@ function readJsonObject(file) {
   }
 }
 
-// Set up Claude Code and Codex on this server for the shim at shimPath.
+// Set up Claude Code, Codex and Antigravity on this server for the shim at
+// shimPath (each when it is there: its folder or its command).
 // -> { ok, version, shim, changed: [files], unchanged: [files], skipped: [agents], errors: [text] }
 function install({ home = os.homedir(), shimPath = path.resolve(__filename), env = process.env, node } = {}) {
   const report = { ok: true, version: VERSION, shim: shimPath, node: node || 'node', changed: [], unchanged: [], skipped: [], errors: [] }
@@ -852,6 +878,12 @@ function install({ home = os.homedir(), shimPath = path.resolve(__filename), env
     tomlStep(path.join(codexDir, 'config.toml'))
     jsonStep(path.join(codexDir, 'hooks.json'), (s) => mergeHooks(s, CODEX_HOOK_EVENTS, 'codex', shimPath, node))
   } else report.skipped.push('codex')
+
+  // Antigravity: its MCP servers only (its hooks are not carried by the tunnel).
+  const agyDir = path.join(home, '.gemini', 'antigravity-cli')
+  const agyConfig = path.join(home, '.gemini', 'config', 'mcp_config.json')
+  if (fs.existsSync(agyDir) || fs.existsSync(agyConfig) || onPath('agy', env)) jsonStep(agyConfig, (cfg) => mergeAntigravityJson(cfg, shimPath, node))
+  else report.skipped.push('antigravity')
 
   // The folders Tessel made here for one account each (an agent started
   // with CLAUDE_CONFIG_DIR / CODEX_HOME there reads its settings from that
@@ -1257,6 +1289,7 @@ else
     hookCommand,
     claudeServer,
     mergeClaudeJson,
+    mergeAntigravityJson,
     mergeHooks,
     splitCodexConfig,
     codexTable,

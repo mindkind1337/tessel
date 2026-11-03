@@ -184,8 +184,56 @@ describe('install', () => {
   it('skips agents that are not installed', () => {
     const r = shim.install({ home, shimPath: ABS, env })
     expect(r.ok).toBe(true)
-    expect(r.skipped).toEqual(['claude', 'codex'])
+    expect(r.skipped).toEqual(['claude', 'codex', 'antigravity'])
     expect(fs.readdirSync(home)).toEqual([])
+  })
+
+  it('Antigravity (its folder, its config or agy on PATH): both servers in ~/.gemini/config/mcp_config.json, command and args only, the rest kept', () => {
+    fs.mkdirSync(join(home, '.gemini', 'antigravity-cli'), { recursive: true })
+    const r = shim.install({ home, shimPath: ABS, env })
+    expect(r.errors).toEqual([])
+    expect(r.skipped).toEqual(['claude', 'codex'])
+    const file = join(home, '.gemini', 'config', 'mcp_config.json')
+    expect(r.changed).toEqual([file])
+    const cfg = JSON.parse(fs.readFileSync(file, 'utf8'))
+    expect(cfg.mcpServers.tessel_team).toEqual({ command: 'node', args: [ABS, 'mcp'] })
+    expect(cfg.mcpServers.tessel_apps).toEqual({ command: 'node', args: [ABS, 'mcp', '--apps'] })
+    expect(shim.install({ home, shimPath: ABS, env }).changed).toEqual([])
+    expect(fs.existsSync(file + '.tessel-bak')).toBe(false) // nothing was there before
+
+    // An existing file: its other servers and settings stay, the former name goes, a server turned off stays off
+    const theirs = { theme: 'dark', mcpServers: { mine: { serverUrl: 'https://x.test/mcp' }, 'tessel-team': { command: 'node', args: ['/old/tessel-shim.cjs', 'mcp'] }, tessel_apps: { command: 'node', args: [ABS, 'mcp', '--apps'], disabled: true } } }
+    fs.writeFileSync(file, JSON.stringify(theirs))
+    const r2 = shim.install({ home, shimPath: ABS, env, node: '/usr/bin/node' })
+    expect(r2.changed).toEqual([file])
+    const cfg2 = JSON.parse(fs.readFileSync(file, 'utf8'))
+    expect(cfg2.theme).toBe('dark')
+    expect(cfg2.mcpServers.mine).toEqual({ serverUrl: 'https://x.test/mcp' })
+    expect(cfg2.mcpServers['tessel-team']).toBeUndefined()
+    expect(cfg2.mcpServers.tessel_team).toEqual({ command: '/usr/bin/node', args: [ABS, 'mcp'] })
+    expect(cfg2.mcpServers.tessel_apps).toEqual({ command: '/usr/bin/node', args: [ABS, 'mcp', '--apps'], disabled: true })
+    expect(JSON.parse(fs.readFileSync(file + '.tessel-bak', 'utf8'))).toEqual(theirs)
+    expect(fs.readdirSync(join(home, '.gemini', 'config')).filter((f) => f.includes('tessel-tmp'))).toEqual([])
+
+    // Found by its config file alone, or by agy on PATH
+    const home2 = fs.mkdtempSync(join(os.tmpdir(), 'tessel-shim-home-'))
+    try {
+      fs.mkdirSync(join(home2, '.gemini', 'config'), { recursive: true })
+      fs.writeFileSync(join(home2, '.gemini', 'config', 'mcp_config.json'), '{}')
+      expect(shim.install({ home: home2, shimPath: ABS, env }).skipped).toEqual(['claude', 'codex'])
+    } finally {
+      fs.rmSync(home2, { recursive: true, force: true })
+    }
+  })
+
+  it('a mcp_config.json that is not a JSON object is left alone and reported', () => {
+    fs.mkdirSync(join(home, '.gemini', 'config'), { recursive: true })
+    const file = join(home, '.gemini', 'config', 'mcp_config.json')
+    fs.writeFileSync(file, '[1]')
+    const r = shim.install({ home, shimPath: ABS, env })
+    expect(r.ok).toBe(false)
+    expect(r.errors).toEqual([`${file}: not a JSON object, left as it is`])
+    expect(fs.readFileSync(file, 'utf8')).toBe('[1]')
   })
 
   it('sets up both agents once, keeps a backup once, and keeps the user entries', () => {
@@ -522,7 +570,7 @@ describe('round trip', () => {
   }, 20000)
 
   it('version', async () => {
-    expect(shim.VERSION).toBe('1.4.6')
+    expect(shim.VERSION).toBe('1.5.0')
     expect((await run(['version'])).out).toBe(`${shim.VERSION}\n`)
   })
 })
