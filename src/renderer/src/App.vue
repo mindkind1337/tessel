@@ -36,6 +36,7 @@ import { HOST_ACCOUNT_AGENTS, checkHostAccountsNow, defaultHostAccount, hostAcco
 import SettingsDialog from './components/SettingsDialog.vue'
 import UpdateDialog from './components/UpdateDialog.vue'
 import DevUpdateDialog from './components/DevUpdateDialog.vue'
+import { devUpdateBadgeShown } from './devUpdateBadge'
 import UpdateCard from './components/UpdateCard.vue'
 import SshPasswordDialog from './components/remote/SshPasswordDialog.vue'
 import { settings, loadSettings, DEFAULT_SETTINGS } from './settings'
@@ -3856,6 +3857,7 @@ async function readDevRestart() {
   }
 }
 const devUpdateShown = computed(() => isDev && (devUpdate.value.state === 'available' || devUpdate.value.state === 'updated'))
+const devUpdateBadge = computed(() => isDev && devUpdateBadgeShown(devUpdate.value))
 // "Restart now": editor files are asked about first, everything is written, then
 // the main process starts the next Tessel and leaves (terminals keep running).
 // Settings > General > Backup: what is on disk is what is exported, so the window
@@ -14760,7 +14762,7 @@ onBeforeUnmount(() => {
             ↻ {{ t('app.toolbar.devRestartShort', 'restart') }}
           </button>
           <button
-            v-if="devUpdateShown"
+            v-if="devUpdateBadge"
             type="button"
             class="brand-dev-update"
             :title="devUpdate.state === 'updated' ? t('app.toolbar.devUpdated', 'Updated: see what to do next') : t('app.toolbar.devUpdate', 'New builds on GitHub: {{count}}. Update this development copy', { count: devUpdate.behind || 0 })"
