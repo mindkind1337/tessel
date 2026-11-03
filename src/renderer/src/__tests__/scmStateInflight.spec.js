@@ -41,6 +41,19 @@ describe('refreshStatus while one runs', () => {
     expect(statusOf('C:\\proj').data.n).toBe(2)
   })
 
+  it('forgotten while one runs with another chained behind it: no second request, no status left behind', async () => {
+    const first = refreshStatus('C:\\proj')
+    const chained = refreshStatus('C:\\proj')
+    expect(calls).toBe(1)
+    forgetStatus('C:\\proj')
+    releases.shift()()
+    await first
+    await expect(chained).resolves.toBeNull()
+    await tick()
+    expect(calls).toBe(1)
+    expect(statusOf('C:\\proj')).toBeNull()
+  })
+
   it('after it settles, the next refresh is a new request', async () => {
     const a = refreshStatus('C:\\proj')
     releases.shift()()

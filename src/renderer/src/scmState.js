@@ -49,8 +49,10 @@ function startRun(k, root, background = false) {
   runs[k] = entry
   const began = Date.now()
   entry.running = readStatus(root, background).finally(() => {
+    // Forgotten meanwhile (forgetStatus), or replaced: nothing to keep.
+    if (runs[k] !== entry) return
     timing[k] = { took: Date.now() - began, ended: Date.now() }
-    if (runs[k] === entry && !entry.next) delete runs[k]
+    if (!entry.next) delete runs[k]
   })
   return entry.running
 }
@@ -86,9 +88,12 @@ export function refreshStatus(root, { background = false } = {}) {
     r.next = r.running
       .catch(() => null)
       .then(() => {
+        // The folder was forgotten while the first one ran: no next run
+        // (it would read a removed project, and leave its status behind).
+        if (runs[k] !== r) return null
         const gap = r.nextAsked ? 0 : backgroundGap(k)
         if (gap <= 0) return startRun(k, root, !r.nextAsked)
-        if (runs[k] === r) delete runs[k]
+        delete runs[k]
         return putOff(k, root, gap)
       })
   } else if (!background) r.nextAsked = true
@@ -132,6 +137,7 @@ export function forgetStatus(root) {
     delete waiting[k]
   }
   delete timing[k]
+  delete runs[k] // a refresh chained behind the running one is dropped too
   seqs[k] = (seqs[k] || 0) + 1
   delete scmStatus[k]
 }
