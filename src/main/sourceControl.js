@@ -67,6 +67,10 @@ export async function repoOf(root) {
   return { top: resolve(res.stdout.trim()) }
 }
 
+// A relative path that leaves its base: '..' alone or as its first segment
+// (a file named '..notes.txt' is inside; a prefix test refused it too).
+const leaves = (rel) => rel === '..' || rel.startsWith('..' + sep)
+
 // A path from the renderer (relative to the repository, or absolute) -> the
 // path relative to the repository with / separators, or null when it is not
 // strictly inside it (the repository itself, .., another drive, NUL).
@@ -74,7 +78,7 @@ export function relIn(top, p) {
   if (typeof p !== 'string' || !p || p.includes('\0') || p.length > 4096) return null
   const full = resolve(isAbsolute(p) ? p : join(top, p))
   const rel = relative(resolve(top), full)
-  if (!rel || rel === '.' || rel.startsWith('..') || isAbsolute(rel)) return null
+  if (!rel || rel === '.' || leaves(rel) || isAbsolute(rel)) return null
   const parts = rel.split(sep)
   if (parts[0].toLowerCase() === '.git') return null
   return parts.join('/')
@@ -278,7 +282,7 @@ export async function collectUntrackedAdditions(top, rels) {
 
 function insideReal(topReal, p) {
   const rel = relative(topReal, p)
-  return !!rel && !rel.startsWith('..') && !isAbsolute(rel)
+  return !!rel && !leaves(rel) && !isAbsolute(rel)
 }
 
 // --- Remote ---------------------------------------------------------------------

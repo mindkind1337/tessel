@@ -106,6 +106,12 @@ describe('parsers', () => {
     expect(relIn(top, 'a/b.txt')).toBe('a/b.txt')
     expect(relIn(top, join(top, 'x y', 'z.txt'))).toBe('x y/z.txt')
     expect(relIn(top, '../escape.txt')).toBeNull()
+    expect(relIn(top, '..')).toBeNull()
+    expect(relIn(top, join(top, '..', 'outside.txt'))).toBeNull()
+    // Names that merely start with two dots are inside the repository.
+    expect(relIn(top, '..notes.txt')).toBe('..notes.txt')
+    expect(relIn(top, '...config')).toBe('...config')
+    expect(relIn(top, 'dir/..keep')).toBe('dir/..keep')
     expect(relIn(top, top)).toBeNull()
     expect(relIn(top, '')).toBeNull()
     expect(relIn(top, '.git/config')).toBeNull()
