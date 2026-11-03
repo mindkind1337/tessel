@@ -128,7 +128,7 @@ describe('MCP servers dialog', () => {
     expect(removed).toEqual([{ agent: 'codex', name: 'ctx', scope: 'user', cwd: null }])
   })
 
-  it('a remote server the probe cannot enter: "Signs in from the agent" (not "Needs sign-in"), one Sign in on the card that runs each CLI sign-in in turn and tells the rest how, in the card', async () => {
+  it('a remote server: "Signs in from the agent" (not "Needs sign-in") after a 401 probe, a Sign in on each agent line and a "Sign in all" on the card that runs each CLI sign-in in turn and tells the rest how, in the card', async () => {
     const s = (scope = 'user') => ({ name: 'cf', scope, type: 'http', target: 'https://mcp.cloudflare.com/mcp' })
     const w = mountWith(
       {
@@ -143,21 +143,28 @@ describe('MCP servers dialog', () => {
     )
     await flushPromises()
     const r = await openRow(w, 'cf')
-    // Before a test: no Sign in anywhere.
-    expect(button(r, 'Sign in')).toBeUndefined()
+    // A remote server offers the sign-in before any test: each line its own, the card all at once.
+    expect(r.findAll('.sl-sub').every((line) => !!button(line, 'Sign in'))).toBe(true)
+    expect(button(r.get('.sl-section-head'), 'Sign in all')).toBeDefined()
     await button(r.get('.sl-section-head'), 'Test').trigger('click')
     await flushPromises()
-    // The honest tag, with why, and the amber dot; the per-agent lines have no Sign in of their own.
+    // The honest tag, with why, and the amber dot.
     const tag = sub(r, 'claude').get('.tag-warn')
     expect(tag.text()).toBe('Signs in from the agent')
     expect(tag.attributes('title')).toContain('cannot tell whether the agent has already signed in')
     expect(row(w, 'cf').get('.mcpi-dot').attributes('title')).toBe('Last test: signs in from the agent')
     expect(w.text()).not.toContain('Needs sign-in')
-    expect(r.findAll('.sl-sub').every((line) => !button(line, 'Sign in'))).toBe(true)
-    // One Sign in on the card: Codex then OpenCode in one pane, the others told how, in the card.
-    await r.get('.sl-section-head .mcpi-signin').trigger('click')
+    // One line alone: Codex runs its CLI in a pane; Claude Code is told how, in the card (not above).
+    await button(sub(r, 'codex'), 'Sign in').trigger('click')
     expect(w.emitted('run')).toHaveLength(1)
-    expect(w.emitted('run')[0][0]).toEqual({ label: 'Sign in: cf', steps: ['codex mcp login cf', 'opencode mcp auth cf'] })
+    expect(w.emitted('run')[0][0]).toEqual({ label: 'Sign in: cf', command: 'codex mcp login cf' })
+    await button(sub(r, 'claude'), 'Sign in').trigger('click')
+    expect(r.get('.mcpi-card-message').text()).toContain('In a Claude Code pane, type /mcp, pick "cf" and choose Authenticate.')
+    expect(w.find('.mcpd-message').exists()).toBe(false)
+    // The card's Sign in all: Codex then OpenCode in one pane, the others told how, in the card.
+    await r.get('.sl-section-head .mcpi-signin').trigger('click')
+    expect(w.emitted('run')).toHaveLength(2)
+    expect(w.emitted('run')[1][0]).toEqual({ label: 'Sign in: cf', steps: ['codex mcp login cf', 'opencode mcp auth cf'] })
     const card = r.get('.mcpi-card-message')
     expect(card.text()).toContain('in a Claude Code pane, type /mcp, pick "cf" and choose Authenticate; in a Gemini CLI pane, type /mcp auth cf')
     expect(card.text()).toContain('Cursor CLI sign in from their own pane; Tessel cannot do it for them.')
@@ -172,7 +179,7 @@ describe('MCP servers dialog', () => {
     expect(r.find('.mcpi-card-message').exists()).toBe(false)
   })
 
-  it('a local server never gets the card Sign in: its probe runs the command itself', async () => {
+  it('a local server never gets a Sign in: its probe runs the command itself', async () => {
     const w = mountWith(
       {
         mcpList: async () => ({ claude: [{ name: 'fs', scope: 'user', type: 'stdio', target: 'npx fs' }], codex: [] }),
@@ -185,6 +192,7 @@ describe('MCP servers dialog', () => {
     await button(r.get('.sl-section-head'), 'Test').trigger('click')
     await flushPromises()
     expect(r.find('.mcpi-signin').exists()).toBe(false)
+    expect(r.find('.mcpi-signin-one').exists()).toBe(false)
   })
 
   it('"Add to…" is one menu with the installed agents that lack the server', async () => {

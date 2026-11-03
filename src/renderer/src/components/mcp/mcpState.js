@@ -200,16 +200,20 @@ export function useMcpState(props, emit) {
   const SLASH_SIGN_IN = ['claude', 'gemini', 'qwen']
   const signInLabel = (name) => t('mcp.signIn.pane', 'Sign in: {{name}}', { name })
 
-  function signIn(agent, name) {
+  // One agent's sign-in. From a server card (inCard) the explanation shows
+  // in that card; from the catalog, in the callout above.
+  function signIn(agent, name, inCard = false) {
     if (!/^[A-Za-z0-9_-]{1,64}$/.test(String(name))) return
+    const tell = inCard ? (text) => sayCard(name, text) : say
     if (SIGN_IN_COMMAND[agent]) {
+      if (inCard) sayCard(name, '')
       emit('run', { label: signInLabel(name), command: SIGN_IN_COMMAND[agent](name) })
     } else if (agent === 'gemini' || agent === 'qwen') {
-      say(t('mcp.signIn.gemini', 'In a {{agent}} pane, type /mcp auth {{name}}. Your browser opens to sign in.', { name, agent: AGENT_NAME[agent] }))
+      tell(t('mcp.signIn.gemini', 'In a {{agent}} pane, type /mcp auth {{name}}. Your browser opens to sign in.', { name, agent: AGENT_NAME[agent] }))
     } else if (agent !== 'claude') {
-      say(t('mcp.signIn.other', 'Sign in to "{{name}}" from a {{agent}} pane (its own MCP command), or set the server\'s API key.', { name, agent: AGENT_NAME[agent] }))
+      tell(t('mcp.signIn.other', 'Sign in to "{{name}}" from a {{agent}} pane (its own MCP command), or set the server\'s API key.', { name, agent: AGENT_NAME[agent] }))
     } else {
-      say(t('mcp.signIn.claude', 'In a Claude Code pane, type /mcp, pick "{{name}}" and choose Authenticate. Your browser opens to sign in.', { name }))
+      tell(t('mcp.signIn.claude', 'In a Claude Code pane, type /mcp, pick "{{name}}" and choose Authenticate. Your browser opens to sign in.', { name }))
     }
   }
 

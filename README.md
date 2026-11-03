@@ -175,12 +175,12 @@ working on Tessel itself (see [Build from source](#build-from-source)).
   themselves.
 - **MCP servers and tools**: see every MCP server for Claude Code and Codex,
   test the connection, copy a server to another agent, and install from a
-  catalog of popular servers and developer tools. A remote server that asks
-  for a sign-in has one Sign in button on its card: it starts each agent's own
-  sign-in (Codex and OpenCode in a pane, one after the other; the card says
-  what to type for Claude Code, Gemini CLI and Qwen Code). Each agent keeps its
-  own token, so Tessel's test cannot see whether an agent has already signed
-  in: the badge says "Signs in from the agent" rather than "needs sign-in".
+  catalog of popular servers and developer tools. A remote server has a Sign in
+  on each agent's line, and a Sign in all on its card that starts each agent's
+  own sign-in in turn (Codex and OpenCode in a pane; the card says what to type
+  for Claude Code, Gemini CLI and Qwen Code). Each agent keeps its own token, so
+  Tessel's test cannot see whether an agent has already signed in: the badge
+  says "Signs in from the agent" rather than "needs sign-in".
 - **Tessel account** (Settings → Tessel account): an optional account. You log in
   on a web page in your own browser, with Google, GitHub or an email address and a
   password, so no password passes through the app, and the browser then asks to open

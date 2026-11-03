@@ -26,6 +26,7 @@ const shownLabel = (shown, count) => t('mcp.installed.shown', '{{shown}} of {{co
 const readErrorLabel = (agent) => t('mcp.installed.readError', "{{agent}}: its MCP settings could not be read, so its servers are missing here.", { agent: AGENT_NAME[agent] })
 const removeFromLabel = (agent) => t('mcp.installed.removeFrom', 'Remove from {{agent}}', { agent: AGENT_NAME[agent] })
 const testOnLabel = (agent) => t('mcp.installed.testOn', 'Test with {{agent}}', { agent: AGENT_NAME[agent] })
+const signInOnLabel = (agent) => t('mcp.installed.signInOn', 'Sign in with {{agent}}', { agent: AGENT_NAME[agent] })
 const copyLabel = (name) => t('mcp.installed.copyTarget', 'Copy what {{name}} runs', { name })
 
 const query = ref('')
@@ -249,15 +250,15 @@ function clearFilters() {
           <div class="sl-section-head">
             <span>{{ t('mcp.installed.usedBy', 'Used by') }}</span>
             <span class="sl-actions">
-              <!-- One Sign in for the whole card: each agent's own sign-in, in turn. -->
+              <!-- All at once: each agent's own sign-in, in turn (each line has its own too). -->
               <button
-                v-if="m.isRemote(row) && m.needsSignIn(row)"
+                v-if="m.isRemote(row)"
                 type="button"
                 class="exit-btn small mcpi-signin"
                 :title="t('mcp.installed.signInAllHint', 'Each agent signs in on its own: a pane opens for those with a command, the card says how for the others.')"
                 @click="m.signInAll(row)"
               >
-                {{ t('mcp.installed.signIn', 'Sign in') }}
+                {{ t('mcp.installed.signInAll', 'Sign in all') }}
               </button>
               <button type="button" class="exit-btn small" @click="m.testServer(row)">{{ t('mcp.installed.test', 'Test') }}</button>
               <McpAddToMenu :agents="others(row)" :disabled="!!m.busy" @pick="(a) => m.copyTo(row, a)" />
@@ -290,7 +291,16 @@ function clearFilters() {
                 >
                 <McpTokenTag :server="row.name" :agent="agent" :scope="row.by[agent].scope" :cwd="cwd" variant="details" />
                 <span class="sl-actions">
-                  <!-- Sign in is the card's one button above (every agent at once). -->
+                  <!-- This agent alone: its CLI in a pane, or how to, in the card. -->
+                  <button
+                    v-if="m.isRemote(row)"
+                    type="button"
+                    class="exit-btn small mcpi-signin-one"
+                    :title="signInOnLabel(agent)"
+                    @click="m.signIn(agent, row.name, true)"
+                  >
+                    {{ t('mcp.installed.signIn', 'Sign in') }}
+                  </button>
                   <button type="button" class="exit-btn small" :title="testOnLabel(agent)" @click="m.test(agent, row.by[agent])">
                     {{ t('mcp.installed.test', 'Test') }}
                   </button>
