@@ -34,7 +34,8 @@ working on Tessel itself (see [Build from source](#build-from-source)).
   folder; drag projects to put them in your order (or Alt+Up / Alt+Down on
   one). Switching never stops a running shell or agent, and everything
   (layout, panes, conversations, tasks, terminal output) is restored on the
-  next launch.
+  next launch. Each project is a framed panel in the sidebar, with its agents
+  inside; the panel of the project you are in is colored.
 - **Sleep**: a pane put to sleep stops its terminal to free memory and keeps
   its place; opening it wakes it (an agent resumes its conversation, a
   terminal starts again in the same folder under what it showed). Put a pane,
@@ -155,7 +156,8 @@ working on Tessel itself (see [Build from source](#build-from-source)).
 - **Live state for every agent**: working, waiting for you, approval needed,
   usage limit, interrupted, idle. It comes from the agents' own hooks, with the
   screen as a fallback, and shows as a dot on the agent's logo in its pane and
-  in the sidebar.
+  in the sidebar. In the sidebar a red dot means the agent needs a look: it
+  waits for you, has a problem, or finished and you have not opened it yet.
 - **Sub-agents**: the ones an agent starts (Claude Code, Codex, OpenCode,
   Cline…) show under it, with their type, model and state.
 - **Yolo mode**: run agents without permission prompts, everywhere or only in
