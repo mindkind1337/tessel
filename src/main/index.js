@@ -146,6 +146,7 @@ import { startSignIn, signInStatus, activeSignIns, cancelSignIn, cancelAllSignIn
 import { createTesselAccount, findAppLink, ACCOUNT_URL } from './tesselAccount'
 import { createSettingsSync } from './settingsSync'
 import { createTesselApps } from './tesselApps'
+import { OLD_GOOGLE_SERVER, createRetireOldGoogle } from './tesselApps/retireOldGoogle'
 import { otherConnectorsOff } from '../shared/otherConnectors'
 import { listAgyPlugins, setAgyPlugin, removeAgyPlugin } from './agyPlugins'
 import { createMusePlugins } from './musePlugins'
@@ -3228,31 +3229,32 @@ const tesselApps = createTesselApps({
   }
 })
 let appsToolsSetUp = null
-// tessel_apps in each installed agent's settings, once a run. Agents already running get it when restarted.
-// Google connected through Tessel replaces the community server the old Google row set up, so an
-// agent does not have two Gmails. Only that name, only where it is, and only once connected: it
-// comes back from the MCP dialog if wanted. Running agents keep it until they are restarted.
-const OLD_GOOGLE_SERVER = 'google-workspace'
-async function retireOldGoogleServer() {
-  if (!tesselApps.connections.list().some((c) => c.service === 'google')) return
-  const removed = []
-  const remove = async (agent) => {
-    const r = await removeMcp({ agent, name: OLD_GOOGLE_SERVER, scope: 'user' }).catch((err) => ({ ok: false, error: err.message }))
-    if (r && r.ok) removed.push(agent)
-  }
-  if (claudeServerExists(undefined, OLD_GOOGLE_SERVER)) await remove('claude')
+function agentsWithServer(name) {
+  const agents = JSON_AGENTS.filter((agent) => jsonAgentHasServer(agent, name))
+  if (claudeServerExists(undefined, name)) agents.push('claude')
   let codex = ''
   try {
     codex = fs.readFileSync(join(os.homedir(), '.codex', 'config.toml'), 'utf8')
   } catch {
     // no Codex settings
   }
-  if (splitCodexConfig(codex, OLD_GOOGLE_SERVER).ours.trim()) await remove('codex')
-  for (const agent of JSON_AGENTS) {
-    if (jsonAgentHasServer(agent, OLD_GOOGLE_SERVER)) await remove(agent)
-  }
-  if (removed.length) log.info('team', `${OLD_GOOGLE_SERVER} replaced by tessel_apps for: ${removed.join(', ')}`) // i18n-ignore log
+  if (splitCodexConfig(codex, name).ours.trim()) agents.push('codex')
+  return agents
 }
+const retireOldGoogle = createRetireOldGoogle({
+  file: join(app.getPath('userData'), 'tessel-apps', 'old-google-retired.json'),
+  replacement: APPS_SERVER_NAME,
+  connected: () => tesselApps.connections.list().some((c) => c.service === 'google'),
+  agentsWith: agentsWithServer,
+  remove: (agent, name) => removeMcp({ agent, name, scope: 'user' })
+})
+async function retireOldGoogleServer() {
+  await setUpAppsTools()
+  const { removed, failed } = await retireOldGoogle.check()
+  if (removed.length) log.info('team', `${OLD_GOOGLE_SERVER} replaced by tessel_apps for: ${removed.join(', ')}`) // i18n-ignore log
+  for (const { agent, error } of failed) log.warn('team', `could not retire ${OLD_GOOGLE_SERVER} for ${agent}: ${error}`) // i18n-ignore log
+}
+// tessel_apps in each installed agent's settings, once a run. Agents already running get it when restarted.
 function setUpAppsTools() {
   if (appsToolsSetUp) return appsToolsSetUp
   appsToolsSetUp = (async () => {
@@ -3286,6 +3288,8 @@ function setUpAppsTools() {
 // Agents installed since: set up at a start too, once the team tools had their turn with the files.
 setTimeout(() => {
   setUpAppsTools().catch((err) => log.warn('team', `tessel_apps tools: ${err && err.message}`)) // i18n-ignore log
+  // Google connected before: nothing else would look at it again.
+  retireOldGoogleServer().catch((err) => log.warn('team', `could not retire ${OLD_GOOGLE_SERVER}: ${err && err.message}`)) // i18n-ignore log
 }, 30000).unref?.()
 ipcMain.handle(
   'tesselApps:view',

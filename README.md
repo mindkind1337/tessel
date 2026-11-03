@@ -341,7 +341,8 @@ working on Tessel itself (see [Build from source](#build-from-source)).
   replaces the same service in Claude Code's connectors, and in Codex's where Tessel knows its id,
   in Tessel's panes here and on hosts, so agents use Tessel's. Codex keeps its own connector for
   Dropbox, Notion, Linear, Sentry and Stripe. All their other tools stay. Agents already running get the tools after
-  a restart.
+  a restart. Connecting Google also removes the older `google-workspace` server from the agents that
+  have Tessel's tools, once: one you add back from the MCP dialog stays until you connect Google again.
 - **A code sent by email, typed and submitted for you**: when you asked an agent to sign in to a
   site in the built-in browser and it asks for a code it sent by email, the agent asks and you
   allow it on a card, every time. The card names the page with its path, the field, the button,
