@@ -62,3 +62,56 @@ describe('the note it puts in the pane', () => {
     expect(src.split('window.shellApi.team.toolsAlive({ dir, ids, launches: launchTokens(ids) })').length - 1).toBe(2)
   })
 })
+
+// The nudge "[Tessel] You have new team messages…" (teamDelivery.js pointerText)
+// is typed only into a pane whose agent can read them (App.vue pointerBlocked,
+// run from the source with what it looks at stubbed).
+describe('the nudge never goes into a pane that cannot read it', () => {
+  const list = src.slice(src.indexOf('const REMOTE_TOOLS_AGENTS = ['), src.indexOf('\n', src.indexOf('const REMOTE_TOOLS_AGENTS = [')))
+  const fnSrc = src.slice(src.indexOf('function pointerBlocked('), src.indexOf('const restartedForTools = new Set()'))
+  const idle = { state: 'idle' }
+  const blocked = (leaf) => {
+    const stubs = {
+      findLeaf: () => leaf,
+      settings: { teamWakeUps: true, teamWakeUnconfirmed: false },
+      restartingLeaves: new Set(),
+      wakeState: {},
+      WAKE_AFTER_MS: 0,
+      REWAKE_AFTER_MS: 0,
+      WAKE_AFTER_RESTART_MS: 0,
+      agentStateKnown: () => true,
+      trackedState: { p1: idle },
+      awaitingApproval: () => false,
+      approvals: {},
+      limits: {},
+      pendingMessages: {},
+      unsent: {},
+      delivering: new Set(),
+      wakeAllowed: () => true,
+      Date
+    }
+    // eslint-disable-next-line no-new-func
+    const fn = new Function(...Object.keys(stubs), `${list}; ${fnSrc}; return pointerBlocked`)(...Object.values(stubs))
+    return fn('p1')
+  }
+  const agent = (extra = {}) => ({ id: 'p1', kind: 'agent', agentId: 'claude', teamTools: true, ...extra })
+
+  it('an idle local agent with the team tools: not blocked', () => {
+    expect(blocked(agent())).toBe('')
+    expect(blocked(agent({ agentId: 'gemini' }))).toBe('')
+  })
+  it('on an SSH host: Claude Code, Codex and Antigravity read them; an agent the host gives no tools cannot', () => {
+    for (const agentId of ['claude', 'codex', 'antigravity']) expect(blocked(agent({ agentId, remoteHostId: 'ssh-box' }))).toBe('')
+    for (const agentId of ['gemini', 'opencode', 'qwen']) expect(blocked(agent({ agentId, remoteHostId: 'ssh-box' }))).toBe('its agent has no Tessel tools on the host')
+  })
+  it('an agent on a host whose tools never connected (its note in the pane): blocked until they do', () => {
+    expect(blocked(agent({ agentId: 'claude', remoteHostId: 'ssh-box', remoteToolsNote: 'Tessel tools are not connected on Box: x.' }))).toBe('its Tessel tools are not connected on the host')
+    const leaf = agent({ agentId: 'antigravity', remoteHostId: 'ssh-box', remoteToolsNote: 'Tessel tools are not connected on Box: x.' })
+    expect(blocked(leaf)).toMatch(/not connected on the host/)
+    delete leaf.remoteToolsNote // checkRemoteAgentTools saw them run
+    expect(blocked(leaf)).toBe('')
+  })
+  it('a pane without the team tools at all stays blocked as before', () => {
+    expect(blocked(agent({ teamTools: false, remoteHostId: 'ssh-box' }))).toBe('not an agent pane with the team tools')
+  })
+})

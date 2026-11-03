@@ -10890,6 +10890,10 @@ function pointerBlocked(id, ownPointer = false) {
   if (!leaf) return 'pane closed'
   if (!settings.teamWakeUps) return 'wake-ups are off in Settings'
   if (leaf.kind !== 'agent' || !leaf.teamTools) return 'not an agent pane with the team tools'
+  // On an SSH host only some agents get the tools, and one whose tools never
+  // connected (remoteToolsNote) could not read the messages either.
+  if (leaf.remoteHostId && !REMOTE_TOOLS_AGENTS.includes(leaf.agentId)) return 'its agent has no Tessel tools on the host'
+  if (leaf.remoteToolsNote) return 'its Tessel tools are not connected on the host'
   if (leaf.sleeping) return 'asleep'
   if (leaf.notConnected) return 'not connected'
   if (leaf.agentMissing) return 'its agent is not installed on the host'
