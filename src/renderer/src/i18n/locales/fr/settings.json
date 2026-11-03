@@ -1089,6 +1089,8 @@
       "open": "Ouvrir Skills"
     },
     "tesselAccount": {
+      "admin": "Administration",
+      "adminHint": "Comptes, connexions et services branchés de tous ceux qui utilisent Tessel, sur admin.tesselcode.com. S'ouvre dans votre navigateur, qui demande sa propre connexion Google.",
       "cancel": "Annuler",
       "changePassword": "Changer le mot de passe",
       "changePasswordHint": "Nous vous envoyons un lien par courriel. Une fois le nouveau choisi, vous vous reconnectez sur tous vos ordinateurs.",

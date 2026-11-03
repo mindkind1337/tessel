@@ -149,6 +149,15 @@ describe('Settings > Tessel account', () => {
     expect(w.get('.tessel-account-error').text()).toContain('Too many tries')
   })
 
+  it("the owner's account has an Administration button to the admin panel; others have none", async () => {
+    await mountPage(api())
+    expect(w.find('.tessel-account-admin').exists()).toBe(false)
+    w.unmount()
+    await mountPage(api({ status: vi.fn(async () => ({ ...IN, user: { ...IN.user, admin: true } })) }))
+    await w.get('.tessel-account-admin').trigger('click')
+    expect(window.shellApi.openExternal).toHaveBeenCalledWith('https://admin.tesselcode.com')
+  })
+
   it('signs out', async () => {
     const a = api({ status: vi.fn(async () => IN) })
     await mountPage(a)

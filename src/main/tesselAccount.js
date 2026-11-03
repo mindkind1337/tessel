@@ -24,7 +24,10 @@ const cleanUser = (user) => ({
   name: user?.name ? String(user.name) : null,
   hasPassword: !!user?.has_password,
   hasGoogle: !!user?.has_google,
-  hasGitHub: !!user?.has_github
+  hasGitHub: !!user?.has_github,
+  // The owner's account, as the server says (its ADMIN_USER_IDS): Settings shows
+  // it a button to the admin panel. The panel checks again on its own sign-in.
+  admin: user?.admin === true
 })
 // The way back from the web page in a command line (a second launch of Tessel), if any.
 export const findAppLink = (argv, scheme) => (Array.isArray(argv) ? argv.find((arg) => typeof arg === 'string' && arg.toLowerCase().startsWith(`${scheme}://`)) : undefined)

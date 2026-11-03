@@ -106,6 +106,9 @@ async function removeAccount() {
 }
 
 const openPrivacy = () => window.shellApi?.openExternal?.('https://tesselcode.com/privacy')
+// The owner's account only (the server says so): the admin panel, in the outside
+// browser, where it asks for its own Google sign-in.
+const openAdmin = () => window.shellApi?.openExternal?.('https://admin.tesselcode.com')
 
 // Asks the server only when the page opens, not while Settings stays in the background.
 watch(
@@ -142,6 +145,7 @@ onBeforeUnmount(() => {
               <span class="set-hint tessel-account-who">{{ state.user.email }}</span>
               <span v-if="state.offline" class="set-hint">{{ t('settings.tesselAccount.offline', 'Tessel cannot reach its server right now. You stay signed in.') }}</span>
             </div>
+            <button v-if="state.user.admin" type="button" class="exit-btn tessel-account-admin" :title="t('settings.tesselAccount.adminHint', 'Accounts, sign-ins and connections of everyone using Tessel, on admin.tesselcode.com. Opens in your browser, where it asks for its own Google sign-in.')" @click="openAdmin">{{ t('settings.tesselAccount.admin', 'Administration') }}</button>
             <button type="button" class="exit-btn tessel-account-out" :disabled="busy" @click="signOut">{{ t('settings.tesselAccount.signOut', 'Sign out') }}</button>
           </template>
           <template v-else-if="state && state.signingIn">

@@ -200,6 +200,8 @@ working on Tessel itself (see [Build from source](#build-from-source)).
   or delete the account; security changes are confirmed by email. Tessel works the
   same without an account. It keeps your email address, name, password as a hash
   and Google or GitHub ID on Tessel's server, never your mail, calendar or files.
+  The owner's account also sees an Administration button there, which opens
+  Tessel's admin panel (admin.tesselcode.com) in the browser.
 - **Your settings everywhere** (Settings → Tessel account): once you turn it on, how
   Tessel looks, your projects and their layout, SSH hosts and task cards follow you to
   every computer you sign in on. They are encrypted on your computer before they leave
