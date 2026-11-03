@@ -42,8 +42,7 @@ describe('parseSshConfig', () => {
   })
 
   it('keeps the first IdentityFile of a block, the main key (OpenSSH tries them in order)', () => {
-    const hosts = parseSshConfig(['Host prod', '  IdentityFile ~/.ssh/id_primary', '  IdentityFile ~/.ssh/id_fallback'].join('
-'), { home: '/home/me' })
+    const hosts = parseSshConfig(['Host prod', '  IdentityFile ~/.ssh/id_primary', '  IdentityFile ~/.ssh/id_fallback'].join(String.fromCharCode(10)), { home: '/home/me' })
     expect(hosts).toEqual([{ host: 'prod', identityFile: '/home/me/.ssh/id_primary' }])
   })
 
