@@ -31,7 +31,8 @@ export const SSH_CONFIG_LIMITS = Object.freeze({
   maxExpansions: 256, // file expansions (the same file included twice counts twice)
   maxExpandedBytes: 1024 * 1024, // the expanded text handed to the parser
   maxGlobEntries: 4096, // directory entries looked at by Include globs
-  maxGlobMatches: 256 // files matched by Include globs, all Includes together
+  maxGlobMatches: 256, // files matched by Include globs, all Includes together
+  maxIncludePathBytes: 4096 // one Include path once ${VAR} and %tokens are expanded
 })
 const KEY_PEEK_BYTES = 64
 
@@ -327,15 +328,28 @@ function parseIncludeDirective(line) {
 }
 
 async function resolveIncludePaths(pattern, context) {
+  // The path is bounded while it is built: a ${VAR} of many kilobytes
+  // repeated on one line made a path of megabytes before any budget saw it.
+  const max = context.limits.maxIncludePathBytes
   let missing = false
+  let size = 0
   const withEnv = pattern.replace(/\$\{([^}]+)\}/g, (_, name) => {
     const v = process.env[name]
     if (v === undefined) missing = true
-    return v ?? ''
+    size += v ? v.length : 0
+    return size > max ? '' : (v ?? '')
   })
   if (missing) return []
+  if (size > max || withEnv.length > max) {
+    overBudget(context)
+    return []
+  }
   const withTokens = expandIncludeTokens(withEnv, context)
   if (withTokens === null) return []
+  if (withTokens.length > max) {
+    overBudget(context)
+    return []
+  }
   const { pathApi } = context
   let abs
   if (withTokens === '~') abs = context.home

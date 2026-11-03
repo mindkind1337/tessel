@@ -97,6 +97,20 @@ describe('loadUserSshConfig (throwaway HOME)', () => {
     expect(hosts.map((h) => h.host)).toEqual(['ay', 'bee', 'main'])
   })
 
+  it('an Include whose ${VAR} expands to a path of megabytes stops the parse (truncated), without building it', async () => {
+    const name = 'TESSEL_CONFIG_TEST_HUGE'
+    process.env[name] = 'x'.repeat(32000)
+    try {
+      writeFileSync(join(home, '.ssh', 'config'), `Include ${'${' + name + '}'.repeat(34)}
+Host only
+`)
+      const { truncated } = await expandSshConfigIncludesDetailed(join(home, ".ssh", "config"), { home })
+      expect(truncated).toBe(true)
+    } finally {
+      delete process.env[name]
+    }
+  })
+
   it('skips an Include with a target-dependent token or a missing variable', async () => {
     writeFileSync(join(home, '.ssh', 'config'), 'Include conf.d/%h.conf\nInclude ${TESSEL_NO_SUCH_VAR_X}/x\nHost only\n')
     writeFileSync(join(home, '.ssh', 'conf.d', '%h.conf'), 'Host bad\n')
