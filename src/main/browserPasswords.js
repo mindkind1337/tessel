@@ -198,6 +198,12 @@ async function importFirefoxPasswords(vault, profileDir, tmpRoot) {
 
 // Runs only in the main frame's isolated world. Rechecks the exact origin
 // inside that world to close navigation races. Never submits the login form.
+// The form's every destination must be the site itself: its action and the
+// formaction of each of its submit buttons (a page can send the form
+// elsewhere through one button). The check runs again on the live form the
+// password field belongs to just before the password goes in: the username's
+// input event runs the page's own scripts, which can move the field to
+// another form or point the form elsewhere meanwhile.
 export function passwordFillScript(entry) {
   return `(${function (login) {
     if (location.origin !== login.origin || location.protocol !== 'https:') return { ok: false, code: 'wrong-site' }
@@ -206,7 +212,21 @@ export function passwordFillScript(entry) {
     if (passwords.length !== 1) return { ok: false, code: 'no-login-form' }
     const password = passwords[0]
     const form = password.form
-    if (!form || new URL(form.action || location.href, location.href).origin !== login.origin) return { ok: false, code: 'unsafe-form' }
+    const sameSite = (target) => {
+      try {
+        return new URL(target || location.href, location.href).origin === login.origin
+      } catch {
+        return false
+      }
+    }
+    const destinationsOk = (f) => {
+      if (!f || !f.isConnected || !sameSite(f.getAttribute('action'))) return false
+      for (const b of f.querySelectorAll('button, input[type="submit"], input[type="image"]')) {
+        if (b.hasAttribute('formaction') && !sameSite(b.getAttribute('formaction'))) return false
+      }
+      return true
+    }
+    if (!destinationsOk(form)) return { ok: false, code: 'unsafe-form' }
     const candidates = [...form.querySelectorAll('input')].filter(visible).filter((e) => ['text', 'email'].includes(e.type))
     const named = candidates.filter((e) => e.autocomplete === 'username' || e.type === 'email')
     const username = named.length === 1 ? named[0] : candidates.length === 1 ? candidates[0] : null
@@ -214,7 +234,9 @@ export function passwordFillScript(entry) {
     const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set
     const fill = (e, value) => { setter.call(e, value); e.dispatchEvent(new Event('input', { bubbles: true })); e.dispatchEvent(new Event('change', { bubbles: true })) }
     if (username) fill(username, login.username)
-    if (location.origin !== login.origin || !password.isConnected || password.type !== 'password' || new URL(form.action || location.href, location.href).origin !== login.origin) return { ok: false, code: 'unsafe-form' }
+    // The page's scripts ran on that input event: the same field, in the same
+    // form, with the same destinations, or nothing goes in.
+    if (location.origin !== login.origin || !password.isConnected || password.type !== 'password' || password.form !== form || !destinationsOk(form)) return { ok: false, code: 'unsafe-form' }
     fill(password, login.password)
     return { ok: true, submitted: false }
   }.toString()})(${JSON.stringify({ origin: entry.origin, username: entry.username, password: entry.password })})`
