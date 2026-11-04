@@ -12,6 +12,10 @@ import fs from 'fs'
 const CHUNK = 512 * 1024
 const MAX_SCAN = 64 * 1024 * 1024
 const SEEN_MAX = 200
+// The bytes just before where the last read stopped, kept to tell a grown
+// file (they are still there) from one rewritten in place and longer (they
+// are not): the latter is read from its start.
+const WITNESS = 64
 
 // parse(text) -> what the newest lines of that text name, or null.
 // What two parts say can add up (Copilot: an answer's model, the effort a
@@ -34,8 +38,13 @@ export function latestInFile(parse, { chunk = CHUNK, maxScan = MAX_SCAN, merge =
       const remembered = seen.get(file)
       // Another file at this path (replaced, same size or not), or rewritten
       // in place: what was read before says nothing about it.
-      const prev = sameFile(remembered, st) ? remembered : null
+      let prev = sameFile(remembered, st) ? remembered : null
       if (prev && prev.size === size) return out(prev.found)
+      if (prev && prev.size < size && prev.witness && prev.witness.length) {
+        const again = Buffer.alloc(prev.witness.length)
+        const n = fs.readSync(fd, again, 0, again.length, prev.lineEnd - again.length)
+        if (n !== again.length || !again.equals(prev.witness)) prev = null
+      }
       // Shrank (rewritten): read it all again.
       const floor = prev && prev.size < size ? prev.lineEnd : 0
       let found = null
@@ -69,8 +78,10 @@ export function latestInFile(parse, { chunk = CHUNK, maxScan = MAX_SCAN, merge =
       }
       // The part read before still says what the new part does not.
       if (prev && floor && !(found && done(found))) found = merge(found, prev.found)
+      const witness = Buffer.alloc(Math.min(WITNESS, lineEnd))
+      if (witness.length) fs.readSync(fd, witness, 0, witness.length, lineEnd - witness.length)
       seen.delete(file)
-      seen.set(file, { size, ino: st.ino || 0, mtimeMs: st.mtimeMs, lineEnd, found })
+      seen.set(file, { size, ino: st.ino || 0, mtimeMs: st.mtimeMs, lineEnd, found, witness })
       while (seen.size > SEEN_MAX) seen.delete(seen.keys().next().value)
       return out(found)
     } catch {

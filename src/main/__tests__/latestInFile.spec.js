@@ -75,6 +75,20 @@ describe('latestInFile', () => {
     expect(read(file)).toBe('bravo')
   })
 
+  it('a file rewritten in place, longer, on the same inode: read from its start (its model line sits before where the old file stopped)', () => {
+    const file = join(dir, 'f.jsonl')
+    const read = latestInFile(parse)
+    fs.writeFileSync(file, line('alpha'))
+    expect(read(file)).toBe('alpha')
+    const ino = fs.statSync(file).ino
+    fs.writeFileSync(file, line('bravo') + JSON.stringify({ tool: 'long output without a model '.repeat(8) }) + '\n')
+    expect(fs.statSync(file).ino).toBe(ino)
+    expect(read(file)).toBe('bravo')
+    // Grown by an append afterwards: still read from where it stopped, and the model kept.
+    fs.appendFileSync(file, JSON.stringify({ tool: 'more' }) + '\n')
+    expect(read(file)).toBe('bravo')
+  })
+
   it('a shrunk file is read again', () => {
     const file = join(dir, 'e.jsonl')
     const read = latestInFile(parse)
