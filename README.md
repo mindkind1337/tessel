@@ -139,7 +139,9 @@ working on Tessel itself (see [Build from source](#build-from-source)).
   Advanced → *Keep sessions alive on the server* turns it off): the host's
   terminals run inside a `tmux` session on the server, with no status bar, and
   a lost connection re-attaches to the same session instead of starting a new
-  shell, so an agent running there keeps going. The server's own `tmux` is
+  shell, so an agent running there keeps going. The mouse wheel scrolls that
+  session's history (the arrow keys stay the shell's history), and a selection
+  made in it reaches the clipboard. The server's own `tmux` is
   used; when it has none, Tessel puts its own statically built `tmux` in
   `~/.tessel-server/bin` there (Linux x86_64 and arm64, no root needed, checked
   against its checksum on the host, run once to prove the home folder may run

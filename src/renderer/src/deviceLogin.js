@@ -253,6 +253,13 @@ export function mouseClickBytes(col, row) {
   return `\x1b[<0;${c};${r}M\x1b[<0;${c};${r}m`
 }
 
+// An SGR (1006) wheel notch at a screen cell, up or down.
+export function mouseWheelBytes(col, row, down) {
+  const c = Math.max(1, Math.floor(col))
+  const r = Math.max(1, Math.floor(row))
+  return `\x1b[<${down ? 65 : 64};${c};${r}M`
+}
+
 // A link click while the program takes the mouse (mouse reporting on): the
 // plain click belongs to the program, so a link opens with Ctrl, Cmd or Shift
 // held (xterm's convention). With no mouse reporting, a plain click opens it.

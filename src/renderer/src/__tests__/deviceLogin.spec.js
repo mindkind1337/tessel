@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { detectDeviceLogin, wholeSignInUrl, columnOfIndex, mouseClickBytes, linkClickOpens, clickPassesThrough } from '../deviceLogin'
+import { detectDeviceLogin, wholeSignInUrl, columnOfIndex, mouseClickBytes, mouseWheelBytes, linkClickOpens, clickPassesThrough } from '../deviceLogin'
 
 const pane = readFileSync(join(__dirname, '..', 'components', 'TerminalPane.vue'), 'utf8')
 // Grok Build 1.0.62's real screens (fixtures/grokDeviceLogin.json says how
@@ -166,6 +166,8 @@ describe('columnOfIndex', () => {
 describe('mouse helpers', () => {
   it('writes an SGR press and release', () => {
     expect(mouseClickBytes(28, 9)).toBe('\x1b[<0;28;9M\x1b[<0;28;9m')
+    expect(mouseWheelBytes(28, 9, false)).toBe('\x1b[<64;28;9M')
+    expect(mouseWheelBytes(3, 1, true)).toBe('\x1b[<65;3;1M')
   })
   it('a plain click opens a link only when no program takes the mouse', () => {
     expect(linkClickOpens('none', {})).toBe(true)

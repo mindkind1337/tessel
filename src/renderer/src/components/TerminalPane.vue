@@ -19,7 +19,7 @@ import { terminalTheme } from '../themes'
 // Mouse-reporting modes (X10, normal, button, any-event, UTF-8, SGR, urxvt).
 const MOUSE_MODES = [9, 1000, 1002, 1003, 1005, 1006, 1015]
 import { registerPane, unregisterPane, getPane } from '../paneRegistry'
-import { detectDeviceLogin, wholeSignInUrl, columnOfIndex, mouseClickBytes, linkClickOpens, clickPassesThrough } from '../deviceLogin'
+import { detectDeviceLogin, wholeSignInUrl, columnOfIndex, mouseClickBytes, mouseWheelBytes, linkClickOpens, clickPassesThrough } from '../deviceLogin'
 import {
   setAgentStatus,
   setAttention,
@@ -3232,6 +3232,18 @@ const pointerOf = (e) => ({ ...(cellAtPointer(e) || { col: 0, row: 0 }), button:
 function onPassDown(e) {
   passDown = settings.alwaysSelect ? { ...pointerOf(e), focused: !!term && !!term.textarea && document.activeElement === term.textarea } : null
 }
+// The wheel under "Always select": the program's mouse request was refused
+// (dragging stays a selection), so xterm reports nothing and, in the
+// alternate screen, has nothing of its own to scroll either; the notch still
+// goes to the program as it would have (tmux scrolls its history with it,
+// the one the pane's own scrollback does not hold). A program on the main
+// screen keeps the pane's own scrollback for the wheel.
+function onPassWheel(e) {
+  if (!settings.alwaysSelect || !term || !e.deltaY || !mouseClickable() || term.modes.mouseTrackingMode !== 'none') return
+  if (props.node.backend === 'liveshare' || props.node.liveShare || props.node.notConnected || exited.value) return
+  const at = cellAtPointer(e)
+  if (at) window.shellApi.writePty(props.node.id, mouseWheelBytes(at.col, at.row, e.deltaY > 0))
+}
 // A press here released outside the pane: forgotten (after onPassUp had its turn).
 function onWindowMouseUp() {
   setTimeout(() => (passDown = null), 0)
@@ -3855,6 +3867,7 @@ onMounted(() => {
   // seen on the way down, its release after xterm's links had their turn.
   hostEl.value.addEventListener('mousedown', onPassDown, { passive: true, capture: true })
   hostEl.value.addEventListener('mouseup', onPassUp, { passive: true })
+  hostEl.value.addEventListener('wheel', onPassWheel, { passive: true, capture: true })
   window.addEventListener('mouseup', onWindowMouseUp, true)
   // A WebGL context lost: the normal renderer at once (the event does not
   // bubble: heard on the way down to the canvas).

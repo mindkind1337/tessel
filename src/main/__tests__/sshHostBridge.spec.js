@@ -380,7 +380,8 @@ describe('persistent sessions (tmux)', () => {
   const LOGIN = 'exec "$SHELL" -l'
   const OPTS =
     `set-option -g status off \\; set-option -g history-limit 50000 \\; set-option -g default-terminal screen-256color \\; ` +
-    `set-option -g escape-time 10 \\; set-option -g focus-events on \\; set-option -ga terminal-overrides ',xterm-256color:RGB'`
+    `set-option -g escape-time 10 \\; set-option -g focus-events on \\; set-option -g mouse on \\; set-option -g set-clipboard on \\; ` +
+    `set-option -ga terminal-overrides ',xterm-256color:RGB:Ms=\\E]52;%p1%s;%p2%s\\007'`
   const v34 = { major: 3, minor: 4 }
 
   it('builds the tmux commands: a fresh session on a first open (the old one killed, no -A), -A -D on a reconnect, exact targets', () => {
@@ -398,7 +399,8 @@ describe('persistent sessions (tmux)', () => {
     expect(again).toBe(`exec tmux -u -L tessel ${OPTS} \\; set-option -g prefix None \\; new-session -A -D -s tessel-pane1a ${first.slice(first.indexOf(" 'cd -- ") + 1)}`)
     expect(again).not.toMatch(/kill-session/)
     for (const c of [first, again, tmuxKillCommand('p')]) {
-      expect(c).not.toMatch(/mouse/)
+      // The mouse is on (the wheel scrolls the history), the pane keeps its look: no status bar.
+      expect(c).not.toMatch(/status on/)
       // Every -t target names the session exactly (=name).
       for (const m of c.matchAll(/-t (\S+)/g)) expect(m[1]).toMatch(/^=tessel-/)
     }

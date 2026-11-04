@@ -114,8 +114,13 @@ const tmuxBin = (bin) => (bin === OWN_TMUX ? OWN_TMUX : 'tmux')
 // first window exists (history-limit applies to windows created after it):
 // no status bar, so the pane looks as it does today; screen-256color is on
 // every host and matches the pane's xterm-256color; true colour, a short
-// escape delay and focus events for the agents' TUIs; and, when tmux takes
-// it (3.2+), no prefix key: a detach would end the pane and its session.
+// escape delay and focus events for the agents' TUIs; the mouse, so the
+// wheel scrolls the session's history (tmux keeps it, the pane's own
+// scrollback stays empty; a program in the alternate screen gets arrow keys
+// instead, as everywhere) while the arrow keys stay the shell's history, and
+// a selection made in tmux reaches the clipboard (set-clipboard, OSC 52);
+// and, when tmux takes it (3.2+), no prefix key: a detach would end the pane
+// and its session.
 // Nothing here is interpolated unquoted: the name is sanitized, the inner
 // command single-quoted, bin one of two fixed strings (tmuxBin).
 export function tmuxCommand(paneId, inner, { reattach = false, version = null, bin = 'tmux' } = {}) {
@@ -126,7 +131,9 @@ export function tmuxCommand(paneId, inner, { reattach = false, version = null, b
     'set-option -g default-terminal screen-256color',
     'set-option -g escape-time 10',
     'set-option -g focus-events on',
-    `set-option -ga terminal-overrides ',xterm-256color:RGB'`,
+    'set-option -g mouse on',
+    'set-option -g set-clipboard on',
+    `set-option -ga terminal-overrides ',xterm-256color:RGB:Ms=\\E]52;%p1%s;%p2%s\\007'`,
     ...(atLeast(version, 3, 2) ? ['set-option -g prefix None'] : [])
   ]
   const tmux = `exec ${tmuxBin(bin)} -u -L ${TMUX_SOCKET} ${options.join(' \\; ')} \\; new-session ${reattach ? '-A -D ' : ''}-s ${name} ${shellQuote(inner)}`
