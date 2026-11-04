@@ -1,0 +1,99 @@
+# Builds the static tmux binaries Tessel ships for SSH hosts that have no tmux
+# (src/main/ssh/bundledTmux.js, resources/tmux). Run by hand (Actions > "Static
+# tmux" > Run workflow, or `gh workflow run tmux-static.yml`), then download
+# the artifacts tmux-linux-x64 and tmux-linux-arm64 and place their files:
+#   resources/tmux/VERSION              (the version below)
+#   resources/tmux/LICENSE              (tmux's COPYING, from either artifact)
+#   resources/tmux/SHA256SUMS           (the two tmux.sha256 files, concatenated)
+#   resources/tmux/linux-x64/tmux
+#   resources/tmux/linux-arm64/tmux
+# then `node scripts/check-tmux-resources.mjs` must pass.
+#
+# Each binary is built from the official release tarball (its sha256 pinned
+# here and checked before the build) in an Alpine container, fully static
+# (musl, libevent and ncurses linked in), so it runs on any Linux of that
+# architecture whatever its libc, from a user's home folder, without root.
+name: Static tmux
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  TMUX_VERSION: 3.5a
+  TMUX_SHA256: 16216bd0877170dfcc64157085ba9013610b12b082548c7c9542cc0103198951
+  ALPINE_IMAGE: alpine:3.21
+
+jobs:
+  build:
+    name: tmux ${{ matrix.arch }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            platform: linux/amd64
+            folder: linux-x64
+          - arch: aarch64
+            platform: linux/arm64
+            folder: linux-arm64
+    steps:
+      - name: Download the tmux release and check its sha256
+        run: |
+          set -eu
+          mkdir -p src
+          curl -fsSL -o "src/tmux-${TMUX_VERSION}.tar.gz" "https://github.com/tmux/tmux/releases/download/${TMUX_VERSION}/tmux-${TMUX_VERSION}.tar.gz"
+          echo "${TMUX_SHA256}  src/tmux-${TMUX_VERSION}.tar.gz" | sha256sum -c -
+
+      - name: Set up QEMU (aarch64 in a container on an x86_64 runner)
+        if: matrix.arch == 'aarch64'
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
+      - name: Build a static tmux in Alpine
+        run: |
+          set -eu
+          cat > src/build.sh <<'EOF'
+          set -eux
+          apk add --no-cache build-base libevent-dev libevent-static ncurses-dev ncurses-static bison pkgconf file
+          cd /work/src
+          tar -xzf "tmux-${TMUX_VERSION}.tar.gz"
+          cd "tmux-${TMUX_VERSION}"
+          ./configure --enable-static
+          make -j"$(nproc)"
+          strip tmux
+          file tmux
+          file tmux | grep -q 'statically linked'
+          if [ "$(uname -m)" = x86_64 ]; then
+            ./tmux -V
+            [ "$(./tmux -V)" = "tmux ${TMUX_VERSION}" ]
+          fi
+          mkdir -p /work/out
+          cp tmux /work/out/tmux
+          cp COPYING /work/out/LICENSE
+          printf '%s\n' "${TMUX_VERSION}" > /work/out/VERSION
+          EOF
+          docker run --rm --platform "${{ matrix.platform }}" \
+            -e TMUX_VERSION="${TMUX_VERSION}" \
+            -v "$PWD:/work" -w /work "${ALPINE_IMAGE}" sh /work/src/build.sh
+          # The line resources/tmux/SHA256SUMS takes for this binary.
+          (cd out && sha256sum tmux | sed 's# tmux$# ${{ matrix.folder }}/tmux#' > tmux.sha256)
+          cat out/tmux.sha256
+          ls -l out
+
+      - name: Upload tmux-${{ matrix.folder }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: tmux-${{ matrix.folder }}
+          path: |
+            out/tmux
+            out/tmux.sha256
+            out/LICENSE
+            out/VERSION
+          if-no-files-found: error
+          retention-days: 30
