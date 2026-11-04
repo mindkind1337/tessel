@@ -28,9 +28,10 @@ const RETRY_MS = 60_000
 export const MAX_TMUX_BYTES = 16 * 1024 * 1024
 
 // What __t_tmuxq printed: `@sys tmux 3.4` (the system's), `@own tmux 3.5a`
-// (Tessel's copy, when it runs), `@arch x86_64` (uname -m).
+// (Tessel's copy, when it runs), `@os Linux` (uname -s), `@arch x86_64`
+// (uname -m).
 export function parseTmuxQuery(text) {
-  const out = { system: null, own: null, arch: null }
+  const out = { system: null, own: null, os: null, arch: null }
   for (const raw of String(text || '').split('\n')) {
     const line = raw.replace(/\r$/, '')
     const sp = line.indexOf(' ')
@@ -39,6 +40,7 @@ export function parseTmuxQuery(text) {
     const value = line.slice(sp + 1).trim().slice(0, 80)
     if (key === '@sys' && value) out.system = value
     else if (key === '@own' && value) out.own = value
+    else if (key === '@os' && value) out.os = value
     else if (key === '@arch' && value) out.arch = value
   }
   return out
@@ -47,14 +49,19 @@ export function parseTmuxQuery(text) {
 // "tmux 3.5a" -> "3.5a" (the bundle's VERSION form).
 const versionOf = (v) => String(v || '').replace(/^tmux\s+/, '').trim()
 
-// __t_tmux's exit codes.
+// __t_tmux's exit codes. Lasting ones (the same tomorrow) are settled for the
+// app run: noexec, no-sha (the host has no sha256 tool to check the copy),
+// not-ours (~/.tessel-server there is not Tessel's folder, or not the user's).
 function installFailure(rc) {
   if (rc === 0) return null
   if (rc === 83) return 'checksum'
   if (rc === 84) return 'noexec'
-  if (rc === 98 || rc === 124) return 'upload'
+  if (rc === 85) return 'no-sha'
+  if (rc === 98) return 'not-ours'
+  if (rc === 124) return 'upload'
   return 'failed'
 }
+const LASTING = new Set(['noexec', 'no-sha', 'not-ours'])
 
 // bundle: bundledTmux.js loadBundledTmux() (null: this build ships no copy).
 // query(hostId) / install(hostId, { version, sha256, binary }) -> { rc, out,
@@ -78,8 +85,10 @@ export function createTmuxInstaller({ bundle, query, install, connected, log = (
     const found = parseTmuxQuery(q.out)
     if (found.system) return settle(hostId, { ok: true, source: 'system', version: found.system })
     if (found.own && versionOf(found.own) === bundle.version) return settle(hostId, { ok: true, source: 'bundled', version: found.own })
-    const arch = tmuxArchFor(found.arch)
-    if (!arch || !bundle.file(arch)) return settle(hostId, { ok: false, reason: 'no-arch', arch: found.arch || '?' })
+    // The copies are Linux binaries: another system (macOS, a BSD) has no
+    // copy whatever its processor.
+    const arch = found.os === 'Linux' ? tmuxArchFor(found.arch) : null
+    if (!arch || !bundle.file(arch)) return settle(hostId, { ok: false, reason: 'no-arch', arch: `${found.os || '?'} ${found.arch || '?'}` })
     const binary = bundle.read(arch)
     if (!binary) return settle(hostId, { ok: false, reason: 'failed', detail: 'the bundled copy is unreadable or corrupt' })
     const r = await install(hostId, { version: bundle.version, sha256: bundle.sha256(arch), binary })
@@ -87,9 +96,7 @@ export function createTmuxInstaller({ bundle, query, install, connected, log = (
     const failure = installFailure(r.rc)
     if (!failure) return settle(hostId, { ok: true, source: 'bundled', version: String(r.out || '').trim().slice(0, 80) || `tmux ${bundle.version}`, installed: true })
     const result = { ok: false, reason: failure, detail: `exit ${r.rc} ${String(r.err || '').slice(0, 300)}`.trim() }
-    // A home folder that refuses to run programs, or a copy of the wrong
-    // kind: the same tomorrow.
-    return failure === 'noexec' ? settle(hostId, result) : result
+    return LASTING.has(failure) ? settle(hostId, result) : result
   }
 
   // The tmux of this host, Tessel's copy put there when needed. -> Promise<
@@ -97,6 +104,7 @@ export function createTmuxInstaller({ bundle, query, install, connected, log = (
   // One at a time per host; a lasting answer is kept for the app run.
   function ensure(hostId) {
     if (typeof hostId !== 'string' || !hostId) return Promise.resolve({ ok: false, reason: 'failed' })
+    if (!bundle) return Promise.resolve(settle(hostId, { ok: false, reason: 'no-bundle' }))
     const kept = settled.get(hostId)
     if (kept) return Promise.resolve(kept)
     const busy = running.get(hostId)
@@ -127,6 +135,9 @@ export function createTmuxInstaller({ bundle, query, install, connected, log = (
   // install once the pane's own connection is up), { ok: false, reason:
   // 'slow' } past waitMs (the install goes on in the background).
   function forPane(hostId) {
+    // No copy in this build: said at once (never "the next session will
+    // have it"), whatever the connection.
+    if (!bundle) return Promise.resolve(settle(hostId, { ok: false, reason: 'no-bundle' }))
     const kept = settled.get(hostId)
     if (kept) return Promise.resolve(kept)
     if (!running.has(hostId) && !connected(hostId)) return Promise.resolve({ ok: false, reason: 'not-connected' })

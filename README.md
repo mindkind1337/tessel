@@ -146,7 +146,9 @@ working on Tessel itself (see [Build from source](#build-from-source)).
   it) before the terminal opens, or in the background for the next terminal
   when the first one opens on a host not connected yet. A host where that is
   impossible (another kind of machine, a home folder that refuses to run
-  programs) says so in the pane and runs as before. Closing the pane ends its
+  programs) says so in the pane and runs as before, as does every host when
+  Tessel was built without the bundled binaries (`resources/tmux`, a plain
+  checkout). Closing the pane ends its
   session. Hosts reached through a jump host or a proxy command use the system
   `ssh` and are not covered.
 - **Stable on slow or dropped links**: your clicks go first, every remote call

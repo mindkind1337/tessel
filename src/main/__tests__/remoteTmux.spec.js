@@ -12,7 +12,7 @@ const BIN = Buffer.from('ELF x64')
 const SHA = 'a'.repeat(64)
 const fakeBundle = { version: '3.5a', file: (a) => (a === 'linux-x64' ? '/res/linux-x64/tmux' : null), sha256: (a) => (a === 'linux-x64' ? SHA : null), read: (a) => (a === 'linux-x64' ? BIN : null) }
 
-function setup({ bundle = fakeBundle, query = '@arch x86_64\n', installRc = 0, connected = true, waitMs = TMUX_WAIT_MS } = {}) {
+function setup({ bundle = fakeBundle, query = '@os Linux\n@arch x86_64\n', installRc = 0, connected = true, waitMs = TMUX_WAIT_MS } = {}) {
   const calls = []
   const logs = []
   let clock = 1000
@@ -37,17 +37,17 @@ function setup({ bundle = fakeBundle, query = '@arch x86_64\n', installRc = 0, c
 afterEach(() => vi.useRealTimers())
 
 describe('what the host said', () => {
-  it('parses the system tmux, Tessel’s copy and uname -m', () => {
-    expect(parseTmuxQuery('@sys tmux 3.4\n')).toEqual({ system: 'tmux 3.4', own: null, arch: null })
-    expect(parseTmuxQuery('@own tmux 3.5a\r\n@arch aarch64\n')).toEqual({ system: null, own: 'tmux 3.5a', arch: 'aarch64' })
-    expect(parseTmuxQuery(Buffer.from('@arch x86_64\n'))).toEqual({ system: null, own: null, arch: 'x86_64' })
-    expect(parseTmuxQuery('')).toEqual({ system: null, own: null, arch: null })
+  it('parses the system tmux, Tessel’s copy, uname -s and uname -m', () => {
+    expect(parseTmuxQuery('@sys tmux 3.4\n')).toEqual({ system: 'tmux 3.4', own: null, os: null, arch: null })
+    expect(parseTmuxQuery('@own tmux 3.5a\r\n@os Linux\n@arch aarch64\n')).toEqual({ system: null, own: 'tmux 3.5a', os: 'Linux', arch: 'aarch64' })
+    expect(parseTmuxQuery(Buffer.from('@os Darwin\n@arch x86_64\n'))).toEqual({ system: null, own: null, os: 'Darwin', arch: 'x86_64' })
+    expect(parseTmuxQuery('')).toEqual({ system: null, own: null, os: null, arch: null })
   })
 })
 
 describe('the install', () => {
   it('a host with its own tmux: nothing sent, remembered for the run', async () => {
-    const { installer, calls } = setup({ query: '@sys tmux 3.4\n@arch x86_64\n' })
+    const { installer, calls } = setup({ query: '@sys tmux 3.4\n@os Linux\n@arch x86_64\n' })
     expect(await installer.ensure('h1')).toEqual({ ok: true, source: 'system', version: 'tmux 3.4' })
     expect(await installer.ensure('h1')).toEqual({ ok: true, source: 'system', version: 'tmux 3.4' })
     expect(calls).toEqual([['query', 'h1']])
@@ -68,34 +68,58 @@ describe('the install', () => {
   })
 
   it('Tessel’s copy already there at the bundled version is reused; an older copy is replaced', async () => {
-    const same = setup({ query: '@own tmux 3.5a\n@arch x86_64\n' })
+    const same = setup({ query: '@own tmux 3.5a\n@os Linux\n@arch x86_64\n' })
     expect(await same.installer.ensure('h1')).toEqual({ ok: true, source: 'bundled', version: 'tmux 3.5a' })
     expect(same.calls.map((c) => c[0])).toEqual(['query'])
-    const older = setup({ query: '@own tmux 3.4\n@arch x86_64\n' })
+    const older = setup({ query: '@own tmux 3.4\n@os Linux\n@arch x86_64\n' })
     expect(await older.installer.ensure('h1')).toMatchObject({ ok: true, source: 'bundled', installed: true })
     expect(older.calls.map((c) => c[0])).toEqual(['query', 'install'])
   })
 
-  it('no copy for the host’s kind of machine: said with uname -m, remembered, nothing sent', async () => {
-    const { installer, calls } = setup({ query: '@arch armv7l\n' })
-    expect(await installer.ensure('h1')).toEqual({ ok: false, reason: 'no-arch', arch: 'armv7l' })
-    expect(await installer.ensure('h1')).toEqual({ ok: false, reason: 'no-arch', arch: 'armv7l' })
+  it('no copy for the host’s kind of machine (another processor, or not Linux): said with uname -s -m, remembered, nothing sent', async () => {
+    const { installer, calls } = setup({ query: '@os Linux\n@arch armv7l\n' })
+    expect(await installer.ensure('h1')).toEqual({ ok: false, reason: 'no-arch', arch: 'Linux armv7l' })
+    expect(await installer.ensure('h1')).toEqual({ ok: false, reason: 'no-arch', arch: 'Linux armv7l' })
     expect(calls).toEqual([['query', 'h1']])
-    const arm = setup({ query: '@arch aarch64\n' })
+    const arm = setup({ query: '@os Linux\n@arch aarch64\n' })
     // The bundle here has no arm64 binary.
-    expect(await arm.installer.ensure('h1')).toEqual({ ok: false, reason: 'no-arch', arch: 'aarch64' })
+    expect(await arm.installer.ensure('h1')).toEqual({ ok: false, reason: 'no-arch', arch: 'Linux aarch64' })
+    // A Mac or a BSD on a processor the bundle has: the copies are Linux binaries.
+    const mac = setup({ query: '@os Darwin\n@arch arm64\n' })
+    expect(await mac.installer.forPane('h1')).toEqual({ ok: false, reason: 'no-arch', arch: 'Darwin arm64' })
+    expect(mac.calls).toEqual([['query', 'h1']])
+    const bsd = setup({ query: '@os FreeBSD\n@arch amd64\n' })
+    expect(await bsd.installer.ensure('h1')).toEqual({ ok: false, reason: 'no-arch', arch: 'FreeBSD amd64' })
+    expect(bsd.calls.filter((c) => c[0] === 'install')).toEqual([])
+    const unknown = setup({ query: '@arch x86_64\n' })
+    expect(await unknown.installer.ensure('h1')).toEqual({ ok: false, reason: 'no-arch', arch: '? x86_64' })
     const none = setup({ query: '\n' })
-    expect(await none.installer.ensure('h1')).toEqual({ ok: false, reason: 'no-arch', arch: '?' })
+    expect(await none.installer.ensure('h1')).toEqual({ ok: false, reason: 'no-arch', arch: '? ?' })
   })
 
-  it('this build ships no copy: no-bundle, without asking the host (the pane keeps the plain "no tmux" line)', async () => {
+  it('this build ships no copy: no-bundle, without asking the host (the pane keeps the plain "no tmux" line), connected or not', async () => {
     const { installer, calls } = setup({ bundle: null })
     expect(await installer.forPane('h1')).toEqual({ ok: false, reason: 'no-bundle' })
+    expect(await installer.ensure('h1')).toEqual({ ok: false, reason: 'no-bundle' })
     expect(calls).toEqual([])
     expect(installer.bundled).toBe(false)
+    const offline = setup({ bundle: null, connected: false })
+    expect(await offline.installer.forPane('h1')).toEqual({ ok: false, reason: 'no-bundle' })
+    expect(await offline.installer.ensure('h1')).toEqual({ ok: false, reason: 'no-bundle' })
+    expect(offline.calls).toEqual([])
   })
 
-  it('the host’s exit codes: 83 checksum, 84 noexec (remembered), 98/124 upload, others failed; a failure is tried again after a minute', async () => {
+  it('the host’s exit codes: 83 checksum, 84 noexec, 85 no-sha and 98 not-ours (remembered), 124 upload, others failed; a failure is tried again after a minute', async () => {
+    for (const [rc, reason] of [
+      [85, 'no-sha'],
+      [98, 'not-ours']
+    ]) {
+      const lasting = setup({ installRc: rc })
+      expect(await lasting.installer.ensure('h1')).toMatchObject({ ok: false, reason })
+      lasting.tick(10 * 60_000)
+      expect(await lasting.installer.ensure('h1')).toMatchObject({ ok: false, reason })
+      expect(lasting.calls.filter((c) => c[0] === 'install')).toHaveLength(1)
+    }
     const checksum = setup({ installRc: 83 })
     expect(await checksum.installer.ensure('h1')).toMatchObject({ ok: false, reason: 'checksum' })
     expect(await checksum.installer.ensure('h1')).toMatchObject({ ok: false, reason: 'checksum' })
@@ -108,7 +132,6 @@ describe('the install', () => {
     noexec.tick(10 * 60_000)
     expect(await noexec.installer.ensure('h1')).toMatchObject({ ok: false, reason: 'noexec' })
     expect(noexec.calls.filter((c) => c[0] === 'install')).toHaveLength(1)
-    expect((await setup({ installRc: 98 }).installer.ensure('h1')).reason).toBe('upload')
     expect((await setup({ installRc: 124 }).installer.ensure('h1')).reason).toBe('upload')
     expect((await setup({ installRc: 90 }).installer.ensure('h1')).reason).toBe('failed')
     expect((await setup({ installRc: () => ({ error: 'lane closed' }) }).installer.ensure('h1')).reason).toBe('upload')
@@ -158,6 +181,9 @@ describe('the pane’s "no tmux" line', () => {
     expect(tmuxMissingText(templates, { ok: false, reason: 'noexec' })).toContain('(the home folder there refuses to run programs)')
     expect(tmuxMissingText(templates, { ok: false, reason: 'checksum' })).toContain('(the copy did not arrive intact)')
     expect(tmuxMissingText(templates, { ok: false, reason: 'upload' })).toContain('(the upload failed)')
+    expect(tmuxMissingText(templates, { ok: false, reason: 'no-sha' })).toContain('(the host cannot verify the copy, it has no sha256 tool)')
+    expect(tmuxMissingText(templates, { ok: false, reason: 'not-ours' })).toContain('(~/.tessel-server on the host is not Tessel’s folder)')
+    expect(tmuxMissingText(templates, { ok: false, reason: 'no-arch', arch: 'Darwin arm64' })).toContain('(no copy for this kind of machine, Darwin arm64)')
     expect(tmuxMissingText(templates, { ok: false, reason: 'failed' })).toContain('(it could not be set up)')
   })
   it('says the next session will have it while the copy is on its way (a first terminal, a slow install)', () => {

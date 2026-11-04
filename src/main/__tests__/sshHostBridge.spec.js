@@ -425,6 +425,12 @@ describe('persistent sessions (tmux)', () => {
     expect(parseTmuxProbe('tmux 3.4\n').bin).toBe('tmux')
     expect(TMUX_PROBE).toContain('command -v tmux')
     expect(TMUX_PROBE).toContain('$HOME/.tessel-server/bin/tmux')
+    // Run by sh whatever the user's login shell (fish, tcsh), and the body
+    // holds no quote that would end it.
+    expect(TMUX_PROBE.startsWith("sh -c '")).toBe(true)
+    expect(TMUX_PROBE.endsWith("'")).toBe(true)
+    expect(TMUX_PROBE.slice(7, -1)).not.toContain("'")
+    expect(TMUX_PROBE).toBe(`sh -c 't=$(command -v tmux 2>/dev/null) && [ -x "$t" ] || t="$HOME/.tessel-server/bin/tmux"; [ -x "$t" ] && v=$("$t" -V) && printf "%s\\n%s\\n" "$v" "$t"'`)
     expect(tmuxKillCommand('p1', OWN_TMUX)).toBe('"$HOME/.tessel-server/bin/tmux" -L tessel kill-session -t =tessel-p1 >/dev/null 2>&1')
     expect(tmuxKillCommand('p1', '/tmp/evil')).toBe(tmuxKillCommand('p1'))
     const own = tmuxCommand('p1', LOGIN, { version: v34, bin: OWN_TMUX })

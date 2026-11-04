@@ -74,8 +74,10 @@ export const OWN_TMUX = '"$HOME/.tessel-server/bin/tmux"'
 const OWN_TMUX_SUFFIX = '/.tessel-server/bin/tmux'
 // Exit 0 with the version ("tmux 3.4") then the path of the tmux to use on
 // stdout: the host's own tmux when it has one (it always wins), else Tessel's
-// copy. Exit 1 when neither is there.
-export const TMUX_PROBE = `t=$(command -v tmux 2>/dev/null) && [ -x "$t" ] || t="$HOME${OWN_TMUX_SUFFIX}"; [ -x "$t" ] && v=$("$t" -V) && printf '%s\\n%s\\n' "$v" "$t"`
+// copy. Exit 1 when neither is there. Run by sh: the exec channel goes
+// through the user's login shell, and fish or tcsh would not take the
+// assignments and tests (no quote inside the single-quoted body).
+export const TMUX_PROBE = `sh -c 't=$(command -v tmux 2>/dev/null) && [ -x "$t" ] || t="$HOME${OWN_TMUX_SUFFIX}"; [ -x "$t" ] && v=$("$t" -V) && printf "%s\\n%s\\n" "$v" "$t"'`
 export const TMUX_PROBE_TIMEOUT_MS = 15_000
 const TMUX_SESSION_MAX = 40
 

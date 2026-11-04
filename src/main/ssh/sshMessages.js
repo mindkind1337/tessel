@@ -18,6 +18,8 @@ export function sshTemplates(t) {
       noexec: t('main.ssh.tmuxNoExec', 'the home folder there refuses to run programs'),
       checksum: t('main.ssh.tmuxChecksum', 'the copy did not arrive intact'),
       upload: t('main.ssh.tmuxUpload', 'the upload failed'),
+      'no-sha': t('main.ssh.tmuxNoSha', 'the host cannot verify the copy, it has no sha256 tool'),
+      'not-ours': t('main.ssh.tmuxNotOurs', '~/.tessel-server on the host is not Tessel’s folder'),
       failed: t('main.ssh.tmuxFailed', 'it could not be set up')
     },
     gaveUp: t('main.ssh.gaveUp', 'Could not reconnect to {{host}}.'),
@@ -102,6 +104,8 @@ export function tmuxMissingText(templates, tmux) {
     case 'noexec':
     case 'checksum':
     case 'upload':
+    case 'no-sha':
+    case 'not-ours':
     case 'failed':
       return templates.noTmuxBundled ? fill(templates.noTmuxBundled, { reason: fill(reasons[tmux.reason] || reasons.failed || tmux.reason, { arch: tmux.arch || '?' }) }) : null
     default:

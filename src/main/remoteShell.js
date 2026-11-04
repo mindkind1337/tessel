@@ -185,7 +185,7 @@ export const FUNCTIONS = new Set([
   '__t_paste',
   // Tessel's own tmux for a host without one (ssh/remoteTmux.js): what tmux
   // the host has (the system's, Tessel's copy in ~/.tessel-server/bin, and
-  // uname -m), and the copy put there: decoded under umask 077, checked
+  // uname -s / -m), and the copy put there: decoded under umask 077, checked
   // against the sha256 given, run once with -V (a home folder mounted noexec
   // or a copy of the wrong kind fails here and the file goes), renamed over
   // bin/tmux. Exit 83: checksum mismatch; 84: it does not run; 85: no
@@ -879,8 +879,8 @@ __t_paste() {
 __t_tmuxq() {
   __w=$(command -v tmux 2>/dev/null) && [ -n "$__w" ] && [ -x "$__w" ] && __v=$("$__w" -V 2>/dev/null) && { printf '@sys %s\\n' "$__v"; return 0; }
   __b="$HOME/.tessel-server/bin/tmux"
-  if [ -f "$__b" ] && [ ! -L "$__b" ] && [ -x "$__b" ] && __v=$("$__b" -V 2>/dev/null); then printf '@own %s\\n' "$__v"; fi
-  printf '@arch %s\\n' "$(uname -m 2>/dev/null)"
+  if [ -f "$__b" ] && [ ! -L "$__b" ] && [ -O "$__b" ] && [ -x "$__b" ] && __v=$("$__b" -V 2>/dev/null); then printf '@own %s\\n' "$__v"; fi
+  printf '@os %s\\n@arch %s\\n' "$(uname -s 2>/dev/null)" "$(uname -m 2>/dev/null)"
   return 0
 }
 __t_tmux() {
@@ -898,6 +898,9 @@ __t_tmux() {
     chmod 700 "$__x" || return 98
   done
   [ -L "$__s/bin/tmux" ] && return 98
+  rm -f "$__s"/bin/.tmux.* 2>/dev/null
+  __tmp=
+  trap '[ -n "$__tmp" ] && rm -f "$__tmp"; exit 124' HUP TERM PIPE
   __tmp=$(mktemp "$__s/bin/.tmux.XXXXXX") || return 98
   ( umask 077; __t_b64d <"$__T_D/u" >"$__tmp" ) || { rm -f "$__tmp"; return 98; }
   rm -f "$__T_D/u"

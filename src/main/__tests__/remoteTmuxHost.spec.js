@@ -58,28 +58,37 @@ describe.skipIf(!gitSh())('Tessel’s tmux on a fake host (Git for Windows sh)',
   let base
   let home
   let rfs
+  let savedPath
   beforeAll(() => {
     base = fs.mkdtempSync(join(os.tmpdir(), 'tessel-rtmux-'))
     home = join(base, 'home')
     fs.mkdirSync(home, { recursive: true })
+    // This computer may have a tmux on PATH (Git for Windows can): a shim
+    // first on PATH that fails -V stands for a host without a system tmux,
+    // so the query's own-copy and uname branches are the ones exercised.
+    const shim = join(base, 'shim')
+    fs.mkdirSync(shim)
+    fs.writeFileSync(join(shim, 'tmux'), '#!/bin/sh\nexit 1\n')
+    savedPath = process.env.PATH
+    process.env.PATH = `${shim}${process.platform === 'win32' ? ';' : ':'}${savedPath || ''}`
     rfs = createRemoteFs({ hosts, spawnImpl: fakeSpawn({ home }) })
   })
   afterAll(() => {
+    process.env.PATH = savedPath
     rfs.close()
     fs.rmSync(base, { recursive: true, force: true })
   })
   const binDir = () => join(home, '.tessel-server', 'bin')
 
-  // The fake host's PATH is this computer's: with a tmux on it (Git for
-  // Windows can have one), the query names that one and stops there, as it
-  // does on a host with its own tmux; without one it gives uname -m.
-  it('the query: the system tmux when there is one (and nothing else), else uname -m and no copy', async () => {
+  // A host without a system tmux (the shim on PATH fails -V) and without
+  // Tessel's copy yet: uname -s and -m only.
+  it('the query: no system tmux, no copy yet: uname -s and -m only', async () => {
     expect(await rfs.connect(HOST)).toEqual({ ok: true })
     const q = await rfs.queryTmux(HOST)
     expect(q.rc).toBe(0)
     const out = q.out.toString('utf8')
-    if (out.startsWith('@sys ')) expect(out).toMatch(/^@sys tmux \S+\n$/)
-    else expect(out).toMatch(/^@arch \S+\n$/)
+    expect(out).toMatch(/^@os \S+\n@arch \S+\n$/)
+    expect(out).not.toContain('@sys')
     expect(out).not.toContain('@own')
   }, 30000)
 
@@ -108,9 +117,8 @@ describe.skipIf(!gitSh())('Tessel’s tmux on a fake host (Git for Windows sh)',
     const q = await rfs.queryTmux(HOST)
     expect(q.rc).toBe(0)
     const out = q.out.toString('utf8')
-    // The system tmux wins; Tessel's copy is named only without one.
-    if (out.startsWith('@sys ')) expect(out).toMatch(/^@sys tmux \S+\n$/)
-    else expect(out).toBe(`@own tmux 3.5a\n@arch ${out.split('@arch ')[1]}`)
+    expect(out).toMatch(/^@own tmux 3\.5a\n@os \S+\n@arch \S+\n$/)
+    expect(out).not.toContain('@sys')
   }, 30000)
 
   it('refused when ~/.tessel-server is not a folder of this user (a file there)', async () => {

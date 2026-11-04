@@ -21,6 +21,8 @@
       "tmuxNoExec": "le dossier personnel là-bas refuse d’exécuter des programmes",
       "tmuxChecksum": "la copie n’est pas arrivée intacte",
       "tmuxUpload": "l’envoi a échoué",
+      "tmuxNoSha": "l’hôte ne peut pas vérifier la copie, il n’a pas d’outil sha256",
+      "tmuxNotOurs": "~/.tessel-server sur l’hôte n’est pas le dossier de Tessel",
       "tmuxFailed": "elle n’a pas pu être mise en place",
       "gaveUp": "Impossible de se reconnecter à {{host}}.",
       "authFailed": "La connexion à {{host}} a échoué (accès refusé).",

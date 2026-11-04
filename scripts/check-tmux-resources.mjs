@@ -3,8 +3,9 @@
 // When the binaries are there, each must match SHA256SUMS ("<sha256 hex>
 // linux-x64/tmux" per line, as sha256sum prints it), every binary must be
 // listed, and VERSION must name the version. A checkout without them (the
-// usual one: they are not in git) passes: the app then tells a host without
-// tmux so, as before. Run by scripts/check-bundle.mjs, or alone:
+// usual one) passes: the app then tells a host without tmux so, as before.
+// With TESSEL_REQUIRE_TMUX=1 (a release build) both binaries, SHA256SUMS,
+// VERSION and LICENSE must be there. Run by scripts/check-bundle.mjs, or alone:
 //   node scripts/check-tmux-resources.mjs [resources/tmux]
 import fs from 'fs'
 import path from 'path'
@@ -15,10 +16,14 @@ const ARCHES = ['linux-x64', 'linux-arm64']
 const SUM_RE = /^([0-9a-f]{64})\s+\*?(linux-(?:x64|arm64))\/tmux\s*$/
 
 // -> { errors: [string], checked: number }
-export function checkTmuxResources(dir = path.join('resources', 'tmux')) {
+export function checkTmuxResources(dir = path.join('resources', 'tmux'), { required = process.env.TESSEL_REQUIRE_TMUX === '1' } = {}) {
   const errors = []
   const present = ARCHES.filter((a) => fs.existsSync(path.join(dir, a, 'tmux')))
   const sumsFile = path.join(dir, 'SHA256SUMS')
+  if (required) {
+    for (const a of ARCHES) if (!present.includes(a)) errors.push(`${path.join(dir, a, 'tmux')} is missing (TESSEL_REQUIRE_TMUX=1: a release ships the bundled tmux)`)
+    for (const f of ['SHA256SUMS', 'LICENSE']) if (!fs.existsSync(path.join(dir, f))) errors.push(`${path.join(dir, f)} is missing (TESSEL_REQUIRE_TMUX=1)`)
+  }
   if (!present.length && !fs.existsSync(sumsFile)) return { errors, checked: 0 }
   if (!fs.existsSync(sumsFile)) {
     errors.push(`${sumsFile} is missing while ${present.map((a) => `${a}/tmux`).join(', ')} is there`)
