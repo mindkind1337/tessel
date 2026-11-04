@@ -1,0 +1,12 @@
+{"frame":{"message":{"body":{"budgets":{"frame_bytes":1048576,"in_flight":32,"stream_window_bytes":2097152,"terminal_ring_bytes":2097152,"total_ring_bytes":16777216},"capabilities":["pty","tree","editor","git"],"versions":[1]},"kind":"hello"},"request_id":1,"version":1},"from":"client"}
+{"frame":{"ok":{"body":{"budgets":{"frame_bytes":1048576,"in_flight":32,"stream_window_bytes":2097152,"terminal_ring_bytes":2097152,"total_ring_bytes":16777216},"capabilities":["pty","tree","editor","git"],"host_epoch":"00000000000000000000000000000001","version":1},"kind":"hello_ok"},"reply_to":1,"version":1},"from":"host"}
+{"frame":{"message":{"kind":"host.info"},"request_id":2,"version":1},"from":"client"}
+{"frame":{"ok":{"body":{"arch":"x86_64","persistence":{"kill_user_processes":false,"linger":false,"method":"session","survives_logout":"yes"},"pid":4242,"version":"0.1.0"},"kind":"host_info"},"reply_to":2,"version":1},"from":"host"}
+{"frame":{"message":{"body":{"path":"/home/user/project"},"kind":"root.open"},"request_id":3,"version":1},"from":"client"}
+{"frame":{"ok":{"body":{"label":"/home/user/project","limits":{"exclusions":["node_modules",".git/objects",".cache","__pycache__",".venv","target"],"max_watches":8192},"root":"00000000000000000000000000000002"},"kind":"root.opened"},"reply_to":3,"version":1},"from":"host"}
+{"frame":{"message":{"body":{"root":"00000000000000000000000000000002"},"kind":"tree.subscribe"},"request_id":4,"version":1},"from":"client"}
+{"frame":{"ok":{"body":{"revision":0,"stream":"00000000000000000000000000000003"},"kind":"tree.subscribed"},"reply_to":4,"version":1},"from":"host"}
+{"frame":{"message":{"body":{"path":[],"root":"00000000000000000000000000000002"},"kind":"tree.expand"},"request_id":5,"version":1},"from":"client"}
+{"frame":{"ok":{"body":{"entries":[{"excluded":false,"kind":"file","label":"README.md","mtime_ms":1700000000000,"name":"UkVBRE1FLm1k","size":10},{"excluded":false,"kind":"dir","label":"src","mtime_ms":1700000000000,"name":"c3Jj","size":4096}],"excluded":false,"path":[],"revision":0,"truncated":false,"watched":true},"kind":"tree.listing"},"reply_to":5,"version":1},"from":"host"}
+{"frame":{"event":{"body":{"added":[{"excluded":false,"kind":"file","label":"new.txt","mtime_ms":1700000000000,"name":"bmV3LnR4dA==","size":4}],"path":[],"removed":[],"revision":1,"updated":[]},"kind":"tree.changed"},"stream":{"id":"00000000000000000000000000000003","seq":1},"version":1},"from":"host"}
+{"frame":{"ack":{"seq":1,"stream":"00000000000000000000000000000003"},"version":1},"from":"client"}

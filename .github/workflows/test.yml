@@ -45,4 +45,7 @@ jobs:
           "TEMP=$t" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           "TMP=$t" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
+      # The tessel-host client (src/main/host) is TypeScript, strict.
+      - run: npm run typecheck:host
+
       - run: npx vitest run

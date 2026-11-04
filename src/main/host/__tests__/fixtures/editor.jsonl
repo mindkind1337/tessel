@@ -1,0 +1,16 @@
+{"frame":{"message":{"body":{"budgets":{"frame_bytes":1048576,"in_flight":32,"stream_window_bytes":2097152,"terminal_ring_bytes":2097152,"total_ring_bytes":16777216},"capabilities":["pty","tree","editor","git"],"versions":[1]},"kind":"hello"},"request_id":1,"version":1},"from":"client"}
+{"frame":{"ok":{"body":{"budgets":{"frame_bytes":1048576,"in_flight":32,"stream_window_bytes":2097152,"terminal_ring_bytes":2097152,"total_ring_bytes":16777216},"capabilities":["pty","tree","editor","git"],"host_epoch":"00000000000000000000000000000001","version":1},"kind":"hello_ok"},"reply_to":1,"version":1},"from":"host"}
+{"frame":{"message":{"kind":"host.info"},"request_id":2,"version":1},"from":"client"}
+{"frame":{"ok":{"body":{"arch":"x86_64","persistence":{"kill_user_processes":false,"linger":false,"method":"session","survives_logout":"yes"},"pid":4242,"version":"0.1.0"},"kind":"host_info"},"reply_to":2,"version":1},"from":"host"}
+{"frame":{"message":{"body":{"path":"/home/user/project"},"kind":"root.open"},"request_id":3,"version":1},"from":"client"}
+{"frame":{"ok":{"body":{"label":"/home/user/project","limits":{"exclusions":["node_modules",".git/objects",".cache","__pycache__",".venv","target"],"max_watches":8192},"root":"00000000000000000000000000000002"},"kind":"root.opened"},"reply_to":3,"version":1},"from":"host"}
+{"frame":{"message":{"body":{"length":65536,"offset":0,"path":["bm90ZXMudHh0"],"root":"00000000000000000000000000000002"},"kind":"file.read"},"request_id":4,"version":1},"from":"client"}
+{"frame":{"ok":{"body":{"data":"Zmlyc3QK","eof":true,"offset":0,"size":6,"version":"00000000000000000000000000000003"},"kind":"file.chunk"},"reply_to":4,"version":1},"from":"host"}
+{"frame":{"message":{"body":{"base":{"digest":"0000000000000000000000000000000000000000000000000000000000d10001","version":"00000000000000000000000000000003"},"path":["bm90ZXMudHh0"],"root":"00000000000000000000000000000002","size":7},"kind":"file.write_begin"},"request_id":5,"version":1},"from":"client"}
+{"frame":{"ok":{"body":{"upload":"00000000000000000000000000000004"},"kind":"file.upload"},"reply_to":5,"version":1},"from":"host"}
+{"frame":{"message":{"body":{"data":"c2Vjb25kCg==","offset":0,"upload":"00000000000000000000000000000004"},"kind":"file.write_chunk"},"request_id":6,"version":1},"from":"client"}
+{"frame":{"ok":{"kind":"done"},"reply_to":6,"version":1},"from":"host"}
+{"frame":{"message":{"body":{"upload":"00000000000000000000000000000004"},"kind":"file.write_commit"},"request_id":7,"version":1},"from":"client"}
+{"frame":{"ok":{"body":{"digest":"0000000000000000000000000000000000000000000000000000000000d10002","size":7,"version":"00000000000000000000000000000005"},"kind":"file.written"},"reply_to":7,"version":1},"from":"host"}
+{"frame":{"message":{"body":{"base":{"digest":"0000000000000000000000000000000000000000000000000000000000d10001","version":"00000000000000000000000000000003"},"path":["bm90ZXMudHh0"],"root":"00000000000000000000000000000002","size":6},"kind":"file.write_begin"},"request_id":8,"version":1},"from":"client"}
+{"frame":{"error":{"code":"conflict","detail":"the file changed since it was read","retryable":false},"reply_to":8,"version":1},"from":"host"}
