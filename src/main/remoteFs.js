@@ -35,6 +35,8 @@ import { codexDayHint } from './remoteAgent/codexDayHint'
 import { parseRemotePath, remoteRoot, relativeTo, childPath, isRemotePath } from '../shared/remotePath'
 import { fileKind, extOf, IMAGE_MIME, BINARY_MIME, BYTE_KINDS } from '../shared/fileKinds'
 import { sortEntries } from '../shared/explorerSort'
+import { createHostDaemons } from './host/daemon'
+import { createRemoteExplorer } from './host/remote'
 import { t } from './i18n'
 import { validateCloneUrl, deriveCloneRepoName, cloneFailureMessage, errorText as addProjectErrorText } from './addProject'
 import { parseWorktreeList, MAX_WORKTREES } from './worktreeList'
@@ -417,7 +419,10 @@ export function createRemoteFs({
   env = process.env,
   timers = { setTimeout, clearTimeout, setInterval, clearInterval },
   now = () => Date.now(),
-  trust = gitTrust
+  trust = gitTrust,
+  // This build's tessel-host programs (host/bundled.js loadBundledHost; null:
+  // none shipped: every host keeps the shell-based path).
+  hostBundle = null
 } = {}) {
   const sessions = new Map() // hostId -> entry
   const roots = new Map() // hostId\npath -> { hostId, path }
@@ -431,6 +436,66 @@ export function createRemoteFs({
   let markerSeq = 0
   let polling = false
   let idleTimer = null
+
+  // tessel-host on each host (host/daemon.ts): put there at the first
+  // connection when missing, joined over one more exec channel of the
+  // signed-in connection; it then serves the Files panel's listings, change
+  // notices and git letters (host/remote.ts). Its commands run in the host's
+  // session like any other (__t_plan / __t_planup, on the pane's lane).
+  const hostDaemons = createHostDaemons({
+    bundle: hostBundle,
+    // In a session that is open (ifOpen): never a new connection or a
+    // question for the daemon's sake; not open: told so, tried again later.
+    run: (hostId, command, { upload, timeoutMs }) =>
+      call(hostId, upload ? '__t_planup' : '__t_plan', [command], { cap: 64 * 1024, timeoutMs, ...(upload ? { upload } : {}), op: 'agent', lane: 'pane', ifOpen: true }).then((res) =>
+        res && res.skipped ? { error: 'not connected', code: 'not-connected' } : res // i18n-ignore internal
+      ),
+    // A channel on the live connection only, on a terminal host that keeps
+    // that promise (onlyLive), and one that keeps its slot (keep).
+    channel: async (hostId) => {
+      const target = ssh ? hosts.get(hostId) : null
+      if (!target) return null
+      if (typeof ssh.onlyLiveSupported !== 'function' || !ssh.onlyLiveSupported()) return null
+      const mode = await ssh.modeFor(target)
+      if (mode.mode !== 'ssh2' || !sharedNow(hostId)) return null
+      return ssh.spawnFor(hostId, mode.spec, { onlyLive: true, keep: true })()
+    },
+    connected: (hostId) => sharedNow(hostId),
+    log: (text) => warn(text),
+    now
+  })
+  const hostExplorer = createRemoteExplorer({
+    daemons: hostDaemons,
+    send,
+    childPath,
+    relativeTo,
+    joinPath,
+    sortEntries,
+    // What the shell poll did on a change: the project's listeners. (The
+    // repository's top and settings are read again when the session
+    // restarts; the daemon's tree never lists git's own folder.)
+    onChanged: (virtual) => {
+      for (const fn of [...changeListeners]) {
+        try {
+          fn(virtual)
+        } catch {
+          /* a listener's own matter */
+        }
+      }
+    },
+    log: (text) => warn(text),
+    now
+  })
+  // Once the Files session is signed in (ssh2): the daemon, in the background.
+  function hostDaemonStart(hostId) {
+    if (!hostBundle) return
+    hostDaemons
+      .ensure(hostId)
+      .then((status) => {
+        if (status.ok && log && typeof log.info === 'function') log.info('remote-host', `tessel-host ${status.version} on ${hostId}: ${status.source}`)
+      })
+      .catch(() => {})
+  }
 
   const warn = (msg) => {
     try {
@@ -638,6 +703,7 @@ export function createRemoteFs({
         if (hosts.paneConnected) hosts.paneConnected(paneId)
         activity(hostId, entry)
         armIdle()
+        hostDaemonStart(hostId)
         return session
       }
       const launch = hosts.launchFor(hostId)
@@ -787,6 +853,14 @@ export function createRemoteFs({
     if (reason === 'auth-cancelled') cancelledAt.set(hostId, now())
     if (sessions.get(hostId) === entry) sessions.delete(hostId)
     for (const k of [...repoInfos.keys()]) if (k.startsWith(`${hostId}\n`)) repoInfos.delete(k)
+    // The daemon's connection rode on the same ssh2 connection, which stays
+    // up when this session only idles out or is cancelled from the badge:
+    // the tree keeps telling of changes. It goes with a disconnect, a
+    // removed host, Tessel closing, or a lost sign-in.
+    if (reason !== 'idle' && reason !== 'cancelled') {
+      hostExplorer.closeHost(hostId)
+      hostDaemons.close(hostId)
+    }
     if (askpass) {
       try {
         askpass.releasePane(entry.paneId, entry.token)
@@ -814,6 +888,9 @@ export function createRemoteFs({
   function closeHost(hostId, reason = 'cancelled') {
     if (LANE_ENDS.has(reason)) {
       closeLanes(hostId, reason)
+      // The daemon too (its session may have idled out already).
+      hostExplorer.closeHost(hostId)
+      hostDaemons.close(hostId)
       for (const k of [...gitHolds.keys()]) if (k.startsWith(`${hostId}\n`)) gitHolds.delete(k)
     }
     const entry = sessions.get(hostId)
@@ -1111,6 +1188,10 @@ ${q.dotfiles !== false}`, () => listDirNow(q))
   async function listDirNow({ root, dir, dotfiles = true, background = false } = {}) {
     const loc = under(root, dir || root)
     if (!loc) return { ok: false, error: t('main.explorer.outside', 'Outside the project.') }
+    // The host's daemon keeps this project's folders current: from it.
+    const served = await hostExplorer.list(root, loc.rel, dotfiles !== false).catch((err) => ({ failed: hostError(err) }))
+    if (served && served.failed) return { ok: false, error: served.failed }
+    if (served) return { ok: true, entries: served.entries, truncated: served.truncated }
     const res = await call(loc.hostId, '__t_ls', [arg(loc.root.path), arg(loc.path), String(MAX_ENTRIES + 1)], { cap: 16 * 1024 * 1024, op: 'list', background: background === true, retry: true })
     // transient: the host did not answer (slow, busy, connection lost), the
     // folder itself may be fine: the window keeps what it showed.
@@ -1171,6 +1252,19 @@ ${q.max || ''}`, () => listManyNow({ ...q, dirs }))
       else results.push({ dir: d, ok: false, error: t('main.explorer.outside', 'Outside the project.') })
     }
     if (!asked.length) return { ok: true, results }
+    // From the host's daemon when it serves this project (its tree keeps the
+    // folders current; a sole sub-folder is not followed: the window asks).
+    if (hostExplorer.served(root)) {
+      const answers = await Promise.all(
+        asked.map((a) =>
+          hostExplorer
+            .list(root, a.loc.rel, dotfiles)
+            .then((served) => (served ? { dir: a.dir, ok: true, entries: served.entries.slice(0, limit), truncated: served.truncated || served.entries.length > limit } : null))
+            .catch((err) => ({ dir: a.dir, ok: false, error: hostError(err) }))
+        )
+      )
+      if (answers.every(Boolean)) return { ok: true, results: [...results, ...answers] }
+    }
     const res = await call(top.hostId, '__t_lsm', [arg(top.root.path), String(limit + 1), chain ? '1' : '0', dotfiles ? '1' : '0', ...asked.map((a) => arg(a.loc.path))], {
       cap: 16 * 1024 * 1024,
       timeoutMs: 60000,
@@ -1219,6 +1313,10 @@ ${!!q.ignored}`, () => projectStatusNow(q))
     const info = await repoInfo(loc, { background: background === true })
     if (info.error) return { ok: false, error: info.error }
     if (info.missing || !info.top) return { ok: true, files: {}, repo: false }
+    // The host's daemon keeps this repository's status current: from its
+    // cache, no git command (host/remote.ts).
+    const cached = await hostExplorer.status(root, info.realRoot).catch(() => null)
+    if (cached) return cached
     // An untracked folder is one entry ("?? dir/"; the explorer shows what is
     // inside it as untracked too: explorerStatus.js), never every file in it:
     // on a huge tree the full list ran out of time and held the host's
@@ -1998,6 +2096,8 @@ ${q.root}`, () => sparseInfoNow(q))
       // often, and the session goes on (no new sign-in).
       for (const [virtual, w] of watchedRoots) {
         if (pollTick < w.next) continue
+        // Served by the host's daemon: its tree says what changed.
+        if (hostExplorer.served(virtual)) continue
         const res = await call(w.hostId, '__t_fp', [arg(w.root.path), String(w.marker), String(FP_PATHS_BYTES)], { cap: FP_PATHS_BYTES + 4096, quiet: true, timeoutMs: 10000 })
         if (res.skipped || res.error) {
           w.next = pollTick + 1
@@ -2067,11 +2167,16 @@ ${q.root}`, () => sparseInfoNow(q))
       watchedRoots.clear()
       watchedRoots.set(root, { hostId: loc.hostId, root: loc.root, marker: ++markerSeq, every: ROOT_POLL_TICKS, next: 0 })
     }
+    // The daemon resolves an absolute folder: a project saved as ~/… is
+    // watched by its real path once known (repoInfo finds it).
+    hostExplorer.watch(root, loc.hostId, () => loc.root.real || (loc.root.path.startsWith('~') ? null : loc.root.path))
+    if (!loc.root.real && loc.root.path.startsWith('~')) repoInfo(loc, { background: true }).catch(() => {})
     ensurePoll()
     return { ok: true }
   }
   function unwatchRoots() {
     watchedRoots.clear()
+    hostExplorer.unwatchAll()
     stopPollIfIdle()
     return { ok: true }
   }
@@ -2773,8 +2878,19 @@ ${q && q.root}`, () => (q && q.background === true ? scmBg : scm).scmStatus(q)),
     // The lanes open now (tests, diagnostics): ["hostId lane"].
     lanesOpen: () => [...lanes.values()].filter((e) => !e.closed).map((e) => `${e.hostId} ${e.lane}`),
     close,
-    poll
+    poll,
+    // Which path a host uses for its Files: { daemon, reason? } (host/daemon.ts).
+    hostStatus: (hostId) => hostDaemons.status(hostId),
+    hostDaemons
   }
+}
+
+// What the host's daemon refused, as the Files panel's words.
+function hostError(err) {
+  const code = err && typeof err === 'object' && typeof err.code === 'string' ? err.code : ''
+  if (code === 'permission_denied') return t('main.explorer.folderUnreadable', 'The folder could not be read.')
+  if (code === 'not_found') return t('main.explorer.folderGone', 'The folder is gone.')
+  return t('main.explorer.folderUnreadable', 'The folder could not be read.')
 }
 
 // The remote projects of a saved layout (the window's workspace-layout.json,

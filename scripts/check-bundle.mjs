@@ -4,6 +4,7 @@
 import fs from 'fs'
 import path from 'path'
 import { checkTmuxResources } from './check-tmux-resources.mjs'
+import { checkHostResources } from './check-host-resources.mjs'
 
 const dir = path.join('out', 'main')
 const files = []
@@ -122,5 +123,12 @@ for (const e of tmux.errors) {
   console.error(`check-bundle: ${e}`)
   failed = true
 }
+// tessel-host's programs (resources/host, packaged as extraResources): when
+// there, each must match the release manifest.
+const host = checkHostResources()
+for (const e of host.errors) {
+  console.error(`check-bundle: ${e}`)
+  failed = true
+}
 if (failed) process.exit(1)
-console.log(`check-bundle: ok (${files.length} files${tmux.checked ? `, ${tmux.checked} bundled tmux` : ', no bundled tmux'})`)
+console.log(`check-bundle: ok (${files.length} files${tmux.checked ? `, ${tmux.checked} bundled tmux` : ', no bundled tmux'}${host.checked ? `, tessel-host ${host.version} x${host.checked}` : ', no tessel-host'})`)

@@ -9,7 +9,7 @@
 //   app -> host
 //     create { ..., ssh: { hostId, spec, remotePath?, texts, persistent? } }   a remote terminal
 //                                     (persistent: inside a tmux session, see createPty)
-//     ssh-exec { ch, hostId, spec, onlyLive? }   the Files session: `exec /bin/sh`
+//     ssh-exec { ch, hostId, spec, onlyLive?, keep? }   the Files session: `exec /bin/sh`
 //                                     (the only command an exec channel may run);
 //                                     onlyLive: on a live connection only, never a
 //                                     new connection or sign-in (a Files lane)
@@ -334,7 +334,7 @@ export function createSshHostBridge({
     const c = { sock, stream: null, release: null, closed: false }
     chans.set(ch, c)
     manager
-      .open(hostId, spec, 'exec', { command: FILES_COMMAND, onlyLive: msg.onlyLive === true })
+      .open(hostId, spec, 'exec', { command: FILES_COMMAND, onlyLive: msg.onlyLive === true, keep: msg.keep === true })
       .then(({ stream, release }) => {
         if (c.closed || sock.destroyed) {
           try {

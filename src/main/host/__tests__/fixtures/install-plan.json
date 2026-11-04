@@ -1,0 +1,27 @@
+{
+  "comment": "tessel_host::install::plan(version, arch, nonce) for both architectures, byte for byte. Checked by crates/host/tests/install_plan.rs; regenerate from that test's message when plan() changes.",
+  "version": "0.1.1",
+  "nonce": "0123456789abcdef",
+  "plans": {
+    "x86_64": {
+      "probe": "uname -m",
+      "upload": "umask 077 && [ ! -L \"$HOME/.tessel-server\" ] && [ ! -L \"$HOME/.tessel-server/host\" ] && [ ! -L \"$HOME/.tessel-server/host/bin\" ] && mkdir -p \"$HOME/.tessel-server/host/bin\" && [ ! -L \"$HOME/.tessel-server\" ] && [ ! -L \"$HOME/.tessel-server/host\" ] && [ ! -L \"$HOME/.tessel-server/host/bin\" ] && cat > \"$HOME/.tessel-server/host/bin/.tessel-host-0.1.1-x86_64.0123456789abcdef.part\"",
+      "digest": "if command -v sha256sum >/dev/null 2>&1; then sha256sum \"$HOME/.tessel-server/host/bin/.tessel-host-0.1.1-x86_64.0123456789abcdef.part\"; else busybox sha256sum \"$HOME/.tessel-server/host/bin/.tessel-host-0.1.1-x86_64.0123456789abcdef.part\"; fi",
+      "activate": "chmod 700 \"$HOME/.tessel-server/host/bin/.tessel-host-0.1.1-x86_64.0123456789abcdef.part\" && mv -f \"$HOME/.tessel-server/host/bin/.tessel-host-0.1.1-x86_64.0123456789abcdef.part\" \"$HOME/.tessel-server/host/bin/tessel-host-0.1.1-x86_64\" && \"$HOME/.tessel-server/host/bin/tessel-host-0.1.1-x86_64\" version",
+      "abort": "rm -f \"$HOME/.tessel-server/host/bin/.tessel-host-0.1.1-x86_64.0123456789abcdef.part\"",
+      "installed": "$HOME/.tessel-server/host/bin/tessel-host-0.1.1-x86_64",
+      "version": "\"$HOME/.tessel-server/host/bin/tessel-host-0.1.1-x86_64\" version",
+      "connect": "\"$HOME/.tessel-server/host/bin/tessel-host-0.1.1-x86_64\" connect --stdio"
+    },
+    "aarch64": {
+      "probe": "uname -m",
+      "upload": "umask 077 && [ ! -L \"$HOME/.tessel-server\" ] && [ ! -L \"$HOME/.tessel-server/host\" ] && [ ! -L \"$HOME/.tessel-server/host/bin\" ] && mkdir -p \"$HOME/.tessel-server/host/bin\" && [ ! -L \"$HOME/.tessel-server\" ] && [ ! -L \"$HOME/.tessel-server/host\" ] && [ ! -L \"$HOME/.tessel-server/host/bin\" ] && cat > \"$HOME/.tessel-server/host/bin/.tessel-host-0.1.1-aarch64.0123456789abcdef.part\"",
+      "digest": "if command -v sha256sum >/dev/null 2>&1; then sha256sum \"$HOME/.tessel-server/host/bin/.tessel-host-0.1.1-aarch64.0123456789abcdef.part\"; else busybox sha256sum \"$HOME/.tessel-server/host/bin/.tessel-host-0.1.1-aarch64.0123456789abcdef.part\"; fi",
+      "activate": "chmod 700 \"$HOME/.tessel-server/host/bin/.tessel-host-0.1.1-aarch64.0123456789abcdef.part\" && mv -f \"$HOME/.tessel-server/host/bin/.tessel-host-0.1.1-aarch64.0123456789abcdef.part\" \"$HOME/.tessel-server/host/bin/tessel-host-0.1.1-aarch64\" && \"$HOME/.tessel-server/host/bin/tessel-host-0.1.1-aarch64\" version",
+      "abort": "rm -f \"$HOME/.tessel-server/host/bin/.tessel-host-0.1.1-aarch64.0123456789abcdef.part\"",
+      "installed": "$HOME/.tessel-server/host/bin/tessel-host-0.1.1-aarch64",
+      "version": "\"$HOME/.tessel-server/host/bin/tessel-host-0.1.1-aarch64\" version",
+      "connect": "\"$HOME/.tessel-server/host/bin/tessel-host-0.1.1-aarch64\" connect --stdio"
+    }
+  }
+}

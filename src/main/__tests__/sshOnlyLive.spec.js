@@ -74,6 +74,25 @@ describe('an exec channel on a live connection only (onlyLive)', () => {
     m.closeAll()
   }, 30000)
 
+  it('a channel opened with keep (tessel-host\'s connection) is no lane: a terminal gets a spare connection instead', async () => {
+    dir = fs.mkdtempSync(join(os.tmpdir(), 'tessel-live-'))
+    srv = await startSshServer({ auth: { password: PASSWORD, methods: ['password'] }, maxSessions: 2, onExec: () => {} })
+    const m = createSshManager({ ask: async (_h, p) => (p.kind === 'hostkey' ? 'yes' : PASSWORD) })
+    const files = await m.open('h', spec(srv.port), 'exec', { command: 'exec /bin/sh' })
+    const kept = await m.open('h', spec(srv.port), 'exec', { command: 'exec /bin/sh', onlyLive: true, keep: true })
+    expect(kept.stream.tesselPending).toBeUndefined()
+    const gaveWay = vi.spyOn(kept.stream, 'close')
+    const term = await m.open('h', spec(srv.port), 'exec', { command: 'exec /bin/sh' })
+    expect(term.stream).toBeTruthy()
+    expect(gaveWay).not.toHaveBeenCalled()
+    expect(srv.events.connections).toBe(2)
+    // Still refused on a connection that is not up: never a new one.
+    files.stream.close()
+    term.stream.close()
+    kept.stream.close()
+    m.closeAll()
+  }, 30000)
+
   it('the idle lanes give way first, one at a time; a busy one only when no idle one is left', async () => {
     dir = fs.mkdtempSync(join(os.tmpdir(), 'tessel-live-'))
     const served = []

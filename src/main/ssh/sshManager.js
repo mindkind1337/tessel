@@ -445,9 +445,13 @@ export function createSshManager({
   // Files session always win), then a spare connection with the kept
   // credentials.
   // -> Promise<{ stream, release, client }>; rejects with an sshError.
+  // opts.keep (with onlyLive): a channel that is not a lane: it carries no
+  // requests of the shell protocol (tessel-host's connection, host/daemon.ts)
+  // and keeps its slot; it goes only with its connection.
   async function open(hostId, spec, kind, opts = {}) {
     const e = entryFor(hostId, spec)
     const lane = opts.onlyLive === true
+    const yields = lane && opts.keep !== true
     if (lane && !liveConns(e).length) throw channelError('not connected')
     await ensure(e)
     const tried = new Set()
@@ -459,7 +463,7 @@ export function createSshManager({
       if (!conn) break
       tried.add(conn)
       try {
-        return track(e, conn, await openOn(conn, kind, opts), lane)
+        return track(e, conn, await openOn(conn, kind, opts), yields)
       } catch (err) {
         lastErr = err
       }

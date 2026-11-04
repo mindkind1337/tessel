@@ -40,6 +40,7 @@ import { remoteProjectLaunch, validateRemotePath } from './remoteProject'
 import { createSshRemote } from './ssh/sshRemote'
 import { createTmuxInstaller } from './ssh/remoteTmux'
 import { loadBundledTmux, bundledTmuxDir } from './ssh/bundledTmux'
+import { loadBundledHost, bundledHostDir } from './host/bundled'
 import { STORE_FILE_NAME as SSH_HOST_KEYS_FILE } from './ssh/hostKeyStore'
 import { createAddProject, registerAddProject } from './addProject'
 import { createSshAskpass, registerSshAskpass, askpassExePath } from './sshAskpass'
@@ -2314,7 +2315,11 @@ setGitTrust(
 )
 // Files, Changes and the editor of remote projects (remoteFs.js): one ssh
 // session per host, the same askpass dialog.
-const remoteFs = createRemoteFs({ hosts: remoteHosts, askpass: sshAskpass, ssh: sshRemote, send: (channel, payload) => send(channel, payload), log })
+// tessel-host (host/daemon.ts): the programs of this build's release
+// (resources/host; none in a plain checkout without them), put on a host at
+// the first connection and serving its Files panel from then on.
+const bundledHost = loadBundledHost(bundledHostDir({ packaged: app.isPackaged, resourcesPath: process.resourcesPath, appPath: app.getAppPath() }), { log: (text) => log.warn('remote-host', text) })
+const remoteFs = createRemoteFs({ hosts: remoteHosts, askpass: sshAskpass, ssh: sshRemote, send: (channel, payload) => send(channel, payload), log, hostBundle: bundledHost })
 registerRemoteFs({ ipcMain, service: remoteFs })
 // Claude Code's folder trust on an SSH host, written there before its start
 // line is typed (remoteAgent/remoteAgentFolderTrust.js): a saved remote

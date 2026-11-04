@@ -3,6 +3,8 @@
 // what the Rust function prints for the same inputs, written out so a drift
 // on either side shows here.
 import { describe, it, expect } from 'vitest'
+import fs from 'node:fs'
+import path from 'node:path'
 import { archFromUname, checkVersion, commands, matches, parseDigest, parseManifest, plan, sha256Hex } from '../install'
 
 const BIN = '$HOME/.tessel-server/host/bin'
@@ -24,6 +26,18 @@ describe('install plan', () => {
       connect: `"${installed}" connect --stdio`
     })
     expect(plan('0.1.1', 'aarch64', 'ffffffffffffffff')!.connect).toBe(`"${BIN}/tessel-host-0.1.1-aarch64" connect --stdio`)
+  })
+
+  it('matches tessel-host’s own fixture (fixtures/install/plan.json, checked there against install::plan by CI) byte for byte', () => {
+    const fixture = JSON.parse(fs.readFileSync(path.join(__dirname, 'fixtures', 'install-plan.json'), 'utf8')) as {
+      version: string
+      nonce: string
+      plans: Record<string, Record<string, string>>
+    }
+    for (const arch of ['x86_64', 'aarch64'] as const) {
+      const p = plan(fixture.version, arch, fixture.nonce)
+      expect(p, arch).toEqual(fixture.plans[arch])
+    }
   })
 
   it('refuses a version or a nonce that is not a plain token', () => {

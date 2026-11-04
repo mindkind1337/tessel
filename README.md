@@ -137,6 +137,17 @@ working on Tessel itself (see [Build from source](#build-from-source)).
   only on a connection that is already signed in. Codex still asks.
 - Their conversations, history, model, cost and skills are read on the host;
   file links open the host's files.
+- **tessel-host on the server** (like VS Code's server): at the first
+  connection to a host, Tessel looks for its own small daemon there and puts
+  it under `~/.tessel-server/host` when missing (Linux x86_64 and arm64, no
+  root, over the signed-in connection, checked against its checksum before
+  and after the copy). The Files panel then gets its folder listings and its
+  change notices from the daemon's file watcher, and its git letters from the
+  daemon's status cache, kept current from file system events, instead of a
+  `find` every few seconds and a `git status` over the whole tree after every
+  change. A host where the daemon cannot run (another kind of machine, a home
+  folder that refuses to run programs) keeps the shell-based path as before,
+  and a build without the programs (`resources/host`, a plain checkout) too.
 - **Sessions that survive a dropped connection**, on by default (per host,
   Advanced → *Keep sessions alive on the server* turns it off): the host's
   terminals run inside a `tmux` session on the server, with no status bar, and

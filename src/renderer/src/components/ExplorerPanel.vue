@@ -329,6 +329,7 @@ async function loadStatus() {
   // (An answer for a project no longer shown says nothing of this one.)
   if (!stillCurrent(revision, root)) return
   if (res && Number.isFinite(res.ms)) statusCost = res.ms
+  statusDaemon = !!(res && res.daemon)
   // One that failed (ran out of time on a huge repository): the next waits
   // twice as long each time, not a new one every minute.
   statusFails = res && res.ok ? 0 : Math.min(statusFails + 1, 6)
@@ -362,8 +363,11 @@ let statusLast = 0
 // often: at most a quarter of the time on it (3x its own time between runs).
 let statusCost = 0
 let statusFails = 0
+// From the host's daemon (tessel-host): a cache, no git command on the host,
+// asked again as soon as it says the status changed.
+let statusDaemon = false
 const statusGap = () => {
-  const base = remote.value ? Math.max(4000, Math.min(60000, statusCost * 3)) : 1000
+  const base = remote.value && !statusDaemon ? Math.max(4000, Math.min(60000, statusCost * 3)) : 1000
   return statusFails ? Math.min(10 * 60000, Math.max(base, remote.value ? 60000 : 5000) * 2 ** (statusFails - 1)) : base
 }
 function requestStatus() {
@@ -1096,6 +1100,7 @@ async function doTrash() {
 // A tree kept longer ago than this: its project's folder is read in your turn.
 const KEPT_FOREGROUND_MS = 10 * 60 * 1000
 let stopChanged = null
+let stopStatusChanged = null
 let changedTimer = 0
 async function showRoot() {
   // The project shown until now: kept as it was, for when it comes back.
@@ -1170,6 +1175,10 @@ onMounted(() => {
       if (!props.root || key(r) !== key(props.root)) return
       noteChange(info)
     })
+  if (api() && api().onStatusChanged)
+    stopStatusChanged = api().onStatusChanged((r) => {
+      if (props.root && key(r) === key(props.root)) requestStatus()
+    })
   window.addEventListener('resize', measure)
 })
 onBeforeUnmount(() => {
@@ -1177,6 +1186,7 @@ onBeforeUnmount(() => {
   rememberTree()
   disposed = true
   if (stopChanged) stopChanged()
+  if (stopStatusChanged) stopStatusChanged()
   clearTimeout(changedTimer)
   clearTimeout(searchTimer)
   clearTimeout(prefetchTimer)

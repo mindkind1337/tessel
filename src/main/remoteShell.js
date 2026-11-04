@@ -192,6 +192,14 @@ export const FUNCTIONS = new Set([
   // sha256 tool on the host; 98: could not be written.
   '__t_tmuxq',
   '__t_tmux',
+  // tessel-host on the host (src/main/host/daemon.ts): one of the fixed
+  // commands of tessel_host::install (install.ts: a probe, the version
+  // check, the upload with the program on its standard input, the digest,
+  // the activation, the abort), run as it is. Their only variable parts are
+  // a version, an architecture and a nonce, checked to be plain tokens
+  // there; nothing from the window ever reaches these.
+  '__t_plan',
+  '__t_planup',
   // The agent sessions on this host (the shim's `sessions`): ids, folders,
   // titles, never their contents.
   '__t_rsess',
@@ -912,6 +920,8 @@ __t_tmux() {
   printf '%s\\n' "$1" >"$__s/bin/TMUX_VERSION"
   printf '%s\\n' "$__v"
 }
+__t_plan() { eval "$1" </dev/null; }
+__t_planup() { __t_b64d <"$__T_D/u" | eval "$1"; __r=$?; rm -f "$__T_D/u"; return "$__r"; }
 __t_tmo() {
   __ts=$1; shift
   rm -f "$__T_D/to" "$__T_D/tk"

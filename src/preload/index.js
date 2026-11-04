@@ -186,6 +186,13 @@ const api = {
       const h = (_e, c) => (c && typeof c === 'object' ? fn(c.root, { paths: Array.isArray(c.paths) ? c.paths : null, renamed: Array.isArray(c.renamed) ? c.renamed : null }) : fn(c, { paths: null }))
       ipcRenderer.on('explorer:changed', h)
       return () => ipcRenderer.removeListener('explorer:changed', h)
+    },
+    // fn(root): the git letters of a watched remote project changed on its
+    // host (tessel-host's status cache): ask status again.
+    onStatusChanged: (fn) => {
+      const h = (_e, c) => fn(c && typeof c === 'object' ? c.root : c)
+      ipcRenderer.on('explorer:statusChanged', h)
+      return () => ipcRenderer.removeListener('explorer:statusChanged', h)
     }
   },
   // Tessel's code editor (src/main/editorFiles.js).
