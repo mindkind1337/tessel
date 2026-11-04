@@ -213,7 +213,7 @@ onMounted(() => nextTick(() => hostEl.value && hostEl.value.focus()))
                   <p class="rh-field-hint">{{ t('remote.form.jumpHint', 'Optional. Equivalent to ProxyJump / ssh -J.') }}</p>
                 </div>
                 <div class="rh-field">
-                  <label class="rh-check" for="add-ssh-persistent">
+                  <label class="rh-check">
                     <input id="add-ssh-persistent" v-model="form.persistentSessions" type="checkbox" class="set-switch" />
                     <span>{{ t('remote.form.persistentSessions', 'Keep sessions alive on the server (tmux)') }}</span>
                   </label>
@@ -222,7 +222,7 @@ onMounted(() => nextTick(() => hostEl.value && hostEl.value.focus()))
                   </p>
                 </div>
                 <div class="rh-field">
-                  <label class="rh-check" for="add-ssh-host-daemon">
+                  <label class="rh-check">
                     <input id="add-ssh-host-daemon" v-model="form.hostDaemon" type="checkbox" class="set-switch" data-test="host-daemon" />
                     <span>{{ t('remote.form.hostDaemon', 'Tessel daemon on the server (tessel-host, experimental)') }}</span>
                   </label>

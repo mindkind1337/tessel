@@ -2181,6 +2181,11 @@ ${q.root}`, () => sparseInfoNow(q))
     // The daemon resolves an absolute folder: a project saved as ~/… is
     // watched by its real path once known (repoInfo finds it).
     hostExplorer.watch(root, loc.hostId, () => loc.root.real || (loc.root.path.startsWith('~') ? null : loc.root.path))
+    // The daemon was turned on for this host after its session signed in
+    // (the host's settings): started here, on a session that is up (nothing
+    // is asked; ensure is idempotent).
+    const live = sessions.get(loc.hostId)
+    if (live && !live.closed && live.session && live.session.state === 'ready') hostDaemonStart(loc.hostId)
     if (!loc.root.real && loc.root.path.startsWith('~')) repoInfo(loc, { background: true }).catch(() => {})
     ensurePoll()
     return { ok: true }
