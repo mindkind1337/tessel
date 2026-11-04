@@ -38,6 +38,8 @@ import { createChosenRepos, createGithubService } from './githubService'
 import { createRemoteHosts, registerRemoteHosts, findSshExe } from './remoteHosts'
 import { remoteProjectLaunch, validateRemotePath } from './remoteProject'
 import { createSshRemote } from './ssh/sshRemote'
+import { createTmuxInstaller } from './ssh/remoteTmux'
+import { loadBundledTmux, bundledTmuxDir } from './ssh/bundledTmux'
 import { STORE_FILE_NAME as SSH_HOST_KEYS_FILE } from './ssh/hostKeyStore'
 import { createAddProject, registerAddProject } from './addProject'
 import { createSshAskpass, registerSshAskpass, askpassExePath } from './sshAskpass'
@@ -4950,6 +4952,19 @@ const remoteShims = createShimInstaller({
   source: remoteShimSource,
   log: (text) => log.warn('remote-agent', text)
 })
+// Tessel's own tmux for a host without one (ssh/remoteTmux.js): the static
+// copy shipped in resources/tmux (ssh/bundledTmux.js; none in a plain
+// checkout: a host without tmux is then told so, as before), put in
+// ~/.tessel-server/bin over the Files session before a persistent pane opens
+// there, once per host per app run.
+const bundledTmux = loadBundledTmux(bundledTmuxDir({ packaged: app.isPackaged, resourcesPath: process.resourcesPath, appPath: app.getAppPath() }), { log: (text) => log.warn('remote-tmux', text) })
+const remoteTmux = createTmuxInstaller({
+  bundle: bundledTmux,
+  query: (hostId) => remoteFs.queryTmux(hostId),
+  install: (hostId, copy) => remoteFs.installTmux(hostId, copy),
+  connected: (hostId) => remoteFs.connectedQuietly(hostId),
+  log: (text) => log.warn('remote-tmux', text)
+})
 // Like VS Code's server: the first terminal opened on a host in this run
 // (once signed in) puts the shim there and looks for the agents installed
 // there, in the background; the window hears remoteAgents:status and may
@@ -5326,6 +5341,15 @@ async function createSshPane(opts, target, spec, shell, startedAt, timing = null
   // local one (src/main/remoteAgent/REMOTE_AGENTS.md); without them it still starts.
   const agent = await prepareRemoteAgent({ id, target, remotePath, agentId: opts.agentId, teamSecret })
   if (opts.agentId) step('remote agent setup')
+  // A session that survives a lost connection (on unless the host turns it
+  // off): a host without tmux gets Tessel's own copy first, when its
+  // connection is signed in already (the pane waits TMUX_WAIT_MS at most). A
+  // first terminal on a host not connected yet opens plain, and the copy
+  // goes there in the background once this pane's connection is up, for the
+  // next terminal (its "no tmux" line says so).
+  const persistent = target.persistentSessions !== false
+  const tmux = persistent ? await remoteTmux.forPane(target.id) : null
+  if (persistent) step('tmux')
   if ((paneKills.get(id) || 0) >= startedAt) return { ok: false, cancelled: true, error: t('main.remote.launchCancelled', 'The terminal was closed before ssh started.') }
   const agentProvider = agent.remoteAgent ? agent.remoteAgent.provider : null
   const agentLaunchToken = agent.launchToken || null
@@ -5339,7 +5363,7 @@ async function createSshPane(opts, target, spec, shell, startedAt, timing = null
       env: {},
       cols,
       rows,
-      ssh: { ...sshRemote.terminalRequest(target, spec, remotePath), ...(agent.remoteAgent ? { remoteAgent: agent.remoteAgent } : {}) },
+      ssh: { ...sshRemote.terminalRequest(target, spec, remotePath, tmux), ...(agent.remoteAgent ? { remoteAgent: agent.remoteAgent } : {}) },
       meta: { shellId: shell.id, shellName: shell.name, backend: 'ssh', cwd: startDir, agentProvider, agentLaunchToken, agentStartedAt: Date.now(), agentCodexHome: null, teamSecret, remoteHostId: target.id }
     })
   } catch (err) {
@@ -5359,6 +5383,8 @@ async function createSshPane(opts, target, spec, shell, startedAt, timing = null
   remoteHosts.paneStarted(id, target.id, { ssh2: true })
   // The host's shim and agents (its shared connection: no new question).
   void remoteAgentCheck.hostStarted(target.id)
+  // Tessel's tmux, the same way, when the pane could not wait for it.
+  if (tmux && tmux.reason === 'not-connected') void remoteTmux.ensure(target.id)
   liveShare?.noteSize(id, cols, rows)
   // A pane restarted in place: Live Share guests get its new screen.
   liveShare?.paneStarted(id)

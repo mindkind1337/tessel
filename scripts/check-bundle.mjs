@@ -3,6 +3,7 @@
 // forever trying to "install" Electron (it crashed the machine once).
 import fs from 'fs'
 import path from 'path'
+import { checkTmuxResources } from './check-tmux-resources.mjs'
 
 const dir = path.join('out', 'main')
 const files = []
@@ -114,5 +115,12 @@ for (const name of ['index.js', 'themedDialog.js']) {
     failed = true
   }
 }
+// Tessel's own tmux for SSH hosts without one (resources/tmux, packaged as
+// extraResources): when the binaries are there they must match SHA256SUMS.
+const tmux = checkTmuxResources()
+for (const e of tmux.errors) {
+  console.error(`check-bundle: ${e}`)
+  failed = true
+}
 if (failed) process.exit(1)
-console.log(`check-bundle: ok (${files.length} files)`)
+console.log(`check-bundle: ok (${files.length} files${tmux.checked ? `, ${tmux.checked} bundled tmux` : ', no bundled tmux'})`)

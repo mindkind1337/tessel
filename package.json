@@ -91,6 +91,15 @@
       "out/main/cli.js",
       "out/main/tessel-cli.exe"
     ],
+    "extraResources": [
+      {
+        "from": "resources/tmux",
+        "to": "tmux",
+        "filter": [
+          "**/*"
+        ]
+      }
+    ],
     "npmRebuild": false,
     "win": {
       "target": [

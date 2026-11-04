@@ -67,8 +67,15 @@ export const AGENT_BIND_WAIT_MS = 10_000
 // user's own tmux), and a reconnect re-attaches to it instead of starting a
 // new shell. The probe for tmux waits this long at most.
 export const TMUX_SOCKET = 'tessel'
-// Exit 0 with the version on stdout when tmux is there ("tmux 3.4").
-export const TMUX_PROBE = 'command -v tmux >/dev/null 2>&1 && tmux -V'
+// Tessel's own tmux on a host that has none (main puts it there before the
+// pane opens: ssh/remoteTmux.js), as the pane's commands name it: a fixed
+// path under $HOME, quoted once here and never built from the host's answer.
+export const OWN_TMUX = '"$HOME/.tessel-server/bin/tmux"'
+const OWN_TMUX_SUFFIX = '/.tessel-server/bin/tmux'
+// Exit 0 with the version ("tmux 3.4") then the path of the tmux to use on
+// stdout: the host's own tmux when it has one (it always wins), else Tessel's
+// copy. Exit 1 when neither is there.
+export const TMUX_PROBE = `t=$(command -v tmux 2>/dev/null) && [ -x "$t" ] || t="$HOME${OWN_TMUX_SUFFIX}"; [ -x "$t" ] && v=$("$t" -V) && printf '%s\\n%s\\n' "$v" "$t"`
 export const TMUX_PROBE_TIMEOUT_MS = 15_000
 const TMUX_SESSION_MAX = 40
 
@@ -85,6 +92,16 @@ export function parseTmuxVersion(stdout) {
 }
 const atLeast = (v, major, minor) => !!v && (v.major > major || (v.major === major && v.minor >= minor))
 
+// What TMUX_PROBE printed -> { version, bin }: bin is `tmux` (the host's own,
+// on its PATH) or OWN_TMUX (the probe named Tessel's copy); nothing else is
+// ever put in a command.
+export function parseTmuxProbe(stdout) {
+  const lines = String(stdout || '').split('\n')
+  const path = (lines[1] || '').trim()
+  return { version: parseTmuxVersion(lines[0]), bin: path.endsWith(OWN_TMUX_SUFFIX) ? OWN_TMUX : 'tmux' }
+}
+const tmuxBin = (bin) => (bin === OWN_TMUX ? OWN_TMUX : 'tmux')
+
 // The command that runs `inner` (a POSIX sh command) inside the pane's tmux
 // session. A first open starts a FRESH session (a session of that name left
 // by a crash or an earlier pane is ended first: an agent in there would run
@@ -98,8 +115,8 @@ const atLeast = (v, major, minor) => !!v && (v.major > major || (v.major === maj
 // escape delay and focus events for the agents' TUIs; and, when tmux takes
 // it (3.2+), no prefix key: a detach would end the pane and its session.
 // Nothing here is interpolated unquoted: the name is sanitized, the inner
-// command single-quoted.
-export function tmuxCommand(paneId, inner, { reattach = false, version = null } = {}) {
+// command single-quoted, bin one of two fixed strings (tmuxBin).
+export function tmuxCommand(paneId, inner, { reattach = false, version = null, bin = 'tmux' } = {}) {
   const name = tmuxSessionName(paneId)
   const options = [
     'set-option -g status off',
@@ -110,14 +127,14 @@ export function tmuxCommand(paneId, inner, { reattach = false, version = null } 
     `set-option -ga terminal-overrides ',xterm-256color:RGB'`,
     ...(atLeast(version, 3, 2) ? ['set-option -g prefix None'] : [])
   ]
-  const tmux = `exec tmux -u -L ${TMUX_SOCKET} ${options.join(' \\; ')} \\; new-session ${reattach ? '-A -D ' : ''}-s ${name} ${shellQuote(inner)}`
-  return reattach ? tmux : `${tmuxKillCommand(paneId)}; ${tmux}`
+  const tmux = `exec ${tmuxBin(bin)} -u -L ${TMUX_SOCKET} ${options.join(' \\; ')} \\; new-session ${reattach ? '-A -D ' : ''}-s ${name} ${shellQuote(inner)}`
+  return reattach ? tmux : `${tmuxKillCommand(paneId, bin)}; ${tmux}`
 }
 
 // Ends the pane's session on the host (the pane was closed, or its client
 // left and the session is of no use to anyone). =name: that session exactly.
-export function tmuxKillCommand(paneId) {
-  return `tmux -L ${TMUX_SOCKET} kill-session -t =${tmuxSessionName(paneId)} >/dev/null 2>&1`
+export function tmuxKillCommand(paneId, bin = 'tmux') {
+  return `${tmuxBin(bin)} -L ${TMUX_SOCKET} kill-session -t =${tmuxSessionName(paneId)} >/dev/null 2>&1`
 }
 
 function cleanStr(v, max) {
@@ -399,7 +416,7 @@ export function createSshHostBridge({
     // for that open stays until the pane ends for good (tunnel.forgetPane
     // removes it then); the agent in the session keeps the variables of its
     // first open, which stay valid for the pane.
-    const commandFor = (tmux, reattach) => (tmux ? tmuxCommand(paneId, plainCommandFor() || 'exec "$SHELL" -l', { reattach, version: tmux.version }) : plainCommandFor())
+    const commandFor = (tmux, reattach) => (tmux ? tmuxCommand(paneId, plainCommandFor() || 'exec "$SHELL" -l', { reattach, version: tmux.version, bin: tmux.bin }) : plainCommandFor())
     const dataFns = []
     const exitFns = []
     const size = { cols: Math.max(2, cols | 0), rows: Math.max(1, rows | 0) }
@@ -413,8 +430,10 @@ export function createSshHostBridge({
     let openedAt = 0
     let notConnectedShown = false
     let noTmuxShown = false
-    // The shell open now (or the last one) runs inside the pane's tmux session.
+    // The shell open now (or the last one) runs inside the pane's tmux session,
+    // and which tmux it is (the host's, or Tessel's copy: OWN_TMUX).
     let inTmux = false
+    let inTmuxBin = 'tmux'
     let queued = []
     let queuedBytes = 0
     const self = { pid: null, hostId, noReconnect: false }
@@ -457,15 +476,15 @@ export function createSshHostBridge({
           })
       )
     }
-    // Is tmux on the host, and which version? Asked before each (re)open of
-    // a persistent pane, so a tmux installed since is used. -> { version } |
-    // false. A probe that hangs, or cannot be run on a first open, counts as
+    // Is tmux on the host (its own, or Tessel's copy), and which version?
+    // Asked before each (re)open of a persistent pane, so a tmux installed
+    // since is used. -> { version, bin } | false. A probe that hangs, or cannot be run on a first open, counts as
     // no tmux: the pane opens as it does today rather than not at all. On a
     // reconnect a probe that cannot run is the connection's problem: it goes
     // through the reconnect ladder like the shell itself.
     const hasTmux = (isReconnect) =>
       runExec(TMUX_PROBE, TMUX_PROBE_TIMEOUT_MS).then(
-        ({ code, stdout }) => (code === 0 ? { version: parseTmuxVersion(stdout) } : false),
+        ({ code, stdout }) => (code === 0 ? parseTmuxProbe(stdout) : false),
         (err) => {
           if (isReconnect) throw err
           return false
@@ -474,7 +493,7 @@ export function createSshHostBridge({
     // Best effort, on a live connection only (closing a pane never asks for
     // a password), and nothing waits for it.
     function killSession() {
-      runExec(tmuxKillCommand(paneId), TMUX_PROBE_TIMEOUT_MS, { onlyLive: true }).catch(() => {})
+      runExec(tmuxKillCommand(paneId, inTmuxBin), TMUX_PROBE_TIMEOUT_MS, { onlyLive: true }).catch(() => {})
     }
 
     const emit = (text) => {
@@ -524,7 +543,7 @@ export function createSshHostBridge({
           const command = commandFor(tmux, isReconnect && inTmux)
           const asked = { ...pty, cols: size.cols, rows: size.rows }
           const opts = command ? { command, pty: asked } : { pty: asked }
-          return manager.open(hostId, spec, command ? 'exec' : 'shell', opts).then((res) => ({ ...res, asked, useTmux: !!tmux }))
+          return manager.open(hostId, spec, command ? 'exec' : 'shell', opts).then((res) => ({ ...res, asked, useTmux: !!tmux, tmuxBin: tmux ? tmux.bin : 'tmux' }))
         })
         .then((res) => {
           if (!res.stream) return
@@ -545,6 +564,7 @@ export function createSshHostBridge({
           notConnectedShown = false
           const wasTmux = inTmux
           inTmux = res.useTmux === true
+          if (inTmux) inTmuxBin = res.tmuxBin
           if (isReconnect) {
             // Back in the same tmux session (its program still running), or a
             // new shell as before. (tmux redraws the screen as it re-attaches.)

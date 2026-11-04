@@ -122,15 +122,17 @@ describe('the host store', () => {
     expect(service().list()).toEqual([])
   })
 
-  it('persistentSessions (tmux on the host) is off unless saved as true, and survives a config refresh', async () => {
+  it('persistentSessions (tmux on the host) is on unless saved as false (absent means on), and survives a config refresh', async () => {
     expect(sanitizeTarget({ host: 'srv' }).target.persistentSessions).toBeUndefined()
     expect(sanitizeTarget({ host: 'srv', persistentSessions: true }).target.persistentSessions).toBe(true)
-    for (const bad of ['true', 1, 'yes', {}, null]) expect(sanitizeTarget({ host: 'srv', persistentSessions: bad }).target.persistentSessions).toBeUndefined()
+    expect(sanitizeTarget({ host: 'srv', persistentSessions: false }).target.persistentSessions).toBe(false)
+    for (const bad of ['true', 'false', 0, 1, 'yes', {}, null]) expect(sanitizeTarget({ host: 'srv', persistentSessions: bad }).target.persistentSessions).toBeUndefined()
     const s = service()
     const { target } = s.add({ host: 'srv', persistentSessions: true })
     expect(target.persistentSessions).toBe(true)
     expect(s.get(target.id).persistentSessions).toBe(true)
-    expect(s.update(target.id, { persistentSessions: false }).target.persistentSessions).toBeUndefined()
+    expect(s.update(target.id, { persistentSessions: false }).target.persistentSessions).toBe(false)
+    expect(s.get(target.id).persistentSessions).toBe(false)
     expect(s.update(target.id, { persistentSessions: true }).target.persistentSessions).toBe(true)
     // An imported host keeps the option through a config sync.
     writeFileSync(join(home, '.ssh', 'config'), 'Host prod\n  HostName prod.example.com\n')

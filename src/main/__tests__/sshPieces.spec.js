@@ -215,6 +215,21 @@ describe('app side: questions and states', () => {
     return { ssh, sent, requests }
   }
 
+  it('a terminal’s request: persistent unless the host turned it off, and its "no tmux" line says what main knows of Tessel’s copy', () => {
+    const { ssh } = setup()
+    const spec = { host: 'box', port: 22 }
+    const absent = ssh.terminalRequest({ id: 'h', label: 'Box', host: 'box' }, spec, null)
+    expect(absent.persistent).toBe(true)
+    expect(absent.texts.noTmux).toBe('tmux is not installed on {{host}}: this session will not survive a lost connection.')
+    expect(ssh.terminalRequest({ id: 'h', host: 'box', persistentSessions: true }, spec, '/srv').persistent).toBe(true)
+    const off = ssh.terminalRequest({ id: 'h', host: 'box', persistentSessions: false }, spec, '/srv')
+    expect(off.persistent).toBeUndefined()
+    expect(off.remotePath).toBe('/srv')
+    expect(ssh.terminalRequest({ id: 'h', host: 'box' }, spec, null, { ok: true, source: 'bundled' }).texts.noTmux).toBe(absent.texts.noTmux)
+    expect(ssh.terminalRequest({ id: 'h', host: 'box' }, spec, null, { ok: false, reason: 'noexec' }).texts.noTmux).toContain('could not be put there (the home folder there refuses to run programs)')
+    expect(ssh.terminalRequest({ id: 'h', host: 'box' }, spec, null, { ok: false, reason: 'not-connected' }).texts.noTmux).toContain('next sessions')
+  })
+
   it('shows a question, sends the answer to the terminal host only, then closes it', async () => {
     const { ssh, sent, requests } = setup()
     ssh.onEvent({ op: 'ssh-prompt', promptId: 'p1', hostId: 'h', kind: 'password', user: 'me', host: 'box' })

@@ -135,13 +135,20 @@ working on Tessel itself (see [Build from source](#build-from-source)).
   only on a connection that is already signed in. Codex still asks.
 - Their conversations, history, model, cost and skills are read on the host;
   file links open the host's files.
-- **Sessions that survive a dropped connection** (per host, Advanced → *Keep
-  sessions alive on the server*): the host's terminals run inside a `tmux`
-  session on the server, with no status bar, and a lost connection re-attaches
-  to the same session instead of starting a new shell, so an agent running there
-  keeps going. Needs `tmux` on the server (the pane says so when it is missing,
-  and works as before). Closing the pane ends its session. Hosts reached through
-  a jump host or a proxy command use the system `ssh` and are not covered.
+- **Sessions that survive a dropped connection**, on by default (per host,
+  Advanced → *Keep sessions alive on the server* turns it off): the host's
+  terminals run inside a `tmux` session on the server, with no status bar, and
+  a lost connection re-attaches to the same session instead of starting a new
+  shell, so an agent running there keeps going. The server's own `tmux` is
+  used; when it has none, Tessel puts its own statically built `tmux` in
+  `~/.tessel-server/bin` there (Linux x86_64 and arm64, no root needed, checked
+  against its checksum on the host, run once to prove the home folder may run
+  it) before the terminal opens, or in the background for the next terminal
+  when the first one opens on a host not connected yet. A host where that is
+  impossible (another kind of machine, a home folder that refuses to run
+  programs) says so in the pane and runs as before. Closing the pane ends its
+  session. Hosts reached through a jump host or a proxy command use the system
+  `ssh` and are not covered.
 - **Stable on slow or dropped links**: your clicks go first, every remote call
   has a time limit, a slow host says so, and when the connection comes back
   the project's panes reopen and agents resume their conversations. A stall of

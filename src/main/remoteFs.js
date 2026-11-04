@@ -132,7 +132,7 @@ export const SHARED_GIT_HOLD_MS = 5 * 60_000
 // went away under them: reads, the shim install (written by a rename, then
 // its idempotent `install`), an account folder made whole (never a new one,
 // never a removal or a sign-out).
-const LANE_RERUN = new Set(['__t_ragent', '__t_agents', '__t_tread', '__t_sread', '__t_accts', '__t_acctdiag', '__t_acctplan', '__t_acctpane'])
+const LANE_RERUN = new Set(['__t_ragent', '__t_agents', '__t_tread', '__t_sread', '__t_accts', '__t_acctdiag', '__t_acctplan', '__t_acctpane', '__t_tmuxq', '__t_tmux'])
 export const laneRerunSafe = (fn, args = []) => LANE_RERUN.has(fn) || (fn === '__t_acctmk' && args[2] !== 'new')
 // What ends the lanes too (else only the Files session ends).
 const LANE_ENDS = new Set(['disconnect', 'removed', 'shutdown'])
@@ -2342,6 +2342,27 @@ ${root}`, () => gitWorktreesNow(root))
     return call(hostId, '__t_ragent', [version], { cap: 64 * 1024, timeoutMs: 60_000, upload: Buffer.from(String(source || ''), 'utf8'), op: 'agent', lane: 'pane' })
   }
 
+  // Tessel's own tmux for a host without one (ssh/remoteTmux.js): what tmux
+  // the host has (__t_tmuxq: the system's, Tessel's copy, uname -m), and the
+  // copy put in ~/.tessel-server/bin there (__t_tmux: checked against its
+  // sha256 on the host, run once to prove it executes). On the pane's lane
+  // like the shim: a terminal opening there waits for it. -> { rc, out, err }
+  // | { error }
+  async function queryTmux(hostId) {
+    if (!hostIdOk(hostId)) return { error: t('main.remote.notFound', 'This remote host is no longer saved in Tessel.') }
+    allow(hostId)
+    return call(hostId, '__t_tmuxq', [], { cap: 4096, timeoutMs: 30_000, op: 'agent', lane: 'pane' })
+  }
+  const MAX_TMUX_BYTES = 16 * 1024 * 1024
+  async function installTmux(hostId, { version, sha256, binary } = {}) {
+    if (!hostIdOk(hostId)) return { error: t('main.remote.notFound', 'This remote host is no longer saved in Tessel.') }
+    if (typeof version !== 'string' || !/^[0-9A-Za-z.-]{1,40}$/.test(version)) return { error: 'bad tmux version' } // i18n-ignore internal
+    if (typeof sha256 !== 'string' || !/^[0-9a-f]{64}$/.test(sha256)) return { error: 'bad tmux checksum' } // i18n-ignore internal
+    if (!Buffer.isBuffer(binary) || !binary.length || binary.length > MAX_TMUX_BYTES) return { error: 'bad tmux binary' } // i18n-ignore internal
+    allow(hostId)
+    return call(hostId, '__t_tmux', [version, sha256], { cap: 4096, timeoutMs: 120_000, upload: binary, op: 'agent', lane: 'pane' })
+  }
+
   // The agents installed on this host (__t_agents): their paths (none is run,
   // but Codex for its --version and --help), and what an install there
   // needs. Only through a session the host allows
@@ -2728,6 +2749,8 @@ ${q && q.root}`, () => (q && q.background === true ? scmBg : scm).scmStatus(q)),
     githubContext,
     connect,
     installAgentShim,
+    queryTmux,
+    installTmux,
     pasteImage,
     agentTools,
     connectedQuietly,

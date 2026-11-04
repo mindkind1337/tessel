@@ -14,7 +14,7 @@
 // IPC call straight into one message to the terminal host.
 import { EventEmitter } from 'events'
 import crypto from 'crypto'
-import { sshTemplates, formatSshError } from './sshMessages'
+import { sshTemplates, formatSshError, tmuxMissingText } from './sshMessages'
 import { createSshResolver } from './sshResolve'
 
 export const PANE_PREFIX = 'ssh2:'
@@ -115,14 +115,21 @@ export function createSshRemote({ host, hosts, send = () => {}, log = null, t, s
 
   // What a remote terminal needs (pty:create): its texts in the interface's
   // language, the spec, the folder, and whether its shell runs inside a tmux
-  // session on the host (the host's "Keep sessions alive on the server").
-  function terminalRequest(target, spec, remotePath) {
+  // session on the host (the host's "Keep sessions alive on the server", on
+  // unless turned off). tmux: what main knows of the tmux there
+  // (ssh/remoteTmux.js forPane): when Tessel's own copy could not be put on
+  // a host without tmux, the pane's "no tmux" line says why; while it is
+  // being put there, that the next session will have it.
+  function terminalRequest(target, spec, remotePath, tmux = null) {
+    const texts = { ...templates(), label: target.label || target.host }
+    const noTmux = tmux ? tmuxMissingText(texts, tmux) : null
+    if (noTmux) texts.noTmux = noTmux
     return {
       hostId: target.id,
       spec,
       ...(remotePath ? { remotePath } : {}),
-      ...(target.persistentSessions === true ? { persistent: true } : {}),
-      texts: { ...templates(), label: target.label || target.host }
+      ...(target.persistentSessions !== false ? { persistent: true } : {}),
+      texts
     }
   }
 

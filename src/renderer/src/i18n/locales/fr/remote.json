@@ -65,7 +65,7 @@
       "jumpPlaceholder": "bastion.example.com",
       "jumpHint": "Facultatif. Équivalent à ProxyJump / ssh -J.",
       "persistentSessions": "Garder les sessions actives sur le serveur (tmux)",
-      "persistentHint": "Une connexion perdue se rattache à la même session au lieu de lancer un nouveau shell : ce qui y tourne (un agent) survit. Nécessite tmux sur le serveur. Sans effet avec un hôte de rebond ou une commande de proxy (ces hôtes passent par le ssh du système).",
+      "persistentHint": "Une connexion perdue se rattache à la même session au lieu de lancer un nouveau shell : ce qui y tourne (un agent) survit. Activé par défaut. Utilise le tmux du serveur ; s’il n’en a pas, Tessel y dépose sa propre copie (Linux x86_64 et arm64, sans droits root). Sans effet avec un hôte de rebond ou une commande de proxy (ces hôtes passent par le ssh du système).",
       "cancel": "Annuler",
       "saveChanges": "Enregistrer les modifications",
       "addTarget": "Ajouter une cible"

@@ -8,7 +8,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import fs from 'fs'
 import os from 'os'
 import { join } from 'path'
-import { createSshHostBridge, validateSpec, FILES_COMMAND, TMUX_PROBE, tmuxCommand, tmuxKillCommand, tmuxSessionName, parseTmuxVersion } from '../ssh/sshHostBridge'
+import { createSshHostBridge, validateSpec, FILES_COMMAND, TMUX_PROBE, OWN_TMUX, tmuxCommand, tmuxKillCommand, tmuxSessionName, parseTmuxVersion, parseTmuxProbe } from '../ssh/sshHostBridge'
 import ssh2 from 'ssh2'
 import { startSshServer, makeKey } from './fixtures/sshServer'
 
@@ -57,6 +57,7 @@ let answers
 // tmux command behaves like a shell (stays up, exits on "exit").
 let tmuxOnHost
 let tmuxVersion
+let tmuxPath
 let rejectProbe
 beforeEach(async () => {
   dir = fs.mkdtempSync(join(os.tmpdir(), 'tessel-sshb-'))
@@ -64,6 +65,7 @@ beforeEach(async () => {
   broadcasts = []
   tmuxOnHost = true
   tmuxVersion = 'tmux 3.4'
+  tmuxPath = '/usr/bin/tmux'
   rejectProbe = false
   answers = { hostkey: ['yes'], password: [PASSWORD] }
   server = await startSshServer({
@@ -80,7 +82,7 @@ beforeEach(async () => {
         return
       }
       if (command === TMUX_PROBE) {
-        if (tmuxOnHost) stream.write(`${tmuxVersion}\n`)
+        if (tmuxOnHost) stream.write(`${tmuxVersion}\n${tmuxPath}\n`)
         stream.exit(tmuxOnHost ? 0 : 1)
         stream.end()
         return
@@ -414,6 +416,34 @@ describe('persistent sessions (tmux)', () => {
     for (const v of [{ major: 3, minor: 2 }, { major: 3, minor: 4 }, { major: 4, minor: 0 }]) expect(tmuxCommand('p', LOGIN, { version: v })).toContain('set-option -g prefix None')
     for (const v of [{ major: 3, minor: 1 }, { major: 2, minor: 9 }, null]) expect(tmuxCommand('p', LOGIN, { version: v })).not.toContain('prefix')
   })
+
+  it("the probe names the tmux to use: the host's own on its PATH, else Tessel's copy in ~/.tessel-server/bin, and the commands take that one", () => {
+    expect(parseTmuxProbe('tmux 3.4\n/usr/bin/tmux\n')).toEqual({ version: v34, bin: 'tmux' })
+    expect(parseTmuxProbe('tmux 3.5a\n/home/me/.tessel-server/bin/tmux\n')).toEqual({ version: { major: 3, minor: 5 }, bin: OWN_TMUX })
+    // The probe's path is never put in a command: only one of two fixed names.
+    expect(parseTmuxProbe('tmux 3.4\n/tmp/evil; rm -rf /\n').bin).toBe('tmux')
+    expect(parseTmuxProbe('tmux 3.4\n').bin).toBe('tmux')
+    expect(TMUX_PROBE).toContain('command -v tmux')
+    expect(TMUX_PROBE).toContain('$HOME/.tessel-server/bin/tmux')
+    expect(tmuxKillCommand('p1', OWN_TMUX)).toBe('"$HOME/.tessel-server/bin/tmux" -L tessel kill-session -t =tessel-p1 >/dev/null 2>&1')
+    expect(tmuxKillCommand('p1', '/tmp/evil')).toBe(tmuxKillCommand('p1'))
+    const own = tmuxCommand('p1', LOGIN, { version: v34, bin: OWN_TMUX })
+    expect(own.startsWith(`${tmuxKillCommand('p1', OWN_TMUX)}; exec "$HOME/.tessel-server/bin/tmux" -u -L tessel `)).toBe(true)
+    expect(tmuxCommand('p1', LOGIN, { version: v34, bin: '/tmp/evil' })).toBe(tmuxCommand('p1', LOGIN, { version: v34 }))
+  })
+
+  it("a host without tmux where Tessel's copy is: the session runs with that copy, and closing the pane ends it with that copy too", async () => {
+    tmuxVersion = 'tmux 3.5a'
+    tmuxPath = '/home/me/.tessel-server/bin/tmux'
+    makeBridge()
+    const { pty, out } = terminal({ paneId: 'p9', persistent: true, texts: ptexts })
+    await until(() => out.text.includes('tmux-welcome'))
+    expect(execs()).toEqual([TMUX_PROBE, tmuxCommand('p9', LOGIN, { version: { major: 3, minor: 5 }, bin: OWN_TMUX })])
+    expect(execs()[1]).toContain('exec "$HOME/.tessel-server/bin/tmux" -u -L tessel')
+    expect(out.text).not.toContain('NO TMUX')
+    pty.kill()
+    await until(() => execs().includes(tmuxKillCommand('p9', OWN_TMUX)))
+  }, 30000)
 
   it('a persistent pane probes for tmux (and its version), then starts a fresh session; the pane ends as today when it exits', async () => {
     makeBridge()

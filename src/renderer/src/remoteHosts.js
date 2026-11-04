@@ -200,7 +200,8 @@ export const EMPTY_FORM = Object.freeze({
   identityFile: '',
   proxyCommand: '',
   jumpHost: '',
-  persistentSessions: false
+  // On by default (a saved false turns it off for that host).
+  persistentSessions: true
 })
 
 export function emptyForm() {
@@ -223,7 +224,8 @@ export function formFromTarget(target) {
     identityFile: target.identityFile || '',
     proxyCommand: target.proxyCommand || '',
     jumpHost: target.jumpHost || '',
-    persistentSessions: target.persistentSessions === true
+    // Absent (a host saved before the option, or never changed) means on.
+    persistentSessions: target.persistentSessions !== false
   }
 }
 
@@ -289,7 +291,8 @@ export function draftConnectionFields(draft) {
 }
 
 export function hasAdvancedValues(form) {
-  return form.proxyCommand.trim().length > 0 || form.jumpHost.trim().length > 0 || form.persistentSessions === true
+  // Advanced opens on what differs from the defaults: the option turned OFF.
+  return form.proxyCommand.trim().length > 0 || form.jumpHost.trim().length > 0 || form.persistentSessions === false
 }
 
 export function isFormDirty(current, baseline) {

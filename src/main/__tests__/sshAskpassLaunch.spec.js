@@ -65,6 +65,8 @@ function harness({ helper = 'fake.exe', createDelay = null, sshMode = { mode: 's
     remoteAgentCheck: { hostStarted: async () => {}, waitConnected: () => {}, paneConnected: () => {}, paneExited: () => {} },
     // A terminal opened on a host lets its Files session sign in (remoteFs.js).
     remoteFs: { allow: (id) => allowed.push(id) },
+    // Tessel's tmux for a host without one (ssh/remoteTmux.js): nothing known here.
+    remoteTmux: { forPane: async () => null, ensure: async () => null },
     Date,
     Map,
     remoteProjectLaunch: (r) => r,
