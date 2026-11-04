@@ -77,9 +77,11 @@ jobs:
           cp tmux /work/out/tmux
           cp COPYING /work/out/LICENSE
           printf '%s\n' "${TMUX_VERSION}" > /work/out/VERSION
+          chown -R "${OUT_UID}:${OUT_GID}" /work/out
           EOF
+          mkdir -p out
           docker run --rm --platform "${{ matrix.platform }}" \
-            -e TMUX_VERSION="${TMUX_VERSION}" \
+            -e TMUX_VERSION="${TMUX_VERSION}" -e OUT_UID="$(id -u)" -e OUT_GID="$(id -g)" \
             -v "$PWD:/work" -w /work "${ALPINE_IMAGE}" sh /work/src/build.sh
           # The line resources/tmux/SHA256SUMS takes for this binary.
           (cd out && sha256sum tmux | sed 's# tmux$# ${{ matrix.folder }}/tmux#' > tmux.sha256)
