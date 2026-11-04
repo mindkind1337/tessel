@@ -20,7 +20,9 @@ import { findMuse, museServe } from './museServe'
 import { museCatalogModelList } from './museCatalog'
 
 const FILE = 'agent-models.json'
-const COMMAND = /^[\w.\-\\/: ]{1,300}$/
+// An agent's command that is only a program: a name or a path (Windows short
+// names like RUNNER~1 included), never a shell line.
+const COMMAND = /^[\w.\-\\/:~ ]{1,300}$/
 
 // { [agent]: { models, fetchedAt } } from disk; {} when absent or damaged.
 export function loadModelLists(dir) {

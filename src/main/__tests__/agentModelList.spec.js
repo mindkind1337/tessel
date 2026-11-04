@@ -72,6 +72,26 @@ describe('model lists from the agents themselves', () => {
     expect(loadModelLists(dir)[agent].models[0].id).toBe(id)
   })
 
+  it("an agent's own command that is a path keeps being probed, Windows short names included; a shell line falls back to the default program", async () => {
+    const calls = []
+    const paths = []
+    const resolveAny = async (exe) => {
+      paths.push(exe)
+      return { file: exe, pre: [], path: null }
+    }
+    const lister = createModelLister(dir, { resolve: resolveAny, spawn: fakeSpawn({ stdout: 'auto - Auto (default)' }, calls) })
+    expect((await lister.probe('cursor', 'C:\\Users\\RUNNER~1\\bin\\cursor-agent.exe')).ok).toBe(true)
+    expect(paths.at(-1)).toBe('C:\\Users\\RUNNER~1\\bin\\cursor-agent.exe')
+    expect(calls.at(-1).opts.shell).toBeUndefined()
+    await lister.probe('cursor', '~/.local/bin/cursor-agent')
+    expect(paths.at(-1)).toBe('~/.local/bin/cursor-agent')
+    // A command with arguments, or shell syntax, is not a program: the default one is probed.
+    await lister.probe('cursor', 'cursor-agent --yolo')
+    expect(paths.at(-1)).toBe('cursor-agent')
+    await lister.probe('cursor', 'cursor-agent;rm')
+    expect(paths.at(-1)).toBe('cursor-agent')
+  })
+
   it('Claude: its program, Orca arguments, the list_models request on stdin; the list is kept', async () => {
     const calls = []
     const lister = createModelLister(dir, { resolve, spawn: fakeSpawn({ stdout: CLAUDE_ANSWER }, calls), now: () => 1234 })
