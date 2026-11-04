@@ -52,9 +52,19 @@ function notifyChanged(provider) {
   emit('changed', provider)
   window.dispatchEvent(new CustomEvent('tessel:accounts-changed', { detail: { provider } }))
 }
+// The system sign-in is the same person as an added account (same address)
+// and that account is the one new sessions use: one row, the added one (its
+// own folder, checked). The system row comes back when that account is
+// removed or another one is picked, since new sessions then use the system
+// sign-in. Kept when no address is known on either side.
+function systemCovered(provider) {
+  const address = typeof provider.system?.email === 'string' ? provider.system.email.trim().toLowerCase() : ''
+  if (!address || provider.selectedId == null) return false
+  return (provider.accounts || []).some((a) => a.id === provider.selectedId && typeof a.email === 'string' && a.email.trim().toLowerCase() === address)
+}
 function rows(provider) {
   return [
-    ...(provider.system
+    ...(provider.system && !systemCovered(provider)
       ? [
           {
             ...provider.system,

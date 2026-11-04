@@ -82,6 +82,26 @@ describe('provider account management', () => {
     expect(row('system').find('[data-test="account-remove"]').exists()).toBe(false)
   })
 
+  it('the system sign-in is not listed twice: hidden while the added account with its address is the one for new sessions', async () => {
+    const claude = state.providers[1]
+    claude.system = { id: null, label: 'System default', status: 'unknown', email: 'Person@example.test', organization: 'Studio', plan: 'max' }
+    claude.selectedId = 'saved-1'
+    await render()
+    expect(section('claude').find('[data-account="system"]').exists()).toBe(false)
+    expect(row('saved-1', 'claude').text()).toContain('New sessions')
+    // Another account picked (or none): the system sign-in is a choice again.
+    claude.selectedId = null
+    wrapper.unmount()
+    await render()
+    expect(section('claude').find('[data-account="system"]').exists()).toBe(true)
+    // A different address on the system side: both rows.
+    claude.selectedId = 'saved-1'
+    claude.system.email = 'other@example.test'
+    wrapper.unmount()
+    await render()
+    expect(section('claude').find('[data-account="system"]').exists()).toBe(true)
+  })
+
   it('shows the system sign-in with the same details as an added account', async () => {
     state.providers[1].system = { id: null, label: 'System default', status: 'ready', email: 'me@example.test', organization: 'Home org', plan: 'max' }
     await render()
