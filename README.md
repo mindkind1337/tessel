@@ -42,6 +42,8 @@ working on Tessel itself (see [Build from source](#build-from-source)).
   sidebar; idle agents can sleep by themselves (Settings → Agents). **Start
   terminals asleep** (Settings → General) brings every agent and terminal back
   asleep at launch, so only the panes you open run.
+- **Hide the task under agents** (the sidebar's options menu): the agent rows
+  show only their names, without the board card's title under each.
 - **Groups of projects**: put projects of the same kind in a group of your own
   (**Group** in a project's menu): a folding row with the projects under it, to
   make room in the sidebar. Groups are saved with your settings.

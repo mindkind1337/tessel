@@ -39,7 +39,8 @@ import {
   LogOut,
   Crown,
   ScreenShare,
-  ScreenShareOff
+  ScreenShareOff,
+  CaptionsOff
 } from 'lucide-vue-next'
 import OrcaMenu from './OrcaMenu.vue'
 import LsAvatars from './liveshare/LsAvatars.vue'
@@ -860,6 +861,15 @@ function optionsItems() {
     label: t('sidebar.options.hideDefault', 'Hide default branch'),
     checked: settings.hideDefaultBranchWorkspace,
     onChange: (v) => (settings.hideDefaultBranchWorkspace = v)
+  })
+  // Display, not a filter: it hides nothing from the list (not in the badge).
+  items.push({
+    type: 'switch',
+    icon: CaptionsOff,
+    label: t('sidebar.options.hideAgentTask', 'Hide the task under agents'),
+    ariaLabel: t('sidebar.options.hideAgentTaskHint', 'Show only the agent names, without the task line under each'),
+    checked: settings.hideAgentTaskLine,
+    onChange: (v) => (settings.hideAgentTaskLine = v)
   })
   return items
 }

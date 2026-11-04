@@ -26,6 +26,7 @@ import { modelLabel } from '../../../../shared/modelLabel'
 import { paneModels } from '../../paneModels'
 import { childrenFolded, olderShown } from './agentRowState'
 import { t } from '../../i18n'
+import { settings } from '../../settings'
 
 const props = defineProps({
   row: { type: Object, required: true },
@@ -231,9 +232,10 @@ const workerOfLabel = computed(() =>
     <LiveSharePresence compact :pane-id="row.id" />
     <span v-if="row.time" class="car-time" :class="{ focused: row.focused }">{{ row.time }}</span>
   </div>
-  <!-- The task on its own line under the agent (the row keeps its space). -->
+  <!-- The task on its own line under the agent (the row keeps its space);
+       the sidebar's options can hide it (Hide the task under agents). -->
   <div
-    v-if="row.subline"
+    v-if="row.subline && !settings.hideAgentTaskLine"
     class="car-subline"
     :class="{ focused: row.focused, nested: hasChildren || picking }"
     aria-hidden="true"

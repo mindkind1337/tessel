@@ -288,6 +288,8 @@
       "exceptDefault": "Sauf la branche par défaut",
       "exceptDefaultHint": "Garder la branche par défaut visible en masquant les espaces de travail en veille",
       "hideDefault": "Masquer la branche par défaut",
+      "hideAgentTask": "Masquer la tâche sous les agents",
+      "hideAgentTaskHint": "N'afficher que le nom des agents, sans la ligne de tâche sous chacun",
       "titleActive": "Options des espaces de travail ({{filters}} actifs)",
       "titleFilters": "Options des espaces de travail ({{filters}})"
     },

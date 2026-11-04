@@ -28,6 +28,21 @@ describe("an agent row shows its team", () => {
   })
 })
 
+describe('the task line under an agent', () => {
+  it('shows the task, and not when the sidebar option hides it', async () => {
+    window.shellApi = {}
+    const { settings } = await import('../settings')
+    const w = mount(CompactAgentRow, { props: { row: row({ subline: 'Fix the login' }) } })
+    expect(w.get('.car-subline').text()).toBe('Fix the login')
+    settings.hideAgentTaskLine = true
+    await w.vm.$nextTick()
+    expect(w.find('.car-subline').exists()).toBe(false)
+    settings.hideAgentTaskLine = false
+    await w.vm.$nextTick()
+    expect(w.find('.car-subline').exists()).toBe(true)
+  })
+})
+
 describe('an agent row shows its model', () => {
   it('no model on the row (it is in the hover card)', () => {
     window.shellApi = {}

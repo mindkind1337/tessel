@@ -208,6 +208,8 @@ export const DEFAULT_SETTINGS = Object.freeze({
   showSleepingWorkspaces: true,
   alwaysShowDefaultBranchWorkspace: true,
   hideDefaultBranchWorkspace: false,
+  // The sidebar's agent rows: the task (board card) line under each name.
+  hideAgentTaskLine: false,
   sidebarFilterRepoIds: [],
   sidebarCollapsedGroups: [],
   // Your own groups of projects in the sidebar: [{ id, name, projectIds }].
