@@ -381,6 +381,8 @@ describe('persistent sessions (tmux)', () => {
   const OPTS =
     `set-option -g status off \\; set-option -g history-limit 50000 \\; set-option -g default-terminal screen-256color \\; ` +
     `set-option -g escape-time 10 \\; set-option -g focus-events on \\; set-option -g mouse on \\; set-option -g set-clipboard on \\; ` +
+    `bind-key -n WheelUpPane if-shell -Ft= "#{mouse_any_flag}" "send-keys -M" "if-shell -Ft= '#{alternate_on}' 'send-keys PPage' 'copy-mode -e; send-keys -M'" \\; ` +
+    `bind-key -n WheelDownPane if-shell -Ft= "#{mouse_any_flag}" "send-keys -M" "if-shell -Ft= '#{alternate_on}' 'send-keys NPage' 'send-keys -M'" \\; ` +
     `set-option -ga terminal-overrides ',xterm-256color:RGB:Ms=\\E]52;%p1%s;%p2%s\\007'`
   const v34 = { major: 3, minor: 4 }
 

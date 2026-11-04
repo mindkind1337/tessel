@@ -2987,6 +2987,15 @@ kbd {
   min-width: 0;
 }
 
+/* The buttons are one piece: when the words take the first line, both go to
+   the second line together, at the right, instead of one under the other. */
+.exit-overlay > .exit-actions {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 10px;
+  margin-left: auto;
+}
+
 .exit-btn {
   height: 28px;
   padding: 0 12px;

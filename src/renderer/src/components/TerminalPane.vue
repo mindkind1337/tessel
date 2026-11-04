@@ -4819,8 +4819,10 @@ const paneMenuBindings = computed(() => ({
 
     <div v-if="node.failed" class="exit-overlay failed" @mousedown.stop>
       <span :title="node.failed">{{ t('pane.failed', "This terminal couldn't start.") }}</span>
-      <button class="exit-btn primary" @click="ctx.restartLeaf(node.id)">{{ t('pane.retry', 'Retry') }}</button>
-      <button class="exit-btn" @click="ctx.closeLeaf(node.id, { force: true })">{{ t('pane.close', 'Close pane') }}</button>
+      <span class="exit-actions">
+        <button class="exit-btn primary" @click="ctx.restartLeaf(node.id)">{{ t('pane.retry', 'Retry') }}</button>
+        <button class="exit-btn" @click="ctx.closeLeaf(node.id, { force: true })">{{ t('pane.close', 'Close pane') }}</button>
+      </span>
     </div>
 
     <div v-else-if="node.notConnected" class="exit-overlay remote-idle" data-test="remote-connect-overlay" @mousedown.stop>
@@ -4869,8 +4871,10 @@ const paneMenuBindings = computed(() => ({
 
     <div v-else-if="exited" class="exit-overlay" @mousedown.stop>
       <span>{{ exitedText() }}</span>
-      <button class="exit-btn primary" @click="ctx.restartLeaf(node.id)">{{ t('pane.restart', 'Restart') }}</button>
-      <button class="exit-btn" @click="ctx.closeLeaf(node.id, { force: true })">{{ t('pane.close', 'Close pane') }}</button>
+      <span class="exit-actions">
+        <button class="exit-btn primary" @click="ctx.restartLeaf(node.id)">{{ t('pane.restart', 'Restart') }}</button>
+        <button class="exit-btn" @click="ctx.closeLeaf(node.id, { force: true })">{{ t('pane.close', 'Close pane') }}</button>
+      </span>
     </div>
 
     <div v-if="dropping" class="drop-hint">{{ t('pane.dropHint', 'Drop to paste the file path') }}</div>

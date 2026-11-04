@@ -116,9 +116,15 @@ const tmuxBin = (bin) => (bin === OWN_TMUX ? OWN_TMUX : 'tmux')
 // every host and matches the pane's xterm-256color; true colour, a short
 // escape delay and focus events for the agents' TUIs; the mouse, so the
 // wheel scrolls the session's history (tmux keeps it, the pane's own
-// scrollback stays empty; a program in the alternate screen gets arrow keys
-// instead, as everywhere) while the arrow keys stay the shell's history, and
-// a selection made in tmux reaches the clipboard (set-clipboard, OSC 52);
+// scrollback stays empty) while the arrow keys stay the shell's history, and
+// a selection made in tmux reaches the clipboard (set-clipboard, OSC 52).
+// A program on the alternate screen that did not take the mouse gets
+// PageUp/PageDown per notch, not tmux's arrow keys: in Claude Code's
+// full-screen view the arrows walk the sent prompts and PgUp/PgDn scroll the
+// transcript (it says so itself: "Scroll wheel is sending arrow keys, use
+// PgUp/PgDn"); less and vim page as well. A program that took the mouse
+// (htop, vim with mouse on) gets the wheel itself (-M), and copy mode keeps
+// its own wheel (its key table, not this root one);
 // and, when tmux takes it (3.2+), no prefix key: a detach would end the pane
 // and its session.
 // Nothing here is interpolated unquoted: the name is sanitized, the inner
@@ -133,6 +139,8 @@ export function tmuxCommand(paneId, inner, { reattach = false, version = null, b
     'set-option -g focus-events on',
     'set-option -g mouse on',
     'set-option -g set-clipboard on',
+    `bind-key -n WheelUpPane if-shell -Ft= "#{mouse_any_flag}" "send-keys -M" "if-shell -Ft= '#{alternate_on}' 'send-keys PPage' 'copy-mode -e; send-keys -M'"`,
+    `bind-key -n WheelDownPane if-shell -Ft= "#{mouse_any_flag}" "send-keys -M" "if-shell -Ft= '#{alternate_on}' 'send-keys NPage' 'send-keys -M'"`,
     `set-option -ga terminal-overrides ',xterm-256color:RGB:Ms=\\E]52;%p1%s;%p2%s\\007'`,
     ...(atLeast(version, 3, 2) ? ['set-option -g prefix None'] : [])
   ]
