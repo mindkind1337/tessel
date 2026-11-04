@@ -302,7 +302,7 @@
   font-size: 12px;
   font-weight: 500;
 }
-.rh-field input {
+.rh-field input:not(.set-switch) {
   height: 32px;
   padding: 0 10px;
   border: 1px solid var(--border-strong);
@@ -312,7 +312,7 @@
   font: inherit;
   font-size: 13px;
 }
-.rh-field input:focus {
+.rh-field input:not(.set-switch):focus {
   border-color: var(--accent);
   outline: none;
 }
