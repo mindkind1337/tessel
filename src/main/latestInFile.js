@@ -3,8 +3,10 @@
 // it (a fixed tail misses it), so the file is read back in chunks until one
 // shows. Remembered per file: a grown file is read only from where the last
 // read stopped (its last whole line), and keeps what it said when the new part
-// names nothing. Used for Codex's rollouts, Copilot's events and Gemini's and
-// Qwen's chats (agentModel.js, agentModelSources.js).
+// names nothing. The same file means the same inode and modification time
+// (a file replaced by another of the same size, or rewritten in place, is read
+// again from the start). Used for Codex's rollouts, Copilot's events and
+// Gemini's and Qwen's chats (agentModel.js, agentModelSources.js).
 import fs from 'fs'
 
 const CHUNK = 512 * 1024
@@ -18,14 +20,21 @@ const SEEN_MAX = 200
 // default the newest part that names something wins.
 // -> (file) => what the file's newest lines name, or null.
 export function latestInFile(parse, { chunk = CHUNK, maxScan = MAX_SCAN, merge = (n, o) => n || o, done = (f) => !!f, finish = (f) => f } = {}) {
-  const seen = new Map() // file -> { size, lineEnd, found }
+  const seen = new Map() // file -> { size, ino, mtimeMs, lineEnd, found }
+  // The same file as last time: same inode (0 where the system gives none)
+  // and, unless it grew, the same modification time.
+  const sameFile = (prev, st) => !!prev && prev.ino === (st.ino || 0) && (prev.size < st.size || prev.mtimeMs === st.mtimeMs)
   const out = (found) => (found ? finish(found) : null)
   return function read(file) {
     let fd
     try {
       fd = fs.openSync(file, 'r')
-      const size = fs.fstatSync(fd).size
-      const prev = seen.get(file)
+      const st = fs.fstatSync(fd)
+      const size = st.size
+      const remembered = seen.get(file)
+      // Another file at this path (replaced, same size or not), or rewritten
+      // in place: what was read before says nothing about it.
+      const prev = sameFile(remembered, st) ? remembered : null
       if (prev && prev.size === size) return out(prev.found)
       // Shrank (rewritten): read it all again.
       const floor = prev && prev.size < size ? prev.lineEnd : 0
@@ -61,7 +70,7 @@ export function latestInFile(parse, { chunk = CHUNK, maxScan = MAX_SCAN, merge =
       // The part read before still says what the new part does not.
       if (prev && floor && !(found && done(found))) found = merge(found, prev.found)
       seen.delete(file)
-      seen.set(file, { size, lineEnd, found })
+      seen.set(file, { size, ino: st.ino || 0, mtimeMs: st.mtimeMs, lineEnd, found })
       while (seen.size > SEEN_MAX) seen.delete(seen.keys().next().value)
       return out(found)
     } catch {
