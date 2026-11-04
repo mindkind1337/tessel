@@ -23,27 +23,20 @@ const VERSION_LINE = '{"name":"tessel-host","version":"0.1.1","arch":"x86_64","p
 const ok = (out: string): RunResult => ({ rc: 0, out: Buffer.from(out), err: '' })
 const fail = (rc: number): RunResult => ({ rc, out: Buffer.alloc(0), err: '' })
 
-/** A fake /bin/sh exec channel: the connect line starts a fake daemon on the channel. */
+/** A fake exec channel running the connect command: a fake daemon answers on it. */
 function shellChannel(epoch: string): { channel: ShellChannel; hosts: FakeHost[] } {
   const hosts: FakeHost[] = []
   const [daemonEnd, hostEnd] = pipePair()
   const listeners: Array<(chunk: Buffer) => void> = []
   const exits: Array<(code: number | null, signal: string | null) => void> = []
-  let started = false
   let killed = false
   daemonEnd.onData((chunk) => listeners.forEach((l) => l(chunk)))
   daemonEnd.onEnd(() => exits.forEach((l) => l(0, null)))
+  hosts.push(new FakeHost(hostEnd, epoch, () => ({ error: 'unsupported_kind' })))
   const channel: ShellChannel = {
     stdout: { on: (_e, l) => listeners.push(l) },
     stdin: {
       write(data) {
-        if (!started) {
-          const line = String(data)
-          if (!line.endsWith(' connect --stdio\n') || !line.startsWith('exec "$HOME/.tessel-server/host/bin/tessel-host-0.1.1-x86_64"')) throw new Error(`bad connect line ${line}`)
-          started = true
-          hosts.push(new FakeHost(hostEnd, epoch, () => ({ error: 'unsupported_kind' })))
-          return true
-        }
         daemonEnd.write(Buffer.isBuffer(data) ? data : Buffer.from(data))
         return true
       },
@@ -58,19 +51,22 @@ function shellChannel(epoch: string): { channel: ShellChannel; hosts: FakeHost[]
   return { channel, hosts, get killed() { return killed } } as never
 }
 
-function deps(script: (command: string, upload?: Buffer) => RunResult | Promise<RunResult>, extra: Partial<DaemonDeps> = {}): { deps: DaemonDeps; ran: Array<{ command: string; upload?: Buffer }>; channels: ReturnType<typeof shellChannel>[] } {
+function deps(script: (command: string, upload?: Buffer) => RunResult | Promise<RunResult>, extra: Partial<DaemonDeps> = {}): { deps: DaemonDeps; ran: Array<{ command: string; upload?: Buffer }>; channels: ReturnType<typeof shellChannel>[]; connects: string[] } {
   const ran: Array<{ command: string; upload?: Buffer }> = []
   const channels: ReturnType<typeof shellChannel>[] = []
+  const connects: string[] = []
   return {
     ran,
     channels,
+    connects,
     deps: {
       bundle: bundle(),
       run: async (_hostId, command, { upload }) => {
         ran.push(upload ? { command, upload } : { command })
         return script(command, upload)
       },
-      channel: async () => {
+      channel: async (_hostId, connect) => {
+        connects.push(connect)
         const c = shellChannel('a'.repeat(32))
         channels.push(c)
         return c.channel
@@ -91,6 +87,7 @@ describe('host daemons', () => {
     if (!status.ok) throw new Error(`not ok: ${status.reason} ${status.detail ?? ''}`)
     expect(status.source).toBe('had')
     expect(d.ran.map((r) => r.command)).toEqual(['uname -m', VERSION_CMD])
+    expect(d.connects).toEqual(['"$HOME/.tessel-server/host/bin/tessel-host-0.1.1-x86_64" connect --stdio'])
     expect(d.channels[0]!.hosts[0]!.seen.map((s) => s.kind)).toEqual(['hello', 'host.info'])
     expect(d.channels[0]!.hosts[0]!.seen[0]!.body).toMatchObject({ capabilities: ['tree', 'git'] })
     expect(daemons.client('h1')).toBe(status.client)
@@ -237,7 +234,73 @@ describe('host daemons', () => {
     daemons.close('h7')
   })
 
-  it('pipeFromShellChannel: the connect line first, then bytes both ways, closed with the channel', () => {
+  it('a channel that ends by itself says why: the bridge’s exit code and its last words reach the failure', async () => {
+    const d = deps((command) => (command === 'uname -m' ? ok('x86_64\n') : command === VERSION_CMD ? ok(VERSION_LINE) : fail(1)), {
+      channel: async () => {
+        const errs: Array<(chunk: Buffer) => void> = []
+        const exits: Array<(code: number | null, signal: string | null) => void> = []
+        const channel: ShellChannel = {
+          stdout: { on: () => {} },
+          stderr: { on: (_e, l) => errs.push(l) },
+          stdin: { write: () => true, end: () => {} },
+          on: (_e, l) => exits.push(l),
+          kill: () => {}
+        }
+        setTimeout(() => {
+          errs.forEach((l) => l(Buffer.from('tessel-host: the host daemon did not start\n')))
+          exits.forEach((l) => l(1, null))
+        }, 10)
+        return channel
+      }
+    })
+    const daemons = createHostDaemons(d.deps)
+    const status = await daemons.ensure('h9')
+    expect(status).toEqual({ ok: false, reason: 'connect-failed', detail: 'connection_lost: exit 1: tessel-host: the host daemon did not start' })
+    daemons.close('h9')
+  })
+
+  it('a transient failure is tried again by itself after RETRY_MS while the host stays connected; close cancels it', async () => {
+    const timeouts: Array<{ fn: () => void; ms: number }> = []
+    const timers = {
+      setTimeout: ((fn: () => void, ms: number) => {
+        timeouts.push({ fn, ms })
+        return timeouts.length as unknown as ReturnType<typeof setTimeout>
+      }) as typeof setTimeout,
+      clearTimeout: ((id: unknown) => {
+        const i = Number(id) - 1
+        if (timeouts[i]) timeouts[i] = { fn: () => {}, ms: -1 }
+      }) as typeof clearTimeout
+    }
+    let t = 5_000_000
+    let armv = 0
+    const d = deps(
+      (command) => {
+        if (command === 'uname -m') return ok('x86_64\n')
+        if (command === VERSION_CMD) return fail(127)
+        if (command.startsWith('umask 077 && ')) {
+          armv++
+          return fail(1)
+        }
+        if (command.startsWith('rm -f ')) return ok('')
+        throw new Error(`unexpected ${command}`)
+      },
+      { now: () => t, timers }
+    )
+    const daemons = createHostDaemons(d.deps)
+    expect((await daemons.ensure('h10')).ok).toBe(false)
+    expect(timeouts.filter((x) => x.ms === RETRY_MS)).toHaveLength(1)
+    t += RETRY_MS + 1
+    timeouts[0]!.fn()
+    await new Promise((r) => setTimeout(r, 20))
+    expect(armv).toBe(2)
+    // The second failure armed another retry; close cancels it.
+    expect(timeouts.filter((x) => x.ms === RETRY_MS)).toHaveLength(2)
+    daemons.close('h10')
+    expect(timeouts.filter((x) => x.ms === RETRY_MS)).toHaveLength(1)
+    expect(timeouts[timeouts.length - 1]!.ms).toBe(-1)
+  })
+
+  it('pipeFromShellChannel: bytes both ways, nothing written by itself, closed with the channel', () => {
     const written: string[] = []
     const out: Array<(chunk: Buffer) => void> = []
     let killed = false
@@ -247,14 +310,14 @@ describe('host daemons', () => {
       on: () => {},
       kill: () => (killed = true)
     }
-    const pipe = pipeFromShellChannel(channel, '"$HOME/x" connect --stdio')
-    expect(written).toEqual(['exec "$HOME/x" connect --stdio\n'])
+    const pipe = pipeFromShellChannel(channel)
+    expect(written).toEqual([])
     const got: Buffer[] = []
     pipe.onData((c) => got.push(c))
     out[0]!(Buffer.from('hi'))
     expect(got.map(String)).toEqual(['hi'])
     pipe.write(Buffer.from('yo'))
-    expect(written[1]).toBe('yo')
+    expect(written[0]).toBe('yo')
     let ended = false
     pipe.onEnd(() => (ended = true))
     pipe.close()

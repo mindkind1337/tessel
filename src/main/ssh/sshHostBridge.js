@@ -9,7 +9,8 @@
 //   app -> host
 //     create { ..., ssh: { hostId, spec, remotePath?, texts, persistent? } }   a remote terminal
 //                                     (persistent: inside a tmux session, see createPty)
-//     ssh-exec { ch, hostId, spec, onlyLive?, keep? }   the Files session: `exec /bin/sh`
+//     ssh-exec { ch, hostId, spec, onlyLive?, keep?, command? }   the Files session: `exec /bin/sh`
+//                                     (keep + command: tessel-host's connect command, CONNECT_COMMAND only)
 //                                     (the only command an exec channel may run);
 //                                     onlyLive: on a live connection only, never a
 //                                     new connection or sign-in (a Files lane)
@@ -50,6 +51,13 @@ export const REMOTE_AGENT_FEATURE = 1
 // connection, never a new connection or a question; it yields its slot to
 // a terminal. Main opens lanes only on a host that says it.
 export const ONLY_LIVE_FEATURE = 1
+// ssh-exec keep + command (host/daemon.ts): the channel runs tessel-host's
+// connect command itself, as the command of the exec channel. Through
+// `exec /bin/sh` and its stdin, dash reads ahead and swallows the bytes that
+// follow the exec line (the client's hello), bash does not: so no shell in
+// between. Only that one command shape is ever accepted (CONNECT_COMMAND).
+export const KEEP_EXEC_FEATURE = 1
+export const CONNECT_COMMAND = /^"\$HOME\/\.tessel-server\/host\/bin\/tessel-host-[a-z0-9._-]{1,32}-(?:x86_64|aarch64)" connect --stdio$/
 export const CREDENTIAL_TIMEOUT_MS = 120_000
 export const FILES_COMMAND = 'exec /bin/sh'
 export const RECONNECT_DELAYS_MS = [1000, 2000, 5000, 5000, 10000, 10000, 10000, 30000, 30000]
@@ -326,6 +334,11 @@ export function createSshHostBridge({
     }
   }
 
+  // What an exec channel runs: the Files session's shell, or, for a kept
+  // channel, tessel-host's connect command alone (any other string: the shell).
+  function execCommand(msg) {
+    return msg.keep === true && typeof msg.command === 'string' && msg.command.length <= 200 && CONNECT_COMMAND.test(msg.command) ? msg.command : FILES_COMMAND
+  }
   function openExec(sock, msg) {
     const ch = typeof msg.ch === 'string' && ID_RE.test(msg.ch) ? msg.ch : null
     const hostId = cleanStr(msg.hostId, 80)
@@ -334,7 +347,7 @@ export function createSshHostBridge({
     const c = { sock, stream: null, release: null, closed: false }
     chans.set(ch, c)
     manager
-      .open(hostId, spec, 'exec', { command: FILES_COMMAND, onlyLive: msg.onlyLive === true, keep: msg.keep === true })
+      .open(hostId, spec, 'exec', { command: execCommand(msg), onlyLive: msg.onlyLive === true, keep: msg.keep === true })
       .then(({ stream, release }) => {
         if (c.closed || sock.destroyed) {
           try {
@@ -831,5 +844,5 @@ export function createSshHostBridge({
     manager.closeAll()
   }
 
-  return { handle, createPty, sockClosed, shutdown, manager, tunnel, hello: () => ({ ssh: SSH_FEATURE, remoteAgent: REMOTE_AGENT_FEATURE, onlyLive: ONLY_LIVE_FEATURE }) }
+  return { handle, createPty, sockClosed, shutdown, manager, tunnel, hello: () => ({ ssh: SSH_FEATURE, remoteAgent: REMOTE_AGENT_FEATURE, onlyLive: ONLY_LIVE_FEATURE, keepExec: KEEP_EXEC_FEATURE }) }
 }

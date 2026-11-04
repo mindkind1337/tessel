@@ -8,7 +8,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import fs from 'fs'
 import os from 'os'
 import { join } from 'path'
-import { createSshHostBridge, validateSpec, FILES_COMMAND, TMUX_PROBE, OWN_TMUX, tmuxCommand, tmuxKillCommand, tmuxSessionName, parseTmuxVersion, parseTmuxProbe } from '../ssh/sshHostBridge'
+import { createSshHostBridge, validateSpec, FILES_COMMAND, CONNECT_COMMAND, TMUX_PROBE, OWN_TMUX, tmuxCommand, tmuxKillCommand, tmuxSessionName, parseTmuxVersion, parseTmuxProbe } from '../ssh/sshHostBridge'
 import ssh2 from 'ssh2'
 import { startSshServer, makeKey } from './fixtures/sshServer'
 
@@ -141,6 +141,26 @@ function terminal(extra = {}) {
 }
 
 describe('one connection per host', () => {
+  it('a kept channel runs tessel-host’s connect command itself (keep + command); any other string gets the Files shell', async () => {
+    const sock = makeBridge()
+    const { out } = terminal()
+    await until(() => out.text.includes('welcome'))
+    const connect = '"$HOME/.tessel-server/host/bin/tessel-host-0.1.1-x86_64" connect --stdio'
+    bridge.handle(sock, { op: 'ssh-exec', ch: 'k1', hostId: 'h1', spec: spec(), onlyLive: true, keep: true, command: connect }, () => {})
+    await until(() => sock.msgs().some((m) => m.op === 'ssh-open' && m.ch === 'k1'))
+    bridge.handle(sock, { op: 'ssh-exec', ch: 'k2', hostId: 'h1', spec: spec(), onlyLive: true, keep: true, command: 'rm -rf / connect --stdio' }, () => {})
+    await until(() => sock.msgs().some((m) => m.op === 'ssh-open' && m.ch === 'k2'))
+    // Without keep, no command is ever taken.
+    bridge.handle(sock, { op: 'ssh-exec', ch: 'k3', hostId: 'h1', spec: spec(), onlyLive: true, command: connect }, () => {})
+    await until(() => sock.msgs().some((m) => m.op === 'ssh-open' && m.ch === 'k3'))
+    const execs = server.events.channels.filter((c) => c.kind === 'exec').map((c) => c.command)
+    expect(execs).toEqual([connect, FILES_COMMAND, FILES_COMMAND])
+    expect(CONNECT_COMMAND.test('"$HOME/.tessel-server/host/bin/tessel-host-0.1.1-aarch64" connect --stdio')).toBe(true)
+    expect(CONNECT_COMMAND.test('"$HOME/.tessel-server/host/bin/tessel-host-0.1.1-x86_64" connect --stdio; id')).toBe(false)
+    expect(CONNECT_COMMAND.test('"$HOME/../x/tessel-host-0.1.1-x86_64" connect --stdio')).toBe(false)
+    expect(bridge.hello().keepExec).toBe(1)
+  }, 30000)
+
   it('a terminal, the Files session and SFTP share it; one password question', async () => {
     const sock = makeBridge()
     const { pty, out } = terminal()

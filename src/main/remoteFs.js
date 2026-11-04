@@ -451,14 +451,16 @@ export function createRemoteFs({
         res && res.skipped ? { error: 'not connected', code: 'not-connected' } : res // i18n-ignore internal
       ),
     // A channel on the live connection only, on a terminal host that keeps
-    // that promise (onlyLive), and one that keeps its slot (keep).
-    channel: async (hostId) => {
+    // that promise (onlyLive), one that keeps its slot (keep) and runs the
+    // daemon's connect command itself (keepExec: no shell in between).
+    channel: async (hostId, command) => {
       const target = ssh ? hosts.get(hostId) : null
       if (!target) return null
       if (typeof ssh.onlyLiveSupported !== 'function' || !ssh.onlyLiveSupported()) return null
+      if (typeof ssh.keepExecSupported !== 'function' || !ssh.keepExecSupported()) return null
       const mode = await ssh.modeFor(target)
       if (mode.mode !== 'ssh2' || !sharedNow(hostId)) return null
-      return ssh.spawnFor(hostId, mode.spec, { onlyLive: true, keep: true })()
+      return ssh.spawnFor(hostId, mode.spec, { onlyLive: true, keep: true, command })()
     },
     connected: (hostId) => sharedNow(hostId),
     log: (text) => warn(text),

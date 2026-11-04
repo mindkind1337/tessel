@@ -24,6 +24,8 @@ export type RunResult = { rc: number; out: Buffer; err: string } | { error: stri
 /** A child-process-like object over an exec channel running /bin/sh (ssh/sshRemote.js ChannelChild). */
 export interface ShellChannel {
   stdout: { on(event: 'data', listener: (chunk: Buffer) => void): unknown }
+  /** What the shell or the daemon's bridge printed (its own fixed sentences): kept for the failure's detail. */
+  stderr?: { on(event: 'data', listener: (chunk: Buffer) => void): unknown }
   stdin: { write(data: Buffer | string): boolean; end(): void }
   on(event: 'exit', listener: (code: number | null, signal: string | null) => void): unknown
   kill(): unknown
@@ -34,20 +36,22 @@ export interface DaemonDeps {
   bundle: BundledHost | null
   /** Runs one plan command on the host (a signed-in session), with bytes on its standard input when given. */
   run(hostId: string, command: string, opts: { upload?: Buffer; timeoutMs: number }): Promise<RunResult>
-  /** A fresh /bin/sh exec channel on the host's live connection (null: none to be had). */
-  channel(hostId: string): Promise<ShellChannel | null>
+  /** A fresh exec channel on the host's live connection running `connect` (the plan's connect command; null: none to be had). */
+  channel(hostId: string, connect: string): Promise<ShellChannel | null>
   /** Whether the host's connection is signed in now (nothing is asked for the daemon). */
   connected(hostId: string): boolean
   log?: (text: string) => void
   now?: () => number
+  timers?: { setTimeout: typeof setTimeout; clearTimeout: typeof clearTimeout }
 }
 
 export type DaemonStatus =
   | { ok: true; client: Client; source: 'had' | 'installed'; version: string }
   | { ok: false; reason: 'no-bundle' | 'not-connected' | 'unsupported' | 'checksum' | 'install-failed' | 'connect-failed' | 'failed'; detail?: string }
 
-/** A failed install or connection is not tried again sooner than this. */
+/** A failed install or connection is tried again after this, by itself while the host stays connected. */
 export const RETRY_MS = 60_000
+const STDERR_KEPT = 2048
 const RUN_MS = 60_000
 const UPLOAD_MS = 180_000
 /** Reasons that hold for the app run (the same tomorrow). */
@@ -62,20 +66,28 @@ interface HostState {
   settled: DaemonStatus | null
   running: Promise<DaemonStatus> | null
   lastFailure: { at: number; status: DaemonStatus } | null
+  retry: ReturnType<typeof setTimeout> | null
 }
 
-/** A link's pipe over a shell channel that will run the daemon: the connect command goes in first. */
-export function pipeFromShellChannel(child: ShellChannel, connect: string): Pipe {
+/** A link's pipe over an exec channel running the daemon's connect command. */
+export function pipeFromShellChannel(child: ShellChannel): Pipe {
   let ended = false
   const ends: Array<(error?: Error) => void> = []
-  const end = (): void => {
+  let said = ''
+  child.stderr?.on('data', (chunk) => {
+    said = (said + chunk.toString('utf8')).slice(-STDERR_KEPT)
+  })
+  const end = (error?: Error): void => {
     if (ended) return
     ended = true
-    for (const l of ends.splice(0)) l()
+    for (const l of ends.splice(0)) l(error)
   }
-  child.on('exit', end)
-  // The shell reads its commands from the channel: this one replaces it with the daemon.
-  child.stdin.write(`exec ${connect}\n`)
+  // The channel ended by itself: the bridge's exit and its last words say why
+  // (the daemon did not start, a refused socket).
+  child.on('exit', (code, signal) => {
+    const words = said.replace(/\s+/g, ' ').trim().slice(0, 300)
+    end(new Error(`exit ${code ?? signal ?? '?'}${words ? `: ${words}` : ''}`))
+  })
   return {
     onData: (listener) => void child.stdout.on('data', listener),
     onEnd: (listener) => (ended ? listener() : void ends.push(listener)),
@@ -96,11 +108,12 @@ export function pipeFromShellChannel(child: ShellChannel, connect: string): Pipe
 export function createHostDaemons(deps: DaemonDeps) {
   const log = deps.log ?? (() => {})
   const now = deps.now ?? (() => Date.now())
+  const timers = deps.timers ?? { setTimeout, clearTimeout }
   const hosts = new Map<string, HostState>()
   const state = (hostId: string): HostState => {
     let s = hosts.get(hostId)
     if (!s) {
-      s = { arch: null, generation: 0, client: null, settled: null, running: null, lastFailure: null }
+      s = { arch: null, generation: 0, client: null, settled: null, running: null, lastFailure: null, retry: null }
       hosts.set(hostId, s)
     }
     return s
@@ -168,9 +181,9 @@ export function createHostDaemons(deps: DaemonDeps) {
     }
     const connect = fixed.connect
     const connector = async (): Promise<Pipe> => {
-      const child = await deps.channel(hostId)
+      const child = await deps.channel(hostId, connect)
       if (!child) throw new Error('no channel')
-      return pipeFromShellChannel(child, connect)
+      return pipeFromShellChannel(child)
     }
     if (gone()) return failed('not-connected')
     let client: Client
@@ -205,7 +218,16 @@ export function createHostDaemons(deps: DaemonDeps) {
         s.running = null
         if (!status.ok) {
           if (LASTING.has(status.reason)) s.settled = status
-          else if (status.reason !== 'not-connected') s.lastFailure = { at: now(), status }
+          else if (status.reason !== 'not-connected') {
+            s.lastFailure = { at: now(), status }
+            // Tried again by itself (a daemon slow to start, a link cut during the
+            // install): nothing else would ask while the host stays connected.
+            if (s.retry) timers.clearTimeout(s.retry)
+            s.retry = timers.setTimeout(() => {
+              s.retry = null
+              if (deps.connected(hostId)) void ensure(hostId)
+            }, RETRY_MS)
+          }
           if (status.reason !== 'not-connected') log(`tessel-host on ${hostId}: ${status.reason}${status.detail ? ` (${status.detail})` : ''}`)
         }
         return status
@@ -233,6 +255,10 @@ export function createHostDaemons(deps: DaemonDeps) {
     const s = hosts.get(hostId)
     if (!s) return
     s.generation++
+    if (s.retry) {
+      timers.clearTimeout(s.retry)
+      s.retry = null
+    }
     const c = s.client
     s.client = null
     c?.close()

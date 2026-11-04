@@ -273,15 +273,17 @@ export function createSshRemote({ host, hosts, send = () => {}, log = null, t, s
   // `exec /bin/sh` on the host's connection. onlyLive: only on a connection
   // signed in already, never a new one (remoteFs.js lanes: nothing is asked).
   // keep (with onlyLive): the channel keeps its slot, never given to a
-  // terminal (tessel-host's connection, host/daemon.ts).
-  function spawnFor(hostId, spec, { onlyLive = false, keep = false } = {}) {
+  // terminal (tessel-host's connection, host/daemon.ts); command: what that
+  // channel runs instead of the Files shell (the daemon's connect command;
+  // the terminal host accepts that one shape only).
+  function spawnFor(hostId, spec, { onlyLive = false, keep = false, command = null } = {}) {
     return () => {
       const ch = crypto.randomBytes(12).toString('hex')
       const child = new ChannelChild((op, body) => host.send(op, { ch, ...body }))
       child.hostId = hostId
       chans.set(ch, child)
       host
-        .request('ssh-exec', { ch, hostId, spec, ...(onlyLive ? { onlyLive: true } : {}), ...(keep ? { keep: true } : {}) })
+        .request('ssh-exec', { ch, hostId, spec, ...(onlyLive ? { onlyLive: true } : {}), ...(keep ? { keep: true } : {}), ...(keep && command ? { command } : {}) })
         .then((res) => {
           if (!res || !res.ok) throw new Error('refused') // i18n-ignore internal
         })
@@ -339,5 +341,8 @@ export function createSshRemote({ host, hosts, send = () => {}, log = null, t, s
   // terminal host started by an older Tessel does not (remoteFs.js opens no
   // lane on it).
   const onlyLiveSupported = () => !!(host.features && host.features.onlyLive)
-  return { modeFor, terminalRequest, spawnFor, onlyLiveSupported, testConnection, disconnect, submit, isPane, onEvent, onConnected, onLost, errorText, clearCache: () => resolve.clear && resolve.clear() }
+  // Whether the terminal host runs a kept channel's own command (ssh-exec
+  // keep + command): an older one would run the Files shell instead.
+  const keepExecSupported = () => !!(host.features && host.features.keepExec)
+  return { modeFor, terminalRequest, spawnFor, onlyLiveSupported, keepExecSupported, testConnection, disconnect, submit, isPane, onEvent, onConnected, onLost, errorText, clearCache: () => resolve.clear && resolve.clear() }
 }
