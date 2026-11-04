@@ -1,11 +1,12 @@
-// The Files panel of a remote project over tessel-host (remoteFs.js uses
-// this when the host's daemon is there, daemon.ts): the folder listings come
-// from the daemon's file tree, which keeps them current and sends what
-// changed (no more `find -newer` every few seconds), and the explorer's git
-// letters come from the daemon's status cache, kept current from file system
-// events (no more `git status` over the whole tree on each change). The
-// answers keep the shapes remoteFs.js gives the window, so the window does
-// not know which path a host uses.
+// The Files panel and the Changes tab of a remote project over tessel-host
+// (remoteFs.js uses this when the host's daemon is there, daemon.ts): the
+// folder listings come from the daemon's file tree, which keeps them current
+// and sends what changed (no more `find -newer` every few seconds), and the
+// git status comes from the daemon's status cache, kept current from file
+// system events (no more `git status` over the whole tree on each change):
+// the explorer's letters, and the porcelain text the Changes tab's reader
+// expects, rebuilt from the cache. The answers keep the shapes remoteFs.js
+// gives the window, so the window does not know which path a host uses.
 import { type HostDaemons } from './daemon'
 import { type GitChanged, type GitEntry, Git } from './git'
 import { type RelPath, labelOf, nameOf, pathKey, relPathText } from './paths'
@@ -63,23 +64,43 @@ interface WatchedRoot {
   rootPath: () => string | null
   tree: Tree | null
   opening: Promise<Tree | null> | null
-  git: GitWatch | null
-  gitOpening: Promise<GitWatch | null> | null
 }
 
+/** One repository's status, followed from the daemon (the Files letters and the Changes tab share it). */
 interface GitWatch {
+  /** hostId + the repository's top: one per repository, whatever root asked. */
+  key: string
+  hostId: string
+  /** The window's roots this status is shown under (each told when it changes). */
+  roots: Set<string>
   git: Git
-  /** The repository's top on the host, and the project folder's real path (for the window's paths). */
+  /** The repository's top on the host. */
   top: string
-  realRoot: string
-  files: Map<string, string> // rel path below the top (text) -> letter
-  dirs: Set<string> // untracked directories (rel path text)
+  files: Map<string, GitEntry> // rel path below the top (text) -> its entry
   stale: boolean
   truncated: boolean
   revision: number
+  /** The first whole status (a reset) arrived: before it the cache says nothing. */
+  ready: boolean
+  waiters: Array<() => void>
+  usedAt: number
+  branch: GitChanged['state']['branch'] | undefined
+  /** A git command that changes the repository ran on the host (stage, commit…) while the cache showed this revision: the next status waits for a newer, complete one. */
+  writeSeen: number | null
 }
 
 const CONTROL = /[\u0000-\u001f\u007f]/
+/** Repositories followed at once (the least recently asked one is let go beyond). */
+const MAX_GITS = 4
+/** How long the Changes tab waits for a repository's first status from the daemon before the old path serves it. */
+const FIRST_STATUS_MS = 2000
+/** After a stage or a commit, how long the next status waits for the daemon's complete re-read before the old path serves it. */
+const AFTER_WRITE_MS = 4000
+/** A repository the daemon refused (not found, outside its roots): not asked again sooner than this. */
+const REFUSED_MS = 60_000
+/** A porcelain record of the daemon is git's own line head: its kind and field count, or it is not shown. */
+const RECORD_FIELDS: Record<string, number> = { '1': 8, '2': 9, u: 10, '?': 1 }
+const recordOk = (record: string): boolean => okText(record) && RECORD_FIELDS[record[0] ?? ''] === record.split(' ').length
 
 /** The explorer's letter for a porcelain v2 entry (as remoteFs.js porcelainLetters gives for v1). */
 export function letterOf(entry: Pick<GitEntry, 'xy' | 'kind'>): string {
@@ -96,10 +117,50 @@ export function letterOf(entry: Pick<GitEntry, 'xy' | 'kind'>): string {
 
 const okText = (rel: string): boolean => !!rel && !CONTROL.test(rel) && !rel.includes('\\')
 
+/**
+ * `git status --porcelain=v2 -z` (with `--branch` headers when asked) rebuilt
+ * from the daemon's cache: each entry's porcelain record (kept as git printed
+ * it, without the path) followed by its path, a rename's original path as the
+ * next record, an untracked directory as `dir/`. What sourceControl.js's
+ * parseStatusV2 reads.
+ */
+export function porcelainV2(entries: Iterable<[string, GitEntry]>, branch: GitChanged['state']['branch'] | undefined, withBranch: boolean): string | null {
+  const out: string[] = []
+  if (withBranch) {
+    // The branch as the daemon read it; a value that is not plain text is
+    // not shown at all (the caller reads git itself).
+    for (const v of [branch?.oid, branch?.head, branch?.upstream]) if (v !== undefined && !okText(v)) return null
+    out.push(`# branch.oid ${branch?.oid || '(initial)'}`)
+    out.push(`# branch.head ${branch?.head || '(detached)'}`)
+    if (branch?.upstream) {
+      out.push(`# branch.upstream ${branch.upstream}`)
+      // Only when git gave them (an upstream that is gone has none).
+      if (typeof branch.ahead === 'number' && typeof branch.behind === 'number') out.push(`# branch.ab +${branch.ahead} -${branch.behind}`)
+    }
+  }
+  for (const [rel, entry] of entries) {
+    if (!okText(rel) || !recordOk(entry.record)) continue
+    const path = entry.untracked_dir ? `${rel}/` : rel
+    if (entry.kind === 'renamed' || entry.record.startsWith('2 ')) {
+      // A rename without a usable original path is not shown as a rename from itself: left out.
+      const orig = entry.orig_path ? relPathText(entry.orig_path) : ''
+      if (!okText(orig)) continue
+      out.push(`${entry.record} ${path}`, orig)
+      continue
+    }
+    out.push(`${entry.record} ${path}`)
+  }
+  return out.length ? out.join('\0') + '\0' : ''
+}
+
 export function createRemoteExplorer(deps: RemoteExplorerDeps) {
   const log = deps.log ?? (() => {})
   const now = deps.now ?? (() => Date.now())
   const watched = new Map<string, WatchedRoot>() // virtual root -> state
+  const gits = new Map<string, GitWatch>() // hostId\nrepository top -> status
+  const aliases = new Map<string, string>() // hostId\nroot path asked -> the key of its repository
+  const gitOpenings = new Map<string, Promise<GitWatch | null>>()
+  const refused = new Map<string, number>() // hostId\nroot path -> time before which it is not asked again
 
   // --- The file tree -----------------------------------------------------------------
   function onTreeEvent(w: WatchedRoot, event: TreeEvent): void {
@@ -161,14 +222,12 @@ export function createRemoteExplorer(deps: RemoteExplorerDeps) {
     if (watched.has(virtual)) return
     unwatchAll()
     const path = typeof rootPath === 'function' ? rootPath : () => rootPath
-    watched.set(virtual, { virtual, hostId, rootPath: path, tree: null, opening: null, git: null, gitOpening: null })
+    watched.set(virtual, { virtual, hostId, rootPath: path, tree: null, opening: null })
   }
 
+  /** The Files tab shows no project: its tree goes (the repositories followed stay for the Changes tab). */
   function unwatchAll(): void {
-    for (const w of watched.values()) {
-      void w.tree?.end()
-      void w.git?.git.end()
-    }
+    for (const w of watched.values()) void w.tree?.end()
     watched.clear()
   }
 
@@ -210,52 +269,132 @@ export function createRemoteExplorer(deps: RemoteExplorerDeps) {
   }
 
   // --- Git status ------------------------------------------------------------------------
+  function wake(g: GitWatch): void {
+    for (const w of g.waiters.splice(0)) w()
+  }
+
   function applyGit(g: GitWatch, change: GitChanged): void {
-    if (change.reset) {
-      g.files.clear()
-      g.dirs.clear()
-    }
-    for (const p of change.removed) {
-      const rel = relPathText(p)
-      g.files.delete(rel)
-      g.dirs.delete(rel)
-    }
+    if (change.reset) g.files.clear()
+    for (const p of change.removed) g.files.delete(relPathText(p))
     for (const entry of change.upsert) {
       const rel = relPathText(entry.path)
       if (!okText(rel)) continue
-      g.files.set(rel, letterOf(entry))
-      if (entry.untracked_dir) g.dirs.add(rel)
-      else g.dirs.delete(rel)
+      g.files.set(rel, entry)
     }
     g.stale = change.state.stale || !change.state.complete
     g.truncated = change.state.truncated
     g.revision = change.revision
+    g.branch = change.state.branch
+    // The whole status came (the daemon's first successful full read always
+    // resets; a failed or cut one sends an empty event, stale, that says
+    // nothing of the repository).
+    if (change.reset) g.ready = true
+    if (g.writeSeen !== null && g.revision > g.writeSeen && !g.stale) g.writeSeen = null
+    wake(g)
   }
 
-  async function openGit(w: WatchedRoot, realRoot: string): Promise<GitWatch | null> {
-    const client = deps.daemons.client(w.hostId)
-    const rootPath = w.rootPath()
-    if (!client || !rootPath) return null
+  function endGit(g: GitWatch): void {
+    gits.delete(g.key)
+    for (const [alias, key] of [...aliases]) if (key === g.key) aliases.delete(alias)
+    wake(g)
+    void g.git.end()
+  }
+
+  /** The least recently asked repository goes when too many are followed. */
+  function trimGits(): void {
+    while (gits.size > MAX_GITS) {
+      let oldest: GitWatch | null = null
+      for (const g of gits.values()) if (!oldest || g.usedAt < oldest.usedAt) oldest = g
+      if (!oldest) return
+      endGit(oldest)
+    }
+  }
+
+  async function openGit(hostId: string, rootPath: string, virtual: string): Promise<GitWatch | null> {
+    const client = deps.daemons.client(hostId)
+    if (!client || client.state.kind !== 'connected') return null
+    const asked = `${hostId}\n${rootPath}`
     const holder: { g: GitWatch | null } = { g: null }
+    let git: Git
     try {
-      const git = await Git.open(client, rootPath, [], (event) => {
-        if (watched.get(w.virtual) !== w || !holder.g) return
+      git = await Git.open(client, rootPath, [], (event) => {
+        const g = holder.g
+        if (!g || gits.get(g.key) !== g) return
         if (event.kind === 'changed') {
-          applyGit(holder.g, event.change)
-          deps.send('explorer:statusChanged', { root: w.virtual })
+          applyGit(g, event.change)
+          for (const root of g.roots) deps.send('explorer:statusChanged', { root })
+        } else if (event.kind === 'disconnected') {
+          // Until the session resumes and resets, what is shown may be old.
+          g.stale = true
         }
       })
-      if (watched.get(w.virtual) !== w) {
-        void git.end()
-        return null
-      }
-      holder.g = { git, top: git.opened.toplevel, realRoot, files: new Map(), dirs: new Set(), stale: true, truncated: false, revision: 0 }
-      w.git = holder.g
-      return holder.g
     } catch (e) {
-      if (!isConnectionLost(e)) log(`tessel-host git of ${w.virtual}: ${e instanceof Error ? e.message : String(e)}`)
+      if (!isConnectionLost(e)) {
+        // The daemon refused (not a repository it can serve): not asked again for a while.
+        refused.set(asked, now() + REFUSED_MS)
+        log(`tessel-host git of ${rootPath} on ${hostId}: ${e instanceof Error ? e.message : String(e)}`)
+      }
       return null
     }
+    if (deps.daemons.client(hostId) !== client) {
+      // The host closed while opening: never the host's.
+      void git.end()
+      return null
+    }
+    const key = `${hostId}\n${git.opened.toplevel}`
+    aliases.set(asked, key)
+    const same = gits.get(key)
+    if (same) {
+      // Another root of the same repository asked first: one status for both.
+      void git.end()
+      same.roots.add(virtual)
+      same.usedAt = now()
+      return same
+    }
+    holder.g = { key, hostId, roots: new Set([virtual]), git, top: git.opened.toplevel, files: new Map(), stale: true, truncated: false, revision: 0, ready: false, waiters: [], usedAt: now(), branch: undefined, writeSeen: null }
+    gits.set(key, holder.g)
+    trimGits()
+    return gits.get(key) === holder.g ? holder.g : null
+  }
+
+  /** The repository below `rootPath`, followed (opened on first use; null: no daemon for this host now, or it refused a moment ago). */
+  function gitOf(hostId: string, rootPath: string, virtual: string): Promise<GitWatch | null> {
+    const asked = `${hostId}\n${rootPath}`
+    const have = gits.get(aliases.get(asked) ?? asked)
+    if (have) {
+      have.usedAt = now()
+      have.roots.add(virtual)
+      return Promise.resolve(have)
+    }
+    if ((refused.get(asked) ?? 0) > now()) return Promise.resolve(null)
+    let opening = gitOpenings.get(asked)
+    if (!opening) {
+      opening = openGit(hostId, rootPath, virtual).finally(() => gitOpenings.delete(asked))
+      gitOpenings.set(asked, opening)
+    }
+    return opening
+  }
+
+  /** Waits until `done()` holds (woken at each event of the repository), at most `ms`. */
+  function waitFor(g: GitWatch, done: () => boolean, ms: number): Promise<boolean> {
+    if (done()) return Promise.resolve(true)
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => resolve(done()), ms)
+      const check = (): void => {
+        if (!done() && gits.get(g.key) === g) {
+          g.waiters.push(check)
+          return
+        }
+        clearTimeout(timer)
+        resolve(done())
+      }
+      g.waiters.push(check)
+    })
+  }
+
+  /** Within `ms`, or null (the daemon is slow or away: the caller runs git itself). */
+  function within<T>(promise: Promise<T | null>, ms: number): Promise<T | null> {
+    return Promise.race([promise, new Promise<null>((resolve) => setTimeout(() => resolve(null), ms))])
   }
 
   /**
@@ -268,37 +407,61 @@ export function createRemoteExplorer(deps: RemoteExplorerDeps) {
     const w = watched.get(virtual)
     if (!w) return null
     if (!(await treeOf(virtual))) return null
-    let g = w.git
-    if (!g) {
-      if (!w.gitOpening)
-        w.gitOpening = openGit(w, realRoot).finally(() => {
-          w.gitOpening = null
-        })
-      g = await w.gitOpening
-      if (!g) return null
-    }
+    const rootPath = w.rootPath()
+    if (!rootPath) return null
+    const g = await within(gitOf(w.hostId, rootPath, virtual), FIRST_STATUS_MS)
+    if (!g) return null
     const t0 = now()
     const files: Record<string, string> = {}
-    for (const [rel, letter] of g.files) {
-      const below = deps.relativeTo(g.realRoot, deps.joinPath(g.top, rel))
+    for (const [rel, entry] of g.files) {
+      const below = deps.relativeTo(realRoot, deps.joinPath(g.top, rel))
       if (below === null || !okText(below)) continue
-      files[deps.childPath(virtual, below)] = letter
+      files[deps.childPath(virtual, below)] = letterOf(entry)
     }
     return { ok: true, files, repo: true, ms: now() - t0, daemon: true, stale: g.stale, truncated: g.truncated }
   }
 
-  /** The host's connection ended: what was open on it is gone. */
-  function closeHost(hostId: string): void {
-    for (const w of [...watched.values()]) {
-      if (w.hostId !== hostId) continue
-      void w.tree?.end()
-      void w.git?.git.end()
-      w.tree = null
-      w.git = null
-    }
+  /**
+   * The Changes tab's `git status --porcelain=v2 [--branch] -z` from the
+   * daemon's cache for the repository whose top is `top` (absolute, on the
+   * host), or null when the daemon does not serve this host now or has no
+   * status for it yet (the caller runs git the old way). `virtual`: the
+   * window's root the tab shows (told when the status changes).
+   */
+  async function statusText(hostId: string, top: string, virtual: string, { branch = false }: { branch?: boolean } = {}): Promise<string | null> {
+    const client = deps.daemons.client(hostId)
+    if (!client || client.state.kind !== 'connected') return null
+    const g = await within(gitOf(hostId, top, virtual), FIRST_STATUS_MS)
+    if (!g) return null
+    if (!(await waitFor(g, () => g.ready, FIRST_STATUS_MS))) return null
+    // A stage or a commit just ran on the host: the list must not show the
+    // repository as it was before it (the daemon re-reads within seconds).
+    if (g.writeSeen !== null && !(await waitFor(g, () => g.writeSeen === null, AFTER_WRITE_MS))) return null
+    if (branch && !g.branch) return null
+    return porcelainV2(g.files, g.branch, branch)
   }
 
-  return { watch, unwatchAll, served, list, status, closeHost, pathKey }
+  /**
+   * A git command that changes the repository at `top` ran on the host (a
+   * stage, a commit, a discard): the next status from the cache waits for the
+   * daemon's re-read of it, or the old path serves it.
+   */
+  function noteWrite(hostId: string, top: string): void {
+    const g = gits.get(aliases.get(`${hostId}\n${top}`) ?? `${hostId}\n${top}`)
+    if (g) g.writeSeen = g.revision
+  }
+
+  /** The host's connection ended: what was open on it is gone. */
+  function closeHost(hostId: string): void {
+    for (const w of watched.values()) {
+      if (w.hostId !== hostId) continue
+      void w.tree?.end()
+      w.tree = null
+    }
+    for (const g of [...gits.values()]) if (g.hostId === hostId) endGit(g)
+  }
+
+  return { watch, unwatchAll, served, list, status, statusText, noteWrite, closeHost, pathKey, followed: () => gits.size }
 }
 
 export type RemoteExplorer = ReturnType<typeof createRemoteExplorer>

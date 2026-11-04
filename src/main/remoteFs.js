@@ -2247,6 +2247,20 @@ ${q.root}`, () => sparseInfoNow(q))
     },
     async git(top, args, opts = {}) {
       const maxBuffer = opts.maxBuffer || 32 * 1024 * 1024
+      // The status itself (the one command that reads the whole tree) from
+      // the host's daemon when it serves this repository: its cache, kept
+      // current from file system events, rebuilt as the porcelain text the
+      // reader expects (host/remote.ts). The other reads (remote, the
+      // diffs' line counts) stay in the session: small ones.
+      // Only the tab's own read (the one with --branch): Discard and the
+      // branch compare decide what to do from a status and read git fresh.
+      if (args[0] === 'status' && args.includes('--porcelain=v2') && args.includes('--branch')) {
+        const text = await hostExplorer.statusText(top.hostId, top.real, top.virtual, { branch: true }).catch(() => null)
+        if (text !== null) return { ok: true, code: 0, stdout: text, stderr: '', error: null, daemon: true }
+      }
+      // A command that changes the repository: the cache is behind it until
+      // the daemon re-reads (statusText waits for that).
+      if (!READ_ONLY_GIT.has(args[0] === 'commit' ? 'commit' : args[0])) hostExplorer.noteWrite(top.hostId, top.real)
       let list = args
       let upload = null
       // A commit message goes in through stdin (base64), never as an argument.

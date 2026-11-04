@@ -940,6 +940,7 @@ const branchTitle = computed(() => {
 // Copyright (c) 2026 Lovecast Inc.).
 const COPY_POLL_MS = 4000
 const SAFETY_POLL_MS = 60000
+let stopStatusChanged = null
 let timer = 0
 let poll = 0
 let lastLoad = 0
@@ -973,6 +974,13 @@ onMounted(() => {
   }, COPY_POLL_MS)
   window.addEventListener('focus', onFocus)
   document.addEventListener('visibilitychange', onVisible)
+  // The host's daemon says the repository's status changed (tessel-host): the
+  // list follows at once instead of waiting for the next poll.
+  const explorerApi = window.shellApi && window.shellApi.explorer
+  if (explorerApi && explorerApi.onStatusChanged)
+    stopStatusChanged = explorerApi.onStatusChanged((r) => {
+      if (props.root && rootKey(r) === rootKey(props.root)) load()
+    })
 })
 onBeforeUnmount(() => {
   disposed = true
@@ -982,6 +990,7 @@ onBeforeUnmount(() => {
   clearInterval(poll)
   window.removeEventListener('focus', onFocus)
   document.removeEventListener('visibilitychange', onVisible)
+  if (stopStatusChanged) stopStatusChanged()
   closeMenu()
   closeMore()
 })

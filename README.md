@@ -146,7 +146,9 @@ working on Tessel itself (see [Build from source](#build-from-source)).
   change notices from the daemon's file watcher, and its git letters from the
   daemon's status cache, kept current from file system events, instead of a
   `find` every few seconds and a `git status` over the whole tree after every
-  change. A host where the daemon cannot run (another kind of machine, a home
+  change; the Changes tab reads its list from the same cache (a repository
+  with tens of thousands of changes no longer holds the host's session), and
+  both follow the daemon's notices at once. A host where the daemon cannot run (another kind of machine, a home
   folder that refuses to run programs) keeps the shell-based path as before,
   and a build without the programs (`resources/host`, a plain checkout) too.
 - **Sessions that survive a dropped connection**, on by default (per host,

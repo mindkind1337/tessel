@@ -147,6 +147,7 @@ const changes = computed(() => {
 const badge = computed(() => (changes.value > 99 ? '99+' : String(changes.value)))
 const explorer = () => window.shellApi && window.shellApi.explorer
 let stop = null
+let stopStatus = null
 let timer = 0
 // The Changes count, read by itself: background work (never "busy" in a
 // remote project's badge, never in front of a click).
@@ -182,6 +183,14 @@ onMounted(() => {
       // Only git-ignored files changed (a server's log, its cache): the
       // Changes count cannot change.
       if (info && !statusMatters(props.root, info.paths)) return
+      clearTimeout(timer)
+      timer = setTimeout(reload, 250)
+    })
+  // The host's daemon says the repository's status changed (tessel-host): the
+  // count follows at once.
+  if (explorer() && explorer().onStatusChanged)
+    stopStatus = explorer().onStatusChanged((r) => {
+      if (!props.root || rootKey(r) !== rootKey(props.root)) return
       clearTimeout(timer)
       timer = setTimeout(reload, 250)
     })
@@ -270,6 +279,7 @@ defineExpose({ closeBrowser, revealInFiles })
 onBeforeUnmount(() => {
   window.removeEventListener('keydown', onKey)
   if (stop) stop()
+  if (stopStatus) stopStatus()
   clearTimeout(timer)
   if (explorer()) explorer().unwatch()
 })

@@ -182,6 +182,60 @@ describe('remote explorer over the daemon', () => {
     client.close()
   })
 
+  it('the Changes tab: the porcelain text from the cache by the repository’s top, after its first status; null without a daemon or before it comes', async () => {
+    const { explorer, client, host, sent } = await setup()
+    const none = createRemoteExplorer({ daemons: { client: () => null } as unknown as HostDaemons, send: () => {}, childPath, relativeTo, joinPath, sortEntries })
+    expect(await none.statusText('h', '/srv', 'ssh://h/srv/app', { branch: true })).toBeNull()
+    const pending = explorer.statusText('h', '/srv', 'ssh://h/srv/app', { branch: true })
+    await until(() => host().seen.some((s) => s.kind === 'git.subscribe'))
+    // Opened by the top itself, no Files watch needed.
+    expect(host().seen.find((s) => s.kind === 'root.open')!.body).toEqual({ path: '/srv' })
+    const state = { complete: true, stale: false, truncated: false, slow: false, coverage_complete: true, duration_ms: 3, branch: { head: 'main', oid: '0'.repeat(40) } }
+    host().event(GIT_STREAM, 1, 'git.changed', {
+      revision: 1,
+      reset: true,
+      upsert: [{ path: [nameOf('app'), nameOf('a.txt')], kind: 'changed', xy: '.M', sub: 'N...', record: '1 .M N... 100644 100644 100644 aaaa bbbb', untracked_dir: false }],
+      removed: [],
+      state
+    })
+    const text = await pending
+    expect(text).toBe('# branch.oid ' + '0'.repeat(40) + '\0# branch.head main\0' + '1 .M N... 100644 100644 100644 aaaa bbbb app/a.txt\0')
+    expect(explorer.followed()).toBe(1)
+    // The same repository asked by the Files panel shares the session.
+    explorer.watch('ssh://h/srv', 'h', '/srv')
+    await explorer.list('ssh://h/srv', '', true)
+    expect((await explorer.status('ssh://h/srv', '/srv'))!.files).toEqual({ 'ssh://h/srv/app/a.txt': 'M' })
+    expect(explorer.followed()).toBe(1)
+    expect(sent.filter((s) => s.channel === 'explorer:statusChanged')).toHaveLength(1)
+    // A stage ran on the host: the next status waits for the daemon's complete re-read.
+    explorer.noteWrite('h', '/srv')
+    const after = explorer.statusText('h', '/srv', 'ssh://h/srv/app', { branch: true })
+    let settled = false
+    void after.then(() => (settled = true))
+    await new Promise((r) => setTimeout(r, 50))
+    expect(settled).toBe(false)
+    // The daemon's partial, stale event does not do; the complete one does.
+    host().event(GIT_STREAM, 2, 'git.changed', { revision: 2, reset: false, upsert: [], removed: [], state: { ...state, stale: true, complete: false } })
+    await new Promise((r) => setTimeout(r, 30))
+    expect(settled).toBe(false)
+    host().event(GIT_STREAM, 3, 'git.changed', { revision: 3, reset: false, upsert: [], removed: [[nameOf('app'), nameOf('a.txt')]], state })
+    expect(await after).toBe('# branch.oid ' + '0'.repeat(40) + '\0# branch.head main\0')
+    // Both roots of the repository are told of each change.
+    expect(sent.filter((s) => s.channel === 'explorer:statusChanged').map((s) => (s.payload as { root: string }).root).slice(-2)).toEqual(['ssh://h/srv/app', 'ssh://h/srv'])
+    explorer.closeHost('h')
+    expect(explorer.followed()).toBe(0)
+    client.close()
+  })
+
+  it('a first event that is empty and stale (a failed read) does not make the cache ready: the old path serves the tab', async () => {
+    const { explorer, client, host } = await setup()
+    const pending = explorer.statusText('h', '/srv', 'ssh://h/srv/app', { branch: true })
+    await until(() => host().seen.some((s) => s.kind === 'git.subscribe'))
+    host().event(GIT_STREAM, 1, 'git.changed', { revision: 1, reset: false, upsert: [], removed: [], state: { complete: false, stale: true, truncated: false, slow: false, coverage_complete: false, duration_ms: 5000 } })
+    expect(await pending).toBeNull()
+    client.close()
+  })
+
   it('the host’s connection ends: the sessions are let go; another root watched ends the first', async () => {
     const { explorer, client, host } = await setup()
     explorer.watch('ssh://h/srv/app', 'h', '/srv/app')
