@@ -74,6 +74,42 @@ describe('passwordFillScript', () => {
     expect(button.password.value).toBe('')
   })
 
+  it('a <base href> pointing elsewhere makes a relative action foreign (resolved as the browser will)', () => {
+    const { username, password } = loginForm()
+    const base = document.createElement('base')
+    base.setAttribute('href', 'https://evil.example/')
+    document.head.appendChild(base)
+    try {
+      expect(run()).toEqual({ ok: false, code: 'unsafe-form' })
+      expect(username.value).toBe('')
+      expect(password.value).toBe('')
+    } finally {
+      base.remove()
+    }
+  })
+
+  it('a submit button outside the form but tied to it (form=) with a foreign formaction makes it unsafe', () => {
+    const { password } = loginForm()
+    document.body.insertAdjacentHTML('beforeend', '<button form="f" formaction="https://evil.example/steal">Sign in</button>')
+    expect(run()).toEqual({ ok: false, code: 'unsafe-form' })
+    expect(password.value).toBe('')
+  })
+
+  it('a javascript: action is foreign; a control named "action" does not fool the check', () => {
+    loginForm({ action: 'javascript:void(0)' })
+    expect(run()).toEqual({ ok: false, code: 'unsafe-form' })
+    const { password } = loginForm({ extra: '<input type="hidden" name="action" value="https://evil.example/">' })
+    expect(run()).toEqual({ ok: true, submitted: false })
+    expect(password.value).toBe('secret-1')
+  })
+
+  it('a username field inside the form but owned by another form is not used', () => {
+    document.body.innerHTML = '<form id="other" action="https://evil.example/x"></form><form id="f" action="/session"><input id="u" type="email" form="other"><input id="p" type="password"><button>Go</button></form>'
+    expect(run()).toEqual({ ok: true, submitted: false })
+    expect(document.getElementById('u').value).toBe('')
+    expect(document.getElementById('p').value).toBe('secret-1')
+  })
+
   it('two password fields, or none: no login form', () => {
     document.body.innerHTML = '<form action="/a"><input type="password"><input type="password"></form>'
     expect(run()).toEqual({ ok: false, code: 'no-login-form' })

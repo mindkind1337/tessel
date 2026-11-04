@@ -212,22 +212,27 @@ export function passwordFillScript(entry) {
     if (passwords.length !== 1) return { ok: false, code: 'no-login-form' }
     const password = passwords[0]
     const form = password.form
+    // Resolved as the browser will: against the document's base (a <base href>
+    // put in the page sends every relative action elsewhere); an empty action
+    // is the page itself.
     const sameSite = (target) => {
       try {
-        return new URL(target || location.href, location.href).origin === login.origin
+        return new URL(target || location.href, document.baseURI).origin === login.origin
       } catch {
         return false
       }
     }
+    // Every way this form can be sent: its action, and the formaction of each
+    // submit button that belongs to it, inside it or tied to it by form="".
     const destinationsOk = (f) => {
-      if (!f || !f.isConnected || !sameSite(f.getAttribute('action'))) return false
-      for (const b of f.querySelectorAll('button, input[type="submit"], input[type="image"]')) {
-        if (b.hasAttribute('formaction') && !sameSite(b.getAttribute('formaction'))) return false
+      if (!f || !f.isConnected || f.ownerDocument !== document || !sameSite(f.getAttribute('action'))) return false
+      for (const b of document.querySelectorAll('[formaction]')) {
+        if (b.form === f && !sameSite(b.getAttribute('formaction'))) return false
       }
       return true
     }
     if (!destinationsOk(form)) return { ok: false, code: 'unsafe-form' }
-    const candidates = [...form.querySelectorAll('input')].filter(visible).filter((e) => ['text', 'email'].includes(e.type))
+    const candidates = [...form.querySelectorAll('input')].filter((e) => e.form === form).filter(visible).filter((e) => ['text', 'email'].includes(e.type))
     const named = candidates.filter((e) => e.autocomplete === 'username' || e.type === 'email')
     const username = named.length === 1 ? named[0] : candidates.length === 1 ? candidates[0] : null
     if (!username && candidates.length) return { ok: false, code: 'ambiguous-form' }
