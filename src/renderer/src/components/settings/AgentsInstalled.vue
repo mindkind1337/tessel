@@ -83,16 +83,11 @@ watch(
 )
 
 // --- Each agent's own command, arguments and variables ---------------------
-const envErrors = ref({})
 function agentPref(id) {
   return settings.agentPrefs[id] || {}
 }
 function setAgentPref(id, field, value) {
   const next = { ...agentPref(id), [field]: value }
-  if (field === 'env') {
-    const r = parseEnvText(value)
-    envErrors.value = { ...envErrors.value, [id]: r.error || '' }
-  }
   settings.agentPrefs = { ...settings.agentPrefs, [id]: next }
 }
 function resetAgent(id) {
@@ -101,7 +96,13 @@ function resetAgent(id) {
   delete next[id]
   if (keepOff) next[id] = { enabled: false }
   settings.agentPrefs = next
-  envErrors.value = { ...envErrors.value, [id]: '' }
+}
+// Read from the saved text, not from the last edit: the variables of an agent
+// whose text is wrong are all ignored at launch, so the warning must stay as
+// long as the text does (Settings closed and reopened, Tessel restarted).
+function envError(id) {
+  const raw = agentPref(id).env
+  return raw ? parseEnvText(raw).error || '' : ''
 }
 function customized(id) {
   const p = agentPref(id)
@@ -526,8 +527,8 @@ async function openAgentRules() {
                   @change="setAgentPref(a.id, 'env', $event.target.value)"
                 ></textarea>
               </label>
-              <p v-if="envErrors[a.id]" class="set-callout warn agent-env-error" role="alert">
-                <span class="set-callout-text">{{ envErrors[a.id] }} {{ t('settings.agents.notUsedUntilFixed', 'Not used until fixed.') }}</span>
+              <p v-if="envError(a.id)" class="set-callout warn agent-env-error" role="alert">
+                <span class="set-callout-text">{{ envError(a.id) }} {{ t('settings.agents.notUsedUntilFixed', 'Not used until fixed.') }}</span>
               </p>
               <span class="set-hint">{{ t('settings.agents.appliesFromNow', 'Applies to panes you start from now on') }}</span>
             </div>
