@@ -67,6 +67,8 @@ interface HostState {
   running: Promise<DaemonStatus> | null
   lastFailure: { at: number; status: DaemonStatus } | null
   retry: ReturnType<typeof setTimeout> | null
+  /** The last failure written to the log: the same one again is not. */
+  said: string | null
 }
 
 /** A link's pipe over an exec channel running the daemon's connect command. */
@@ -113,7 +115,7 @@ export function createHostDaemons(deps: DaemonDeps) {
   const state = (hostId: string): HostState => {
     let s = hosts.get(hostId)
     if (!s) {
-      s = { arch: null, generation: 0, client: null, settled: null, running: null, lastFailure: null, retry: null }
+      s = { arch: null, generation: 0, client: null, settled: null, running: null, lastFailure: null, retry: null, said: null }
       hosts.set(hostId, s)
     }
     return s
@@ -228,8 +230,12 @@ export function createHostDaemons(deps: DaemonDeps) {
               if (deps.connected(hostId)) void ensure(hostId)
             }, RETRY_MS)
           }
-          if (status.reason !== 'not-connected') log(`tessel-host on ${hostId}: ${status.reason}${status.detail ? ` (${status.detail})` : ''}`)
-        }
+          const line = `tessel-host on ${hostId}: ${status.reason}${status.detail ? ` (${status.detail})` : ''}`
+          if (status.reason !== 'not-connected' && line !== s.said) {
+            s.said = line
+            log(line)
+          }
+        } else s.said = null
         return status
       })
     return s.running

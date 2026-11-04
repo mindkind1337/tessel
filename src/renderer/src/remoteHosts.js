@@ -201,7 +201,9 @@ export const EMPTY_FORM = Object.freeze({
   proxyCommand: '',
   jumpHost: '',
   // On by default (a saved false turns it off for that host).
-  persistentSessions: true
+  persistentSessions: true,
+  // tessel-host on the server: off unless turned on for this host.
+  hostDaemon: false
 })
 
 export function emptyForm() {
@@ -225,7 +227,8 @@ export function formFromTarget(target) {
     proxyCommand: target.proxyCommand || '',
     jumpHost: target.jumpHost || '',
     // Absent (a host saved before the option, or never changed) means on.
-    persistentSessions: target.persistentSessions !== false
+    persistentSessions: target.persistentSessions !== false,
+    hostDaemon: target.hostDaemon === true
   }
 }
 
@@ -292,7 +295,7 @@ export function draftConnectionFields(draft) {
 
 export function hasAdvancedValues(form) {
   // Advanced opens on what differs from the defaults: the option turned OFF.
-  return form.proxyCommand.trim().length > 0 || form.jumpHost.trim().length > 0 || form.persistentSessions === false
+  return form.proxyCommand.trim().length > 0 || form.jumpHost.trim().length > 0 || form.persistentSessions === false || form.hostDaemon === true
 }
 
 export function isFormDirty(current, baseline) {
@@ -328,7 +331,8 @@ export function buildSavePayload(form) {
       identityFile: form.identityFile.trim(),
       proxyCommand: form.proxyCommand.trim(),
       jumpHost: form.jumpHost.trim(),
-      persistentSessions: form.persistentSessions === true
+      persistentSessions: form.persistentSessions === true,
+      hostDaemon: form.hostDaemon === true
     }
   }
 }

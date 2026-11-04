@@ -122,6 +122,12 @@ describe('the host store', () => {
     expect(service().list()).toEqual([])
   })
 
+  it('hostDaemon (tessel-host on the host) is off unless saved as true; anything else is dropped', () => {
+    expect(sanitizeTarget({ host: 'srv' }).target.hostDaemon).toBeUndefined()
+    expect(sanitizeTarget({ host: 'srv', hostDaemon: true }).target.hostDaemon).toBe(true)
+    for (const bad of [false, 'true', 1, 'yes', {}, null]) expect(sanitizeTarget({ host: 'srv', hostDaemon: bad }).target.hostDaemon).toBeUndefined()
+  })
+
   it('persistentSessions (tmux on the host) is on unless saved as false (absent means on), and survives a config refresh', async () => {
     expect(sanitizeTarget({ host: 'srv' }).target.persistentSessions).toBeUndefined()
     expect(sanitizeTarget({ host: 'srv', persistentSessions: true }).target.persistentSessions).toBe(true)

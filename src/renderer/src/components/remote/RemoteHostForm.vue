@@ -221,6 +221,15 @@ onMounted(() => nextTick(() => hostEl.value && hostEl.value.focus()))
                     {{ t('remote.form.persistentHint', 'A lost connection re-attaches to the same session instead of starting a new shell, so what runs there (an agent) survives. On by default. Uses the server’s tmux; when it has none, Tessel puts its own copy there (Linux x86_64 and arm64, no root needed). Not used with a Jump Host or a Proxy Command (those hosts go through the system ssh).') }}
                   </p>
                 </div>
+                <div class="rh-field">
+                  <label class="rh-check" for="add-ssh-host-daemon">
+                    <input id="add-ssh-host-daemon" v-model="form.hostDaemon" type="checkbox" class="set-switch" data-test="host-daemon" />
+                    <span>{{ t('remote.form.hostDaemon', 'Tessel daemon on the server (tessel-host, experimental)') }}</span>
+                  </label>
+                  <p class="rh-field-hint">
+                    {{ t('remote.form.hostDaemonHint', 'Off by default. At the next connection Tessel puts its small daemon under ~/.tessel-server/host on this server (Linux x86_64 and arm64, no root needed) and the Files panel takes its listings, change notices and git letters from it, instead of running find and git status over the whole project. Turn it on for a development server first.') }}
+                  </p>
+                </div>
               </div>
             </div>
           </div>

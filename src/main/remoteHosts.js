@@ -95,6 +95,10 @@ export function sanitizeTarget(input, { id } = {}) {
   // anything else is left out, which means on.
   if (src.persistentSessions === true) target.persistentSessions = true
   else if (src.persistentSessions === false) target.persistentSessions = false
+  // tessel-host on this host (remoteFs.js, host/daemon.ts): only when the
+  // user turned it on for this host; absent or anything else means off
+  // (nothing is put on a server the user did not choose).
+  if (src.hostDaemon === true) target.hostDaemon = true
   return { target }
 }
 

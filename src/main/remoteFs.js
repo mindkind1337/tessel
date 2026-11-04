@@ -488,9 +488,18 @@ export function createRemoteFs({
     log: (text) => warn(text),
     now
   })
-  // Once the Files session is signed in (ssh2): the daemon, in the background.
+  // Once the Files session is signed in (ssh2): the daemon, in the
+  // background, on a host the user turned it on for (Advanced, "Tessel
+  // daemon on the server"); nothing is put on another server.
   function hostDaemonStart(hostId) {
     if (!hostBundle) return
+    let target = null
+    try {
+      target = hosts.get(hostId)
+    } catch {
+      return
+    }
+    if (!target || target.hostDaemon !== true) return
     hostDaemons
       .ensure(hostId)
       .then((status) => {

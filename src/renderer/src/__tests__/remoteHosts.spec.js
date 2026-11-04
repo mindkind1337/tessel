@@ -65,8 +65,16 @@ describe('host input and the save payload (Orca ssh-target-draft)', () => {
     draft = applyParsedSshHostInput({ ...draft, host: '51.79.12.34' })
     expect(buildSavePayload(draft)).toEqual({
       ok: true,
-      target: { label: 'Website AfterlifeRP', configHost: '51.79.12.34', host: '51.79.12.34', port: 22, username: 'afterlife', identityFile: '', proxyCommand: '', jumpHost: '', persistentSessions: true }
+      target: { label: 'Website AfterlifeRP', configHost: '51.79.12.34', host: '51.79.12.34', port: 22, username: 'afterlife', identityFile: '', proxyCommand: '', jumpHost: '', persistentSessions: true, hostDaemon: false }
     })
+  })
+
+  it('"Tessel daemon on the server" is off by default, on only when saved true, and opens Advanced when on', () => {
+    expect(emptyForm().hostDaemon).toBe(false)
+    expect(formFromTarget(BOX).hostDaemon).toBe(false)
+    expect(formFromTarget({ ...BOX, hostDaemon: true }).hostDaemon).toBe(true)
+    expect(hasAdvancedValues({ ...emptyForm(), hostDaemon: true })).toBe(true)
+    expect(buildSavePayload({ ...emptyForm(), host: 'srv', hostDaemon: true }).target.hostDaemon).toBe(true)
   })
 
   it('"Keep sessions alive on the server" is a boolean of the form, on by default and for a host saved without it, false round-trips', () => {
@@ -109,7 +117,7 @@ describe('host input and the save payload (Orca ssh-target-draft)', () => {
     const ok = buildSavePayload({ ...emptyForm(), host: 'deploy@srv:2200', identityFile: ' ~/.ssh/k ' })
     expect(ok).toEqual({
       ok: true,
-      target: { label: 'deploy@srv', configHost: 'srv', host: 'srv', port: 2200, username: 'deploy', identityFile: '~/.ssh/k', proxyCommand: '', jumpHost: '', persistentSessions: true }
+      target: { label: 'deploy@srv', configHost: 'srv', host: 'srv', port: 2200, username: 'deploy', identityFile: '~/.ssh/k', proxyCommand: '', jumpHost: '', persistentSessions: true, hostDaemon: false }
     })
   })
 

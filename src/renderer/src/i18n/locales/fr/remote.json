@@ -65,6 +65,8 @@
       "jumpPlaceholder": "bastion.example.com",
       "jumpHint": "Facultatif. Équivalent à ProxyJump / ssh -J.",
       "persistentSessions": "Garder les sessions actives sur le serveur (tmux)",
+      "hostDaemon": "Démon Tessel sur le serveur (tessel-host, expérimental)",
+      "hostDaemonHint": "Désactivé par défaut. À la prochaine connexion, Tessel place son petit démon sous ~/.tessel-server/host sur ce serveur (Linux x86_64 et arm64, sans root) et le panneau Fichiers y prend ses listes, ses notifications de changement et ses lettres git, au lieu de lancer find et git status sur tout le projet. À activer d'abord sur un serveur de développement.",
       "persistentHint": "Une connexion perdue se rattache à la même session au lieu de lancer un nouveau shell : ce qui y tourne (un agent) survit. Activé par défaut. Utilise le tmux du serveur ; s’il n’en a pas, Tessel y dépose sa propre copie (Linux x86_64 et arm64, sans droits root). Sans effet avec un hôte de rebond ou une commande de proxy (ces hôtes passent par le ssh du système).",
       "cancel": "Annuler",
       "saveChanges": "Enregistrer les modifications",
