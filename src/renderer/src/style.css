@@ -657,6 +657,19 @@ body.popup-open .toolbar {
   animation: agent-pulse 1.1s steps(4) infinite;
 }
 
+/* The pulses animate a box-shadow (a paint), stepped a few times a second.
+   Without a layer of their own each step repainted the layer that holds the
+   dot (a pane header, the sidebar's agent list), with a dozen of them pulsing
+   the window spent a sixth of a core at rest; promoted, each step repaints
+   the dot alone (2026-11-06). */
+.pane-icon.busy .pane-status-dot,
+.pane-icon.attention .pane-status-dot,
+.ws-busy,
+.asd-dot.asd-working,
+.pane-nav.agent.busy::after {
+  will-change: transform;
+}
+
 @keyframes agent-pulse {
   0%,
   100% {

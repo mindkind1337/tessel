@@ -12991,11 +12991,15 @@ async function syncBoard(b, round = teamRound) {
     if (leaf && b.teamId) tellAgents([leaf], `[Tessel] ${r.text}`, b.teamId)
     else if (leaf && window.shellApi.log) window.shellApi.log('info', `board: ${paneLabel(leaf)}: ${r.text}`)
   }
-  const label = (paneId) => {
-    const leaf = paneId ? findLeaf(paneId) : null
-    return leaf ? leaf.paneName || null : null
-  }
-  const cards = boardTasks
+  // Every 2.5 s for each board: the panes' names read once, not a walk of
+  // every workspace tree per card, and the cards read raw (no reactive
+  // proxies made for a copy that only goes to main). With a few hundred
+  // cards that walk was a measurable share of the window's idle CPU
+  // (profiled 2026-11-06).
+  const paneNames = new Map()
+  forEachWsLeaf((leaf) => paneNames.set(leaf.id, leaf.paneName || null))
+  const label = (paneId) => (paneId && paneNames.has(paneId) ? paneNames.get(paneId) : null)
+  const cards = toRaw(boardTasks)
     .filter(onBoard)
     .map((t) => ({
       id: t.id,
