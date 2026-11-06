@@ -10488,6 +10488,19 @@ body.osb-project-dragging * {
   box-shadow: none;
 }
 
+/* Each project is a panel with its workspaces and agents; the one you are in
+   is colored. Same border on all, so nothing moves on a switch. */
+.osb-run.panel {
+  margin-bottom: 6px;
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+}
+
+.osb-run.current {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
+  background: color-mix(in srgb, var(--accent) 5%, transparent);
+}
+
 .osb-group {
   padding-top: 4px;
 }

@@ -50,6 +50,7 @@ import RenameProjectDialog from './sidebar/RenameProjectDialog.vue'
 import { settings } from '../settings'
 import {
   buildSidebarRows,
+  sidebarRowRuns,
   neighborCard,
   cardTargetPane,
   isAgentPane,
@@ -147,6 +148,7 @@ const options = computed(() => ({
   openWorktreeGroups: openWorktreeGroups.value
 }))
 const rows = computed(() => buildSidebarRows(props.projects, options.value, props.now))
+const rowRuns = computed(() => sidebarRowRuns(rows.value))
 const grouped = computed(() => settings.sidebarGroupBy !== 'none')
 const showPorts = computed(() => settings.worktreeCardProperties.includes('ports'))
 const showAgents = computed(() => settings.worktreeCardProperties.includes('inline-agents'))
@@ -1439,7 +1441,14 @@ defineExpose({
       >
         <!-- Where a dragged project lands. -->
         <div v-if="projectDrag && projectDrag.active && projectDrag.line !== null" class="osb-drop-line" :style="{ top: projectDrag.line + 'px' }" aria-hidden="true" data-test="project-drop-line"></div>
-        <template v-for="r in rows" :key="r.key">
+        <div
+          v-for="run in rowRuns"
+          :key="run.key"
+          class="osb-run"
+          :class="{ panel: !!run.project, current: !!run.project && run.project.id === currentId }"
+          data-test="sidebar-run"
+        >
+        <template v-for="r in run.rows" :key="r.key">
           <div v-if="r.type === 'folder'" class="osb-folder" data-test="sidebar-folder">
             <div
               class="osb-folder-header"
@@ -1745,6 +1754,7 @@ defineExpose({
             </div>
           </div>
         </template>
+        </div>
         <div v-if="!rows.some((x) => x.type === 'card') && projects.length" class="osb-empty">
           {{ t('sidebar.noMatch', 'No workspaces match these filters.') }}
           <button v-if="filterBadge.count" type="button" class="osb-link" data-test="sidebar-empty-clear" @click="clearFilters">
