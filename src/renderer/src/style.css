@@ -601,20 +601,31 @@ body.popup-open .toolbar {
    them cost about a sixth of a CPU core), a stepped one only redraws at each
    step, like Orca's agent spinner (src/renderer/src/assets/main.css, MIT,
    Copyright (c) 2026 Lovecast Inc.). */
+/* The sweep moves with transform, which the compositor animates by itself:
+   it used to move its background-position, and each of its ten steps a
+   second was a style recalculation of the window (625 against 154 a second
+   with one agent working, three quarters of the window's style time at
+   rest, measured 2026-11-06). The header clips the bar while it is outside
+   (clip-path, 2 px below for the hairline). */
+.pane-nav.agent.busy {
+  clip-path: inset(0 0 -2px 0);
+}
+
 .pane-nav.agent.busy::after {
+  right: auto;
+  width: 50%;
   height: 2px;
   background: linear-gradient(90deg, transparent 0%, var(--accent) 50%, transparent 100%);
-  background-size: 50% 100%;
-  background-repeat: no-repeat;
+  will-change: transform;
   animation: agent-sweep 1.4s steps(14) infinite;
 }
 
 @keyframes agent-sweep {
   from {
-    background-position: -100% 0;
+    transform: translateX(-100%);
   }
   to {
-    background-position: 200% 0;
+    transform: translateX(300%);
   }
 }
 

@@ -20,6 +20,15 @@ describe('the pulsing status dots', () => {
     expect(body).not.toMatch(/box-shadow|background|width|height|border/)
   })
 
+  it('the working sweep under an agent pane\u2019s header moves with transform, not background-position', () => {
+    const body = keyframes('agent-sweep')
+    expect(body).not.toBeNull()
+    expect(body).toMatch(/transform:/)
+    expect(body).not.toMatch(/background/)
+    // Clipped by the header while outside it (the bar is half the width and travels past both ends).
+    expect(css).toMatch(/\.pane-nav\.agent\.busy \{\s*clip-path: inset\(/)
+  })
+
   it('the pulses run on the dots\u2019 ::after ring, never on the dots themselves', () => {
     // Comments stripped: a comment before a rule would count as its selector.
     const plain = css.replace(/\/\*[\s\S]*?\*\//g, '')
