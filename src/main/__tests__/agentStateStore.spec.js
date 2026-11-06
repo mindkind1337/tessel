@@ -160,6 +160,46 @@ describe('local agent status spool and snapshots', () => {
     expect(fs.existsSync(waiting)).toBe(false)
   })
 
+  it('an event waiting for a pane that never registers goes after 15 minutes, while a pane registered in time still gets its own', async () => {
+    const store = make()
+    const startedAt = tick
+    const gone = put(event('UserPromptSubmit', { paneId: 'pane-gone' }))
+    const late = put(event('UserPromptSubmit', { paneId: 'pane-later' }))
+    expect((await store.scan()).stats.deferred).toBe(2)
+    tick += 14 * 60 * 1000
+    expect((await store.scan()).stats.deferred).toBe(2)
+    expect(fs.existsSync(gone)).toBe(true)
+    await store.register(registered({ paneId: 'pane-later', startedAt }))
+    tick += 2 * 60 * 1000
+    const result = await store.scan()
+    expect(result.stats).toMatchObject({ accepted: 1, rejected: 1, removed: 2 })
+    expect(result.states['pane-later'].state).toBe('working')
+    expect(fs.existsSync(gone)).toBe(false)
+    expect(fs.existsSync(late)).toBe(false)
+    // Nothing left to examine: the next scans find an empty spool.
+    expect((await store.scan()).stats).toMatchObject({ examined: 0, deferred: 0 })
+  })
+
+  it('checks each spool file with one lstat, not a walk from the drive root (the directory is checked once per scan)', async () => {
+    const store = make()
+    const files = []
+    for (let i = 0; i < 12; i++) files.push(put(event('UserPromptSubmit', { paneId: `pane-${i}` })))
+    const original = fsp.lstat.bind(fsp)
+    const seen = []
+    vi.spyOn(fsp, 'lstat').mockImplementation((path, ...args) => {
+      seen.push(String(path))
+      return original(path, ...args)
+    })
+    expect((await store.scan()).stats.deferred).toBe(12)
+    // A read checks the file before and after: two per file, none of its parents.
+    const inSpool = seen.filter((p) => files.includes(p)).length
+    expect(inSpool).toBeLessThanOrEqual(2 * files.length)
+    const parents = seen.filter((p) => !files.includes(p) && !p.endsWith('events'))
+    // The spool's own parents (and state.json's), once per scan, not once per
+    // file: the walk per file cost at least 2 x files x depth before.
+    expect(parents.length).toBeLessThan(2 * files.length)
+  })
+
   it('a kept waiting event still expires', async () => {
     const store = make()
     const waiting = put(event('UserPromptSubmit', { paneId: 'pane-later' }))

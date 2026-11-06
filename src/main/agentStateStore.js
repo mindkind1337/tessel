@@ -18,6 +18,12 @@ const MAX_PANES = 128
 const MAX_SCAN = 128
 // Waiting events kept parsed between scans (see waitingEvents), at most.
 const MAX_WAITING = 1024
+// An event whose pane is not registered waits this long, from the scan that
+// first saw it, for a late registration (a terminal re-attached after a
+// restart registers within seconds), then goes: the last events of a closed
+// pane were kept a whole day (TTL) and examined by every scan.
+const DEFER_MS = 15 * 60 * 1000
+const MAX_WAITING_SINCE = 4096
 const TTL = 24 * 60 * 60 * 1000
 const RETAIN_STATE = 7 * TTL
 const ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/
@@ -133,6 +139,17 @@ async function checkPath(path, allowMissing = false) {
   return fs.lstat(root)
 }
 
+// A file of a directory this scan already checked with checkPath: its own
+// lstat, no symbolic link. Each file of the spool was walked from the drive's
+// root instead (eight lstat and a realpath, twice per read): with 1,700
+// waiting files of closed panes that was 4,600 file calls a second, half a
+// core, while every agent slept (2026-11-06).
+async function checkFile(path) {
+  const stat = await fs.lstat(path)
+  if (stat.isSymbolicLink()) throw new Error('unsafe path')
+  return stat
+}
+
 async function directory(path) {
   const stat = await checkPath(path, true)
   if (stat) {
@@ -148,8 +165,8 @@ async function directory(path) {
   if (!(await checkPath(path)).isDirectory()) throw new Error('not a directory')
 }
 
-async function readBounded(file, limit) {
-  const before = await checkPath(file)
+async function readBounded(file, limit, check = checkPath) {
+  const before = await check(file)
   if (!before.isFile() || before.size > limit)
     throw Object.assign(new Error('invalid size'), { code: 'ESIZE' })
   const handle = await fs.open(file, 'r')
@@ -169,7 +186,7 @@ async function readBounded(file, limit) {
       if (!bytesRead) break
       offset += bytesRead
     }
-    const after = await checkPath(file)
+    const after = await check(file)
     if (
       offset !== before.size ||
       after.ino !== before.ino ||
@@ -265,6 +282,7 @@ export function createAgentStateStore({ dir, now = Date.now, onChange = () => {}
   // work each time, which every register (a terminal re-attached) waited
   // behind (2026-10-16).
   const waitingEvents = new Map() // file name -> { event, stat }
+  const waitingSince = new Map() // file name -> when a scan first found its pane unregistered
   const sameFile = (a, b) =>
     a.isFile() && !a.isSymbolicLink() && a.ino === b.ino && a.dev === b.dev && a.size === b.size && a.mtimeMs === b.mtimeMs
 
@@ -404,9 +422,9 @@ export function createAgentStateStore({ dir, now = Date.now, onChange = () => {}
       if (temporary) await fs.unlink(temporary).catch(() => {})
     }
   }
-  async function removeFile(file, before) {
+  async function removeFile(file, before, check = checkPath) {
     try {
-      const current = await checkPath(file)
+      const current = await check(file)
       if (
         !current.isFile() ||
         current.ino !== before.ino ||
@@ -448,7 +466,7 @@ export function createAgentStateStore({ dir, now = Date.now, onChange = () => {}
         ) {
           const path = join(eventsDir, entry.name)
           try {
-            const stat = await checkPath(path)
+            const stat = await checkFile(path)
             if (stat.isFile() && clock() - stat.mtimeMs > TTL)
               removals.push({ path, stat, independent: true })
           } catch (error) {
@@ -477,7 +495,7 @@ export function createAgentStateStore({ dir, now = Date.now, onChange = () => {}
             else waitingEvents.delete(entry.name)
           }
           if (!stat) {
-            const raw = await readBounded(path, MAX_EVENT)
+            const raw = await readBounded(path, MAX_EVENT, checkFile)
             let parsed
             try {
               parsed = JSON.parse(raw.text)
@@ -490,6 +508,7 @@ export function createAgentStateStore({ dir, now = Date.now, onChange = () => {}
           if (!event || clock() - event.at > TTL || clock() - stat.mtimeMs > TTL) {
             stats.rejected++
             waitingEvents.delete(entry.name)
+            waitingSince.delete(entry.name)
             removals.push({ path, stat, independent: true })
             warn('An invalid or expired agent event was discarded.')
           } else candidates.push({ event, path, stat, name: entry.name })
@@ -497,7 +516,7 @@ export function createAgentStateStore({ dir, now = Date.now, onChange = () => {}
           stats.rejected++
           if (error.code === 'ESIZE') {
             try {
-              const stat = await checkPath(path)
+              const stat = await checkFile(path)
               if (stat.isFile()) removals.push({ path, stat, independent: true })
             } catch {
               /* changing source is left untouched */
@@ -518,6 +537,19 @@ export function createAgentStateStore({ dir, now = Date.now, onChange = () => {}
       const { event } = candidate
       const current = active.get(event.paneId)
       if (!current) {
+        if (!waitingSince.has(candidate.name)) {
+          waitingSince.set(candidate.name, clock())
+          if (waitingSince.size > MAX_WAITING_SINCE) waitingSince.delete(waitingSince.keys().next().value)
+        }
+        if (clock() - waitingSince.get(candidate.name) > DEFER_MS) {
+          // Its pane never came: the event of a closed pane, gone.
+          stats.rejected++
+          waitingEvents.delete(candidate.name)
+          waitingSince.delete(candidate.name)
+          removals.push({ ...candidate, independent: true })
+          warn('An agent event whose pane never registered was discarded.')
+          continue
+        }
         stats.deferred++
         // Kept for the next scans (bounded: the oldest name goes first).
         waitingEvents.delete(candidate.name)
@@ -526,6 +558,7 @@ export function createAgentStateStore({ dir, now = Date.now, onChange = () => {}
         continue
       }
       waitingEvents.delete(candidate.name)
+      waitingSince.delete(candidate.name)
       if (
         current.state.launchToken !== event.launchToken ||
         current.state.provider !== event.provider
@@ -567,7 +600,7 @@ export function createAgentStateStore({ dir, now = Date.now, onChange = () => {}
     }
     const saved = await persist()
     for (const item of removals)
-      if ((item.independent || saved) && (await removeFile(item.path, item.stat))) stats.removed++
+      if ((item.independent || saved) && (await removeFile(item.path, item.stat, checkFile))) stats.removed++
     return { states: publish(), warnings: [...warnings], stats }
   }
   return {
