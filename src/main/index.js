@@ -5358,6 +5358,7 @@ async function createSshPane(opts, target, spec, shell, startedAt, timing = null
   if ((paneKills.get(id) || 0) >= startedAt) return { ok: false, cancelled: true, error: t('main.remote.launchCancelled', 'The terminal was closed before ssh started.') }
   const agentProvider = agent.remoteAgent ? agent.remoteAgent.provider : null
   const agentLaunchToken = agent.launchToken || null
+  const agentStartedAt = Date.now()
   let res
   try {
     res = await host.request('create', {
@@ -5369,7 +5370,7 @@ async function createSshPane(opts, target, spec, shell, startedAt, timing = null
       cols,
       rows,
       ssh: { ...sshRemote.terminalRequest(target, spec, remotePath, tmux), ...(agent.remoteAgent ? { remoteAgent: agent.remoteAgent } : {}) },
-      meta: { shellId: shell.id, shellName: shell.name, backend: 'ssh', cwd: startDir, agentProvider, agentLaunchToken, agentStartedAt: Date.now(), agentCodexHome: null, teamSecret, remoteHostId: target.id }
+      meta: { shellId: shell.id, shellName: shell.name, backend: 'ssh', cwd: startDir, agentProvider, agentLaunchToken, agentStartedAt, agentCodexHome: null, teamSecret, remoteHostId: target.id }
     })
   } catch (err) {
     res = { ok: false, error: err.message }
@@ -5385,6 +5386,15 @@ async function createSshPane(opts, target, spec, shell, startedAt, timing = null
   }
   ptyInfo.set(id, { shellId: shell.id, shellName: shell.name, backend: 'ssh', pid: null, agentLaunchToken, agentCodexHome: null })
   setTeamSecret(id, teamSecret)
+  // The agent's status follows its hooks from the start, as a local pane's
+  // does (above): this path left it to the window's later attach, and the
+  // hook events of two ssh2 panes sat in the spool unmatched for hours
+  // (2026-11-06).
+  if (agentProvider) {
+    try { await agentStateStore.register({ paneId: id, provider: agentProvider, launchToken: agentLaunchToken, startedAt: agentStartedAt }) }
+    catch { /* the window shows unknown until an observation can be read */ }
+    step('register')
+  }
   remoteHosts.paneStarted(id, target.id, { ssh2: true })
   // The host's shim and agents (its shared connection: no new question).
   void remoteAgentCheck.hostStarted(target.id)
