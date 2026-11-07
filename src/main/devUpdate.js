@@ -7,7 +7,11 @@
 //
 // Nothing here changes the working copy but apply(), and apply() only
 // fast-forwards: no merge, no stash, no reset, no install of packages (a
-// change to package.json is said, the user runs npm install themselves).
+// change to package.json is said; launch.mjs installs them at the next
+// start). Edits of the user's own that are not committed are left as they
+// are, and stop the fast-forward only when they touch a file the new builds
+// change too (git would refuse it): a copy where an agent edited a spec, or
+// the user a setting, is not stuck behind every push for that.
 import { execFile } from 'child_process'
 import { createHash } from 'crypto'
 
@@ -30,6 +34,31 @@ export function gitRunner(root, run = execFile) {
 
 // What the user sees: the line of each new commit is only text.
 const oneLine = (s) => String(s || '').replace(/[\u0000-\u001f\u007f-\u009f]+/g, ' ').trim().slice(0, 140)
+
+// The paths of `git status --porcelain` (XY<space>path, a rename as
+// "old -> new": both; a path with odd characters comes quoted). The runner
+// trims git's output, so the first line may have lost a leading space of its
+// two status letters: one letter and a space is a status too.
+const PORCELAIN_LINE = /^(?:[ MADRCUT?!]{2} |[MADRCUT?!] )(.*)$/
+export function porcelainPaths(out) {
+  const paths = []
+  for (const line of String(out || '').split('\n')) {
+    const m = PORCELAIN_LINE.exec(line)
+    if (!m || !m[1]) continue
+    for (const part of m[1].split(' -> ')) {
+      let p = part.trim()
+      if (p.startsWith('"') && p.endsWith('"') && p.length >= 2) {
+        try {
+          p = JSON.parse(p)
+        } catch {
+          p = p.slice(1, -1)
+        }
+      }
+      if (p) paths.push(p)
+    }
+  }
+  return paths
+}
 
 // What a restart is needed for: the code the running app loaded when it started.
 // The renderer reloads by itself; these are read once at start.
@@ -84,11 +113,17 @@ export function createDevUpdate({ root, packaged = false, send = () => {}, git =
     const m = /^(\d+)\s+(\d+)$/.exec(counts.out)
     if (!m) return { none: 'unreadable' }
     const names = files.out ? files.out.split('\n') : []
+    const edited = porcelainPaths(dirty.out)
+    // Edits of the user's own on files the new builds change: the only ones
+    // that stand in the way of a fast-forward.
+    const overlap = edited.filter((p) => names.includes(p))
     return {
       upstream: up.out,
       ahead: Number(m[1]),
       behind: Number(m[2]),
       dirty: dirty.out !== '',
+      edited: edited.length,
+      overlap,
       newest: /^[0-9a-f]{7,40}$/.test(newest.out) ? newest.out : '',
       newBuild: /^\d{1,9}$/.test(upCount.out) ? Number(upCount.out) : null,
       commits: list.out
@@ -105,10 +140,10 @@ export function createDevUpdate({ root, packaged = false, send = () => {}, git =
 
   function describe(s) {
     if (s.none) return { state: 'none', reason: s.none, checkedAt: now() }
-    const base = { upstream: s.upstream, ahead: s.ahead, behind: s.behind, newBuild: s.newBuild, newest: s.newest, commits: s.commits, depsChanged: s.depsChanged, mainChanged: s.mainChanged, checkedAt: now() }
+    const base = { upstream: s.upstream, ahead: s.ahead, behind: s.behind, newBuild: s.newBuild, newest: s.newest, commits: s.commits, depsChanged: s.depsChanged, mainChanged: s.mainChanged, edited: s.edited, overlap: s.overlap.slice(0, LIST_MAX), checkedAt: now() }
     if (s.behind <= 0) return { state: 'none', ...base }
     // Why it cannot be brought in by itself: the user does it (or not).
-    const blocked = s.dirty ? 'dirty' : s.ahead > 0 ? 'ahead' : ''
+    const blocked = s.overlap.length ? 'dirty' : s.ahead > 0 ? 'ahead' : ''
     return { state: 'available', ...base, blocked }
   }
 
@@ -146,7 +181,7 @@ export function createDevUpdate({ root, packaged = false, send = () => {}, git =
       const s = await look()
       if (s.none) return { ok: false, reason: s.none }
       if (s.behind <= 0) return { ok: false, reason: 'current' }
-      if (s.dirty) return { ok: false, reason: 'dirty' }
+      if (s.overlap.length) return { ok: false, reason: 'dirty', overlap: s.overlap.slice(0, LIST_MAX) }
       if (s.ahead > 0) return { ok: false, reason: 'ahead' }
       const r = await git(['merge', '--ff-only', '--quiet', '@{u}'], 60000)
       if (!r.ok) return { ok: false, reason: 'merge' }

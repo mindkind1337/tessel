@@ -1,8 +1,9 @@
 <script setup>
 // A development Tessel (npm run dev) follows the repository: this says there are
-// new builds on GitHub, lists them, and brings them in (a fast-forward, only for
-// a copy with no change of its own; src/main/devUpdate.js). It never installs
-// packages and never restarts by itself: it says what the user does next.
+// new builds on GitHub, lists them, and brings them in (a fast-forward; edits of
+// the user's own are left alone and stop it only when they touch a file the
+// builds change; src/main/devUpdate.js). It never installs packages and never
+// restarts by itself: it says what the user does next.
 import { ref, computed, onMounted } from 'vue'
 import { X, Copy } from 'lucide-vue-next'
 import { t } from '../i18n'
@@ -18,6 +19,7 @@ const emit = defineEmits(['apply', 'close', 'copy', 'restart'])
 
 const busy = ref(false)
 const failed = ref('')
+const failedOverlap = ref([])
 const done = ref(null)
 
 const s = computed(() => props.status || {})
@@ -38,9 +40,13 @@ const line = computed(() => {
 })
 const restartLine = computed(() => t('app.devUpdate.restartLine', 'The code of the background part changed since Tessel started ({{count}} file): what runs is the old one.', { count: s.value.count || 0 }))
 const moreText = computed(() => t('app.devUpdate.more', '… and {{count}} more', { count: (s.value.behind || 0) - (s.value.commits || []).length }))
+const overlapText = computed(() => {
+  const files = (failed.value === 'dirty' && failedOverlap.value.length ? failedOverlap.value : s.value.overlap) || []
+  return files.map((f) => `\u00ab${f}\u00bb`).join(', ')
+})
 const blockedText = computed(() =>
   s.value.blocked === 'dirty'
-    ? t('app.devUpdate.dirty', 'This copy has changes that are not committed: Tessel does not touch it. Commit or put them aside, then run git pull.')
+    ? t('app.devUpdate.dirty', 'This copy changes files that these builds change too ({{files}}): Tessel does not touch them. Commit or put those aside, then run git pull. Your other changes that are not committed stay as they are.', { files: overlapText.value })
     : s.value.blocked === 'ahead'
       ? t('app.devUpdate.ahead', 'This copy has commits that GitHub does not have: Tessel does not merge them for you. Run git pull yourself.')
       : ''
@@ -89,7 +95,10 @@ async function apply() {
   try {
     const r = await new Promise((resolve) => emit('apply', resolve))
     if (r && r.ok) done.value = r
-    else failed.value = (r && r.reason) || 'merge'
+    else {
+      failed.value = (r && r.reason) || 'merge'
+      failedOverlap.value = r && Array.isArray(r.overlap) ? r.overlap : []
+    }
   } finally {
     busy.value = false
   }

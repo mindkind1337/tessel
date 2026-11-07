@@ -1011,7 +1011,7 @@
       "title": "Nouveaux builds sur GitHub : {{count}}",
       "from": "Vous avez {{now}}. GitHub a {{next}}.",
       "fromShort": "GitHub a des builds que cette copie n'a pas.",
-      "dirty": "Cette copie a des changements non validés : Tessel n'y touche pas. Validez-les ou mettez-les de côté, puis lancez git pull.",
+      "dirty": "Cette copie modifie des fichiers que ces builds changent aussi ({{files}}) : Tessel n'y touche pas. Validez-les ou mettez-les de côté, puis lancez git pull. Vos autres changements non validés restent en place.",
       "ahead": "Cette copie a des commits que GitHub n'a pas : Tessel ne les fusionne pas pour vous. Lancez git pull vous-même.",
       "failed": "La mise à jour n'a pas pu être faite : lancez git pull dans le dépôt.",
       "current": "Cette copie est déjà à jour.",

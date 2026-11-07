@@ -8,7 +8,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { execFileSync } from 'node:child_process'
-import { createDevUpdate, devRestartCommand } from '../devUpdate'
+import { createDevUpdate, devRestartCommand, porcelainPaths } from '../devUpdate'
 
 const git = (cwd, ...args) => execFileSync('git', ['-C', cwd, '-c', 'user.name=t', '-c', 'user.email=t@t', '-c', 'commit.gpgsign=false', ...args], { encoding: 'utf8' }).trim()
 
@@ -92,14 +92,30 @@ describe('bringing it in', () => {
     expect(du.status.state).toBe('updated')
     expect((await du.check()).state).toBe('none')
   })
-  it('changes that are not committed: nothing is touched, the user is told', async () => {
+  it('an edit not committed on a file the new builds change too: nothing is touched, the file is named', async () => {
+    commit(other, 'a.txt', 'theirs', 'Change a')
+    git(other, 'push', '-q', 'origin', 'main')
+    fs.writeFileSync(path.join(mine, 'a.txt'), 'mine')
+    const { du } = make()
+    expect(await du.check()).toMatchObject({ state: 'available', blocked: 'dirty', edited: 1, overlap: ['a.txt'] })
+    expect(await du.apply()).toEqual({ ok: false, reason: 'dirty', overlap: ['a.txt'] })
+    expect(fs.readFileSync(path.join(mine, 'a.txt'), 'utf8')).toBe('mine')
+  })
+  it('an edit not committed elsewhere does not stand in the way: fast-forwarded, the edit kept', async () => {
     push()
     fs.writeFileSync(path.join(mine, 'a.txt'), 'mine')
     const { du } = make()
-    expect(await du.check()).toMatchObject({ state: 'available', blocked: 'dirty' })
-    expect(await du.apply()).toEqual({ ok: false, reason: 'dirty' })
+    expect(await du.check()).toMatchObject({ state: 'available', blocked: '', edited: 1, overlap: [] })
+    expect(await du.apply()).toMatchObject({ ok: true, behind: 1 })
+    expect(fs.existsSync(path.join(mine, 'b.txt'))).toBe(true)
     expect(fs.readFileSync(path.join(mine, 'a.txt'), 'utf8')).toBe('mine')
-    expect(fs.existsSync(path.join(mine, 'b.txt'))).toBe(false)
+    expect(git(mine, 'status', '--porcelain')).toMatch(/^ ?M a\.txt$/)
+  })
+  it('porcelainPaths: plain, renamed and quoted paths', () => {
+    expect(porcelainPaths(' M a.txt\nR  old.txt -> new.txt\n?? "sp ace.txt"\nA  src/x.js')).toEqual(['a.txt', 'old.txt', 'new.txt', 'sp ace.txt', 'src/x.js'])
+    // The runner trims the output: the first line without its leading space.
+    expect(porcelainPaths('M a.txt\n M b.txt')).toEqual(['a.txt', 'b.txt'])
+    expect(porcelainPaths('')).toEqual([])
   })
   it('commits of its own: no merge is made for the user', async () => {
     push()

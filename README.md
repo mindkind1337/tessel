@@ -411,9 +411,10 @@ working on Tessel itself (see [Build from source](#build-from-source)).
   that mail get no new card for 15 minutes, and after two denies in 15 minutes nothing does.
 - **Updating a development copy**: a Tessel started with `npm run dev` checks GitHub
   every 30 minutes (`git fetch` of the branch it follows) and, when there are newer
-  builds, shows a yellow `↑ b1700` next to the version. It lists them and, for a copy with
-  no change of its own, brings them in with a fast-forward; with changes of your own
-  it touches nothing and gives you the command. It says whether to restart
+  builds, shows a yellow `↑ b1700` next to the version. It lists them and brings them
+  in with a fast-forward; changes of your own that are not committed are left as they
+  are, and stop the update only when they touch a file the new builds change too (it
+  names them and gives you the command). It says whether to restart
   (main process changed). `npm run dev` installs the packages the code needs by itself
   when they are missing or out of date, without changing `package-lock.json`. An installed Tessel
   keeps its own updater: it downloads each release and asks you to restart.
