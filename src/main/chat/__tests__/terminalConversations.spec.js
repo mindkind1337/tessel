@@ -1094,3 +1094,98 @@ describe('a host not connected', () => {
     conv.dispose()
   })
 })
+
+describe('a window that opens on an answer: the turn’s prompt is found before it', () => {
+  const big = 'x'.repeat(40 * 1024)
+  // An old turn, then a long turn: its prompt, 40 tool calls with big outputs, its answer.
+  const records = () => {
+    const out = [prompt(0, 'Earlier question'), answer(1, 'm0', [{ type: 'text', text: 'Earlier answer.' }]), prompt(2, 'Why does the maybach fail to load?')]
+    for (let i = 0; i < 40; i++) {
+      out.push(answer(3 + i * 2, `m${i + 1}`, [{ type: 'tool_use', id: `t${i}`, name: 'Bash', input: { command: 'ls' } }]))
+      out.push({ type: 'user', uuid: `r${i}`, timestamp: ts(4 + i * 2), message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: `t${i}`, content: big }] } })
+    }
+    out.push(answer(90, 'mz', [{ type: 'text', text: 'The maybach is fine on the server.' }]))
+    return out
+  }
+  // Windows far too small for the turn: the earlier reads stop at remoteMaxBytes / localMaxBytes.
+  const limits = { ...TERMINAL_LIMITS, remoteBytes: 64 * 1024, remoteMaxBytes: 128 * 1024, localBytes: 64 * 1024, localMaxBytes: 128 * 1024 }
+
+  it('a host file: the prompt line asked of the host once per window start, shown above the answer', async () => {
+    const data = Buffer.from(jsonl(records()))
+    const promptLine = JSON.stringify(records()[2])
+    const readAgentFile = vi.fn(async (hostId, { offset, cap }) => {
+      const start = offset === null ? Math.max(0, data.length - cap) : offset
+      return { ok: true, size: data.length, mtimeMs: 1, data: data.subarray(start, Math.min(data.length, start + cap)) }
+    })
+    const findAgentPrompt = vi.fn(async (hostId, q) => {
+      expect(hostId).toBe('ssh-box')
+      expect(q).toMatchObject({ agent: 'claude', id: CLAUDE_ID })
+      expect(q.before).toBeGreaterThan(0)
+      expect(q.before).toBeLessThan(data.length)
+      return { ok: true, line: promptLine, cut: false }
+    })
+    const conv = createTerminalConversations({ readAgentFile, findAgentPrompt, limits, isRemote: async () => false })
+    const ask = { from: 0, panes: [{ paneId: 'r1', agent: 'claude', sessionId: CLAUDE_ID, hostId: 'ssh-box' }] }
+    const res = await conv.read(ask)
+    expect(res.panes.r1.items.map((i) => [i.role, i.text])).toEqual([
+      ['user', 'Why does the maybach fail to load?'],
+      ['agent', 'The maybach is fine on the server.']
+    ])
+    expect(findAgentPrompt).toHaveBeenCalledTimes(1)
+    // Asked again with nothing new: the same window start, no second scan.
+    await conv.read(ask)
+    expect(findAgentPrompt).toHaveBeenCalledTimes(1)
+    conv.dispose()
+  })
+
+  it('a host that finds no prompt, or no scan at all: the window as it was', async () => {
+    const data = Buffer.from(jsonl(records()))
+    const readAgentFile = async (hostId, { offset, cap }) => {
+      const start = offset === null ? Math.max(0, data.length - cap) : offset
+      return { ok: true, size: data.length, mtimeMs: 1, data: data.subarray(start, Math.min(data.length, start + cap)) }
+    }
+    const ask = { from: 0, panes: [{ paneId: 'r1', agent: 'claude', sessionId: CLAUDE_ID, hostId: 'ssh-box' }] }
+    const none = createTerminalConversations({ readAgentFile, findAgentPrompt: async () => ({ ok: false, none: true }), limits, isRemote: async () => false })
+    expect((await none.read(ask)).panes.r1.items.map((i) => i.role)).toEqual(['agent'])
+    none.dispose()
+    const without = createTerminalConversations({ readAgentFile, limits, isRemote: async () => false })
+    expect((await without.read(ask)).panes.r1.items.map((i) => i.role)).toEqual(['agent'])
+    without.dispose()
+  })
+
+  it('the turn began with another session’s message: found, and the answer hidden as the full view hides it', async () => {
+    const peerRecords = () => {
+      const out = records()
+      out[2] = prompt(2, 'Another Claude session sent a message:\n[Tessel] You have 1 new team message', { isMeta: true, origin: { kind: 'peer' } })
+      return out
+    }
+    const data = Buffer.from(jsonl(peerRecords()))
+    const readAgentFile = async (hostId, { offset, cap }) => {
+      const start = offset === null ? Math.max(0, data.length - cap) : offset
+      return { ok: true, size: data.length, mtimeMs: 1, data: data.subarray(start, Math.min(data.length, start + cap)) }
+    }
+    const findAgentPrompt = async () => ({ ok: true, line: JSON.stringify(peerRecords()[2]) })
+    const conv = createTerminalConversations({ readAgentFile, findAgentPrompt, limits, isRemote: async () => false })
+    const res = await conv.read({ from: 0, panes: [{ paneId: 'r1', agent: 'claude', sessionId: CLAUDE_ID, hostId: 'ssh-box' }] })
+    expect(res.panes.r1.items).toEqual([])
+    conv.dispose()
+  })
+
+  it('a local file: the prompt read backwards from the window’s start', async () => {
+    const tmp = fs.mkdtempSync(join(os.tmpdir(), 'tessel-tconv-prompt-'))
+    try {
+      const claudeHome = join(tmp, 'claude')
+      fs.mkdirSync(join(claudeHome, 'projects', 'C--proj'), { recursive: true })
+      fs.writeFileSync(join(claudeHome, 'projects', 'C--proj', `${CLAUDE_ID}.jsonl`), jsonl(records()))
+      const conv = createTerminalConversations({ homes: async () => claudeHome, roots: () => transcriptViewRoots(tmp, {}), limits, isRemote: async () => false })
+      const res = await conv.read({ from: 0, panes: [{ paneId: 'p1', agent: 'claude', sessionId: CLAUDE_ID }] })
+      expect(res.panes.p1.items.map((i) => [i.role, i.text])).toEqual([
+        ['user', 'Why does the maybach fail to load?'],
+        ['agent', 'The maybach is fine on the server.']
+      ])
+      conv.dispose()
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true })
+    }
+  })
+})

@@ -183,7 +183,7 @@ export function createRemoteTail(readWindow, maxBytes, { maxEarlier = 0 } = {}) 
   function more() {
     return head > 0 && earlier < maxEarlier && !stuck
   }
-  return { read, readEarlier, lines: () => lines, cut: () => cut, more, size: () => size, remote: true }
+  return { read, readEarlier, lines: () => lines, cut: () => cut, more, size: () => size, head: () => head, remote: true }
 }
 
 // A remote conversation's most recent part as the chat's events (a resumed

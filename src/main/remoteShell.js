@@ -217,6 +217,11 @@ export const FUNCTIONS = new Set([
   // search of the whole folder: one search per read held the host's session
   // for seconds on a host with many sessions.
   '__t_tread',
+  // The last prompt typed at or before a byte of a Claude Code transcript
+  // (its offset and length, found by a scan on the host from a start byte;
+  // chat/promptBefore.js says why): the conversation view's turn whose
+  // answer its window shows without the question.
+  '__t_tprompt',
   // The signed-in user's home folder ($HOME), to tell a "~/…" project from
   // the same folder named by its full path (chat file links).
   '__t_home',
@@ -1068,6 +1073,14 @@ __t_twin() {
 __t_tread() {
   __t_tfile "$1" "$2" "$5" || return $?
   __t_twin "$__F" "$3" "$4"
+}
+__t_tprompt() {
+  __t_tfile "$1" "$2" "$4" || return $?
+  case $3 in ''|*[!0-9]*) return 90 ;; esac
+  case $5 in ''|*[!0-9]*) __o=0 ;; *) __o=$5 ;; esac
+  # From one byte before the start: the first record is then the end of the line before it (or empty) and is skipped, so a start inside a line never yields a partial one.
+  if [ "$__o" -gt 0 ]; then __s=$((__o-1)); __k=1; else __s=0; __k=0; fi
+  tail -c +"$((__s+1))" "$__F" | LC_ALL=C awk -v max="$3" -v o="$__s" -v skip="$__k" 'BEGIN { lo = -1; ll = 0 } { l = length($0) + 1; if (skip && NR == 1) { o += l; next } if (o > max) exit; if (!index($0, "\\"isSidechain\\":true")) { u = index($0, "\\"type\\":\\"user\\"") && !index($0, "\\"type\\":\\"tool_result\\""); q = index($0, "\\"queued_command\\"") && index($0, "\\"commandMode\\":\\"prompt\\""); y = !index($0, "\\"isMeta\\":true") && (!index($0, "\\"origin\\"") || index($0, "\\"kind\\":\\"human\\"")); if ((u && (y || index($0, "\\"kind\\":\\"peer\\""))) || (q && y)) { lo = o; ll = l } } o += l } END { if (lo >= 0) print lo, ll }'
 }
 __t_subdir() {
   __t_tfile claude "$1" || return $?

@@ -58,6 +58,7 @@ import {
   grokModelTimeline
 } from './transcriptView.js'
 import { createRemoteTail, remoteWindowReader, validRemoteTranscript } from './remoteTranscripts.js'
+import { lastPromptBefore } from './promptBefore.js'
 import { isTesselDelivery } from '../../shared/tesselDelivery.js'
 import { museModelTimeline } from '../museSessions.js'
 import { antigravityModelTimeline } from '../agentModel.js'
@@ -90,6 +91,10 @@ export const TERMINAL_LIMITS = {
   minItems: 4,
   localMaxBytes: 8 * 1024 * 1024,
   remoteMaxBytes: 3 * 1024 * 1024,
+  // A window that starts inside a turn (an answer first, no prompt): the
+  // turn's prompt is looked for before it (promptBefore.js), a local file
+  // read backwards up to this much.
+  promptScanBytes: 64 * 1024 * 1024,
   items: 200,
   chars: 300000,
   text: 8000,
@@ -649,6 +654,8 @@ export function createTerminalConversations({
   homes = async () => null,
   sessionsDir = () => null,
   readAgentFile = null,
+  // A host's: the last prompt before a byte of a transcript (remoteFs.js findAgentPrompt).
+  findAgentPrompt = null,
   roots = transcriptViewRoots,
   limits = TERMINAL_LIMITS,
   now = () => Date.now(),
@@ -809,13 +816,18 @@ export function createTerminalConversations({
         }
         return
       }
-      const items = decodeLines(e, windowLines(r.data, r.size > r.data.length))
+      const cut = r.size > r.data.length
+      let items = decodeLines(e, windowLines(r.data, cut))
       const wider = Math.min(cap * 2, limits.localMaxBytes || cap)
-      if (items.length < (limits.minItems || 0) && r.size > r.data.length && wider > cap) {
+      if (items.length < (limits.minItems || 0) && cut && wider > cap) {
         cap = wider
         continue
       }
       e.cap = cap
+      if (cut && answerFirst(items)) {
+        const line = await promptBefore(e, r.size - r.data.length)
+        if (line) items = decodeLines(e, [line, ...windowLines(r.data, cut)])
+      }
       await settle(e, items, `${r.size}:${r.mtimeMs ?? ''}`)
       break
     }
@@ -861,7 +873,43 @@ export function createTerminalConversations({
       if (!more || !more.added) break
       items = decodeLines(e, e.tail.lines())
     }
+    if (e.tail.cut() && answerFirst(items)) {
+      const line = await promptBefore(e, e.tail.head())
+      if (line) items = decodeLines(e, [line, ...e.tail.lines()])
+    }
     await settle(e, items, `${e.tail.size()}`)
+  }
+  // The window opens on an answer: its turn began before it.
+  const answerFirst = (items) => items.length > 0 && items[0].role !== 'user'
+  // The turn's prompt, found before the window (a host's by a scan there,
+  // a local file read backwards: promptBefore.js), once per window start.
+  // A window that moved on (the file grew, the agent still at work): only
+  // the bytes since the last start are looked at, and the prompt found then
+  // stands when nothing newer is there. A failed look (the host not
+  // answering) is not remembered: asked again with the next change. Claude
+  // Code's files only (the line's shape is theirs). The window's own first
+  // line is dropped by the tail (cut at a newline): a host's scan ends just
+  // before the start, a local file's includes the line that starts there.
+  async function promptBefore(e, head) {
+    if ((e.agent !== 'claude' && e.agent !== 'openclaude') || !(Number.isSafeInteger(head) && head > 0)) return null
+    if (e.promptAt === head) return e.promptLine
+    const had = e.promptLine || null
+    const since = had && Number.isSafeInteger(e.promptAt) && head > e.promptAt ? e.promptAt : 0
+    let line = null
+    try {
+      if (e.hostId) {
+        if (typeof findAgentPrompt !== 'function') return null
+        const r = await findAgentPrompt(e.hostId, { agent: e.agent, id: e.sessionId, before: head - 1, start: since })
+        if (!r || !(r.ok || r.none)) return had
+        line = r.ok && typeof r.line === 'string' && r.line ? r.line : null
+      } else if (e.file) line = await lastPromptBefore(e.file, head + 1, limits.promptScanBytes || 0, { fsp, stopAt: since })
+      else return null
+    } catch {
+      return had
+    }
+    e.promptAt = head
+    e.promptLine = line || (since > 0 ? had : null)
+    return e.promptLine
   }
   // One read at a time per host, apart from the local reads; a host that
   // took long is left alone hostDownMs.

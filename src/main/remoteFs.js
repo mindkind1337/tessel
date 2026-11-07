@@ -143,6 +143,9 @@ export const GUEST_MS = Object.freeze({ list: 8000, stat: 5000, read: 10_000, wr
 // Search results a guest's search checks at most (links, nested
 // repositories, what git ignores).
 export const GUEST_CHECK_MAX = 2000
+// One prompt line of a transcript, images included (findAgentPrompt).
+const MAX_PROMPT_LINE = 4 * 1024 * 1024
+
 // The guest functions' exit codes -> a guest answer's code.
 // 87: git on the host is too old to tell what it ignores (check-ignore --no-index).
 const GUEST_RC = { 87: 'old-git', 90: 'refused', 91: 'missing', 92: 'not-file', 93: 'too-large', 95: 'conflict', 96: 'is-folder', 97: 'unknown', 124: 'busy' }
@@ -2635,6 +2638,36 @@ ${root}`, () => gitWorktreesNow(root))
     return { ok: true, size, mtimeMs: Number.isSafeInteger(mtime) && mtime >= 0 ? mtime * 1000 : null, data: out.subarray(nl + 1) }
   }
 
+  // The last prompt typed at or before byte `before` of a Claude Code
+  // transcript on this host, looking from byte `start` (0: the file's
+  // start; chat/promptBefore.js says why and what counts): __t_tprompt scans
+  // the file there and says the line's offset and length (never its text),
+  // then that one line is read (readAgentFile), at most MAX_PROMPT_LINE
+  // bytes. Never a sign-in.
+  // -> { ok: true, line } | { ok: false, none?, missing?, notConnected?, error }
+  async function findAgentPrompt(hostId, { agent, id, before, start = 0, lane = null } = {}) {
+    if (!hostIdOk(hostId)) return { ok: false, error: t('main.remote.notFound', 'This remote host is no longer saved in Tessel.') }
+    if (agent !== 'claude' || typeof id !== 'string' || !/^[0-9A-Za-z-]{8,100}$/.test(id)) return { ok: false, error: 'invalid' }
+    if (!(Number.isSafeInteger(before) && before > 0) || !(Number.isSafeInteger(start) && start >= 0 && start <= before)) return { ok: false, error: 'invalid' }
+    if (!connectedQuietly(hostId)) return { ok: false, notConnected: true, error: t('main.remoteFs.notConnected', '{{host}} is not connected. Use Connect to sign in.', { host: hostLabel(hostId) }) }
+    const entry = sessions.get(hostId)
+    const open = !!(entry && !entry.closed && entry.session && entry.session.state === 'ready')
+    const how = lane === 'pane' ? { lane } : guestOr(lane, open)
+    const res = await call(hostId, '__t_tprompt', [agent, id, String(before), '', String(start)], { cap: 256, timeoutMs: lane === 'guest' ? 15_000 : 30_000, op: 'read', background: true, ...how })
+    if (!res || res.skipped) return { ok: false, notConnected: true, error: t('main.remoteFs.notConnected', '{{host}} is not connected. Use Connect to sign in.', { host: hostLabel(hostId) }) }
+    if (res.error) return { ok: false, error: res.error }
+    if (res.rc === RC.MISSING) return { ok: false, missing: true, error: 'missing' }
+    if (res.rc !== 0) return { ok: false, error: rcText(res, `rc ${res.rc}`) }
+    const said = (Buffer.isBuffer(res.out) ? res.out.toString('latin1') : String(res.out || '')).trim()
+    if (!said) return { ok: false, none: true }
+    const [offset, length] = said.split(' ').map(Number)
+    if (!Number.isSafeInteger(offset) || offset < start || offset > before || !Number.isSafeInteger(length) || length <= 0) return { ok: false, error: 'unreadable' }
+    const r = await readAgentFile(hostId, { agent, id, offset, cap: Math.min(length, MAX_PROMPT_LINE), lane })
+    if (!r.ok) return r
+    const nl = r.data.indexOf(10)
+    return { ok: true, line: r.data.toString('utf8', 0, nl < 0 ? r.data.length : nl) }
+  }
+
   // A Claude Code session's sub-agent transcripts on this host (__t_subs:
   // <id>/subagents/*.jsonl next to its transcript, no link followed), at
   // most `limit`: their names (without .jsonl), sizes and change times, never
@@ -2893,6 +2926,7 @@ ${q && q.root}`, () => (q && q.background === true ? scmBg : scm).scmStatus(q)),
     findAntigravitySession,
     antigravityConversationExists,
     readAgentFile,
+    findAgentPrompt,
     listSubagentFiles,
     readSubagentMetas,
     listCodexChildren,

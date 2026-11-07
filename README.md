@@ -208,7 +208,10 @@ working on Tessel itself (see [Build from source](#build-from-source)).
 - **Yolo mode**: run agents without permission prompts, everywhere or only in
   chosen folders; it is kept when an agent or Tessel restarts.
 - **Resume and history**: agent panes come back with their conversation after
-  a restart; you can browse and reopen past sessions of every agent.
+  a restart; you can browse and reopen past sessions of every agent. The
+  Conversations view of a terminal agent (on your computer or on a host) shows
+  a long turn's answer with the prompt you typed above it, even when hours of
+  tool output lie between the two.
 - **Agent updates**: Tessel checks for new versions of your agents, updates
   them in the background, and restarts each pane on the new version when it is
   idle, with its conversation resumed. A new version's models appear by

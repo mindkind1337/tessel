@@ -1668,7 +1668,8 @@ const terminalConversations = createTerminalConversations({
     return (r && r[agent]) || null
   },
   sessionsDir: () => sessionsDir(),
-  readAgentFile: (hostId, q) => (remoteHosts.get(hostId) ? remoteFs.readAgentFile(hostId, q) : { ok: false, error: 'unknown host' }) // i18n-ignore
+  readAgentFile: (hostId, q) => (remoteHosts.get(hostId) ? remoteFs.readAgentFile(hostId, q) : { ok: false, error: 'unknown host' }), // i18n-ignore
+  findAgentPrompt: (hostId, q) => (remoteHosts.get(hostId) ? remoteFs.findAgentPrompt(hostId, q) : { ok: false, error: 'unknown host' }) // i18n-ignore
 })
 terminalConversations.register(ipcMain)
 // The same reader for Live Share guests (their history of a shared pane): a
@@ -1681,7 +1682,8 @@ const guestTerminalConversations = createTerminalConversations({
     return (r && r[agent]) || null
   },
   sessionsDir: () => sessionsDir(),
-  readAgentFile: (hostId, q) => (remoteHosts.get(hostId) ? remoteFs.readAgentFile(hostId, { ...q, lane: 'guest' }) : { ok: false, error: 'unknown host' }) // i18n-ignore
+  readAgentFile: (hostId, q) => (remoteHosts.get(hostId) ? remoteFs.readAgentFile(hostId, { ...q, lane: 'guest' }) : { ok: false, error: 'unknown host' }), // i18n-ignore
+  findAgentPrompt: (hostId, q) => (remoteHosts.get(hostId) ? remoteFs.findAgentPrompt(hostId, { ...q, lane: 'guest' }) : { ok: false, error: 'unknown host' }) // i18n-ignore
 })
 // The skills a terminal agent's chat view lists ("/" menu): its project's
 // (its open view's folder), the user's and its account's.
