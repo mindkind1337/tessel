@@ -26,7 +26,8 @@
 // - A browser's everyday input: its keys (find, zoom, history, reload, stop),
 //   Ctrl+wheel zoom, the mouse's back/forward buttons and a right-click menu
 //   are handled here and told to the window; a middle-click or Ctrl+click on
-//   a link opens it in a new pane (the same popup rule). After Orca's
+//   a link opens it in a new pane (the same popup rule); a window.open with
+//   a size (a sign-in popup) is a window of its own, with its opener. After Orca's
 //   src/main/browser/browser-guest-context-menu.ts and
 //   browser-guest-wheel-zoom.ts (MIT, Copyright (c) 2026 Lovecast Inc.).
 import fs from 'fs'
@@ -66,6 +67,68 @@ const GRANTED_PERMISSIONS = new Set(['clipboard-sanitized-write', 'fullscreen'])
 // A new window counts only this soon after the user's own click or key in
 // the page (a popup blocker's rule); later, or with none, it is refused.
 const POPUP_GESTURE_MS = 1500
+// window.open with a size (width= or height= among its features): a window
+// of its own, as a browser opens one, in the page's session and with
+// window.opener live. A sign-in flow opens such a window and waits for it to
+// post its result to the opener and close itself (Google's, GitHub's,
+// Microsoft's); opened in the pane instead, the opener was gone with the
+// page, nothing came back and the flow ended on a blank callback page
+// (xfree.com's Google sign-in, 2026-11-07). A window.open without a size and
+// a link's new tab stay in the pane, as before. Its size is what the page
+// asked, within these bounds, centred on Tessel's window.
+const POPUP_SIZE = /(?:^|[\s,;])(?:inner)?(?:width|height)\s*=/i
+const POPUP_DEFAULT = { width: 600, height: 700 }
+const POPUP_MIN = 300
+const POPUP_MAX = { width: 1400, height: 1000 }
+// Electron makes the window from the page's whole features string (every
+// key=value of it, "alwaysOnTop=yes", "frame=no", "kiosk=yes", "show=no"…)
+// under what is overridden: a plain, framed, closable window, never on top,
+// full screen, invisible or see-through, whatever the page asked.
+export const POPUP_WINDOW = Object.freeze({
+  show: true,
+  frame: true,
+  fullscreen: false,
+  fullscreenable: false,
+  kiosk: false,
+  simpleFullscreen: false,
+  alwaysOnTop: false,
+  transparent: false,
+  opacity: 1,
+  skipTaskbar: false,
+  focusable: true,
+  resizable: true,
+  movable: true,
+  minimizable: true,
+  maximizable: false,
+  closable: true,
+  modal: false,
+  enableLargerThanScreen: false,
+  titleBarStyle: 'default',
+  thickFrame: true,
+  type: undefined,
+  center: false,
+  useContentSize: false,
+  minWidth: POPUP_MIN,
+  minHeight: POPUP_MIN,
+  maxWidth: POPUP_MAX.width,
+  maxHeight: POPUP_MAX.height
+})
+export function popupWindowSize(features, bounds = null) {
+  const text = String(features || '')
+  const pick = (name) => {
+    const m = new RegExp(`(?:^|[\\s,;])(?:inner)?${name}\\s*=\\s*(\\d{2,5})`, 'i').exec(text)
+    return m ? Number(m[1]) : null
+  }
+  const clamp = (v, max, fallback) => (Number.isFinite(v) && v > 0 ? Math.min(Math.max(Math.round(v), POPUP_MIN), max) : fallback)
+  const width = clamp(pick('width'), POPUP_MAX.width, POPUP_DEFAULT.width)
+  const height = clamp(pick('height'), POPUP_MAX.height, POPUP_DEFAULT.height)
+  const out = { width, height }
+  if (bounds && Number.isFinite(bounds.x) && Number.isFinite(bounds.y) && Number.isFinite(bounds.width) && Number.isFinite(bounds.height)) {
+    out.x = Math.round(bounds.x + (bounds.width - width) / 2)
+    out.y = Math.round(bounds.y + (bounds.height - height) / 2)
+  }
+  return out
+}
 // The user's input that may open a window (what browsers call an activation).
 const GESTURE_INPUTS = new Set(['mouseDown', 'mouseUp', 'keyDown', 'rawKeyDown', 'touchStart', 'touchEnd', 'gestureTap', 'pointerDown', 'pointerUp'])
 // What the window may still choose for a page, the rest of its
@@ -226,6 +289,14 @@ export function createBrowserGuests({ getWindow, send, log = null, screenshotDir
 
   const warn = (msg) => log && log.warn('browser', msg)
 
+  // The partition a browser session was made from (a popup window of a page
+  // shares it), or null for a session that is not one of ours.
+  function partitionOf(ses) {
+    if (!ses) return null
+    for (const [p, s] of ourSessions) if (s === ses) return p
+    for (const p of BROWSER_PARTITIONS) if (electronSession.fromPartition(p) === ses) return p
+    return null
+  }
   function isBrowserSession(ses) {
     if (!ses) return false
     for (const s of ourSessions.values()) if (s === ses) return true
@@ -370,7 +441,7 @@ export function createBrowserGuests({ getWindow, send, log = null, screenshotDir
       noteGesture(mouse && mouse.type)
     })
 
-    guest.setWindowOpenHandler(({ url, disposition, postBody, referrer }) => {
+    guest.setWindowOpenHandler(({ url, disposition, postBody, referrer, features }) => {
       if (url.startsWith('blob:')) {
         try {
           if (Date.now() - gestureAt <= POPUP_GESTURE_MS && new URL(url).origin === new URL(guest.getURL()).origin) {
@@ -391,6 +462,44 @@ export function createBrowserGuests({ getWindow, send, log = null, screenshotDir
         return { action: 'deny' }
       }
       gestureAt = 0
+      // A sized window.open (POPUP_SIZE): a window of its own, hardened like
+      // a page (nothing of Node, no <webview>, the page's own session), kept
+      // with the page (did-create-window below). Electron opens it with
+      // window.opener live.
+      // Not for a page an agent drives, nor the agents' own session: a window
+      // the agent's tools cannot see or use would stall its flow on the
+      // user's desktop; the pane, as before.
+      const partition = disposition === 'new-window' && POPUP_SIZE.test(String(features || '')) && !agentControlsPage(guest.id) ? partitionOf(guest.session) : null
+      if (partition && partition !== BROWSER_PARTITION_AGENT) {
+        const win = getWindow()
+        const live = win && !win.isDestroyed()
+        const size = popupWindowSize(features, live && typeof win.getBounds === 'function' ? win.getBounds() : null)
+        return {
+          action: 'allow',
+          overrideBrowserWindowOptions: {
+            ...POPUP_WINDOW,
+            ...size,
+            ...(live ? { parent: win } : {}),
+            autoHideMenuBar: true,
+            backgroundColor: '#ffffff',
+            webPreferences: {
+              partition,
+              nodeIntegration: false,
+              nodeIntegrationInSubFrames: false,
+              nodeIntegrationInWorker: false,
+              contextIsolation: true,
+              sandbox: true,
+              webviewTag: false,
+              webSecurity: true,
+              allowRunningInsecureContent: false,
+              experimentalFeatures: false,
+              enableBlinkFeatures: '',
+              preload: undefined,
+              additionalArguments: []
+            }
+          }
+        }
+      }
       // Preserve a form POST used to generate a PDF (rerouting through the
       // renderer would turn it into a GET and discard the request body).
       if (postBody?.data) {
@@ -552,6 +661,37 @@ export function createBrowserGuests({ getWindow, send, log = null, screenshotDir
       }
     })
     guest.on('destroyed', () => cancelPick(guest.id))
+    // The window a sized window.open got (above): no menu bar, no window of
+    // its own (a popup's popup), http(s) pages only (a custom scheme a flow
+    // redirects to would reach the system), and closed with its page.
+    guest.on('did-create-window', (child) => {
+      try {
+        const wc = child && child.webContents
+        if (!wc) return
+        // No menu at all (a hidden one still answers its shortcuts: DevTools, full screen).
+        if (typeof child.removeMenu === 'function') child.removeMenu()
+        if (typeof child.setMenuBarVisibility === 'function') child.setMenuBarVisibility(false)
+        wc.setWindowOpenHandler(() => ({ action: 'deny' }))
+        const onlyWeb = (event, url) => {
+          if (!allowedBrowserUrl(url)) event.preventDefault()
+        }
+        wc.on('will-navigate', onlyWeb)
+        wc.on('will-redirect', onlyWeb)
+        // Its frames too, as the page's own (a frame to javascript: or file:).
+        wc.on('will-frame-navigate', (details) => {
+          if (details && !allowedBrowserUrl(details.url) && typeof details.preventDefault === 'function') details.preventDefault()
+        })
+        // Destroyed, not closed: a page's beforeunload cannot keep the window
+        // once its pane is gone.
+        const closeIt = () => {
+          if (!child.isDestroyed()) child.destroy()
+        }
+        guest.once('destroyed', closeIt)
+        child.once('closed', () => guest.off('destroyed', closeIt))
+      } catch (err) {
+        warn(`a page's popup window could not be set up: ${err.message}`)
+      }
+    })
     // A page's process that ends (a crash, killed, out of memory): logged,
     // the window shows "page stopped" with Reload.
     guest.on('render-process-gone', (_event, details) => {

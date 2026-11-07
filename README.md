@@ -64,7 +64,9 @@ working on Tessel itself (see [Build from source](#build-from-source)).
 - **Built-in browser**: a real browser in a pane or in the side panel (drag a
   page between them), with a design mode to pick an element and send feedback
   about it to an agent. **Import cookies** from Chrome, Edge, Brave, Firefox…
-  (your default browser first) to stay signed in to your sites.
+  (your default browser first) to stay signed in to your sites. A site's
+  sign-in popup (Google, GitHub, Microsoft…) opens as a small window of its
+  own and hands its result back to the page, as in a browser.
 - **Saved passwords**: import logins from your browsers into an encrypted,
   on-this-computer vault (never sent through Live Share), then fill them on a
   private page. All profiles of every Chromium browser are found — Chrome (and

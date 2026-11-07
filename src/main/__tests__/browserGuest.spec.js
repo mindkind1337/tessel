@@ -7,7 +7,7 @@ import { join } from 'path'
 
 vi.mock('../browserPicker', () => ({ pickerScript: (a) => `/*${a}*/`, clampPickPayload: (x) => x }))
 
-import { createBrowserGuests, BROWSER_PARTITION, BROWSER_PARTITION_AGENT, BROWSER_PARTITION_GUEST, BROWSER_PARTITIONS, shortcutOf, contextMenuItems, wantsNewPane } from '../browserGuest'
+import { createBrowserGuests, BROWSER_PARTITION, BROWSER_PARTITION_AGENT, BROWSER_PARTITION_GUEST, BROWSER_PARTITIONS, shortcutOf, contextMenuItems, wantsNewPane, popupWindowSize, POPUP_WINDOW } from '../browserGuest'
 
 const ev = (extra = {}) => ({ preventDefault: vi.fn(), ...extra })
 
@@ -91,7 +91,7 @@ function setup(opts = {}) {
   }
   const log = { warn: vi.fn() }
   const openExternal = vi.fn()
-  const bg = createBrowserGuests({ getWindow: () => win, send: (ch, payload) => sent.push([ch, payload]), log, screenshotDir: dir, electron, openExternal, agentSessionOnly: opts.agentSessionOnly })
+  const bg = createBrowserGuests({ getWindow: () => win, send: (ch, payload) => sent.push([ch, payload]), log, screenshotDir: dir, electron, openExternal, agentSessionOnly: opts.agentSessionOnly, ...(opts.agentControlsPage ? { agentControlsPage: opts.agentControlsPage } : {}) })
   bg.attachToWindow(win)
   const handlers = {}
   bg.register({ handle: (ch, fn) => (handlers[ch] = fn) })
@@ -234,6 +234,91 @@ describe('a page attached', () => {
       expect(g.openHandler({ url })).toEqual({ action: 'deny' })
     }
     expect(t.sent).toEqual([])
+  })
+
+  it('window.open with a size (a sign-in popup): a window of its own in the page\u2019s session, right after a click; without a size, or a link\u2019s tab: the pane as before', () => {
+    const g = t.attach()
+    t.win.getBounds = () => ({ x: 100, y: 50, width: 1600, height: 900 })
+    t.click(g)
+    const r = g.openHandler({ url: 'https://accounts.google.com/o/oauth2/auth?x=1', disposition: 'new-window', features: 'width=500,height=600,menubar=no' })
+    expect(r.action).toBe('allow')
+    expect(r.overrideBrowserWindowOptions).toMatchObject({
+      width: 500,
+      height: 600,
+      x: 650,
+      y: 200,
+      parent: t.win,
+      autoHideMenuBar: true,
+      webPreferences: { partition: BROWSER_PARTITION, nodeIntegration: false, contextIsolation: true, sandbox: true, webviewTag: false, webSecurity: true }
+    })
+    expect(r.overrideBrowserWindowOptions.webPreferences.preload).toBeUndefined()
+    // Every window option a page could smuggle through its features string is pinned.
+    for (const [k, v] of Object.entries(POPUP_WINDOW)) expect([k, r.overrideBrowserWindowOptions[k]]).toEqual([k, v])
+    expect(Object.keys(POPUP_WINDOW)).toEqual(expect.arrayContaining(['show', 'frame', 'fullscreen', 'kiosk', 'alwaysOnTop', 'transparent', 'opacity', 'skipTaskbar', 'focusable', 'closable', 'modal', 'enableLargerThanScreen', 'type', 'minWidth', 'maxWidth', 'maxHeight']))
+    expect(t.sent).toEqual([])
+    // The click was spent: the next one, right away, is refused.
+    expect(g.openHandler({ url: 'https://accounts.google.com/x', disposition: 'new-window', features: 'width=500,height=600' })).toEqual({ action: 'deny' })
+    // No size, or a link's new tab (even with a size said): the pane.
+    t.click(g)
+    expect(g.openHandler({ url: 'https://example.com/p', disposition: 'new-window', features: '' })).toEqual({ action: 'deny' })
+    t.click(g)
+    expect(g.openHandler({ url: 'https://example.com/t', disposition: 'foreground-tab', features: 'width=500' })).toEqual({ action: 'deny' })
+    expect(t.sent.map(([, p]) => p.url)).toEqual(['https://example.com/p', 'https://example.com/t'])
+    // Not an http(s) page: nothing, size or not.
+    t.sent.length = 0
+    t.click(g)
+    expect(g.openHandler({ url: 'javascript:alert(1)', disposition: 'new-window', features: 'width=500,height=600' })).toEqual({ action: 'deny' })
+    expect(t.sent).toEqual([])
+  })
+
+  it('a page an agent drives, or the agents\u2019 session: the pane as before (a window its tools cannot see would stall it)', () => {
+    const driven = setup({ agentControlsPage: () => true })
+    const g = driven.attach()
+    driven.click(g)
+    expect(g.openHandler({ url: 'https://accounts.google.com/o', disposition: 'new-window', features: 'width=500,height=600' })).toEqual({ action: 'deny' })
+    expect(driven.sent.map(([, p]) => p.url)).toEqual(['https://accounts.google.com/o'])
+    const agentSes = fakeSession()
+    const apart = setup({ agentSes })
+    const a = apart.attach({ ses: agentSes, partition: BROWSER_PARTITION_AGENT })
+    apart.click(a)
+    expect(a.openHandler({ url: 'https://accounts.google.com/o', disposition: 'new-window', features: 'width=500,height=600' })).toEqual({ action: 'deny' })
+    expect(apart.sent.map(([, p]) => p.url)).toEqual(['https://accounts.google.com/o'])
+  })
+
+  it('the popup window: no menu, no window of its own, http(s) only (frames too), destroyed with its page', () => {
+    const g = t.attach()
+    const childWc = Object.assign(new EventEmitter(), { setWindowOpenHandler: vi.fn(), isDestroyed: () => false })
+    const child = Object.assign(new EventEmitter(), { webContents: childWc, setMenuBarVisibility: vi.fn(), removeMenu: vi.fn(), close: vi.fn(), destroy: vi.fn(), isDestroyed: () => false })
+    g.emit('did-create-window', child, { url: 'https://accounts.google.com/x' })
+    expect(child.removeMenu).toHaveBeenCalled()
+    expect(child.setMenuBarVisibility).toHaveBeenCalledWith(false)
+    const frame = { url: 'javascript:alert(1)', preventDefault: vi.fn() }
+    childWc.emit('will-frame-navigate', frame)
+    expect(frame.preventDefault).toHaveBeenCalled()
+    const okFrame = { url: 'https://accounts.google.com/f', preventDefault: vi.fn() }
+    childWc.emit('will-frame-navigate', okFrame)
+    expect(okFrame.preventDefault).not.toHaveBeenCalled()
+    expect(childWc.setWindowOpenHandler.mock.calls[0][0]({ url: 'https://x.test/' })).toEqual({ action: 'deny' })
+    const bad = ev()
+    childWc.emit('will-navigate', bad, 'file:///C:/x')
+    expect(bad.preventDefault).toHaveBeenCalled()
+    const custom = ev()
+    childWc.emit('will-redirect', custom, 'myapp://done?code=1')
+    expect(custom.preventDefault).toHaveBeenCalled()
+    const fine = ev()
+    childWc.emit('will-navigate', fine, 'https://accounts.google.com/signin')
+    expect(fine.preventDefault).not.toHaveBeenCalled()
+    g.destroyed = true
+    g.emit('destroyed')
+    expect(child.destroy).toHaveBeenCalledTimes(1)
+    expect(child.close).not.toHaveBeenCalled()
+  })
+
+  it('popupWindowSize: the page\u2019s size within bounds, centred on the window; defaults without one', () => {
+    expect(popupWindowSize('width=500,height=600', { x: 0, y: 0, width: 1000, height: 1000 })).toEqual({ width: 500, height: 600, x: 250, y: 200 })
+    expect(popupWindowSize('innerWidth=4000, innerHeight=10', null)).toEqual({ width: 1400, height: 300 })
+    expect(popupWindowSize('menubar=no,width=abc', null)).toEqual({ width: 600, height: 700 })
+    expect(popupWindowSize('', null)).toEqual({ width: 600, height: 700 })
   })
 
   it("a popup without the user\'s click or key (an ad frame) is refused silently, logged once", () => {
