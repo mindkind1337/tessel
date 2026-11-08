@@ -77,11 +77,14 @@ const startingLabel = computed(() => {
   if (retryIn.value) return t('liveShare.pill.retryIn', 'Retrying in {{count}} s', { count: retryIn.value })
   return props.pill.restarting ? t('liveShare.pill.restarting', 'Restarting…') : t('liveShare.pill.starting', 'Starting…')
 })
+// Short: the pill is a status in the toolbar, its words are in the tooltip
+// and the popover. Hosting: the red dot and the number of people; a guest:
+// the host's name; starting or reconnecting: that, briefly.
 const label = computed(() => {
   const p = props.pill
-  if (!isHost.value) return p.reconnecting ? t('liveShare.pill.reconnecting', 'Reconnecting to {{host}}…', { host: p.host || '?' }) : t('liveShare.pill.guest', 'Live with {{host}}', { host: p.host || '?' })
+  if (!isHost.value) return p.reconnecting ? `${p.host || '?'}…` : p.host || '?'
   if (p.starting) return startingLabel.value
-  return t('liveShare.pill.host', 'Live · {{count}}', { count: count.value })
+  return String(count.value)
 })
 const waitingBadge = computed(() => (waitingCount.value === 1 ? t('liveShare.pill.waitingBadge', '{{count}} waiting for your answer', { count: 1 }) : t('liveShare.pill.waitingBadge', '{{count}} waiting for your answer', { count: waitingCount.value })))
 const ariaLabel = computed(() => {
@@ -341,17 +344,18 @@ onBeforeUnmount(() => {
 .lsp-pill {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  max-width: 240px;
-  height: 24px;
+  gap: 5px;
+  max-width: 160px;
+  height: 20px;
   margin: 0 2px;
-  padding: 0 10px 0 8px;
+  padding: 0 7px 0 6px;
   border: 1px solid var(--border-strong);
-  border-radius: 12px;
+  border-radius: 10px;
   background: var(--surface-2);
   color: var(--text);
   font: inherit;
-  font-size: 12px;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
   cursor: pointer;
 }
 .lsp-pill:hover,
@@ -400,8 +404,8 @@ onBeforeUnmount(() => {
 }
 .lsp-dot {
   flex: none;
-  width: 8px;
-  height: 8px;
+  width: 7px;
+  height: 7px;
   border-radius: 50%;
   background: var(--text-dim);
 }

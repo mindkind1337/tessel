@@ -30,7 +30,6 @@ import {
   Moon,
   Pencil,
   Plus,
-  Search,
   SlidersHorizontal,
   SquareTerminal,
   StickyNote,
@@ -1367,17 +1366,8 @@ defineExpose({
     data-worktree-sidebar=""
   >
     <template v-if="!collapsed">
-      <!-- SidebarNav: search. -->
-      <div class="osb-nav">
-        <button type="button" class="osb-search" :aria-label="t('sidebar.searchLabel', 'Search worktrees and browser tabs')" @click="emit('search')">
-          <Search class="osb-search-icon" :size="16" :stroke-width="1.75" aria-hidden="true" />
-          <span class="osb-search-label">{{ t('sidebar.search', 'Search') }}</span>
-          <span class="osb-search-keys" aria-hidden="true">
-            <kbd v-for="k in paletteShortcut.split('+')" :key="k">{{ k }}</kbd>
-          </span>
-        </button>
-      </div>
-
+      <!-- No search box of its own: the toolbar's command box (Ctrl+Shift+P)
+           finds worktrees and browser tabs too. -->
       <!-- SidebarHeader: section title and actions. -->
       <div class="osb-header">
         <span class="osb-header-title" :data-sidebar-section-title="grouped ? 'projects' : 'workspaces'">{{

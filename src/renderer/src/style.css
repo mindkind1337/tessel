@@ -5391,6 +5391,45 @@ body.pane-dragging * {
   }
 }
 
+/* A narrow window: the toolbar's secondary buttons (Live Share, issues,
+   broadcast, layout, floating terminal, the two panels) go under one "more"
+   button, the brand keeps its name only and the command box its icon, so
+   nothing overlaps the version or the window's own buttons. */
+.toolbar .tb-more {
+  display: none;
+}
+.menu-check {
+  color: var(--accent);
+}
+@media (max-width: 1100px) {
+  .toolbar .tb-secondary {
+    display: none !important;
+  }
+  .toolbar .tb-more {
+    display: inline-flex;
+  }
+  .toolbar .toolbar-sep {
+    display: none;
+  }
+}
+@media (max-width: 860px) {
+  .toolbar .tb-left .brand-version {
+    display: none;
+  }
+  .toolbar .tb-center {
+    padding: 0 6px;
+  }
+  .toolbar .tb-command {
+    width: 30px;
+    padding: 0 7px;
+    gap: 0;
+  }
+  .toolbar .tb-command-text,
+  .toolbar .tb-command-kbd {
+    display: none;
+  }
+}
+
 /* ================= Toolbar v3: identity | command box | icon toggles ================= */
 .tb-left,
 .tb-right {
@@ -10355,59 +10394,12 @@ body.explorer-sash-dragging * {
   padding: 8px 8px 4px;
 }
 
-.osb .osb-search {
-  display: flex;
-  width: 100%;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 8px;
-  border-radius: 6px;
-  background: color-mix(in srgb, var(--wts-fg) 5%, transparent);
-  color: color-mix(in srgb, var(--wts-fg) 60%, transparent);
-  font-size: 13px;
-  font-weight: 500;
-  letter-spacing: -0.01em;
-  text-align: left;
-  cursor: pointer;
-  transition: background-color 0.15s;
-}
 
-.osb .osb-search:hover {
-  background: color-mix(in srgb, var(--wts-fg) 8%, transparent);
-}
 
-.osb-search-icon {
-  flex-shrink: 0;
-  color: color-mix(in srgb, var(--wts-fg) 30%, transparent);
-}
 
-.osb-search-label {
-  flex: 1;
-}
 
-.osb-search-keys {
-  display: none;
-  flex-shrink: 0;
-  align-items: center;
-  gap: 2px;
-}
 
-.osb-search:hover .osb-search-keys,
-.osb-search:focus-visible .osb-search-keys {
-  display: inline-flex;
-}
 
-.osb-search-keys kbd {
-  min-width: 16px;
-  padding: 1px 4px;
-  border: 1px solid color-mix(in srgb, var(--wts-border) 80%, transparent);
-  border-radius: 4px;
-  background: color-mix(in srgb, var(--wts-fg) 8%, transparent);
-  color: color-mix(in srgb, var(--wts-fg) 55%, transparent);
-  font: inherit;
-  font-size: 9px;
-  text-align: center;
-}
 
 /* SidebarHeader: "Projects" and its actions. */
 .osb-header {
@@ -10461,11 +10453,6 @@ body.explorer-sash-dragging * {
 }
 
 .osb-icon-btn:focus-visible,
-.osb-search:focus-visible,
-.osb-section-header:focus-visible {
-  outline: none;
-  box-shadow: 0 0 0 1px var(--wts-ring);
-}
 
 .osb-filter-badge {
   position: absolute;

@@ -27,7 +27,7 @@ describe('LiveSharePill: host', () => {
   it('nobody connected: "Live · 0" with a grey dot', () => {
     const w = mount(LiveSharePill, { props: { pill: hostPill() } })
     const pill = w.find('[data-test="live-pill"]')
-    expect(pill.text()).toBe('Live · 0')
+    expect(pill.text()).toBe('0')
     expect(w.find('[data-test="live-pill-dot"]').classes()).not.toContain('lit')
     expect(pill.attributes('aria-label')).toContain('0 people connected')
     expect(pill.attributes('aria-expanded')).toBe('false')
@@ -35,7 +35,7 @@ describe('LiveSharePill: host', () => {
 
   it('someone connected: the dot lights up and the count shows', () => {
     const w = mount(LiveSharePill, { props: { pill: hostPill({ guests: [{ id: 'g1', name: 'Simpa', via: 'Design', watching: [], typing: [] }] }) } })
-    expect(w.find('[data-test="live-pill"]').text()).toBe('Live · 1')
+    expect(w.find('[data-test="live-pill"]').text()).toBe('1')
     expect(w.find('[data-test="live-pill-dot"]').classes()).toContain('lit')
     expect(w.find('[data-test="live-pill"]').attributes('aria-label')).toContain('1 person connected')
   })
@@ -109,7 +109,7 @@ describe('LiveSharePill: host', () => {
   it('people waiting: an amber badge on the pill, and their row with the code and Let in', async () => {
     const pill = hostPill({ guests: [{ id: 'g1', name: 'Simpa', via: '', rights: { type: true }, watching: [], typing: [] }], waiting: 1, waitingList: [{ id: 'g3', name: 'Eve', code: '482 913' }] })
     const w = mount(LiveSharePill, { props: { pill } })
-    expect(w.find('[data-test="live-pill"]').text()).toBe('Live · 11')
+    expect(w.find('[data-test="live-pill"]').text()).toBe('11')
     expect(w.find('[data-test="live-pill-badge"]').text()).toBe('1')
     expect(w.find('[data-test="live-pill"]').attributes('aria-label')).toContain('1 waiting for your answer')
     await w.find('[data-test="live-pill"]').trigger('click')

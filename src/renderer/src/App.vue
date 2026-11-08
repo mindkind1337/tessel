@@ -1332,7 +1332,7 @@ watch(
 )
 
 const initError = ref('')
-const openMenu = ref(null) // toolbar dropdown: 'layout' | 'agents'
+const openMenu = ref(null) // toolbar dropdown: 'layout' | 'agents' | 'issues' | 'more' (a narrow window)
 
 const updateLabel = computed(() => t('app.toolbar.updateVersion', 'Update {{version}}', { version: updateStatus.value.version }))
 
@@ -14899,7 +14899,7 @@ onBeforeUnmount(() => {
         />
         <button
           v-else
-          class="tb-icon"
+          class="tb-icon tb-secondary"
           data-test="live-share-button"
           :title="t('liveShare.toolbar.title', 'Live Share: share your screen, or join someone’s')"
           :aria-label="t('liveShare.toolbar.label', 'Live Share')"
@@ -14911,7 +14911,7 @@ onBeforeUnmount(() => {
             <path d="M10.6 3.2a2.3 2.3 0 010 4.2M12 9.9c1.1.5 1.9 1.6 2.2 3.3" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" />
           </svg>
         </button>
-        <div class="menu-group" @pointerdown.stop>
+        <div class="menu-group tb-secondary" @pointerdown.stop>
           <button class="tb-icon" :aria-label="t('app.toolbar.issues', 'Issues')" :title="t('app.toolbar.issuesTitle', 'GitHub and Linear issues')" aria-haspopup="menu" :aria-expanded="openMenu === 'issues'" @click="toggleMenu('issues')">
             <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><circle cx="8" cy="8" r="5.7" stroke="currentColor" stroke-width="1.3" /><path d="M8 4.5v4M8 11h.01" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" /></svg>
           </button>
@@ -14921,7 +14921,7 @@ onBeforeUnmount(() => {
           </div>
         </div>
         <button
-          class="tb-icon"
+          class="tb-icon tb-secondary"
           :class="{ on: broadcast, warn: broadcast }"
           :title="broadcast ? t('app.toolbar.broadcastOn', 'Broadcast is on: type once into every pane with write checked (Ctrl+Shift+B)') : t('app.toolbar.broadcastOff', 'Broadcast is off: type once into every pane with write checked (Ctrl+Shift+B)')"
           :aria-label="t('app.toolbar.broadcast', 'Broadcast')"
@@ -14938,7 +14938,7 @@ onBeforeUnmount(() => {
             />
           </svg>
         </button>
-        <div class="menu-group" @pointerdown.stop>
+        <div class="menu-group tb-secondary" @pointerdown.stop>
           <button
             class="tb-icon"
             :class="{ open: openMenu === 'layout' }"
@@ -15016,7 +15016,7 @@ onBeforeUnmount(() => {
         </div>
         <!-- The floating terminal (Ctrl+`), over the workspace. -->
         <button
-          class="tb-icon"
+          class="tb-icon tb-secondary"
           :class="{ on: floating.state.open }"
           :title="t('app.toolbar.floatingTitle', 'Floating terminal (Ctrl+`)')"
           :aria-label="t('app.toolbar.floating', 'Floating terminal')"
@@ -15033,7 +15033,7 @@ onBeforeUnmount(() => {
         </button>
         <!-- The two side panels, shown or hidden (filled half = shown). -->
         <button
-          class="tb-icon tb-panel-toggle"
+          class="tb-icon tb-panel-toggle tb-secondary"
           :title="t('app.toolbar.toggleSidebar', 'Toggle the left sidebar')"
           :aria-label="t('app.toolbar.toggleSidebar', 'Toggle the left sidebar')"
           :aria-pressed="!sidebarCollapsed"
@@ -15047,7 +15047,7 @@ onBeforeUnmount(() => {
           </svg>
         </button>
         <button
-          class="tb-icon tb-panel-toggle"
+          class="tb-icon tb-panel-toggle tb-secondary"
           :title="t('app.toolbar.toggleRightPanel', 'Toggle the right sidebar')"
           :aria-label="t('app.toolbar.toggleRightPanel', 'Toggle the right sidebar')"
           :aria-pressed="taskPanelOpen"
@@ -15060,6 +15060,70 @@ onBeforeUnmount(() => {
             <path v-else d="M9.5 2.5v11" stroke="currentColor" stroke-width="1.3" />
           </svg>
         </button>
+        <!-- A narrow window: the buttons above (tb-secondary) are hidden and
+             this menu holds their actions (style.css, the toolbar's media
+             queries); the new-terminal, usage, notifications, Live Share pill
+             and Settings stay. -->
+        <div class="menu-group tb-more" @pointerdown.stop>
+          <button
+            class="tb-icon"
+            :class="{ open: openMenu === 'more' }"
+            :title="t('app.toolbar.moreTitle', 'More: Live Share, issues, broadcast, layout, panels')"
+            :aria-label="t('app.toolbar.more', 'More')"
+            aria-haspopup="menu"
+            :aria-expanded="openMenu === 'more'"
+            data-test="toolbar-more"
+            @click="toggleMenu('more')"
+          >
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+              <circle cx="3.2" cy="8" r="1.5" /><circle cx="8" cy="8" r="1.5" /><circle cx="12.8" cy="8" r="1.5" />
+            </svg>
+          </button>
+          <div v-if="openMenu === 'more'" class="toolbar-menu align-right" role="menu" data-test="toolbar-more-menu">
+            <button class="toolbar-menu-item" role="menuitem" @click="menuAction(() => openLiveShare())">
+              <span class="menu-item-name">{{ t('liveShare.toolbar.label', 'Live Share') }}</span>
+            </button>
+            <button class="toolbar-menu-item" role="menuitem" @click="menuAction(() => openGitHub())">
+              <span class="menu-item-name">{{ t('app.toolbar.githubIssues', 'GitHub issues and PRs') }}</span>
+            </button>
+            <button class="toolbar-menu-item" role="menuitem" @click="menuAction(openLinear)">
+              <span class="menu-item-name">{{ t('app.toolbar.linearIssues', 'Linear issues') }}</span>
+            </button>
+            <div class="menu-sep"></div>
+            <button class="toolbar-menu-item" role="menuitemcheckbox" :aria-checked="broadcast" @click="menuAction(toggleBroadcast)">
+              <span class="menu-item-name">{{ t('app.toolbar.broadcast', 'Broadcast') }}<span v-if="broadcast" class="menu-check" aria-hidden="true"> ✓</span></span>
+              <span class="menu-shortcut">Ctrl+Shift+B</span>
+            </button>
+            <button class="toolbar-menu-item" role="menuitemcheckbox" :aria-checked="floating.state.open" @click="menuAction(toggleFloating)">
+              <span class="menu-item-name">{{ t('app.toolbar.floating', 'Floating terminal') }}<span v-if="floating.state.open" class="menu-check" aria-hidden="true"> ✓</span></span>
+              <span class="menu-shortcut">Ctrl+`</span>
+            </button>
+            <div class="menu-sep"></div>
+            <button class="toolbar-menu-item" role="menuitem" @click="menuAction(() => splitActive('row'))">
+              <span class="menu-item-name">{{ t('app.toolbar.splitRight', 'Split right') }}</span>
+              <span class="menu-shortcut">Ctrl+Shift+E</span>
+            </button>
+            <button class="toolbar-menu-item" role="menuitem" @click="menuAction(() => splitActive('col'))">
+              <span class="menu-item-name">{{ t('app.toolbar.splitDown', 'Split down') }}</span>
+              <span class="menu-shortcut">Ctrl+Shift+O</span>
+            </button>
+            <button v-if="canArrangePanes(currentWs)" class="toolbar-menu-item" role="menuitem" @click="menuAction(() => arrangePanes())">
+              <span class="menu-item-name">{{ t('app.cmd.arrangeGrid', 'Arrange panes in a grid') }}</span>
+            </button>
+            <div class="menu-sep"></div>
+            <button class="toolbar-menu-item" role="menuitemcheckbox" :aria-checked="!sidebarCollapsed" @click="menuAction(toggleSidebar)">
+              <span class="menu-item-name">{{ t('app.toolbar.toggleSidebar', 'Toggle the left sidebar') }}</span>
+            </button>
+            <button class="toolbar-menu-item" role="menuitemcheckbox" :aria-checked="taskPanelOpen" @click="menuAction(toggleRightPanel)">
+              <span class="menu-item-name">{{ t('app.toolbar.toggleRightPanel', 'Toggle the right sidebar') }}</span>
+            </button>
+            <div class="menu-sep"></div>
+            <button class="toolbar-menu-item danger" role="menuitem" @click="menuAction(closeActive)">
+              <span class="menu-item-name">{{ t('app.toolbar.closeActive', 'Close active pane') }}</span>
+              <span class="menu-shortcut">Ctrl+Shift+W</span>
+            </button>
+          </div>
+        </div>
         <button
           class="tb-icon"
           :title="t('app.toolbar.settingsTitle', 'Settings (Ctrl+,)')"
