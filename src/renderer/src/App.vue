@@ -141,6 +141,7 @@ import { prefetchAttaches, terminalLeafIds } from './restoreAttach'
 import { afterStartup, startupBegins, startupFinished } from './startupIdle'
 import { paneOpenLine } from '../../shared/paneTiming'
 import { tasks as boardTasks, setTasks, updateTask, removeTask, addTask, deletedTaskIds, addDeletedTasks, takeDeletedToPurge, cardOnBoard, beginBoardLoad, endBoardLoad, watchBoard } from './taskBoardStore'
+import { toolbarFitLevel } from './toolbarFit'
 import { usageScopeEntries, usageScopeRoots, rememberUsageCopies, loadUsageCopies, saveUsageCopies } from './usageStats'
 import { createSaveScheduler } from './saveScheduler'
 import { taskHistory, historyVersion, createHistorySync, setTaskHistory, backfillHistory, setHistoryDescriber } from './taskHistory'
@@ -1333,6 +1334,52 @@ watch(
 
 const initError = ref('')
 const openMenu = ref(null) // toolbar dropdown: 'layout' | 'agents' | 'issues' | 'more' (a narrow window)
+
+// --- The toolbar's room (toolbarFit.js): measured whenever it or its two
+// groups change size (a chip comes, the window narrows). The groups are
+// measured with everything shown (the tight classes off for the read, back
+// on before the frame paints), so a tight toolbar can widen again.
+const toolbarEl = ref(null)
+const tbLeftEl = ref(null)
+const tbRightEl = ref(null)
+const toolbarTight = ref(0)
+const toolbarTightClass = computed(() => (toolbarTight.value ? { 'tb-tight-1': true, 'tb-tight-2': toolbarTight.value >= 2 } : null))
+let toolbarFitObserver = null
+function fitToolbar() {
+  const bar = toolbarEl.value
+  const left = tbLeftEl.value
+  const right = tbRightEl.value
+  if (!bar || !left || !right) return
+  const was = toolbarTight.value
+  bar.classList.remove('tb-tight-1', 'tb-tight-2')
+  const style = getComputedStyle(bar)
+  const avail = bar.clientWidth - (parseFloat(style.paddingLeft) || 0) - (parseFloat(style.paddingRight) || 0) - 2 * (parseFloat(style.gap) || 0)
+  let secondary = 0
+  for (const el of right.querySelectorAll('.tb-secondary, .toolbar-sep')) secondary += el.getBoundingClientRect().width + 2
+  const more = right.querySelector('.tb-more')
+  const version = left.querySelector('.brand-version')
+  const level = toolbarFitLevel({
+    avail,
+    left: left.getBoundingClientRect().width,
+    right: right.getBoundingClientRect().width,
+    secondary,
+    more: more ? Math.max(28, more.getBoundingClientRect().width) : 28,
+    version: version ? version.getBoundingClientRect().width : 0
+  })
+  if (was >= 1) bar.classList.add('tb-tight-1')
+  if (was >= 2) bar.classList.add('tb-tight-2')
+  if (level !== was) toolbarTight.value = level
+}
+onMounted(() => {
+  if (typeof ResizeObserver !== 'function') return
+  toolbarFitObserver = new ResizeObserver(() => fitToolbar())
+  for (const el of [toolbarEl.value, tbLeftEl.value, tbRightEl.value]) if (el) toolbarFitObserver.observe(el)
+  fitToolbar()
+})
+onBeforeUnmount(() => {
+  if (toolbarFitObserver) toolbarFitObserver.disconnect()
+  toolbarFitObserver = null
+})
 
 const updateLabel = computed(() => t('app.toolbar.updateVersion', 'Update {{version}}', { version: updateStatus.value.version }))
 
@@ -14747,9 +14794,9 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="app">
-    <div class="toolbar">
+    <div ref="toolbarEl" class="toolbar" :class="toolbarTightClass">
       <!-- Left: who and where (app, then the workspace switcher). -->
-      <div class="tb-left">
+      <div ref="tbLeftEl" class="tb-left">
         <div class="brand" :class="{ dev: isDev }">
           <!-- The app icon (build/icon.png): a T of tiles, fading down, a cursor tile. -->
           <svg
@@ -14811,7 +14858,7 @@ onBeforeUnmount(() => {
       </div>
 
       <!-- Right: create, then icon-only toggles with tooltips. -->
-      <div class="tb-right">
+      <div ref="tbRightEl" class="tb-right">
         <button
           v-if="approvalCard && approvalParked"
           class="tb-approval"

@@ -5391,43 +5391,42 @@ body.pane-dragging * {
   }
 }
 
-/* A narrow window: the toolbar's secondary buttons (Live Share, issues,
-   broadcast, layout, floating terminal, the two panels) go under one "more"
-   button, the brand keeps its name only and the command box its icon, so
-   nothing overlaps the version or the window's own buttons. */
+/* A tight toolbar (App.vue fitToolbar, from the room it measures; not the
+   window's width: the dev chips, the update pill and the Live Share pill
+   come and go): tb-tight-1 puts the secondary buttons (Live Share, issues,
+   broadcast, layout, floating terminal, the two panels) under one "more"
+   button; tb-tight-2 also drops the brand's version and the command box's
+   words (its icon stays). Nothing overlaps the version or the window's own
+   buttons. */
 .toolbar .tb-more {
   display: none;
 }
 .menu-check {
   color: var(--accent);
 }
-@media (max-width: 1100px) {
-  .toolbar .tb-secondary {
-    display: none !important;
-  }
-  .toolbar .tb-more {
-    display: inline-flex;
-  }
-  .toolbar .toolbar-sep {
-    display: none;
-  }
+.toolbar.tb-tight-1 .tb-secondary {
+  display: none !important;
 }
-@media (max-width: 860px) {
-  .toolbar .tb-left .brand-version {
-    display: none;
-  }
-  .toolbar .tb-center {
-    padding: 0 6px;
-  }
-  .toolbar .tb-command {
-    width: 30px;
-    padding: 0 7px;
-    gap: 0;
-  }
-  .toolbar .tb-command-text,
-  .toolbar .tb-command-kbd {
-    display: none;
-  }
+.toolbar.tb-tight-1 .tb-more {
+  display: inline-flex;
+}
+.toolbar.tb-tight-1 .toolbar-sep {
+  display: none;
+}
+.toolbar.tb-tight-2 .tb-left .brand-version {
+  display: none;
+}
+.toolbar.tb-tight-2 .tb-center {
+  padding: 0 6px;
+}
+.toolbar.tb-tight-2 .tb-command {
+  width: 30px;
+  padding: 0 7px;
+  gap: 0;
+}
+.toolbar.tb-tight-2 .tb-command-text,
+.toolbar.tb-tight-2 .tb-command-kbd {
+  display: none;
 }
 
 /* ================= Toolbar v3: identity | command box | icon toggles ================= */

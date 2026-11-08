@@ -539,10 +539,11 @@ like VS Code Live Share:
 
 ### Everyday comfort
 
-- **Narrow windows**: under 1100 px the toolbar's secondary buttons (Live Share,
-  issues, broadcast, layout, floating terminal, the two side panels) gather under one
-  `⋯` button, and under 860 px the command box keeps its icon only; the Live Share
-  pill shows its dot and the number of people, its words in the tooltip.
+- **Narrow windows**: when the toolbar runs out of room (measured, so the dev chips
+  and the pills count), its secondary buttons (Live Share, issues, broadcast, layout,
+  floating terminal, the two side panels) gather under one `⋯` button, then the
+  version and the command box's words go (its icon stays); the Live Share pill shows
+  its dot and the number of people, its words in the tooltip.
 - Command palette (`Ctrl+Shift+P`), find in terminal, zoom, copy on select,
   notifications when an agent needs you, themed menus and lists everywhere.
 - Low CPU and GPU use: hidden terminals stop drawing while agents work.
