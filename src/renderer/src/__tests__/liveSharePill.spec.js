@@ -172,7 +172,7 @@ describe('LiveSharePill: guest', () => {
 
   it('"Live with jeanc"; its popover explains, sums up the rights, shows the code, and Leave', async () => {
     const w = mount(LiveSharePill, { props: { pill: guestPill() } })
-    expect(w.find('[data-test="live-pill"]').text()).toBe('Live with jeanc')
+    expect(w.find('[data-test="live-pill"]').text()).toBe('jeanc')
     expect(w.find('[data-test="live-pill-dot"]').classes()).toContain('lit')
     await w.find('[data-test="live-pill"]').trigger('click')
     expect(w.find('[data-test="live-pill-guest-text"]').text()).toContain('jeanc’s computer')
@@ -187,7 +187,7 @@ describe('LiveSharePill: guest', () => {
 
   it('reconnecting: says so, with a grey pulsing dot, the tries and the relay', async () => {
     const w = mount(LiveSharePill, { props: { pill: guestPill({ reconnecting: true, retry: { tries: 3, lookup: true } }) } })
-    expect(w.find('[data-test="live-pill"]').text()).toBe('Reconnecting to jeanc…')
+    expect(w.find('[data-test="live-pill"]').text()).toBe('jeanc…')
     expect(w.find('[data-test="live-pill-dot"]').classes()).toContain('pulse')
     await w.find('[data-test="live-pill"]').trigger('click')
     expect(w.find('[data-test="live-pill-reconnect"]').text()).toBe('Try 3 · Looking up the host’s new address via ntfy.sh')
