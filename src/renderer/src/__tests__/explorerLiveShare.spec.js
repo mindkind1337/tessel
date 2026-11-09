@@ -247,15 +247,18 @@ describe('download menu', () => {
     await openMenuOn('a.js')
     await w.get('[data-test="explorer-menu-download"]').trigger('click')
     await flushPromises()
-    expect(download).toHaveBeenCalledWith(`${root}\\a.js`)
+    expect(download).toHaveBeenCalledWith({ file: `${root}\\a.js`, root, folder: false })
     expect(w.emitted('toast').at(-1)).toEqual(['File downloaded.'])
+    // A folder: from an SSH host, not from a Live Share host.
     await openMenuOn('src')
-    expect(has('explorer-menu-download')).toBe(false)
+    expect(has('explorer-menu-download')).toBe(root.startsWith('ssh://'))
   })
-  it('does not offer remote download for local files', async () => {
+  it('offers it for local files and folders too (a copy)', async () => {
     api({ download: vi.fn() })
     await make({ root: 'C:/project' })
     await openMenuOn('a.js')
-    expect(has('explorer-menu-download')).toBe(false)
+    expect(has('explorer-menu-download')).toBe(true)
+    await openMenuOn('src')
+    expect(has('explorer-menu-download')).toBe(true)
   })
 })

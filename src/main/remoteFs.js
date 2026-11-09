@@ -1247,14 +1247,16 @@ ${q.dotfiles !== false}`, () => listDirNow(q))
   // A folder the answer did not reach (cut at its size) is left out.
   function listMany(q = {}) {
     const dirs = Array.isArray(q.dirs) ? q.dirs.filter((d) => typeof d === 'string').slice(0, MAX_LIST_MANY) : []
-    return shared(`lm${q.background === true ? 'b' : ''}
+    return shared(`lm${q.background === true ? 'b' : ''}${q.direct === true ? 'd' : ''}
 ${q.root}
 ${dirs.join('\n')}
 ${q.dotfiles !== false}
 ${!!q.chain}
 ${q.max || ''}`, () => listManyNow({ ...q, dirs }))
   }
-  async function listManyNow({ root, dirs, dotfiles = true, chain = false, background = false, max = MAX_ENTRIES } = {}) {
+  // direct: by the Files session itself, never the host's daemon (a folder
+  // download: the daemon's tree would keep following every folder it lists).
+  async function listManyNow({ root, dirs, dotfiles = true, chain = false, background = false, max = MAX_ENTRIES, direct = false } = {}) {
     const top = under(root, root)
     if (!top) return { ok: false, error: t('main.explorer.outside', 'Outside the project.') }
     const limit = Number.isInteger(max) && max > 0 ? Math.min(max, MAX_ENTRIES) : MAX_ENTRIES
@@ -1268,7 +1270,7 @@ ${q.max || ''}`, () => listManyNow({ ...q, dirs }))
     if (!asked.length) return { ok: true, results }
     // From the host's daemon when it serves this project (its tree keeps the
     // folders current; a sole sub-folder is not followed: the window asks).
-    if (hostExplorer.served(root)) {
+    if (!direct && hostExplorer.served(root)) {
       const answers = await Promise.all(
         asked.map((a) =>
           hostExplorer
@@ -1495,7 +1497,7 @@ ${q.root}`, () => sparseInfoNow(q))
     const target = childPath(dir || root, n)
     const res = await call(parent.hostId, '__t_mk', [arg(parent.root.path), arg(joinPath(parent.path, n)), folder ? '1' : '0'], { cap: 4096, op: 'save' })
     if (res.error) return { ok: false, error: res.error }
-    if (res.rc === RC.EXISTS) return { ok: false, error: t('main.explorer.exists', '"{{name}}" already exists here.', { name: n }) }
+    if (res.rc === RC.EXISTS) return { ok: false, exists: true, error: t('main.explorer.exists', '"{{name}}" already exists here.', { name: n }) }
     if (res.rc !== 0) return { ok: false, error: rcText(res, t('main.remoteFs.createFailed', 'It could not be created on the host.')) }
     return { ok: true, path: target }
   }
@@ -1515,6 +1517,53 @@ ${q.root}`, () => sparseInfoNow(q))
     if (res.rc === RC.MISSING) return { ok: false, error: t('main.explorer.gone', 'It is already gone.') }
     if (res.rc !== 0) return { ok: false, error: rcText(res, t('main.remoteFs.renameFailed', 'It could not be renamed on the host.')) }
     return { ok: true, path: to }
+  }
+
+  // The explorer's drag onto a folder of the same project: -> { ok, path } |
+  // { ok: false, error }. The host checks both ends are below the project,
+  // that nothing there has the name, and that a folder does not go into itself.
+  async function move({ root, path: p, dir } = {}) {
+    const loc = under(root, p)
+    const dest = under(root, dir || root)
+    if (!loc || !loc.rel || !dest || dest.hostId !== loc.hostId || dest.root !== loc.root) return { ok: false, error: t('main.explorer.outside', 'Outside the project.') }
+    const name = loc.path.split('/').pop()
+    const parentVirtual = String(p).replace(/[\\/][^\\/]*$/, '')
+    const destVirtual = String(dir || root).replace(/[\\/]+$/, '')
+    if (parentVirtual === destVirtual) return { ok: true, path: p, same: true }
+    const res = await call(loc.hostId, '__t_mvto', [arg(loc.root.path), arg(loc.path), arg(dest.path)], { cap: 4096, op: 'save' })
+    if (res.error) return { ok: false, error: res.error }
+    if (res.rc === RC.EXISTS) return { ok: false, error: t('main.explorer.exists', '"{{name}}" already exists here.', { name }) }
+    if (res.rc === RC.MISSING) return { ok: false, error: t('main.explorer.moveGone', 'It, or the folder it was going to, is no longer there.') }
+    if (res.rc === RC.NOT_FILE) return { ok: false, error: t('main.explorer.notFolder', 'The destination is not a folder.') }
+    if (res.rc === RC.NO_TRASH) return { ok: false, error: t('main.remoteFs.moveOtherDisk', 'The folder is on another disk of the host: it is not moved there.') }
+    if (res.rc === RC.OUTSIDE) return { ok: false, error: t('main.explorer.moveRefused', 'It cannot be moved there (outside the project, or a folder into itself).') }
+    if (res.rc !== 0) return { ok: false, error: rcText(res, t('main.remoteFs.moveFailed', 'It could not be moved on the host.')) }
+    // Two names for the same folder on the host (a link): nothing moved.
+    if (res.out.toString('utf8').trim() === 'same') return { ok: true, path: p, same: true }
+    return { ok: true, path: childPath(destVirtual, name) }
+  }
+
+  // A file of this computer sent into a folder of the project (dropped from
+  // Windows): never over a file there. -> { ok, path } | { ok: false, error, exists? }
+  async function upload({ root, dir, name, data } = {}) {
+    const bad = checkRemoteName(name)
+    if (bad) return { ok: false, error: bad }
+    const parent = under(root, dir || root)
+    if (!parent) return { ok: false, error: t('main.explorer.outside', 'Outside the project.') }
+    if (!Buffer.isBuffer(data)) return { ok: false, error: t('main.editor.nothingToWrite', 'Nothing to write.') }
+    if (data.length > MAX_EDIT_BYTES) return { ok: false, tooLarge: true, error: t('main.remoteFs.uploadTooLarge', 'Over {{mb}} MB: not sent.', { mb: MAX_EDIT_BYTES / 1024 / 1024 }) }
+    const n = name.trim()
+    const res = await call(parent.hostId, '__t_write', [arg(parent.root.path), arg(joinPath(parent.path, n)), '', '', '', 'new'], {
+      cap: 64 * 1024,
+      upload: data,
+      timeoutMs: 30000 + Math.ceil(data.length / (512 * 1024)) * 1000,
+      op: 'save'
+    })
+    if (res.error) return { ok: false, error: res.error }
+    if (res.rc === RC.CONFLICT || res.rc === RC.EXISTS) return { ok: false, exists: true, error: t('main.explorer.exists', '"{{name}}" already exists here.', { name: n }) }
+    if (res.rc === RC.IS_DIR) return { ok: false, exists: true, error: t('main.explorer.exists', '"{{name}}" already exists here.', { name: n }) }
+    if (res.rc !== 0) return { ok: false, error: rcText(res, t('main.remoteFs.uploadFailed', 'It could not be written on the host.')) }
+    return { ok: true, path: childPath(dir || root, n) }
   }
 
   // To the host user's trash (never rm): -> { ok, name } | { ok: false, error }
@@ -2895,6 +2944,8 @@ ${root}`, () => gitWorktreesNow(root))
     },
     create,
     rename,
+    move,
+    upload,
     trash,
     readDownload,
     previewRoot,

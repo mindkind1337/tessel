@@ -93,6 +93,20 @@ working on Tessel itself (see [Build from source](#build-from-source)).
   installed app: it asks once which repository to show (`owner/name` or its
   URL), checks it with gh, remembers it for that folder, and a **Change
   repository** link in its header picks another.
+- **Drag and drop in the file explorer**: drag a file or folder onto another
+  folder to move it there (the folder lights up; a closed folder opens when
+  held under the pointer). Drop files or folders from Windows onto a folder to
+  copy them in (up to 20,000 files or 20 GB a drop), or to send them to the
+  host in an SSH project (up to 50 MB a file, 5,000 files or 1 GB a drop).
+  Nothing already there is replaced, links and junctions are not followed, and
+  nothing goes into or out of a folder that is a link to another place (such
+  as a linked `node_modules`). Dragging a row onto a terminal still types its
+  path.
+  **Download…** in the right-click menu works for every file and folder, on
+  this computer (a copy) and on SSH hosts: a file is saved where you choose,
+  a folder is copied into the folder you choose (`name (2)` when the name is
+  taken), with its progress shown under the header. A Live Share project
+  offers file downloads only.
 - **Files the editor shows in their own view** (read-only, on this computer
   and on SSH hosts, up to 30 MB):
   - **PDF** in an editor tab (pages drawn as they come into view, zoom);

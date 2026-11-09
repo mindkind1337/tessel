@@ -1,4 +1,5 @@
 import { createFileDownload } from './fileDownload'
+import { createExplorerImport } from './explorerImport'
 import { app, BrowserWindow, Menu, ipcMain, clipboard, nativeImage, dialog, Notification, shell, powerSaveBlocker, powerMonitor, safeStorage, webContents, session, utilityProcess } from 'electron'
 import { holdClaudeDefaultModel } from './claudeDefaultModel'
 import { join, isAbsolute, dirname, basename, resolve as resolvePath, sep } from 'path'
@@ -2370,7 +2371,12 @@ const remoteArg = (q) => (q && typeof q === 'object' ? isRemotePath(q.root) || i
 // (liveShare/guestFs.js); a session not there answers that the host did not.
 const offlineFs = createGuestFs({ request: () => Promise.reject(new Error('offline')) })
 const guestFs = () => (liveShare && liveShare.guestFs) || offlineFs
-const downloadFile = createFileDownload({ dialog, getWindow: () => mainWindow, downloadsDir: () => app.getPath('downloads'), remote: remoteFs, guest: guestFs })
+// "Download…" of the file explorer (fileDownload.js): files and folders, local
+// or remote; a folder's progress goes to the window.
+const downloadFile = createFileDownload({ dialog, getWindow: () => mainWindow, downloadsDir: () => app.getPath('downloads'), remote: remoteFs, guest: guestFs, progress: (info) => send('explorer:progress', { kind: 'download', ...info }) })
+// Files dropped from Windows onto a folder of the explorer (explorerImport.js).
+const importPaths = createExplorerImport({ remote: remoteFs, progress: (info) => send('explorer:progress', { kind: 'import', ...info }) })
+ipcMain.handle('explorer:import', safe((q) => importPaths(q || {})))
 ipcMain.handle('explorer:download', (_event, file) => downloadFile(file))
 // Add a project (addProject.js): clone from a URL, create a new one, find the
 // repositories in a folder.
@@ -4464,6 +4470,8 @@ ipcMain.handle('explorer:searchNames', safe((q) => explorerFor(q).searchNames(q 
 ipcMain.handle('explorer:searchContent', safe((q) => explorerFor(q).searchContent(q || {})))
 ipcMain.handle('explorer:create', safe((q) => explorerFor(q).create(q || {})))
 ipcMain.handle('explorer:rename', safe((q) => explorerFor(q).rename(q || {})))
+// A row dragged onto another folder of the same project (not a Live Share project).
+ipcMain.handle('explorer:move', safe((q) => (lshareArg(q) ? { ok: false, error: t('main.explorer.moveShared', 'Moving files is not available in a Live Share project.') } : remoteArg(q) ? remoteFs.move(q || {}) : explorer.move(q || {}))))
 ipcMain.handle('explorer:trash', safe((q) => (lshareArg(q) ? guestFs().trash(q) : remoteArg(q) ? remoteFs.trash(q) : explorer.trash(q || {}, (p) => shell.trashItem(p)))))
 ipcMain.handle('explorer:reveal', safe((q) => {
   if (localOnlyFor('explorer:reveal', q)) return guestFs().localOnly()

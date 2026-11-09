@@ -177,6 +177,16 @@ const api = {
     searchContent: (q) => ipcRenderer.invoke('explorer:searchContent', q),
     create: (q) => ipcRenderer.invoke('explorer:create', q),
     rename: (q) => ipcRenderer.invoke('explorer:rename', q),
+    // A row dragged onto another folder: { root, path, dir }.
+    move: (q) => ipcRenderer.invoke('explorer:move', q),
+    // Files dropped from Windows: { root, dir, paths } (pathForFile's).
+    importPaths: (q) => ipcRenderer.invoke('explorer:import', q),
+    // fn({ kind: 'download' | 'import', done, name }) while a folder goes.
+    onProgress: (fn) => {
+      const h = (_e, p) => fn(p && typeof p === 'object' ? p : {})
+      ipcRenderer.on('explorer:progress', h)
+      return () => ipcRenderer.removeListener('explorer:progress', h)
+    },
     trash: (q) => ipcRenderer.invoke('explorer:trash', q),
     reveal: (q) => ipcRenderer.invoke('explorer:reveal', q),
     watch: (root) => ipcRenderer.invoke('explorer:watch', root),

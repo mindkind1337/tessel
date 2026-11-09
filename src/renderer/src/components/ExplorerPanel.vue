@@ -901,7 +901,16 @@ const relPath = (p) => {
 const posixQuoted = (p) => (/[^\w@%+=:,./-]/.test(p) ? `'${p.replace(/'/g, `'\\''`)}'` : p)
 const quoted = (p) => (remote.value ? posixQuoted(p) : /[\s&()^;,'"]/.test(p) ? `"${p}"` : p)
 
-// --- Drag a file to a terminal -------------------------------------------------
+// --- Drag and drop -------------------------------------------------------------
+// A row dragged onto a terminal types its path there; onto another folder of
+// the tree, it moves there. Files dropped from Windows onto a folder are
+// copied into it (sent to the host in a remote project). A closed folder
+// held under the pointer opens, as in VS Code.
+const MOVE_TYPE = 'application/x-tessel-explorer-move'
+const dragged = ref(null) // { path, dir, name } of the row being dragged from this tree
+const dropDir = ref(null) // the folder that takes the drop
+let openTimer = 0
+let openTimerDir = null
 // From a compact row: the folder pressed.
 function onRowDragStart(ev, row) {
   onDragStart(ev, row.chain[pressedSeg >= 0 && pressedSeg < row.chain.length ? pressedSeg : row.chain.length - 1])
@@ -910,7 +919,188 @@ function onDragStart(ev, e) {
   if (!ev.dataTransfer) return
   ev.dataTransfer.setData('text/x-tessel-path', hostPath(e.path))
   ev.dataTransfer.setData('text/plain', hostPath(e.path))
-  ev.dataTransfer.effectAllowed = 'copy'
+  ev.dataTransfer.setData(MOVE_TYPE, e.path)
+  ev.dataTransfer.effectAllowed = 'copyMove'
+  dragged.value = { path: e.path, dir: !!e.dir, name: e.name }
+}
+function endDrag() {
+  dragged.value = null
+  dropDir.value = null
+  clearTimeout(openTimer)
+  openTimer = 0
+  openTimerDir = null
+}
+const parentPath = (p) => {
+  const up = String(p).replace(/[\\/][^\\/]*$/, '')
+  return /^[A-Za-z]:$/.test(up) ? up + '\\' : up
+}
+// p is dir or inside it (the host checks again; here only what is offered).
+const pathKey = (p) => (remote.value ? String(p || '') : key(p))
+const normPath = (p) => pathKey(p).replace(/[\\/]+/g, '\\').replace(/\\+$/, '')
+const below = (p, dir) => {
+  const a = normPath(p)
+  const b = normPath(dir)
+  return a === b || a.startsWith(b + '\\')
+}
+const nameOf = (p) => String(p).split(/[\\/]/).filter(Boolean).pop() || ''
+// The folder under the pointer: a folder row (in a compact row, the folder
+// pointed at), a file's own folder, else the folder the tree shows.
+function dropTargetOf(ev) {
+  const t0 = ev.target && ev.target.closest ? ev.target : null
+  const sticky = t0 && t0.closest('[data-drop-dir]')
+  if (sticky) return sticky.dataset.dropDir
+  const rowEl = t0 && t0.closest('.explorer-row[data-path]')
+  if (!rowEl || !treeEl.value || !treeEl.value.contains(rowEl)) return displayRoot.value
+  const crumb = t0.closest('.explorer-crumb[data-path]')
+  if (crumb) return crumb.dataset.path
+  const row = rowOf(rowEl.dataset.path)
+  if (!row) return displayRoot.value
+  return row.dir ? row.path : parentPath(row.path)
+}
+// What a drag carries: 'move' (a row of this tree), 'files' (from Windows) or ''.
+function dragKind(ev) {
+  const types = ev.dataTransfer ? [...ev.dataTransfer.types] : []
+  if (types.includes(MOVE_TYPE)) return dragged.value ? 'move' : ''
+  return types.includes('Files') ? 'files' : ''
+}
+function canDropOn(dir, kind) {
+  if (!dir || readOnly.value || lshare.value || accessState.value) return false
+  // A window newer than its preload (until Tessel restarts): no drop offered.
+  const ex = api()
+  if (!ex || !(kind === 'move' ? ex.move : ex.importPaths)) return false
+  if (kind !== 'move') return true
+  const d = dragged.value
+  if (!d || normPath(parentPath(d.path)) === normPath(dir)) return false
+  return !(d.dir && below(dir, d.path))
+}
+function onTreeDragOver(ev) {
+  const kind = dragKind(ev)
+  if (!kind) return
+  const dir = dropTargetOf(ev)
+  if (!canDropOn(dir, kind)) {
+    dropDir.value = null
+    clearTimeout(openTimer)
+    openTimerDir = null
+    return
+  }
+  ev.preventDefault()
+  ev.dataTransfer.dropEffect = kind === 'move' ? 'move' : 'copy'
+  dropDir.value = dir
+  if (dir !== openTimerDir) {
+    clearTimeout(openTimer)
+    openTimerDir = dir
+    const row = rowOf(dir)
+    openTimer = row && row.dir && !row.open && dir !== displayRoot.value ? setTimeout(() => dropDir.value === dir && toggleRow(row), 700) : 0
+  }
+}
+function onTreeDragLeave(ev) {
+  if (treeEl.value && ev.relatedTarget && treeEl.value.contains(ev.relatedTarget)) return
+  dropDir.value = null
+  clearTimeout(openTimer)
+  openTimerDir = null
+}
+async function onTreeDrop(ev) {
+  const kind = dragKind(ev)
+  const dir = dropDir.value || dropTargetOf(ev)
+  const allowed = !!kind && canDropOn(dir, kind)
+  const d = dragged.value
+  endDrag()
+  if (!kind) return
+  ev.preventDefault()
+  if (lshare.value) return emit('toast', t('explorer.drop.shared', 'Moving or dropping files is not available in a Live Share project.'))
+  if (readOnly.value) return refuseReadOnly()
+  if (!allowed) return
+  if (kind === 'move') return moveTo(d, dir)
+  const toPath = window.shellApi.pathForFile || (() => '')
+  const paths = [...(ev.dataTransfer.files || [])].map((f) => toPath(f)).filter(Boolean)
+  if (paths.length) importInto(dir, paths)
+}
+async function moveTo(d, dir) {
+  const res = await api().move({ root: props.root, path: d.path, dir }).catch((err) => ({ ok: false, error: err.message }))
+  if (!res || !res.ok) {
+    emit('toast', t('explorer.move.failed', '"{{name}}" could not be moved: {{error}}', { name: d.name, error: (res && res.error) || t('explorer.unknownError', 'unknown error') }))
+    return
+  }
+  if (res.same) return
+  emit('toast', t('explorer.move.done', '"{{name}}" moved to "{{folder}}".', { name: d.name, folder: nameOf(dir) }))
+  if (dir !== displayRoot.value) open[dir] = true
+  await refresh()
+  selected.value = res.path
+}
+
+// --- Copying in and downloading: progress and results ----------------------------------
+// A folder downloading or files copying in: a line under the header while it
+// goes ({ kind, name, done }).
+const transfer = ref(null)
+let stopProgress = null
+const transferText = computed(() => {
+  const x = transfer.value
+  if (!x) return ''
+  const n = Number(x.done) || 0
+  const v = { name: x.name, count: n }
+  if (x.kind === 'download') return n === 1 ? t('explorer.transfer.download', 'Downloading “{{name}}”… {{count}} file', v) : t('explorer.transfer.download', 'Downloading “{{name}}”… {{count}} files', v)
+  if (remote.value) return n === 1 ? t('explorer.transfer.upload', 'Sending to the host… {{count}} file', v) : t('explorer.transfer.upload', 'Sending to the host… {{count}} files', v)
+  return n === 1 ? t('explorer.transfer.copy', 'Copying… {{count}} file', v) : t('explorer.transfer.copy', 'Copying… {{count}} files', v)
+})
+function onProgress(p) {
+  if (transfer.value && p && p.kind === transfer.value.kind) transfer.value = { ...transfer.value, done: Number(p.done) || 0 }
+}
+const listNames = (names) => {
+  const shown = names.slice(0, 3).map((n) => `“${n}”`).join(', ')
+  return names.length > 3 ? t('explorer.drop.andMore', '{{names}} and {{count}} more', { names: shown, count: names.length - 3 }) : shown
+}
+async function importInto(dir, paths) {
+  if (transfer.value) return emit('toast', t('explorer.transfer.busy', 'Files are still being copied. Try again when it is done.'))
+  transfer.value = { kind: 'import', name: nameOf(dir), done: 0 }
+  let res
+  try {
+    res = await api().importPaths({ root: props.root, dir, paths })
+  } catch (err) {
+    res = { ok: false, error: err.message }
+  } finally {
+    transfer.value = null
+  }
+  if (!res || !res.ok) return emit('toast', (res && res.error) || t('explorer.drop.failed', 'The files could not be copied here.'))
+  const parts = []
+  if (res.copied.length)
+    parts.push(
+      remote.value
+        ? t('explorer.drop.sent', 'Sent to “{{folder}}”: {{names}}.', { folder: nameOf(dir), names: listNames(res.copied) })
+        : t('explorer.drop.copied', 'Copied to “{{folder}}”: {{names}}.', { folder: nameOf(dir), names: listNames(res.copied) })
+    )
+  if (res.skipped.length) parts.push(t('explorer.drop.skipped', 'Already there, not replaced: {{names}}.', { names: listNames(res.skipped) }))
+  if (res.tooLarge.length) parts.push(t('explorer.drop.tooLarge', 'Over 50 MB, not sent: {{names}}.', { names: listNames(res.tooLarge) }))
+  if (res.failed.length) parts.push(t('explorer.drop.notCopied', 'Not copied: {{names}} ({{error}}).', { names: listNames(res.failed.map((f) => f.name)), error: res.failed[0].error }))
+  const left = (res.links || 0) + (res.unreadable || 0)
+  if (left) parts.push(left === 1 ? t('explorer.download.skippedLeft', '{{count}} link or unreadable item was left out.', { count: left }) : t('explorer.download.skippedLeft', '{{count}} links or unreadable items were left out.', { count: left }))
+  if (res.cut) parts.push(t('explorer.drop.cut', 'Stopped at the limit for one drop: the rest was not copied.'))
+  emit('toast', parts.join(' ') || t('explorer.drop.nothing', 'Nothing was copied.'))
+  if (dir !== displayRoot.value) open[dir] = true
+  await refresh()
+}
+// "Download…": a file where the dialog says, a folder into the folder chosen.
+const canDownload = (e) => !!(e && api() && api().download && (!e.dir || !lshare.value))
+async function downloadEntry(e) {
+  if (e.dir && transfer.value) return emit('toast', t('explorer.transfer.busy', 'Files are still being copied. Try again when it is done.'))
+  if (e.dir) transfer.value = { kind: 'download', name: e.name, done: 0 }
+  let res
+  try {
+    res = await api().download({ file: e.path, root: props.root, folder: !!e.dir })
+  } catch {
+    res = { ok: false }
+  } finally {
+    if (e.dir) transfer.value = null
+  }
+  if (res && res.ok) {
+    if (!e.dir) return emit('toast', t('explorer.download.done', 'File downloaded.'))
+    const parts = [t('explorer.download.folderDone', 'Folder downloaded: {{path}}', { path: res.path })]
+    const big = { count: res.tooLarge }
+    const left = { count: res.skipped }
+    if (res.tooLarge) parts.push(res.tooLarge === 1 ? t('explorer.download.tooLargeLeft', '{{count}} file over 50 MB was left out.', big) : t('explorer.download.tooLargeLeft', '{{count}} files over 50 MB were left out.', big))
+    if (res.skipped) parts.push(res.skipped === 1 ? t('explorer.download.skippedLeft', '{{count}} link or unreadable item was left out.', left) : t('explorer.download.skippedLeft', '{{count}} links or unreadable items were left out.', left))
+    if (res.cut) parts.push(t('explorer.download.cut', 'Stopped at the limit for one download: the rest was not downloaded.'))
+    emit('toast', parts.join(' '))
+  } else if (!res || !res.canceled) emit('toast', (res && res.error) || t('explorer.download.failed', 'The file could not be downloaded.'))
 }
 
 // --- Context menu ----------------------------------------------------------------
@@ -969,15 +1159,7 @@ async function act(what) {
   if (readOnly.value && WRITES.includes(what)) return refuseReadOnly()
   if (what === 'open' && e) emit('open', e.path)
   else if (what === 'editor' && e) emit('open-editor', e.path)
-  else if (what === 'download' && e && !e.dir && remote.value) {
-    try {
-      const res = await api().download(e.path)
-      if (res?.ok) emit('toast', t('explorer.download.done', 'File downloaded.'))
-      else if (!res?.canceled) emit('toast', res?.error || t('explorer.download.failed', 'The file could not be downloaded.'))
-    } catch {
-      emit('toast', t('explorer.download.failed', 'The file could not be downloaded.'))
-    }
-  }
+  else if (what === 'download' && canDownload(e)) await downloadEntry(e)
   else if (what === 'external' && e) emit('open-external', e.path)
   else if (what === 'terminal') emit('terminal-here', menuDir.value)
   else if (what === 'insert' && e) emit('insert-path', quoted(relPath(e.path)))
@@ -1179,12 +1361,15 @@ onMounted(() => {
     stopStatusChanged = api().onStatusChanged((r) => {
       if (props.root && key(r) === key(props.root)) requestStatus()
     })
+  if (api() && api().onProgress) stopProgress = api().onProgress(onProgress)
   window.addEventListener('resize', measure)
 })
 onBeforeUnmount(() => {
   // Kept for the next panel (a host connected again remounts it).
   rememberTree()
   disposed = true
+  clearTimeout(openTimer)
+  if (stopProgress) stopProgress()
   if (stopChanged) stopChanged()
   if (stopStatusChanged) stopStatusChanged()
   clearTimeout(changedTimer)
@@ -1337,6 +1522,9 @@ function rowTitle(e) {
       </span>
     </div>
     <template v-if="folderShown">
+    <div v-if="transfer" class="explorer-transfer" role="status" data-test="explorer-transfer">
+      <span class="explorer-spinner" aria-hidden="true"></span>{{ transferText }}
+    </div>
     <div v-if="root && sparseDirs.length && !accessState" class="explorer-scope" data-test="explorer-scope" :title="scopeHelp">
       <span class="explorer-scope-label">{{ t('explorer.sparse.label', 'Sparse checkout') }}</span>
       <ThemedSelect
@@ -1390,6 +1578,7 @@ function rowTitle(e) {
           @click="onHitClick(h)"
           @contextmenu="onContext($event, h)"
           @dragstart="onDragStart($event, h)"
+          @dragend="endDrag"
         >
           <svg v-if="h.dir" class="explorer-icon" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M1.8 4h4.4l1.4 1.5h6.6v7.7H1.8z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" /></svg>
           <FileIcon v-else class="explorer-icon" :name="h.name" />
@@ -1428,9 +1617,14 @@ function rowTitle(e) {
       v-else
       ref="treeEl"
       class="explorer-tree explorer-files"
+      :class="{ 'drop-root': dropDir && dropDir === displayRoot }"
       role="tree"
       tabindex="0"
       :aria-label="t('explorer.side.files', 'Files')"
+      data-test="explorer-tree"
+      @dragover="onTreeDragOver"
+      @dragleave="onTreeDragLeave"
+      @drop="onTreeDrop"
       @keydown="onTreeKey"
       @scroll="onTreeScroll"
       @contextmenu.self="onContext($event, null)"
@@ -1443,6 +1637,7 @@ function rowTitle(e) {
           :class="{ last: k === sticky.length - 1, selected: selected === s.row.path, ignored: ignoredOf(s.row.path), ['git-' + (letterOf(s.row.entry) || 'none')]: true }"
           :style="{ top: s.top + 'px', paddingLeft: rowPadding(s.row.depth) + 4 + 'px' }"
           :title="rowTitle(s.row.entry)"
+          :data-drop-dir="s.row.path"
           @click="onStickyClick(s, k)"
           @contextmenu="onRowContext($event, s.row)"
         >
@@ -1488,6 +1683,7 @@ function rowTitle(e) {
             compact: row.chain.length > 1,
             stale: staleOf(row.parent),
             ignored: ignoredOf(row.path),
+            'drop-target': row.dir && dropDir !== null && row.chain.some((c) => c.path === dropDir),
             ['git-' + (letterOf(row.entry) || 'none')]: true
           }"
           role="treeitem"
@@ -1503,6 +1699,7 @@ function rowTitle(e) {
           @dblclick="!row.dir && emit('open', row.path, { keep: true })"
           @contextmenu="onRowContext($event, row)"
           @dragstart="onRowDragStart($event, row)"
+          @dragend="endDrag"
         >
           <span v-if="row.depth" class="explorer-guides" aria-hidden="true" :style="{ left: guideX(0) + 'px', width: row.depth * INDENT + 'px' }"></span>
           <span v-if="inGuide(i)" class="explorer-guide-active" aria-hidden="true" :style="{ left: guideX(guide.depth) + 'px' }"></span>
@@ -1563,10 +1760,10 @@ function rowTitle(e) {
         <template v-if="menu.entry && !menu.entry.dir">
           <button role="menuitem" class="ctx-menu-item" @click="act('open')">{{ t('explorer.menu.open', 'Open') }}</button>
           <button role="menuitem" class="ctx-menu-item" @click="act('editor')">{{ t('explorer.menu.openInEditor', 'Open in editor') }}</button>
-          <button v-if="remote && api()?.download" role="menuitem" class="ctx-menu-item" data-test="explorer-menu-download" @click="act('download')">{{ t('explorer.menu.download', 'Download…') }}</button>
           <button v-if="!remote" role="menuitem" class="ctx-menu-item" data-test="explorer-menu-external" @click="act('external')">{{ t('explorer.menu.openInVsCode', 'Open in VS Code') }}</button>
         </template>
         <button v-if="!lshare" role="menuitem" class="ctx-menu-item" data-test="explorer-menu-terminal" @click="act('terminal')">{{ t('explorer.menu.terminalHere', 'Open a terminal here') }}</button>
+        <button v-if="canDownload(menu.entry)" role="menuitem" class="ctx-menu-item" data-test="explorer-menu-download" @click="act('download')">{{ t('explorer.menu.download', 'Download…') }}</button>
         <button v-if="menu.entry && canInsert" role="menuitem" @click="act('insert')">
           {{ t('explorer.menu.insertPath', 'Insert path in the active pane') }}
         </button>

@@ -9235,6 +9235,33 @@ pre.confirm-code {
   outline-offset: -1px;
 }
 
+/* A drag over the tree: the folder that takes the drop (VS Code's
+   list.dropBackground), or the whole tree for the folder it shows. */
+.explorer-row.drop-target,
+.explorer-row.drop-target:hover {
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+  outline: 1px solid color-mix(in srgb, var(--accent) 65%, transparent);
+  outline-offset: -1px;
+}
+
+.explorer-files.drop-root {
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 55%, transparent);
+}
+
+/* A folder downloading or files copying in: one line under the header. */
+.explorer-transfer {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 12px 4px;
+  color: var(--text-dim, var(--text));
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 /* VS Code's explorer sections: "Open Editors", then the project's folder,
    each folded by its header; their buttons show while the pointer is on the
    explorer (or the keyboard in the header). */

@@ -535,6 +535,7 @@ export function create({ root, dir, name, folder = false } = {}) {
   const parent = inside(root, dir || root)
   const target = parent && inside(root, join(parent, name.trim()))
   if (!target) return { ok: false, error: t('main.explorer.outside', 'Outside the project.') }
+  if (!reallyInside(root, parent)) return { ok: false, error: t('main.explorer.throughLink', 'Not through a link: it would leave the project.') }
   if (fs.existsSync(target)) return { ok: false, error: t('main.explorer.exists', '"{{name}}" already exists here.', { name: name.trim() }) }
   try {
     if (folder) fs.mkdirSync(target)
@@ -552,6 +553,7 @@ export function rename({ root, path: p, name } = {}) {
   if (!from || from === resolve(root)) return { ok: false, error: t('main.explorer.outside', 'Outside the project.') }
   const to = inside(root, join(dirname(from), name.trim()))
   if (!to) return { ok: false, error: t('main.explorer.outside', 'Outside the project.') }
+  if (!reallyInside(root, dirname(from))) return { ok: false, error: t('main.explorer.throughLink', 'Not through a link: it would leave the project.') }
   if (to === from) return { ok: true, path: to }
   // Only a change of case on Windows is the same file: allowed.
   if (fs.existsSync(to) && to.toLowerCase() !== from.toLowerCase()) return { ok: false, error: t('main.explorer.exists', '"{{name}}" already exists here.', { name: name.trim() }) }
@@ -563,11 +565,89 @@ export function rename({ root, path: p, name } = {}) {
   }
 }
 
+// The real path (links and junctions resolved), null when it does not exist.
+export function realPath(p) {
+  try {
+    return fs.realpathSync.native(p)
+  } catch {
+    try {
+      return fs.realpathSync(p)
+    } catch {
+      return null
+    }
+  }
+}
+// b is a or inside it (paths as given; win32 compares without case).
+export function within(a, b) {
+  const rel = relative(a, b)
+  return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel))
+}
+// An existing path really inside the project: no link or junction on the way
+// leads out (node_modules linked to another copy, a folder linked elsewhere).
+export function reallyInside(root, p) {
+  const r = realPath(resolve(root))
+  const q = realPath(p)
+  return !!(r && q && within(r, q))
+}
+// A file system error in words (the toast), not Node's English message.
+export function fsErrorText(err) {
+  const code = err && err.code
+  if (code === 'EPERM' || code === 'EACCES' || code === 'EBUSY') return t('main.explorer.inUse', 'It is in use or protected (a terminal or another program may have it open).')
+  if (code === 'EXDEV') return t('main.explorer.otherDrive', 'It is on another drive.')
+  if (code === 'ENOSPC') return t('main.explorer.diskFull', 'The disk is full.')
+  if (code === 'ENOENT') return t('main.explorer.gone', 'It is already gone.')
+  if (code === 'EEXIST') return t('main.explorer.taken', 'Something with that name is already there.')
+  return t('main.explorer.fsFailed', 'It could not be done ({{code}}).', { code: code || '?' })
+}
+
+// Something is there (a broken link too).
+export function taken(p) {
+  try {
+    fs.lstatSync(p)
+    return true
+  } catch {
+    return false
+  }
+}
+
+// A drag onto another folder of the project: -> { ok, path } | { ok: false, error }.
+// Never over something there, never a folder into itself or below it.
+export function move({ root, path: p, dir } = {}) {
+  const from = inside(root, p)
+  const toDir = inside(root, dir || root)
+  if (!from || !toDir || from === resolve(root)) return { ok: false, error: t('main.explorer.outside', 'Outside the project.') }
+  let st
+  try {
+    if (!fs.statSync(toDir).isDirectory()) return { ok: false, error: t('main.explorer.notFolder', 'The destination is not a folder.') }
+    st = fs.lstatSync(from)
+  } catch {
+    return { ok: false, error: t('main.explorer.gone', 'It is already gone.') }
+  }
+  // Both folders really in the project: a junction or link (node_modules
+  // linked to another copy) never takes a file out, nor brings one in.
+  const realDir = realPath(toDir)
+  const realParent = realPath(dirname(from))
+  if (!reallyInside(root, toDir) || !reallyInside(root, dirname(from))) return { ok: false, error: t('main.explorer.throughLink', 'Not through a link: it would leave the project.') }
+  if (relative(realParent, realDir) === '') return { ok: true, path: from, same: true }
+  // A real folder (a link moves as itself): never into itself or below it.
+  if (st.isDirectory() && !st.isSymbolicLink() && within(realPath(from) || from, realDir)) return { ok: false, error: t('main.explorer.intoItself', 'A folder cannot be moved into itself.') }
+  const to = inside(root, join(toDir, basename(from)))
+  if (!to) return { ok: false, error: t('main.explorer.outside', 'Outside the project.') }
+  if (taken(to)) return { ok: false, error: t('main.explorer.exists', '"{{name}}" already exists here.', { name: basename(from) }) }
+  try {
+    fs.renameSync(from, to)
+    return { ok: true, path: to }
+  } catch (err) {
+    return { ok: false, error: fsErrorText(err) }
+  }
+}
+
 // To the Recycle Bin (shell.trashItem, given by the caller): never deleted for good.
 export async function trash({ root, path: p } = {}, trashItem) {
   const target = inside(root, p)
   if (!target || target === resolve(root)) return { ok: false, error: t('main.explorer.outside', 'Outside the project.') }
   if (!fs.existsSync(target)) return { ok: false, error: t('main.explorer.gone', 'It is already gone.') }
+  if (!reallyInside(root, dirname(target))) return { ok: false, error: t('main.explorer.throughLink', 'Not through a link: it would leave the project.') }
   try {
     await trashItem(target)
     return { ok: true, name: basename(target) }

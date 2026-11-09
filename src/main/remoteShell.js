@@ -127,6 +127,9 @@ export const FUNCTIONS = new Set([
   '__t_write',
   '__t_mk',
   '__t_mv',
+  // The explorer's drag onto another folder: below the project, never over
+  // something there, never a folder into itself.
+  '__t_mvto',
   '__t_trash',
   '__t_top',
   '__t_gitin',
@@ -450,6 +453,21 @@ __t_mv() {
   __t_ent "$1" "$2" || return $?
   { [ -e "$__P" ] || [ -L "$__P" ]; } || return 91
   __to="\${__PD%/}/$3"
+  { [ -e "$__to" ] || [ -L "$__to" ]; } && return 94
+  if [ -n "$__T_MT" ]; then mv -T -n "$__P" "$__to" || return 98; else mv -n "$__P" "$__to" || return 98; fi
+  { [ -e "$__P" ] || [ -L "$__P" ]; } && return 94
+  return 0
+}
+__t_mvto() {
+  __t_tgt "$1" "$3" || return $?
+  [ -d "$__P" ] || return 92
+  __DD=$__P
+  __t_ent "$1" "$2" || return $?
+  { [ -e "$__P" ] || [ -L "$__P" ]; } || return 91
+  [ "$__PD" = "$__DD" ] && { printf 'same\\n'; return 0; }
+  if [ -d "$__P" ] && [ ! -L "$__P" ]; then __t_in "$__P" "$__DD" && return 90; fi
+  [ "$(__t_dev "$__PD")" = "$(__t_dev "$__DD")" ] || return 99
+  __to="\${__DD%/}/$__N"
   { [ -e "$__to" ] || [ -L "$__to" ]; } && return 94
   if [ -n "$__T_MT" ]; then mv -T -n "$__P" "$__to" || return 98; else mv -n "$__P" "$__to" || return 98; fi
   { [ -e "$__P" ] || [ -L "$__P" ]; } && return 94
