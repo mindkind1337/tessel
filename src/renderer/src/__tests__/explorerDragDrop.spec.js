@@ -133,6 +133,96 @@ describe('drag and drop in the file explorer', () => {
   })
 })
 
+describe('dragging a file out to Windows', () => {
+  let w
+  afterEach(() => {
+    w?.unmount()
+    w = null
+    delete window.shellApi
+    resetSettings()
+  })
+  const URL1 = `http://127.0.0.1:5000/dl/${'a'.repeat(64)}`
+  function outApi() {
+    return api({
+      dragOutPrepare: vi.fn(async () => ({ ok: true, url: URL1, name: 'README.md' })),
+      dragOutRevoke: vi.fn()
+    })
+  }
+
+  it('a pressed file gets its one-file address, and the drag carries it as a DownloadURL', async () => {
+    const ex = outApi()
+    w = mount(ExplorerPanel, { props: { root: ROOT } })
+    await flushPromises()
+    await row(w, `${ROOT}\\README.md`).trigger('mousedown', { button: 0 })
+    await flushPromises()
+    expect(ex.dragOutPrepare).toHaveBeenCalledWith({ root: ROOT, file: `${ROOT}\\README.md` })
+    const dt = transfer()
+    await row(w, `${ROOT}\\README.md`).trigger('dragstart', { dataTransfer: dt })
+    expect(dt.getData('DownloadURL')).toBe(`application/octet-stream:README.md:${URL1}`)
+    // Still a path for a terminal, still a move inside the tree.
+    expect(dt.getData('text/x-tessel-path')).toBe(`${ROOT}\\README.md`)
+    // Dropped on the desktop: the address stays for the download.
+    dt.dropEffect = 'copy'
+    await row(w, `${ROOT}\\README.md`).trigger('dragend', { dataTransfer: dt })
+    expect(ex.dragOutRevoke).not.toHaveBeenCalled()
+  })
+
+  it('given up when the drag ends without a drop, or when the row is only clicked; folders never go out', async () => {
+    const ex = outApi()
+    w = mount(ExplorerPanel, { props: { root: ROOT } })
+    await flushPromises()
+    await row(w, `${ROOT}\\README.md`).trigger('mousedown', { button: 0 })
+    await flushPromises()
+    const dt = transfer()
+    await row(w, `${ROOT}\\README.md`).trigger('dragstart', { dataTransfer: dt })
+    await row(w, `${ROOT}\\README.md`).trigger('dragend', { dataTransfer: dt })
+    expect(ex.dragOutRevoke).toHaveBeenCalledWith(URL1)
+    ex.dragOutRevoke.mockClear()
+    await row(w, `${ROOT}\\README.md`).trigger('mousedown', { button: 0 })
+    await flushPromises()
+    await row(w, `${ROOT}\\README.md`).trigger('click')
+    expect(ex.dragOutRevoke).toHaveBeenCalledWith(URL1)
+    ex.dragOutPrepare.mockClear()
+    await row(w, `${ROOT}\\docs`).trigger('mousedown', { button: 0 })
+    const fdt = transfer()
+    await row(w, `${ROOT}\\docs`).trigger('dragstart', { dataTransfer: fdt })
+    expect(ex.dragOutPrepare).not.toHaveBeenCalled()
+    expect(fdt.getData('DownloadURL')).toBe('')
+  })
+
+  it('dropped inside Tessel (here, a folder of the tree): the address is given up at once', async () => {
+    const ex = outApi()
+    w = mount(ExplorerPanel, { props: { root: ROOT }, attachTo: document.body })
+    await flushPromises()
+    await row(w, `${ROOT}\\README.md`).trigger('mousedown', { button: 0 })
+    await flushPromises()
+    const dt = transfer()
+    await row(w, `${ROOT}\\README.md`).trigger('dragstart', { dataTransfer: dt })
+    await row(w, `${ROOT}\\docs`).trigger('dragover', { dataTransfer: dt })
+    await row(w, `${ROOT}\\docs`).trigger('drop', { dataTransfer: dt })
+    await flushPromises()
+    expect(ex.dragOutRevoke).toHaveBeenCalledWith(URL1)
+    expect(ex.move).toHaveBeenCalled()
+  })
+
+  it('an address not ready yet: the drag goes on without it', async () => {
+    let answer
+    const ex = api({ dragOutPrepare: vi.fn(() => new Promise((r) => (answer = r))), dragOutRevoke: vi.fn() })
+    w = mount(ExplorerPanel, { props: { root: ROOT } })
+    await flushPromises()
+    await row(w, `${ROOT}\\README.md`).trigger('mousedown', { button: 0 })
+    const dt = transfer()
+    await row(w, `${ROOT}\\README.md`).trigger('dragstart', { dataTransfer: dt })
+    expect(dt.getData('DownloadURL')).toBe('')
+    expect(dt.getData('text/x-tessel-path')).toBe(`${ROOT}\\README.md`)
+    // Pressed elsewhere since: the late address is given up at once.
+    await row(w, `${ROOT}\\app`).trigger('mousedown', { button: 0 })
+    answer({ ok: true, url: URL1, name: 'README.md' })
+    await flushPromises()
+    expect(ex.dragOutRevoke).toHaveBeenCalledWith(URL1)
+  })
+})
+
 describe('"Download…" in the file explorer', () => {
   let w
   afterEach(() => {

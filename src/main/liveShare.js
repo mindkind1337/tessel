@@ -2534,6 +2534,8 @@ export function registerLiveShare({
   // in order), rights, code, url, secret, invite, name, signingKey (this
   // guest's reconnect key), admitted, leaving, retry: { timer, since, tries } }
   let joined = null
+  // Bumped on each join: which session a guest's request was made in.
+  let joinCount = 0
   let sessions = 0
   let guestTimer = null
 
@@ -3099,6 +3101,7 @@ export function registerLiveShare({
       retry: null
     }
     joined = g
+    joinCount++
     connectGuest(g)
     clearInterval(guestTimer)
     guestTimer = setInterval(() => saveGuest(g), KEEP_FRESH_MS)
@@ -3877,6 +3880,8 @@ export function registerLiveShare({
     // Guest: the host's files, editor, notes and changes (index.js sends
     // lshare:// calls here), and its watches.
     guestFs,
+    // The session joined now (0: none): a key that changes with each join.
+    guestSession: () => (joined ? joinCount : 0),
     guestWatchRoot,
     guestUnwatchRoots,
     guestWatchFiles,

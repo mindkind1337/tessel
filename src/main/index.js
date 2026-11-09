@@ -1,5 +1,6 @@
 import { createFileDownload } from './fileDownload'
 import { createExplorerImport } from './explorerImport'
+import { createDragOut } from './dragOut'
 import { app, BrowserWindow, Menu, ipcMain, clipboard, nativeImage, dialog, Notification, shell, powerSaveBlocker, powerMonitor, safeStorage, webContents, session, utilityProcess } from 'electron'
 import { holdClaudeDefaultModel } from './claudeDefaultModel'
 import { join, isAbsolute, dirname, basename, resolve as resolvePath, sep } from 'path'
@@ -2377,6 +2378,11 @@ const downloadFile = createFileDownload({ dialog, getWindow: () => mainWindow, d
 // Files dropped from Windows onto a folder of the explorer (explorerImport.js).
 const importPaths = createExplorerImport({ remote: remoteFs, progress: (info) => send('explorer:progress', { kind: 'import', ...info }) })
 ipcMain.handle('explorer:import', safe((q) => importPaths(q || {})))
+// A file dragged out to Windows (dragOut.js): a one-file address on 127.0.0.1.
+const dragOut = createDragOut({ remote: remoteFs, guest: guestFs, session: () => (liveShare && liveShare.guestSession ? liveShare.guestSession() : 0) })
+ipcMain.handle('explorer:dragOutPrepare', safe((q) => dragOut.prepare(q || {})))
+ipcMain.on('explorer:dragOutRevoke', (_evt, url) => dragOut.revoke(url))
+app.on('will-quit', () => dragOut.close())
 ipcMain.handle('explorer:download', (_event, file) => downloadFile(file))
 // Add a project (addProject.js): clone from a URL, create a new one, find the
 // repositories in a folder.

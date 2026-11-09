@@ -629,6 +629,7 @@ function revealPath(p) {
 }
 defineExpose({ revealPath })
 function onHitClick(h) {
+  dropDragOut()
   selected.value = h.path + (h.line ? ':' + h.line : '')
   if (h.dir) revealInTree(h.path)
   else if (h.line) emit('open', h.path, h.line)
@@ -669,9 +670,13 @@ function segAt(ev, row) {
 let pressedSeg = -1
 function onRowMouseDown(ev, row) {
   pressedSeg = segAt(ev, row)
+  if (ev.button !== 0) return
+  if (row.dir) dropDragOut()
+  else prepareDragOut(row.chain[pressedSeg])
 }
 // A click on a segment selects that folder; the row opens or closes.
 function onRowClick(ev, row) {
+  dropDragOut()
   const e = row.chain[segAt(ev, row)]
   selected.value = e.path
   if (row.dir) toggleRow(row)
@@ -920,6 +925,13 @@ function onDragStart(ev, e) {
   ev.dataTransfer.setData('text/x-tessel-path', hostPath(e.path))
   ev.dataTransfer.setData('text/plain', hostPath(e.path))
   ev.dataTransfer.setData(MOVE_TYPE, e.path)
+  // Out to Windows: a file whose address is ready (folders do not go out).
+  if (!e.dir && dragOut && dragOut.path === e.path && dragOut.url) {
+    // Chromium's DownloadURL: a MIME type, the file's name, its address.
+    ev.dataTransfer.setData('DownloadURL', `application/octet-stream:${dragOut.name}:${dragOut.url}`) // i18n-ignore
+    dragOut.used = true
+    document.addEventListener('drop', onDropInside, true)
+  } else dropDragOut()
   ev.dataTransfer.effectAllowed = 'copyMove'
   dragged.value = { path: e.path, dir: !!e.dir, name: e.name }
 }
@@ -929,6 +941,51 @@ function endDrag() {
   clearTimeout(openTimer)
   openTimer = 0
   openTimerDir = null
+}
+// The drag is over: dropped nowhere (Esc, or let go where nothing takes it),
+// the file's download address is given up at once.
+function onDragEnd(ev) {
+  document.removeEventListener('drop', onDropInside, true)
+  const d = dragOut
+  if (d && (!d.used || !ev || !ev.dataTransfer || ev.dataTransfer.dropEffect === 'none')) dropDragOut(true)
+  dragOut = null
+  endDrag()
+}
+// Dropped inside Tessel (a folder of the tree, a terminal, a chat): the
+// address can never be used.
+function onDropInside() {
+  document.removeEventListener('drop', onDropInside, true)
+  dropDragOut(true)
+}
+
+// --- Out to Windows -------------------------------------------------------------------
+// A file dragged out of the window onto the desktop or a folder: the drag
+// carries Chromium's DownloadURL, and on the drop Windows gets the file from
+// a one-file address main made when the row was pressed (dragOut.js). Its
+// project and path stay in main; the address is given up when the drag ends
+// without a drop, when the row is only clicked, or after 2 minutes.
+let dragOut = null // { path, url, name, used }
+function prepareDragOut(e) {
+  const ex = api()
+  dropDragOut()
+  if (!e || e.dir || !ex || !ex.dragOutPrepare) return
+  const mine = { path: e.path, url: '', name: '', used: false }
+  dragOut = mine
+  Promise.resolve(ex.dragOutPrepare({ root: props.root, file: e.path }))
+    .then((r) => {
+      if (!r || !r.ok) return
+      if (dragOut === mine) Object.assign(mine, { url: r.url, name: r.name })
+      else if (ex.dragOutRevoke) ex.dragOutRevoke(r.url)
+    })
+    .catch(() => {})
+}
+// The address not used for a drag (or a drag dropped nowhere): given up.
+function dropDragOut(force = false) {
+  const d = dragOut
+  if (!d || (d.used && !force)) return
+  dragOut = null
+  const ex = api()
+  if (d.url && ex && ex.dragOutRevoke) ex.dragOutRevoke(d.url)
 }
 const parentPath = (p) => {
   const up = String(p).replace(/[\\/][^\\/]*$/, '')
@@ -1369,6 +1426,8 @@ onBeforeUnmount(() => {
   rememberTree()
   disposed = true
   clearTimeout(openTimer)
+  document.removeEventListener('drop', onDropInside, true)
+  dropDragOut(true)
   if (stopProgress) stopProgress()
   if (stopChanged) stopChanged()
   if (stopStatusChanged) stopStatusChanged()
@@ -1575,10 +1634,11 @@ function rowTitle(e) {
           :title="h.rel"
           draggable="true"
           :data-path="h.path"
+          @mousedown.left="h.dir ? dropDragOut() : prepareDragOut(h)"
           @click="onHitClick(h)"
           @contextmenu="onContext($event, h)"
           @dragstart="onDragStart($event, h)"
-          @dragend="endDrag"
+          @dragend="onDragEnd"
         >
           <svg v-if="h.dir" class="explorer-icon" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M1.8 4h4.4l1.4 1.5h6.6v7.7H1.8z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" /></svg>
           <FileIcon v-else class="explorer-icon" :name="h.name" />
@@ -1699,7 +1759,7 @@ function rowTitle(e) {
           @dblclick="!row.dir && emit('open', row.path, { keep: true })"
           @contextmenu="onRowContext($event, row)"
           @dragstart="onRowDragStart($event, row)"
-          @dragend="endDrag"
+          @dragend="onDragEnd"
         >
           <span v-if="row.depth" class="explorer-guides" aria-hidden="true" :style="{ left: guideX(0) + 'px', width: row.depth * INDENT + 'px' }"></span>
           <span v-if="inGuide(i)" class="explorer-guide-active" aria-hidden="true" :style="{ left: guideX(guide.depth) + 'px' }"></span>

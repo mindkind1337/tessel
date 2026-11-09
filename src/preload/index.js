@@ -181,6 +181,10 @@ const api = {
     move: (q) => ipcRenderer.invoke('explorer:move', q),
     // Files dropped from Windows: { root, dir, paths } (pathForFile's).
     importPaths: (q) => ipcRenderer.invoke('explorer:import', q),
+    // A file about to be dragged out to Windows: { root, file } -> { ok, url, name }
+    // (a one-file address, dragOut.js); revoke(url) gives it up.
+    dragOutPrepare: (q) => ipcRenderer.invoke('explorer:dragOutPrepare', q),
+    dragOutRevoke: (url) => ipcRenderer.send('explorer:dragOutRevoke', String(url || '')),
     // fn({ kind: 'download' | 'import', done, name }) while a folder goes.
     onProgress: (fn) => {
       const h = (_e, p) => fn(p && typeof p === 'object' ? p : {})

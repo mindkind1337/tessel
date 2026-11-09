@@ -101,7 +101,12 @@ working on Tessel itself (see [Build from source](#build-from-source)).
   Nothing already there is replaced, links and junctions are not followed, and
   nothing goes into or out of a folder that is a link to another place (such
   as a linked `node_modules`). Dragging a row onto a terminal still types its
-  path.
+  path. Drag a file out of the window onto the desktop or a folder to download
+  it there, one file at a time: any size for a local file, up to 50 MB from an
+  SSH host, up to 8 MB from a Live Share host; for a folder, use
+  **Download…**. Windows gets it from an address made for that one file, on
+  this computer only, given up when the drag ends without a drop and gone
+  after 2 minutes at most.
   **Download…** in the right-click menu works for every file and folder, on
   this computer (a copy) and on SSH hosts: a file is saved where you choose,
   a folder is copied into the folder you choose (`name (2)` when the name is
