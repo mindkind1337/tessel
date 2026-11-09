@@ -3005,34 +3005,45 @@ kbd {
 
 /* ================= Exited pane / drop hint ================= */
 .exit-overlay {
+  /* The pane's width less 12 px each side, at most 560 px, centred, and
+     following the pane as it is resized: the box sits between left and
+     right with an auto margin. It was placed at left: 50% and pulled back
+     with a transform, which left it only half the pane to grow in: the
+     words wrapped into a narrow column in a wide pane. */
   position: absolute;
-  left: 50%;
+  left: 12px;
+  right: 12px;
   bottom: 18px;
   z-index: 8;
-  transform: translateX(-50%);
+  width: fit-content;
+  max-width: 560px;
+  margin: 0 auto;
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 8px 8px 8px 14px;
+  gap: 8px 14px;
+  padding: 10px 10px 10px 16px;
   border: 1px solid var(--border-strong);
   border-radius: 10px;
   background: var(--surface-2);
   box-shadow: 0 10px 28px rgba(0, 0, 0, 0.5);
   color: var(--text);
-  font-size: 12px;
-  /* A narrow pane: the words wrap and the buttons go to a second line,
-     the box never wider than the pane (it used to overflow both sides). */
+  font-size: 12.5px;
+  line-height: 1.45;
+  /* A narrow pane: the words wrap and the buttons go to a second line, at
+     the right; a wide one: the words, then the buttons, on one line. */
   box-sizing: border-box;
-  max-width: calc(100% - 24px);
   flex-wrap: wrap;
-  justify-content: center;
-  text-align: center;
+  text-align: left;
   white-space: normal;
 }
 
 .exit-overlay > span {
-  flex: 1 1 auto;
+  flex: 1 1 260px;
   min-width: 0;
+}
+.exit-overlay > .exit-btn {
+  flex: 0 0 auto;
+  margin-left: auto;
 }
 
 /* The buttons are one piece: when the words take the first line, both go to
