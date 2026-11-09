@@ -97,6 +97,8 @@
       }
     },
     "toolbar": {
+      "more": "Plus",
+      "moreTitle": "Plus : Live Share, tickets, diffusion, disposition, panneaux",
       "updateVersion": "Mettre à jour {{version}}",
       "version": "Version de Tessel : {{version}}",
       "devBuild": "Version de développement (npm run dev)",
