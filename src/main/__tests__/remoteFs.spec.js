@@ -3,7 +3,7 @@ import fs from 'fs'
 import os from 'os'
 import { join } from 'path'
 import { execFileSync } from 'child_process'
-import { createRemoteFs, checkRemoteName, cleanRel, findPattern, trashInfoPath, porcelainLetters, parseStat, parseFingerprint } from '../remoteFs'
+import { createRemoteFs, checkRemoteName, cleanRel, findPattern, trashInfoPath, porcelainLetters, parseStat, parseFingerprint, agentScratchDir, agentScratchParts, claudeProjectSlug } from '../remoteFs'
 import { remoteRoot, childPath } from '../../shared/remotePath'
 import { gitSh, fakeSpawn, posixPath } from './fixtures/fakeSsh'
 
@@ -20,6 +20,21 @@ describe('helpers', () => {
     expect(cleanRel('a/b\\c')).toBe('a/b/c')
     expect(cleanRel('a/../b')).toBe(null)
     expect(cleanRel('a/\u0001')).toBe(null)
+  })
+  it("an agent's scratch folder: only for an open project of the host, never .. or another folder of /tmp", () => {
+    const s = '/tmp/claude-1001/-home-fivem-FXServer/116c121c-29e6-43d9-bc37-3ac3de09795a/scratchpad'
+    expect(claudeProjectSlug('/home/fivem/FXServer/')).toBe('-home-fivem-FXServer')
+    expect(agentScratchDir(`${s}/dlg/cmp_plate_f.png`, ['/home/fivem/FXServer'])).toBe(s)
+    expect(agentScratchDir(`${s}/dlg/cmp_plate_f.png`, ['~/FXServer', null, '/home/fivem/FXServer'])).toBe(s)
+    expect(agentScratchDir(`${s}/dlg/cmp_plate_f.png`, ['/home/other'])).toBe(null)
+    expect(agentScratchDir(`${s}/dlg/cmp_plate_f.png`, ['~/FXServer'])).toBe(null)
+    expect(agentScratchDir(`${s}/../../x.png`, ['/home/fivem/FXServer'])).toBe(null)
+    expect(agentScratchDir(`${s}//x.png`, ['/home/fivem/FXServer'])).toBe(null)
+    expect(agentScratchDir(`${s}/a\nb.png`, ['/home/fivem/FXServer'])).toBe(null)
+    expect(agentScratchDir('/tmp/claude-1001/-home-fivem-FXServer/not-a-session/scratchpad/x.png', ['/home/fivem/FXServer'])).toBe(null)
+    expect(agentScratchDir('/tmp/other/x.png', ['/home/fivem/FXServer'])).toBe(null)
+    expect(agentScratchDir(`${s}/x.png`, ['/'])).toBe(null)
+    expect(agentScratchParts(`${s}/x.png`, ['/home/fivem/FXServer'])).toEqual({ uid: '1001', slug: '-home-fivem-FXServer', session: '116c121c-29e6-43d9-bc37-3ac3de09795a', dir: s })
   })
   it('find patterns match the text literally', () => {
     expect(findPattern('a*b?[c]\\')).toBe('*a\\*b\\?\\[c\\]\\\\*')

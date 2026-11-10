@@ -40,6 +40,30 @@ describe('useNativeChatFileLinkClick', () => {
     }
   })
 
+  // Tessel: a picture an agent on an SSH host rendered in its scratch folder
+  // (/tmp/claude-.../scratchpad): outside the project, shown in the image viewer
+  // when the host's side lets it through; never opened in the editor.
+  it('a host path outside the project: a picture goes to the image viewer (main decides), anything else is refused', async () => {
+    const root = 'ssh://ssh-box1/home/fivem/FXServer'
+    const pic = '/tmp/claude-1001/-home-fivem-FXServer/116c121c-29e6-43d9-bc37-3ac3de09795a/scratchpad/dlg/a.png'
+    const viewImage = vi.fn(async (p) => (p.endsWith('a.png') ? { ok: true, dataUrl: 'data:image/png;base64,AA==' } : { ok: false }))
+    const showImage = vi.fn()
+    const openFile = vi.fn()
+    const onOpenFailure = vi.fn()
+    const ctx = { worktreePath: root, roots: [root], remote: true, remoteRoot: root }
+    const result = setup(ctx, { openFile, viewImage, showImage, onOpenFailure })
+    await result.current(event(), pic)
+    expect(viewImage).toHaveBeenCalledWith(`ssh://ssh-box1${pic}`)
+    expect(showImage).toHaveBeenCalledWith(expect.objectContaining({ title: 'a.png' }))
+    expect(onOpenFailure).not.toHaveBeenCalled()
+    await result.current(event(), pic.replace('a.png', 'b.png'))
+    expect(onOpenFailure).toHaveBeenCalledWith(expect.objectContaining({ verdict: 'outside' }))
+    await result.current(event(), pic.replace('a.png', 'notes.md'))
+    expect(onOpenFailure).toHaveBeenCalledTimes(2)
+    expect(viewImage).toHaveBeenCalledTimes(2)
+    expect(openFile).not.toHaveBeenCalled()
+  })
+
   it.each([
     ['docs/deck.md', '/repo/docs/deck.md', null, null],
     ['/repo/src/app.ts:12', '/repo/src/app.ts', 12, null],

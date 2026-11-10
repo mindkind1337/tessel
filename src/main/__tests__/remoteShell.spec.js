@@ -2,6 +2,7 @@ import { describe, it, expect, afterEach } from 'vitest'
 import fs from 'fs'
 import os from 'os'
 import { join } from 'path'
+import { execFileSync } from 'child_process'
 import { EventEmitter } from 'events'
 import { sq, remotePathArg, rawArg, requestScript, sessionArgs, prelude, createRemoteSession, RC } from '../remoteShell'
 import { gitSh, fakeSshLaunch, fakeSpawn } from './fixtures/fakeSsh'
@@ -189,5 +190,34 @@ describe.skipIf(!gitSh())('session against a POSIX shell (fake ssh)', () => {
     expect(text.split('\n')[0]).toMatch(/^6 \d+ \d+ \d+ sha256:[0-9a-f]{64}$/)
     const out = await session.run('__t_read', [posix(dir), '/etc/hostname-nope', '1000'])
     expect([RC.MISSING, RC.OUTSIDE]).toContain(out.rc)
+  }, 30000)
+
+  // An agent's scratch folder (remoteFs.agentScratchParts): read only when the
+  // uid is the signed-in user's and none of the four folders is a link.
+  it("__t_simg: reads a picture of the signed-in user's scratch folder, never another uid's nor through a link", async () => {
+    const sh = gitSh()
+    const session_ = '0123abcd-0000-4000-8000-00000000beef'
+    const slug = `-tessel-test-${process.pid}`
+    const uid = execFileSync(sh, ['-c', 'id -u']).toString().trim()
+    const base = `/tmp/claude-${uid}/${slug}`
+    execFileSync(sh, ['-c', `mkdir -p '${base}/${session_}/scratchpad/dlg' && printf png > '${base}/${session_}/scratchpad/dlg/a.png'`])
+    try {
+      const launch = fakeSshLaunch({ home: os.tmpdir() })
+      session = createRemoteSession({ file: launch.file, args: sessionArgs(launch.args), spawnImpl: launch.spawnImpl })
+      await session.start()
+      const pic = `${base}/${session_}/scratchpad/dlg/a.png`
+      const ok = await session.run('__t_simg', [uid, slug, session_, pic, '1000'])
+      expect(ok.rc).toBe(0)
+      const text = ok.out.toString('utf8')
+      expect(text.slice(text.indexOf('\n') + 1)).toBe('png')
+      // Another uid: refused before anything is looked at.
+      expect((await session.run('__t_simg', [String(Number(uid) + 1), slug, session_, pic, '1000'])).rc).toBe(RC.OUTSIDE)
+      // A session folder that does not exist.
+      expect((await session.run('__t_simg', [uid, slug, '0123abcd-0000-4000-8000-00000000dead', pic, '1000'])).rc).not.toBe(0)
+      // A path out of the scratch folder.
+      expect((await session.run('__t_simg', [uid, slug, session_, `${base}/${session_}/../x.png`, '1000'])).rc).not.toBe(0)
+    } finally {
+      execFileSync(sh, ['-c', `rm -rf '${base}'`])
+    }
   }, 30000)
 })

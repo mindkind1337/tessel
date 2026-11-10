@@ -44,6 +44,27 @@ import { parseSparseList, sparseDirsUnder } from './sparseCheckout'
 import { BIN_NAME, parseAgentTools, parseRemoteSessions, remoteSessionsLimit } from './remoteAgent/remoteAgentSetup'
 
 export const SESSION_PREFIX = 'rfs:'
+
+// An agent's own scratch folder on a host: Claude Code keeps one per session
+// at /tmp/claude-<uid>/<the project's folder, its non-alphanumerics as
+// "-">/<session id>/scratchpad, and renders pictures there that it names in
+// the chat. Such a picture is shown (read only, images only) when the folder
+// belongs to an open project of that host: the scratch folder of an agent of
+// that project, nothing else of /tmp. -> the scratch folder | null.
+const AGENT_SCRATCH = /^\/tmp\/claude-(\d{1,10})\/([A-Za-z0-9-]{1,255})\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\/scratchpad\/(.+)$/
+export const claudeProjectSlug = (p) => String(p).replace(/\/+$/, '').replace(/[^A-Za-z0-9]/g, '-')
+export function agentScratchDir(path, projectPaths) {
+  const parts = agentScratchParts(path, projectPaths)
+  return parts ? parts.dir : null
+}
+// -> { uid, slug, session, dir } | null (the same checks).
+export function agentScratchParts(path, projectPaths) {
+  const m = AGENT_SCRATCH.exec(typeof path === 'string' ? path : '')
+  if (!m || /[\u0000-\u001f\u007f]/.test(m[4])) return null
+  if (m[4].split('/').some((s) => !s || s === '.' || s === '..')) return null
+  const own = (projectPaths || []).some((p) => typeof p === 'string' && p.startsWith('/') && p.length > 1 && claudeProjectSlug(p) === m[2])
+  return own ? { uid: m[1], slug: m[2], session: m[3], dir: `/tmp/claude-${m[1]}/${m[2]}/${m[3]}/scratchpad` } : null
+}
 const MAX_ENTRIES = 5000
 const MAX_LIST_MANY = 64 // folders in one listMany request
 const MAX_ROOTS = 200
@@ -2120,11 +2141,29 @@ ${q.root}`, () => sparseInfoNow(q))
   // An image (Markdown pictures, the image view) as a data URL.
   // An image, or a file the editor shows in a view of its own (a workbook,
   // a document, slides, audio, video): read whole.
+  // A picture in the scratch folder of an agent of an open project of that
+  // host (agentScratchParts): -> { hostId, uid, slug, session, path } | null.
+  // Images only.
+  function locateScratchImage(file) {
+    const p = isRemotePath(file) && fileKind(file) === 'image' ? parseRemotePath(file) : null
+    if (!p) return null
+    const mine = []
+    for (const r of roots.values()) if (r.hostId === p.hostId) mine.push(r.path, r.real)
+    const parts = agentScratchParts(p.path, mine)
+    return parts ? { hostId: p.hostId, ...parts, path: p.path } : null
+  }
   async function readImage(file) {
     if (!BYTE_KINDS.includes(fileKind(file))) return { ok: false, error: t('main.file.notImage', 'Not an image.') }
     const loc = locateFile(file)
-    if (!loc) return { ok: false, error: notInProject() }
-    const res = await call(loc.hostId, '__t_read', [arg(loc.root.path), arg(loc.path), String(MAX_IMAGE)], { cap: MAX_IMAGE + HEADER_SLACK, timeoutMs: 120000, op: 'read', retry: true })
+    // Not in a project: a scratch folder's picture, read by __t_simg (the
+    // folders checked as the signed-in user's own, not links; then the real
+    // path must stay below the scratch folder).
+    const scratch = loc ? null : locateScratchImage(file)
+    if (!loc && !scratch) return { ok: false, error: notInProject() }
+    const opts = { cap: MAX_IMAGE + HEADER_SLACK, timeoutMs: 120000, op: 'read', retry: true }
+    const res = loc
+      ? await call(loc.hostId, '__t_read', [arg(loc.root.path), arg(loc.path), String(MAX_IMAGE)], opts)
+      : await call(scratch.hostId, '__t_simg', [scratch.uid, scratch.slug, scratch.session, arg(scratch.path), String(MAX_IMAGE)], opts)
     if (res.error) return { ok: false, error: res.error }
     if (res.rc === RC.TOO_LARGE) return { ok: false, kind: 'image', error: t('main.file.imageTooLarge', 'This image is too large to show here.') }
     if (res.rc !== 0 || res.truncated) return { ok: false, error: rcText(res, t('main.file.notFound', 'The file was not found.')) }

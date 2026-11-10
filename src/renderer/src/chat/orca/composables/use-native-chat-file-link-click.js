@@ -132,7 +132,13 @@ export function useNativeChatFileLinkClick(context, options = {}) {
         if (home) hit = remoteLinkTarget(owner.remoteRoot, parsed.pathText, { home }) || hit
       }
       if (!hit) return failure('unresolved', route.pathText)
-      if (!hit.inside) return failure('outside', route.pathText)
+      // Outside the project: only a picture the host's side lets through
+      // (remoteFs.readImage: the scratch folder of an agent of an open
+      // project there), in the image viewer; anything else is refused.
+      if (!hit.inside) {
+        if (!/[\\/]$/.test(parsed.pathText) && fileKind(hit.file) === 'image' && (await showInLightbox(hit.file))) return
+        return failure('outside', route.pathText)
+      }
       try {
         // A folder (written with a trailing "/"): the Files tab when it shows
         // that project there, else the router says it is not in it.

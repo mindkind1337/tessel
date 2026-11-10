@@ -225,6 +225,11 @@ export const FUNCTIONS = new Set([
   // chat/promptBefore.js says why): the conversation view's turn whose
   // answer its window shows without the question.
   '__t_tprompt',
+  // A picture in an agent's scratch folder (/tmp/claude-<uid>/<slug>/<session>/
+  // scratchpad, remoteFs.agentScratchDir): read only when each of those four
+  // folders is a real folder (not a link) owned by the signed-in user, and
+  // <uid> is theirs; then __t_read below it.
+  '__t_simg',
   // The signed-in user's home folder ($HOME), to tell a "~/…" project from
   // the same folder named by its full path (chat file links).
   '__t_home',
@@ -1091,6 +1096,19 @@ __t_twin() {
 __t_tread() {
   __t_tfile "$1" "$2" "$5" || return $?
   __t_twin "$__F" "$3" "$4"
+}
+__t_simg() {
+  case $1 in ''|*[!0-9]*) return 90 ;; esac
+  case $2 in ''|*[!A-Za-z0-9-]*) return 90 ;; esac
+  case $3 in ''|*[!0-9a-f-]*) return 90 ;; esac
+  [ "$1" = "$(id -u)" ] || return 90
+  __d=/tmp/claude-$1
+  for __c in "$__d" "$__d/$2" "$__d/$2/$3" "$__d/$2/$3/scratchpad"; do
+    [ -L "$__c" ] && return 90
+    [ -d "$__c" ] || return 92
+    [ -O "$__c" ] || return 90
+  done
+  __t_read "$__d/$2/$3/scratchpad" "$4" "$5"
 }
 __t_tprompt() {
   __t_tfile "$1" "$2" "$4" || return $?

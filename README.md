@@ -157,7 +157,8 @@ working on Tessel itself (see [Build from source](#build-from-source)).
   a folder that is a link to another place are never trusted, and it happens
   only on a connection that is already signed in. Codex still asks.
 - Their conversations, history, model, cost and skills are read on the host;
-  file links open the host's files.
+  file links open the host's files (those of the project; a picture the agent rendered in its own scratch
+  folder, `/tmp/claude-…/scratchpad`, opens in the image viewer too).
 - **tessel-host on the server** (like VS Code's server; experimental, off by
   default: per host, Advanced → *Tessel daemon on the server*): at the next
   connection to that host, Tessel looks for its own small daemon there and puts
