@@ -10,6 +10,11 @@
 // list_models request, stopped after 60 s or 4 MB. Success only is kept
 // (userData/agent-models.json), so a failed probe never replaces a good list;
 // the window reads the kept list at start without running anything.
+// The files of the program a probe ran are noted with the list (their size
+// and time): an agent updated since (npm install -g, its own updater) says so
+// by a look at them, nothing started, and its menu reads the list again: a
+// new model (Fable 5.2) was missing for a day after Claude Code's update
+// (2026-11-10).
 import fs from 'fs'
 import os from 'os'
 import { join } from 'path'
@@ -34,7 +39,13 @@ export function loadModelLists(dir) {
       const e = data[agent]
       if (!e || typeof e !== 'object') continue
       const models = validListedModels(e.models)
-      if (models.length) out[agent] = { models, fetchedAt: Number.isFinite(e.fetchedAt) ? e.fetchedAt : 0 }
+      if (!models.length) continue
+      out[agent] = { models, fetchedAt: Number.isFinite(e.fetchedAt) ? e.fetchedAt : 0 }
+      const files = Array.isArray(e.programFiles) ? e.programFiles.filter((p) => typeof p === 'string' && p && p.length <= 1024).slice(0, 8) : null
+      if (files && typeof e.programSig === 'string') {
+        out[agent].programFiles = files
+        out[agent].programSig = e.programSig.slice(0, 4000)
+      }
     }
     return out
   } catch {
@@ -51,6 +62,35 @@ function saveModelLists(dir, lists) {
   }
 }
 
+// The files of a resolved program (the executable, or node and its script):
+// those that exist as files. -> [path]
+export function programFiles(prog, stat = fs.statSync) {
+  if (!prog || typeof prog.file !== 'string') return []
+  const out = []
+  for (const p of [prog.file, ...(Array.isArray(prog.pre) ? prog.pre : [])]) {
+    if (typeof p !== 'string' || !p || p.startsWith('-') || p.length > 1024 || out.includes(p)) continue
+    try {
+      if (stat(p).isFile()) out.push(p)
+    } catch {
+      /* not a file (a bare name, an argument) */
+    }
+  }
+  return out.slice(0, 8)
+}
+// Their size and time, as one string ('' when none can be read).
+export function filesSig(files, stat = fs.statSync) {
+  const parts = []
+  for (const p of files || []) {
+    try {
+      const st = stat(p)
+      parts.push(`${p}:${st.size}:${Math.round(st.mtimeMs)}`)
+    } catch {
+      parts.push(`${p}:gone`)
+    }
+  }
+  return parts.join('|').slice(0, 4000)
+}
+
 // deps (tests): resolve(exe) -> { file, pre, path } | null; spawn like
 // child_process.spawn; now(); findMsp(env) -> the program a protocol probe
 // runs (Muse: museServe.js findMuse).
@@ -59,11 +99,15 @@ export function createModelLister(dir, deps = {}) {
   const spawn = deps.spawn || nodeSpawn
   const now = deps.now || Date.now
   const timeoutMs = deps.timeoutMs || MODEL_PROBE_TIMEOUT_MS
+  const stat = deps.stat || fs.statSync
   let lists = loadModelLists(dir)
   const running = new Map() // agent -> promise
 
+  // The window's copy: the models and when (the program's files stay here).
   function list() {
-    return JSON.parse(JSON.stringify(lists))
+    const out = {}
+    for (const [agent, e] of Object.entries(lists)) out[agent] = { models: e.models, fetchedAt: e.fetchedAt }
+    return JSON.parse(JSON.stringify(out))
   }
 
   // -> { ok: true, models, fetchedAt } | { ok: false, reason, detail }
@@ -109,6 +153,8 @@ export function createModelLister(dir, deps = {}) {
       prog = null
     }
     if (!prog) return { ok: false, reason: 'not-found', detail: exe }
+    const files = programFiles(prog, stat)
+    const program = { programFiles: files, programSig: filesSig(files, stat) }
     const env = { ...(deps.env || process.env) }
     if (prog.path) {
       for (const k of Object.keys(env)) if (k.toLowerCase() === 'path') delete env[k]
@@ -165,19 +211,33 @@ export function createModelLister(dir, deps = {}) {
         child.stdin.end(spec.stdin)
       }
     })
-    return keep(agent, result)
+    return keep(agent, result, program)
   }
 
   // A probe's success kept (on disk too); a failure changes nothing.
-  function keep(agent, result) {
+  function keep(agent, result, program = null) {
     if (!result.ok) return result
     const models = validListedModels(result.models)
     if (!models.length) return { ok: false, reason: 'empty', detail: '' }
     const entry = { models, fetchedAt: now() }
-    lists = { ...lists, [agent]: entry }
+    lists = { ...lists, [agent]: program ? { ...entry, ...program } : entry }
     saveModelLists(dir, lists)
     return { ok: true, ...entry }
   }
 
-  return { list, probe }
+  // Whether the agent's program changed since its kept list was read: its
+  // files looked at again (nothing started). A list kept before Tessel
+  // noted them: true, once (the next probe notes them). No list, a protocol
+  // agent (Muse), or a program whose files are not known (a bare name on
+  // Linux): false.
+  function changed(agent) {
+    const spec = Object.prototype.hasOwnProperty.call(MODEL_PROBES, agent) ? MODEL_PROBES[agent] : null
+    const entry = lists[agent]
+    if (!spec || spec.msp || !entry) return false
+    if (!Array.isArray(entry.programFiles)) return true
+    if (!entry.programFiles.length) return false
+    return filesSig(entry.programFiles, stat) !== entry.programSig
+  }
+
+  return { list, probe, changed }
 }

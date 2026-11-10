@@ -237,7 +237,8 @@ working on Tessel itself (see [Build from source](#build-from-source)).
 - **Agent updates**: Tessel checks for new versions of your agents, updates
   them in the background, and restarts each pane on the new version when it is
   idle, with its conversation resumed. A new version's models appear by
-  themselves.
+  themselves: the model menu reads the agent's list again as soon as its program
+  has changed, however it was updated.
 - **MCP servers and tools**: see every MCP server for Claude Code and Codex,
   test the connection, copy a server to another agent, and install from a
   catalog of popular servers and developer tools. A remote server has a Sign in

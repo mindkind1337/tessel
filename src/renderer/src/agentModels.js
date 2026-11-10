@@ -5,6 +5,9 @@
 // (agent-model-catalog-store.ts, MIT, Copyright (c) 2026 Lovecast Inc.), a
 // model menu you open refreshes a list that is missing or a day old in the
 // background; a failure waits 30 s before the next try. Never on a timer.
+// A list younger than that is read again too when the agent's program changed
+// since (an update of the CLI: main looks at its files, at most once a minute
+// per agent).
 import { reactive } from 'vue'
 import { settings } from './settings'
 import { catalogModelsFor, getAgentSessionOptionCatalog } from '../../shared/agentSessionOptions'
@@ -60,6 +63,8 @@ const built = new Map() // agent -> { key, models }
 export const MODEL_LIST_MAX_AGE_MS = 24 * 60 * 60 * 1000
 export const MODEL_PROBE_FAILURE_TTL_MS = 30_000
 const lastFailure = new Map() // agent -> time of the last failed background refresh
+export const PROGRAM_CHECK_MS = 60_000
+const lastProgramCheck = new Map() // agent -> time main was last asked whether the program changed
 
 // A model menu opened: a missing or old list gets one background refresh
 // (never two at once).
@@ -67,14 +72,23 @@ export function refreshIfStale(agent, now = Date.now()) {
   if (!canProbeModels(agent) || typeof window === 'undefined' || !window.shellApi || !window.shellApi.probeAgentModels) return
   if (modelProbes[agent] && modelProbes[agent].busy) return
   const list = modelLists[agent]
-  if (list && now - list.fetchedAt < MODEL_LIST_MAX_AGE_MS) return
   const failed = lastFailure.get(agent)
   if (failed != null && now - failed < MODEL_PROBE_FAILURE_TTL_MS) return
+  const young = (kept) => kept && Date.now() - kept.fetchedAt < MODEL_LIST_MAX_AGE_MS
+  let ask = false
+  if (list && now - list.fetchedAt < MODEL_LIST_MAX_AGE_MS) {
+    // Young: only when the program changed, asked at most once a minute.
+    if (typeof window.shellApi.agentModelListChanged !== 'function') return
+    const last = lastProgramCheck.get(agent)
+    if (last != null && now - last < PROGRAM_CHECK_MS) return
+    lastProgramCheck.set(agent, now)
+    ask = true
+  }
   const command = (settings.agentPrefs && settings.agentPrefs[agent] && settings.agentPrefs[agent].command) || ''
   Promise.resolve(loadModelLists())
-    .then(() => {
-      const kept = modelLists[agent]
-      if (kept && Date.now() - kept.fetchedAt < MODEL_LIST_MAX_AGE_MS) return null
+    .then(async () => {
+      if (ask) return (await window.shellApi.agentModelListChanged(agent)) === true ? refreshModels(agent, command) : null
+      if (young(modelLists[agent])) return null
       return refreshModels(agent, command)
     })
     .then((res) => {
@@ -101,5 +115,6 @@ export function resetModelListsForTests() {
   for (const k of Object.keys(modelProbes)) delete modelProbes[k]
   built.clear()
   lastFailure.clear()
+  lastProgramCheck.clear()
   loaded = null
 }

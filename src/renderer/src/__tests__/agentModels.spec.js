@@ -7,7 +7,7 @@ import SettingsDialog from '../components/SettingsDialog.vue'
 import LaunchMenu from '../components/LaunchMenu.vue'
 import SessionOptionPicker from '../components/SessionOptionPicker.vue'
 import { settings, resetSettings, loadSettings } from '../settings'
-import { modelLists, modelsFor, refreshModels, loadModelLists, resetModelListsForTests, refreshIfStale, MODEL_LIST_MAX_AGE_MS } from '../agentModels'
+import { modelLists, modelsFor, refreshModels, loadModelLists, resetModelListsForTests, refreshIfStale, MODEL_LIST_MAX_AGE_MS, PROGRAM_CHECK_MS } from '../agentModels'
 import { createClaudeModelSwitchObserver, hasClaudeModelSwitchConfirmation, hasClaudeModelSwitchSuccess } from '../claudeModelSwitch'
 import { sessionPillLabel } from '../sessionOptionLabels'
 import { setMessages } from '../i18n'
@@ -181,6 +181,28 @@ describe('a model menu that opens refreshes a missing or old list', () => {
     refreshIfStale('codex')
     await flushPromises()
     expect(probe).toHaveBeenCalledTimes(1)
+  })
+
+  it("a young list is read again when the agent's program changed (main asked at most once a minute)", async () => {
+    const probe = vi.fn(async () => ({ ok: true, fetchedAt: Date.now(), models: [{ id: 'claude-fable-5-2', label: 'Fable 5.2' }] }))
+    let updated = false
+    const changed = vi.fn(async () => updated)
+    window.shellApi = { agentModelLists: async () => ({ claude: { models: [{ id: 'opus', label: 'Opus' }], fetchedAt: Date.now() } }), probeAgentModels: probe, agentModelListChanged: changed }
+    await loadModelLists()
+    const t0 = Date.now()
+    refreshIfStale('claude', t0)
+    await flushPromises()
+    expect(changed).toHaveBeenCalledTimes(1)
+    expect(probe).not.toHaveBeenCalled()
+    updated = true
+    refreshIfStale('claude', t0 + 1000)
+    await flushPromises()
+    expect(changed).toHaveBeenCalledTimes(1) // within the minute: not asked
+    refreshIfStale('claude', t0 + PROGRAM_CHECK_MS + 1)
+    await flushPromises()
+    expect(changed).toHaveBeenCalledTimes(2)
+    expect(probe).toHaveBeenCalledTimes(1)
+    expect(modelsFor('claude').map((m) => m.id)).toContain('claude-fable-5-2')
   })
 
   it('a failure waits 30 s before the next try; an agent without a probe is left alone', async () => {

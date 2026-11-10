@@ -2028,6 +2028,15 @@ ipcMain.handle('agents:modelLists', () => {
     return {}
   }
 })
+// The agent's program changed since its list was read (agentModelList.js
+// changed(): its files looked at, nothing started).
+ipcMain.handle('agents:modelListChanged', (_evt, agent) => {
+  try {
+    return typeof agent === 'string' && getModelLister().changed(agent)
+  } catch {
+    return false
+  }
+})
 ipcMain.handle('agents:probeModels', async (_evt, q = {}) => {
   const agent = q && typeof q.agent === 'string' ? q.agent : ''
   const command = q && typeof q.command === 'string' ? q.command.slice(0, 300) : ''

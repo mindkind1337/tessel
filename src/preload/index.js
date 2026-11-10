@@ -253,6 +253,7 @@ const api = {
   // The models each agent's CLI listed (kept), and asking it again:
   // { agent, command } -> { ok, models, fetchedAt } | { ok: false, reason, detail }
   agentModelLists: () => ipcRenderer.invoke('agents:modelLists'),
+  agentModelListChanged: (agent) => ipcRenderer.invoke('agents:modelListChanged', String(agent || '')),
   probeAgentModels: (query) => ipcRenderer.invoke('agents:probeModels', query),
   // { paneId, sessionId, text } -> { ok } | { ok: false, error }
   agentInbox: (query) => ipcRenderer.invoke('agents:inbox', query),

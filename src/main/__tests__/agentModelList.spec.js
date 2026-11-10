@@ -2,7 +2,7 @@
 // program: arguments, stdin, kept lists, failures that keep the last good one.
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { EventEmitter } from 'node:events'
-import { mkdtempSync, rmSync, readFileSync, existsSync } from 'node:fs'
+import { mkdtempSync, rmSync, readFileSync, existsSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createModelLister, loadModelLists } from '../agentModelList'
@@ -155,6 +155,42 @@ describe('model lists from the agents themselves', () => {
     const [a, b] = await Promise.all([lister.probe('claude'), lister.probe('claude')])
     expect(a).toBe(b)
     expect(calls).toHaveLength(1)
+  })
+
+  it("an update of the agent's program (its files' size or time) says the kept list is old, nothing started", async () => {
+    const calls = []
+    const files = { 'C:\\npm\\node.exe': { size: 10, mtimeMs: 1 }, 'C:\\npm\\cli.js': { size: 20, mtimeMs: 2 } }
+    const stat = (p) => {
+      const f = files[p]
+      if (!f) throw new Error('ENOENT')
+      return { ...f, isFile: () => true }
+    }
+    const resolveNode = async () => ({ file: 'C:\\npm\\node.exe', pre: ['C:\\npm\\cli.js', '--flag'], path: 'C:\\npm' })
+    const lister = createModelLister(dir, { resolve: resolveNode, spawn: fakeSpawn({ stdout: CLAUDE_ANSWER }, calls), stat })
+    expect(lister.changed('claude')).toBe(false) // nothing kept yet
+    expect((await lister.probe('claude')).ok).toBe(true)
+    expect(lister.changed('claude')).toBe(false)
+    // The window's copy does not carry the files.
+    expect(Object.keys(lister.list().claude).sort()).toEqual(['fetchedAt', 'models'])
+    files['C:\\npm\\cli.js'] = { size: 21, mtimeMs: 3 } // npm install -g @anthropic-ai/claude-code
+    expect(lister.changed('claude')).toBe(true)
+    expect(calls).toHaveLength(1) // looked at, not started
+    await lister.probe('claude')
+    expect(lister.changed('claude')).toBe(false)
+    // Kept on disk and read back at the next start.
+    const again = createModelLister(dir, { resolve: resolveNode, spawn: fakeSpawn({ stdout: CLAUDE_ANSWER }, calls), stat })
+    expect(again.changed('claude')).toBe(false)
+    delete files['C:\\npm\\cli.js']
+    expect(again.changed('claude')).toBe(true)
+  })
+  it('a list kept before the program was noted: changed once; a program with no file known (a bare name): never', async () => {
+    writeFileSync(join(dir, 'agent-models.json'), JSON.stringify({ claude: { models: [{ id: 'opus', label: 'Opus' }], fetchedAt: 5 } }))
+    const calls = []
+    const lister = createModelLister(dir, { resolve: async () => ({ file: 'claude', pre: [], path: '' }), spawn: fakeSpawn({ stdout: CLAUDE_ANSWER }, calls), stat: () => { throw new Error('ENOENT') } })
+    expect(lister.changed('claude')).toBe(true)
+    await lister.probe('claude')
+    expect(lister.changed('claude')).toBe(false)
+    expect(lister.changed('nope')).toBe(false)
   })
 
   it('a damaged file reads as nothing kept', () => {
