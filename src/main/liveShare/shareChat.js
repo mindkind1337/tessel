@@ -79,9 +79,12 @@ const timeOf = (v) => (Number.isFinite(v) ? v : undefined)
 // --- Secrets ------------------------------------------------------------------
 const VALUE = `("[^"\\r\\n]{1,200}"|'[^'\\r\\n]{1,200}'|[^\\s"',;&]{3,200})`
 const SECRET_NAME = '[A-Za-z0-9_.-]{0,40}(?:token|secret|passw(?:or)?d|passwd|pwd|api[_-]?key|apikey|access[_-]?key|private[_-]?key|client[_-]?secret|credential|session[_-]?key|connection[_-]?string)[A-Za-z0-9_.-]{0,40}'
+// A URL's user:password@.
+const USERINFO = /\b([a-z][a-z0-9+.-]{1,20}:\/\/)[^\s/@:]{1,200}:[^\s/@]{1,200}@/gi
+const maskUserinfo = (text) => text.replace(USERINFO, `$1${MASK}@`)
 const SECRETS = [
   [/-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z ]*PRIVATE KEY-----|$)/g, MASK],
-  [/\b([a-z][a-z0-9+.-]{1,20}:\/\/)[^\s/@:]{1,200}:[^\s/@]{1,200}@/gi, `$1${MASK}@`],
+  [USERINFO, `$1${MASK}@`],
   [/\b(?:sk|pk|rk)[-_](?:ant-|proj-|live[-_]|test[-_]|or-)?[A-Za-z0-9_-]{16,}/g, MASK],
   [/\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,}/g, MASK],
   [/\bgithub_pat_[A-Za-z0-9_]{20,}/g, MASK],
@@ -124,13 +127,17 @@ const decodeOnce = (text) =>
     const c = parseInt(hex, 16)
     return c >= 0x20 && c < 0x7f ? String.fromCharCode(c) : all
   })
-export function plainText(text) {
-  let out = str(text).replace(ANSI, '')
+// userinfo: a URL's user:password@ masked before each decoding too (what a
+// guest reads): a password with %20, %40 or %3A in it, or a whole URL
+// encoded in another (a redirect's next=), no longer matches once decoded.
+export function plainText(text, { userinfo = false } = {}) {
+  const mask = userinfo ? maskUserinfo : (t) => t
+  let out = mask(str(text).replace(ANSI, ''))
   // Decoded until nothing changes (C%253A... is C%3A... is C:...).
   for (let i = 0; i < 6 && /%[0-9A-Fa-f]{2}/.test(out); i++) {
     const next = decodeOnce(out)
     if (next === out) break
-    out = next
+    out = mask(next)
   }
   return out.replace(/\\\\[?.]\\UNC\\/gi, '\\\\').replace(/\\\\[?.]\\(?=[A-Za-z]:)/g, '')
 }
@@ -289,7 +296,7 @@ export function hidePaths(text, roots) {
 // Cut first (a little past the end: a secret across the cut is still seen
 // whole), so no pattern ever runs over more than that.
 export function guestText(text, roots, max) {
-  return clip(hidePaths(maskSecrets(plainText(clip(text, max + 256))), roots), max)
+  return clip(hidePaths(maskSecrets(plainText(clip(text, max + 256), { userinfo: true })), roots), max)
 }
 
 // The harness's own user turns (never the conversation): known by their

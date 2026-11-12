@@ -97,6 +97,18 @@ describe('shareChat: what a guest gets of a conversation', () => {
     ])
       expect(guestText(from, roots, 500)).toBe(to)
     expect(guestText('password=hunter22 Bearer abcdefghijklmnop1234 postgres://u:pw1234@db/x', roots, 500)).toBe('password=•••• Bearer •••• postgres://••••@db/x')
+    // A password encoded in a URL is masked before it is decoded.
+    expect(guestText('see https://user:hello%20world@host/x', roots, 500)).toBe('see https://••••@host/x')
+    expect(guestText('see ftp://a:p%40ss@h/x', roots, 500)).not.toMatch(/p@ss|p%40ss/)
+    expect(guestText('see https://u:a%3Ab@h/x', roots, 500)).not.toMatch(/a:b@|a%3Ab/)
+    expect(guestText('see https://example.com/a%20b', roots, 500)).toBe('see https://example.com/a b')
+    // A URL encoded in another (a redirect), twice encoded; a control
+    // character in the password.
+    expect(guestText('go?next=https%3A%2F%2Fuser%3Ahello%2520world%40host%2F', roots, 500)).not.toMatch(/hello|world/)
+    expect(guestText('go?next=https%3A%2F%2Fuser%3Ap%2540ss%40host', roots, 500)).not.toMatch(/p@ss|ss@host/)
+    expect(guestText('see https://u:a\x0bb%20c@h/x', roots, 500)).toBe('see https://••••@h/x')
+    // An encoded quote around a secret: all of it masked.
+    expect(guestText('password=%22hello world%22', roots, 500)).toBe('password="••••"')
     // A host path behind a made-up address is hidden too; addresses stay.
     for (const text of [
       'open x1://C:\\Users\\jean\\.ssh\\id_rsa now',
