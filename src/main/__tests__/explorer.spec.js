@@ -1,9 +1,9 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import fs from 'fs'
 import os from 'os'
 import { join } from 'path'
 import { execFileSync } from 'child_process'
-import { inside, listDir, parsePorcelain, projectStatus, checkName, create, rename, trash, searchNames, searchContent, searchContentWalk, parseGrepRecord, clipLine, grepFileCheck, grepReader, grepArgs, searchCap, SEARCH_LIMIT, isGitStateChange, sparseInfo, listMany, watchProject } from '../explorer'
+import { inside, listDir, parsePorcelain, projectStatus, checkName, create, rename, trash, searchNames, searchContent, searchContentWalk, readUpTo, parseGrepRecord, clipLine, grepFileCheck, grepReader, grepArgs, searchCap, SEARCH_LIMIT, isGitStateChange, sparseInfo, listMany, watchProject } from '../explorer'
 import { parseSparseList, sparseDirsUnder } from '../sparseCheckout'
 import { statusOf, folderStatus, ignoredSet, isIgnored } from '../../renderer/src/explorerStatus'
 
@@ -181,6 +181,28 @@ describe('file explorer', () => {
     expect(res.ok).toBe(true)
     expect(res.results).toEqual([{ path: join(root, 'src', 'b.js'), rel: join('src', 'b.js'), line: 2, text: 'return Needle(a)' }])
     expect(res.truncated).toBe(false)
+  })
+
+  it('reads at most the cap, on one handle: a file over it (or grown past it while read) gives null', async () => {
+    const p = join(root, 'grow.txt')
+    fs.writeFileSync(p, 'abcd')
+    expect((await readUpTo(p, 4)).toString()).toBe('abcd')
+    expect((await readUpTo(p, 10)).toString()).toBe('abcd')
+    expect(await readUpTo(p, 3)).toBe(null)
+    // Grown after its size was read: still never more than the cap + 1 read.
+    const open = fs.promises.open
+    const spy = vi.spyOn(fs.promises, 'open').mockImplementation(async (...a) => {
+      const fh = await open(...a)
+      const stat = fh.stat.bind(fh)
+      fh.stat = async () => ({ ...(await stat()), isFile: () => true, size: 2 })
+      return fh
+    })
+    try {
+      expect(await readUpTo(p, 3)).toBe(null)
+      expect(await readUpTo(p, 100)).toBe(null)
+    } finally {
+      spy.mockRestore()
+    }
   })
 
   it('caps content results', async () => {

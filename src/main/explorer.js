@@ -288,6 +288,27 @@ export function clipLine(text, q) {
   return (start > 0 ? '…' : '') + s.slice(start, start + MAX_TEXT) + (start + MAX_TEXT < s.length ? '…' : '')
 }
 
+// A file's bytes, at most `max` of them, read on one handle: null when it
+// holds more (also when it grew after its size was read).
+export async function readUpTo(path, max) {
+  const fh = await fs.promises.open(path, 'r')
+  try {
+    const st = await fh.stat()
+    if (!st.isFile() || st.size > max) return null
+    // Sized from the handle's own size (+1 shows a file that grew: skipped).
+    const buf = Buffer.allocUnsafe(Math.min(st.size, max) + 1)
+    let got = 0
+    while (got < buf.length) {
+      const { bytesRead } = await fh.read(buf, got, buf.length - got, got)
+      if (!bytesRead) break
+      got += bytesRead
+    }
+    return got === buf.length ? null : buf.subarray(0, got)
+  } finally {
+    await fh.close()
+  }
+}
+
 // Content search by walking the project (no git): plain text,
 // case-insensitive; binaries (a NUL in the first 8 KB) and files over 2 MB
 // are skipped. -> { ok, results: [{ path, rel, line, text }], truncated }
@@ -302,12 +323,11 @@ export async function searchContentWalk({ root, query, limit = SEARCH_LIMIT, ski
     if (!e.file || skipped(skip, root, e.path)) return false
     let buf
     try {
-      const st = await fs.promises.stat(e.path)
-      if (st.size > MAX_FILE) return false
-      buf = await fs.promises.readFile(e.path)
+      buf = await readUpTo(e.path, MAX_FILE)
     } catch {
       return false
     }
+    if (!buf) return false
     if (buf.subarray(0, 8192).includes(0)) return false
     const lines = buf.toString('utf8').split('\n')
     for (let i = 0; i < lines.length; i++) {
