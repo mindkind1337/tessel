@@ -216,6 +216,11 @@ function folderIdentity(saved, value) {
   const same = (saved.account && saved.account === who.account) || (saved.email && saved.email === who.email)
   return same && !conflict(saved, who) ? 'same' : 'other'
 }
+// A valid credentials document with no claude.ai login in it.
+function signedOut(raw) {
+  const parsed = jsonObject(raw)
+  return !Object.hasOwn(parsed, 'claudeAiOauth') || parsed.claudeAiOauth === null
+}
 function credentials(raw) {
   if (raw === null) return null
   const parsed = jsonObject(raw)
@@ -635,6 +640,11 @@ export function createClaudeAccounts({
       const raw = await readText(join(path, '.credentials.json'))
       const accountRaw = await readText(join(path, 'oauth-account.json'))
       if (raw === null || accountRaw === null) return { status: 'missing' }
+      // Signed out in its folder (Claude Code dropped its login, a sign-in
+      // that expired): a sign-in is needed, as for the system's (authStatus).
+      // It was 'unknown', and "Sign in again", the one way to fix it, was
+      // refused as unreadable storage.
+      if (signedOut(raw)) return { status: 'missing' }
       const token = credentials(raw)
       const oauth = jsonObject(accountRaw)
       if (conflict(identity(token), identity(oauth))) throw authError()
@@ -666,6 +676,27 @@ export function createClaudeAccounts({
       return object(login) && folderIdentity(saved, login) === 'other'
     } catch {
       return false // unreadable: not known here (the login checks refuse it)
+    }
+  }
+  // Its own folder, its credentials a valid document with no usable login
+  // in it (a login with no token): a new sign-in replaces it. Only for
+  // "Sign in again"; elsewhere such a folder stays unreadable.
+  async function noUsableLogin(id) {
+    let raw
+    try {
+      const folder = authPath(id)
+      if (!(await ownedDirectory(accountsRoot, folder, MARKER, id))) return false
+      raw = await readText(join(folder, '.credentials.json'))
+      if (raw === null) return false
+      jsonObject(raw)
+    } catch {
+      return false
+    }
+    try {
+      credentials(raw)
+      return false
+    } catch {
+      return true
     }
   }
   const otherAccount = () =>
@@ -1504,7 +1535,12 @@ export function createClaudeAccounts({
     const previous = id ? state.accounts.find((a) => a.id === id) : null
     if (id && !previous) throw authError(t('main.claudeAccount.unknown', 'Unknown Claude account.'))
     // Signed in to another account in its folder: it may sign in again.
-    if (id && (await managed(id)).status === 'unknown' && !(await signedInElsewhere(id, previous.identity)))
+    if (
+      id &&
+      (await managed(id)).status === 'unknown' &&
+      !(await signedInElsewhere(id, previous.identity)) &&
+      !(await noUsableLogin(id))
+    )
       throw authError()
     if (typeof runLogin !== 'function') throw authError(t('main.claudeAccount.loginUnavailable', 'Claude login is unavailable.'))
     if (signal?.aborted) throw authError(t('main.claudeAccount.loginCancelled', 'Claude login was cancelled.'))

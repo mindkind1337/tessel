@@ -216,6 +216,41 @@ describe('Claude account capture and public state', () => {
     expect(fs.readFileSync(join(authPath(id), '.credentials.json'), 'utf8')).toBe(before)
     expect((await service.list()).accounts[0].status).toBe('ready')
   })
+  it.each([['no login', {}], ['a null login', { claudeAiOauth: null }]])(
+    'an account signed out in its folder (%s) needs a sign-in, and "Sign in again" works',
+    async (_name, value) => {
+      seedSystem()
+      const id = await add()
+      await service.select(id)
+      put(join(authPath(id), '.credentials.json'), value)
+      expect((await service.list()).accounts[0].status).toBe('missing')
+      expect(await service.launchEnv(id)).toMatchObject({ ok: false, error: expect.stringMatching(/sign in again/) })
+      runner.mockImplementationOnce(async ({ home: isolated }) => {
+        put(join(isolated, '.credentials.json'), token('managed', 'reauthenticated'))
+        put(join(isolated, '.claude.json'), { oauthAccount: who() })
+        return { ok: true, status: { loggedIn: true, email: who().emailAddress, orgId: who().organizationUuid } }
+      })
+      expect(await service.reauthenticate(id)).toMatchObject({ ok: true })
+      expect(read(join(authPath(id), '.credentials.json'))).toEqual(token('managed', 'reauthenticated'))
+      expect((await service.list()).accounts[0].status).toBe('ready')
+      expect(read(credentialPath())).toEqual(token('system'))
+    }
+  )
+  it('a login with no token in its folder: unreadable, yet "Sign in again" replaces it', async () => {
+    const id = await add()
+    put(join(authPath(id), '.credentials.json'), { claudeAiOauth: {} })
+    expect((await service.list()).accounts[0].status).toBe('unknown')
+    runner.mockImplementationOnce(async ({ home: isolated }) => {
+      put(join(isolated, '.credentials.json'), token('managed', 'reauthenticated'))
+      put(join(isolated, '.claude.json'), { oauthAccount: who() })
+      return { ok: true, status: { loggedIn: true, email: who().emailAddress, orgId: who().organizationUuid } }
+    })
+    expect(await service.reauthenticate(id)).toMatchObject({ ok: true })
+    expect((await service.list()).accounts[0].status).toBe('ready')
+    // A damaged document is still refused.
+    put(join(authPath(id), '.credentials.json'), '{bad')
+    await expect(service.reauthenticate(id)).rejects.toThrow('unavailable or invalid')
+  })
   it('a same-account reauthentication replaces only its own login, never the system one', async () => {
     seedSystem()
     const id = await add()
