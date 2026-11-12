@@ -233,9 +233,14 @@ const PATHS = [
   [/\bfile:\/\/\/?[^\s"'`<>)\]]+/gi, 'file'],
   // A quoted path, spaces and all.
   [/(["'`])((?:[A-Za-z]:[\\/]|\\\\|\/\/(?!\/)|~[\\/]|\/[^/"'`\r\n]+\/)[^"'`\r\n]{0,1024}?)\1/g, 'quoted'],
-  // C:\... also stuck to the text before it (Error:C:\..., xC:\...); C:/...
-  // on its own (host:/path is a host's, http://... an address).
-  [new RegExp(`(?:(?<![\\\\/.])[A-Za-z]:\\\\|(?<![\\w\\\\/.])[A-Za-z]:/(?!/))${PATH_BODY}`, 'g'), 'path'],
+  // C:\... also stuck to the text before it (Error:C:\..., xC:\...), or
+  // after a slash (x1:///C:\..., vscode://file/C:\...: no address holds a
+  // drive and a backslash); C:/... on its own (host:/path is a host's,
+  // http://... an address).
+  [new RegExp(`(?:(?<![\\\\.])[A-Za-z]:\\\\|(?<![\\w\\\\/.])[A-Za-z]:/(?!/))${PATH_BODY}`, 'g'), 'path'],
+  // \\server\... right after an address's colon or slash (app://\\srv\...,
+  // x1:\\srv\...): the rule below leaves those alone.
+  [new RegExp(`(?<=[:/])\\\\\\\\[^\\s\\\\/]+[\\\\/]${PATH_BODY}`, 'g'), 'path'],
   // \\server\share\... and //server/share/...
   [new RegExp(`(?<![\\w\\\\/:])(?:\\\\\\\\[^\\s\\\\/]+\\\\|//[^\\s\\\\/]+/)${PATH_BODY}`, 'g'), 'path'],
   // ///etc/passwd: extra slashes are still the root.

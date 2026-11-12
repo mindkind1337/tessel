@@ -97,6 +97,24 @@ describe('shareChat: what a guest gets of a conversation', () => {
     ])
       expect(guestText(from, roots, 500)).toBe(to)
     expect(guestText('password=hunter22 Bearer abcdefghijklmnop1234 postgres://u:pw1234@db/x', roots, 500)).toBe('password=•••• Bearer •••• postgres://••••@db/x')
+    // A host path behind a made-up address is hidden too; addresses stay.
+    for (const text of [
+      'open x1://C:\\Users\\jean\\.ssh\\id_rsa now',
+      'open x1:///C:\\Users\\jean\\.ssh\\id_rsa now',
+      'open vscode://file/C:\\Users\\jean\\id_rsa now',
+      'open 1x://C:\\Users\\jean\\id_rsa now',
+      'open http://host/C:\\Users\\jean\\id_rsa now',
+      'open app://\\\\srv\\share\\x.txt now',
+      'open x1:\\\\srv\\share\\x.txt now',
+      'open x1://\\\\srv/share/x.txt now'
+    ]) {
+      const out = guestText(text, roots, 500)
+      expect(out).not.toMatch(/jean|id_rsa|srv|share/)
+      expect(out).toMatch(/^open .*now$/)
+    }
+    // Inside the project: relative, after the address too.
+    expect(guestText('open x1://C:\\proj\\src\\a.js now', cleanRoots(['C:\\proj']), 500)).toBe('open x1://src/a.js now')
+    expect(guestText('see https://example.com/a/b and http://h:8080/x/y', roots, 500)).toBe('see https://example.com/a/b and http://h:8080/x/y')
   })
 
   it('is bounded: the latest events that fit the count and the bytes, each text cut', () => {
