@@ -109,6 +109,13 @@ describe('rules by name', () => {
     // servers and models).
     for (const p of ['opencode.json', 'sub/opencode.jsonc', '.opencode/agent/x.md', 'crush.json', '.crush.json', '.aider.conf.yml', '.continue/config.yaml', '.windsurf/rules/a.md', '.kiro/steering/x.md', '.goosehints', '.grok/settings.json', '.roo/rules.md', '.qwen/settings.json'])
       expect(isProtectedRel(p), p).toBe(true)
+    // CI: what a push or a pull request runs.
+    for (const p of ['.github/workflows/ci.yml', '.github/actions/x/action.yml', 'sub/.GITHUB/workflows/a.yaml', '.circleci/config.yml', '.gitlab-ci.yml', '.gitlab/ci/a.yml', 'Jenkinsfile', 'ci/Jenkinsfile.release', 'azure-pipelines.yml', 'bitbucket-pipelines.yml', '.drone.yml', '.travis.yml', 'appveyor.yml', '.woodpecker/build.yml', '.buildkite/pipeline.yml', '.drone.star', '.cirrus.yml', '.semaphore/semaphore.yml', '.builds/linux.yml', '.tekton/run.yaml', 'buildkite.yml', 'netlify.toml', 'vercel.json'])
+      expect(isProtectedRel(p), p).toBe(true)
+    for (const p of ['github/workflows/ci.yml', 'docs/jenkins.md', 'gitlab-ci.md', 'Jenkinsfile.md', 'docs/Jenkinsfile.txt'])
+      expect(isProtectedRel(p), p).toBe(false)
+    expect(writeAllowed('.github/workflows/ci.yml', { edit: true })).toBe(false)
+    expect(writeAllowed('Jenkinsfile', { edit: true, type: true })).toBe(true)
     // The folder the project's git runs hooks from (core.hooksPath).
     expect(isProtectedRel('tools/hooks/pre-commit', ['tools/hooks'])).toBe(true)
     expect(isProtectedRel('tools/hooksx/a', ['tools/hooks'])).toBe(false)

@@ -541,6 +541,13 @@ like VS Code Live Share:
   **Open** terminals and agents (they run on your computer), **Close** panes
   (an agent or a busy terminal still asks you first). Remove anyone or **Stop
   sharing** at any time.
+- With **Edit files**, a guest changes the project's files, except the ones
+  that tell agents, git or CI what to run (agents' settings and instructions,
+  git hooks and their managers, `.gitignore`, the config files of CI and deploy
+  services such as `.github/`, `.gitlab-ci.yml`, a `Jenkinsfile` or
+  `netlify.toml`): those also need **Type**. The code a pipeline runs (scripts,
+  tests, `package.json`) is not protected: check a guest's changes before you
+  push them.
 - Guests **Join** from the same window by pasting the code. A code works for
   an hour; **New code** makes another.
 - It goes through a free Cloudflare tunnel (no account; Tessel downloads

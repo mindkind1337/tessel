@@ -29,7 +29,12 @@
 //   the tools that run them (.husky/, .githooks/, .pre-commit-config.yaml,
 //   lefthook, lint-staged, commitlint, the folder core.hooksPath names), what
 //   decides which files git ignores or how it reads them (.gitignore,
-//   .gitattributes, .gitmodules), .envrc...).
+//   .gitattributes, .gitmodules), .envrc, and the config files of CI and
+//   deploy services (.github/, .gitlab-ci.yml, Jenkinsfile, netlify.toml...).
+//   Only those entry files: the code a pipeline runs (its scripts, tests,
+//   package.json, a local action or an included file at another path, a
+//   pipeline file set elsewhere in a service's settings) is not, and no name
+//   could tell it.
 // - Never moved, made or put in the Recycle Bin by a guest: .git and .tessel
 //   themselves (either name, anywhere: a folder renamed to or from one would
 //   show or change what is hidden in it), and a folder with anything hidden
@@ -142,7 +147,19 @@ const PROTECTED_FOLDERS = new Set([
   '.junie',
   '.augment',
   '.copilot',
-  '.zed'
+  '.zed',
+  // CI: what a push or a pull request runs (workflows, pipelines, actions).
+  '.github',
+  '.gitlab',
+  '.circleci',
+  '.buildkite',
+  '.woodpecker',
+  '.azure-pipelines',
+  '.forgejo',
+  '.gitea',
+  '.semaphore',
+  '.builds',
+  '.tekton'
 ])
 const PROTECTED_FILES = new Set([
   '.mcp.json',
@@ -155,6 +172,39 @@ const PROTECTED_FILES = new Set([
   // Hook managers: what they run on a commit.
   '.pre-commit-config.yaml',
   '.pre-commit-hooks.yaml',
+  // CI pipelines at the project's top level (or anywhere: names compared
+  // lowercased).
+  '.gitlab-ci.yml',
+  '.gitlab-ci.yaml',
+  'jenkinsfile',
+  'azure-pipelines.yml',
+  'azure-pipelines.yaml',
+  'bitbucket-pipelines.yml',
+  '.drone.yml',
+  '.drone.yaml',
+  '.travis.yml',
+  'appveyor.yml',
+  '.appveyor.yml',
+  '.woodpecker.yml',
+  '.woodpecker.yaml',
+  'cloudbuild.yaml',
+  'cloudbuild.yml',
+  'buildspec.yml',
+  'codemagic.yaml',
+  'bitrise.yml',
+  '.drone.star',
+  '.cirrus.yml',
+  '.cirrus.star',
+  '.build.yml',
+  'buildkite.yml',
+  'buildkite.yaml',
+  '.buildkite.yml',
+  '.buildkite.yaml',
+  'cloudbuild.json',
+  'codefresh.yml',
+  // Deploy services: the build command they run on a push.
+  'netlify.toml',
+  'vercel.json',
   // An agent's instructions.
   'claude.md',
   'agents.md',
@@ -182,7 +232,7 @@ const PROTECTED_FILES = new Set([
   '.continuerc.json',
   'continue.config.json'
 ])
-const PROTECTED_PATTERNS = [/^\.?lefthook(-local)?\.ya?ml$/, /^\.lintstagedrc(\..+)?$/, /^lint-staged\.config\.[cm]?[jt]s$/, /^\.?commitlint(rc|\.config)(\..+)?$/]
+const PROTECTED_PATTERNS = [/^jenkinsfile\.(?!(md|txt|rst|adoc)$).+$/, /^\.?lefthook(-local)?\.ya?ml$/, /^\.lintstagedrc(\..+)?$/, /^lint-staged\.config\.[cm]?[jt]s$/, /^\.?commitlint(rc|\.config)(\..+)?$/]
 // The names git runs by itself as hooks: with core.hooksPath on the project's
 // own folder ('.'), these files of the project's top level run on a commit.
 const HOOK_NAMES = new Set([
