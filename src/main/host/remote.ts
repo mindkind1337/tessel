@@ -161,6 +161,9 @@ export function createRemoteExplorer(deps: RemoteExplorerDeps) {
   const aliases = new Map<string, string>() // hostId\nroot path asked -> the key of its repository
   const gitOpenings = new Map<string, Promise<GitWatch | null>>()
   const refused = new Map<string, number>() // hostId\nroot path -> time before which it is not asked again
+  // Roots the daemon listed empty while the shell found entries (it holds a
+  // folder that was replaced): listed the old way until the host reconnects.
+  const distrusted = new Map<string, string>() // virtual root -> hostId
 
   // --- The file tree -----------------------------------------------------------------
   function onTreeEvent(w: WatchedRoot, event: TreeEvent): void {
@@ -190,7 +193,8 @@ export function createRemoteExplorer(deps: RemoteExplorerDeps) {
     if (!client || !rootPath) return null
     try {
       const tree = await Tree.open(client, rootPath, (e) => onTreeEvent(w, e))
-      if (watched.get(w.virtual) !== w) {
+      // (Distrusted while it opened: not kept either.)
+      if (watched.get(w.virtual) !== w || distrusted.has(w.virtual)) {
         void tree.end()
         return null
       }
@@ -205,7 +209,7 @@ export function createRemoteExplorer(deps: RemoteExplorerDeps) {
   /** The tree of a watched root, opened on first use (null: no daemon for this host now). */
   function treeOf(virtual: string): Promise<Tree | null> {
     const w = watched.get(virtual)
-    if (!w) return Promise.resolve(null)
+    if (!w || distrusted.has(virtual)) return Promise.resolve(null)
     if (w.tree) return Promise.resolve(w.tree)
     if (!w.opening)
       w.opening = openTree(w).finally(() => {
@@ -232,7 +236,21 @@ export function createRemoteExplorer(deps: RemoteExplorerDeps) {
   }
 
   /** Whether a root is served by the daemon now (its tree is open): the poll then leaves it alone. */
-  const served = (virtual: string): boolean => !!watched.get(virtual)?.tree
+  const served = (virtual: string): boolean => !!watched.get(virtual)?.tree && !distrusted.has(virtual)
+
+  /**
+   * The daemon's listing of this root is wrong (empty where the shell finds
+   * entries): its tree ends, and the root is listed and polled the old way
+   * until the host's connection ends (closeHost).
+   */
+  function distrust(virtual: string, hostId: string): void {
+    distrusted.set(virtual, hostId)
+    const w = watched.get(virtual)
+    if (w?.tree) {
+      void w.tree.end()
+      w.tree = null
+    }
+  }
 
   /**
    * A folder's entries from the daemon (`rel`: below the root, '' for the
@@ -453,6 +471,7 @@ export function createRemoteExplorer(deps: RemoteExplorerDeps) {
 
   /** The host's connection ended: what was open on it is gone. */
   function closeHost(hostId: string): void {
+    for (const [virtual, host] of [...distrusted]) if (host === hostId) distrusted.delete(virtual)
     for (const w of watched.values()) {
       if (w.hostId !== hostId) continue
       void w.tree?.end()
@@ -461,7 +480,7 @@ export function createRemoteExplorer(deps: RemoteExplorerDeps) {
     for (const g of [...gits.values()]) if (g.hostId === hostId) endGit(g)
   }
 
-  return { watch, unwatchAll, served, list, status, statusText, noteWrite, closeHost, pathKey, followed: () => gits.size }
+  return { watch, unwatchAll, served, distrust, list, status, statusText, noteWrite, closeHost, pathKey, followed: () => gits.size }
 }
 
 export type RemoteExplorer = ReturnType<typeof createRemoteExplorer>

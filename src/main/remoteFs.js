@@ -1226,7 +1226,25 @@ ${q.dotfiles !== false}`, () => listDirNow(q))
     // The host's daemon keeps this project's folders current: from it.
     const served = await hostExplorer.list(root, loc.rel, dotfiles !== false).catch((err) => ({ failed: hostError(err) }))
     if (served && served.failed) return { ok: false, error: served.failed }
-    if (served) return { ok: true, entries: served.entries, truncated: served.truncated }
+    // An empty project folder from the daemon is checked the old way: a
+    // daemon that opened the folder before it was replaced (deleted and made
+    // again, a deploy) keeps listing the old one, empty, until it restarts.
+    const checkEmpty = served && !loc.rel && !served.entries.length && !served.truncated
+    if (served && !checkEmpty) return { ok: true, entries: served.entries, truncated: served.truncated }
+    const shown = await listShell(loc, dir, root, dotfiles, background)
+    if (!checkEmpty) return shown
+    if (!shown.ok || !shown.entries.length) return { ok: true, entries: served.entries, truncated: served.truncated }
+    distrustDaemon(root, loc.hostId, shown.entries.length)
+    return shown
+  }
+  // The daemon listed the project folder empty and the shell did not: the
+  // project is listed the old way (its sub-folders, refreshes and changes
+  // too) until the host reconnects.
+  function distrustDaemon(root, hostId, found) {
+    hostExplorer.distrust(root, hostId)
+    warn(`tessel-host on ${hostId}: the daemon lists the project folder empty, the shell finds ${found} entr${found === 1 ? 'y' : 'ies'}; listed by the shell until the host reconnects`)
+  }
+  async function listShell(loc, dir, root, dotfiles, background) {
     const res = await call(loc.hostId, '__t_ls', [arg(loc.root.path), arg(loc.path), String(MAX_ENTRIES + 1)], { cap: 16 * 1024 * 1024, op: 'list', background: background === true, retry: true })
     // transient: the host did not answer (slow, busy, connection lost), the
     // folder itself may be fine: the window keeps what it showed.
@@ -1289,6 +1307,7 @@ ${q.max || ''}`, () => listManyNow({ ...q, dirs }))
       else results.push({ dir: d, ok: false, error: t('main.explorer.outside', 'Outside the project.') })
     }
     if (!asked.length) return { ok: true, results }
+    let checkRoot = null
     // From the host's daemon when it serves this project (its tree keeps the
     // folders current; a sole sub-folder is not followed: the window asks).
     if (!direct && hostExplorer.served(root)) {
@@ -1300,7 +1319,11 @@ ${q.max || ''}`, () => listManyNow({ ...q, dirs }))
             .catch((err) => ({ dir: a.dir, ok: false, error: hostError(err) }))
         )
       )
-      if (answers.every(Boolean)) return { ok: true, results: [...results, ...answers] }
+      // The project folder listed empty is checked by the shell below (see
+      // listDirNow).
+      const emptyRoot = asked.some((a, i) => !a.loc.rel && answers[i] && answers[i].ok && !answers[i].entries.length && !answers[i].truncated)
+      if (answers.every(Boolean) && !emptyRoot) return { ok: true, results: [...results, ...answers] }
+      if (emptyRoot) checkRoot = asked.find((a) => !a.loc.rel).dir
     }
     const res = await call(top.hostId, '__t_lsm', [arg(top.root.path), String(limit + 1), chain ? '1' : '0', dotfiles ? '1' : '0', ...asked.map((a) => arg(a.loc.path))], {
       cap: 16 * 1024 * 1024,
@@ -1335,6 +1358,8 @@ ${q.max || ''}`, () => listManyNow({ ...q, dirs }))
       const failed = listFailure(s.rc, res)
       results.push({ dir: s.dir, ...(failed || listEntries(s.records, s.dir, dotfiles, limit)) })
     }
+    const rootShown = checkRoot !== null && results.find((r) => r.dir === checkRoot)
+    if (rootShown && rootShown.ok && rootShown.entries.length) distrustDaemon(root, top.hostId, rootShown.entries.length)
     return { ok: true, results }
   }
 
