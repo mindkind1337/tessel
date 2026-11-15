@@ -511,8 +511,9 @@ op('fs.sparse', {
 
 // May the guest save this file (edit, and the type right for the files that
 // run things by themselves, the folder git runs its hooks from included)?
-// Checked on both names it has. env.extra: that folder (protectedOf).
-const mayWrite = (env, rel) => writeAllowed(rel, env.rights, env.extra)
+// Checked on both names it has. env.extra: that folder (protectedOf; null
+// when git could not tell it: nothing is written then).
+const mayWrite = (env, rel) => Array.isArray(env.extra) && writeAllowed(rel, env.rights, env.extra)
 const canWrite = (env, r) => env.rights.edit === true && mayWrite(env, r.rel) && mayWrite(env, r.realRel)
 // A move, a new name or the Recycle Bin: never .git or .tessel themselves.
 const special = (r) => touchesSpecial(r.rel) || touchesSpecial(r.realRel || '')

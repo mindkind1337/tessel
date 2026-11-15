@@ -300,6 +300,9 @@ const sameFile = (a, b) => !!a && !!b && a.dev === b.dev && a.ino === b.ino
 const IGNORE_TTL_MS = 30000
 const IGNORE_CACHE_MAX = 50000
 const IGNORE_TIMEOUT_MS = 10000
+// git could not tell (failed, timed out): asked again after this, not on
+// every request.
+export const UNKNOWN_RETRY_MS = 5000
 // Entries below a folder looked at before a guest moves it (more: refused).
 const BELOW_MAX = 20000
 
@@ -383,12 +386,22 @@ export function createShareScope({ ignoreCheck = checkIgnore, gitTop = defaultGi
       ignores.set(real, s)
       if (ignores.size > 64) ignores.delete(ignores.keys().next().value)
     }
+    // repo: null (not a repository, or no git), or rejected when git could
+    // not tell (failed, timed out): not kept then, asked again next time.
+    if (s.repo && s.failedAt && Date.now() - s.failedAt >= UNKNOWN_RETRY_MS) {
+      s.repo = null
+      s.failedAt = 0
+    }
     if (!s.repo) {
-      s.repo = (async () => {
+      const p = (async () => {
         const top = await gitTop(real)
         if (!top) return null
         return { top, safety: await localGitArgs(top, { ask: false }) }
-      })().catch(() => null)
+      })()
+      s.repo = p
+      p.catch(() => {
+        if (s.repo === p) s.failedAt = Date.now()
+      })
     }
     return s
   }
@@ -399,7 +412,8 @@ export function createShareScope({ ignoreCheck = checkIgnore, gitTop = defaultGi
     return set
   }
   // Which of rels (paths from the root's real path) git ignores: -> Set. Not
-  // a repository: none. git failing: all of them (not kept: asked again).
+  // a repository: none. git failing (also when telling whether it is one):
+  // all of them (not kept: asked again).
   // One git run for all the paths not known yet; charge() is asked first (a
   // guest's budget: false -> the request is refused as busy). A path once
   // seen ignored stays so for the share.
@@ -407,7 +421,7 @@ export function createShareScope({ ignoreCheck = checkIgnore, gitTop = defaultGi
     const list = [...new Set(rels.filter((r) => typeof r === 'string' && r))]
     if (!list.length) return new Set()
     const s = ignoreState(info.real)
-    const repo = await s.repo
+    const repo = await s.repo.catch(() => undefined)
     const seen = stickyOf(info.real)
     // Seen ignored before, itself or a folder it is in.
     const stuck = (r) => {
@@ -416,6 +430,7 @@ export function createShareScope({ ignoreCheck = checkIgnore, gitTop = defaultGi
       return false
     }
     const out = new Set(seen.size ? list.filter(stuck) : [])
+    if (repo === undefined) return new Set(list)
     if (!repo) return out
     const ask = []
     for (const r of list) {
@@ -480,17 +495,22 @@ export function createShareScope({ ignoreCheck = checkIgnore, gitTop = defaultGi
   }
 
   // The folder the project's git runs its hooks from (core.hooksPath), when
-  // it is inside the project: [rel] (lower case), kept a while.
+  // it is inside the project: [rel] (lower case), kept a while; [] when
+  // there is none in it (not a repository, not set, set elsewhere); null when
+  // git could not tell (failed, timed out, refused the repository: dubious
+  // ownership, a bare one): guests write nothing then (shareRequests.js
+  // mayWrite), and it is asked again after UNKNOWN_RETRY_MS.
   const hookFolders = new Map() // real root -> { at, value: Promise<string[]> }
   function protectedOf(info) {
     const hit = hookFolders.get(info.real)
-    if (hit && Date.now() - hit.at < IGNORE_TTL_MS) return hit.value
+    if (hit && Date.now() - hit.at < (hit.unknown ? UNKNOWN_RETRY_MS : IGNORE_TTL_MS)) return hit.value
     const value = (async () => {
       const s = ignoreState(info.real)
       const repo = await s.repo
       if (!repo) return []
       // (Read without the -c overrides: a guest's own hide the real one.)
       const where = await hooksPath(info.real, ['-c', 'core.fsmonitor=false'])
+      if (where === undefined) return null
       if (!where) return []
       const full = isAbsolute(where) ? where : resolve(repo.top, where)
       let real
@@ -501,9 +521,16 @@ export function createShareScope({ ignoreCheck = checkIgnore, gitTop = defaultGi
       }
       const rel = relFrom(info.real, real)
       return rel ? [lower(rel)] : rel === '' ? [''] : []
-    })().catch(() => [])
+    })().catch(() => null)
     hookFolders.set(info.real, { at: Date.now(), value })
     if (hookFolders.size > 64) hookFolders.delete(hookFolders.keys().next().value)
+    value.then((v) => {
+      const kept = hookFolders.get(info.real)
+      if (v === null && kept && kept.value === value) {
+        kept.unknown = true
+        kept.at = Date.now()
+      }
+    })
     return value
   }
 
@@ -700,16 +727,17 @@ export function createShareScope({ ignoreCheck = checkIgnore, gitTop = defaultGi
   return { root, resolve: resolveRel, readResolved, hiddenOf, ignoredOf, invalidate, invalidatePaths, reset, hiddenBelow, protectedOf }
 }
 
-// The project's core.hooksPath (as set, relative to the repository's top or
-// absolute), or null.
+// The project's core.hooksPath (as set, ~ expanded: relative to the
+// repository's top or absolute), null when it is not set, undefined when git
+// could not tell (failed, timed out, a config file it cannot read).
 function defaultHooksPath(cwd, safety) {
   return new Promise((done) => {
     let child
     let out = ''
     try {
-      child = spawn('git', ['-C', cwd, ...safety, 'config', '--get', 'core.hooksPath'], { windowsHide: true, env: cleanEnv(process.env) })
+      child = spawn('git', ['-C', cwd, ...safety, 'config', '--get', '--path', 'core.hooksPath'], { windowsHide: true, env: cleanEnv(process.env) })
     } catch {
-      return done(null)
+      return done(undefined)
     }
     const timer = setTimeout(() => {
       try {
@@ -725,24 +753,29 @@ function defaultHooksPath(cwd, safety) {
     child.stderr.on('data', () => {})
     child.on('error', () => {
       clearTimeout(timer)
-      done(null)
+      done(undefined)
     })
+    // 0: set; 1: not set; anything else (killed at the time limit too): git
+    // failing.
     child.on('close', (code) => {
       clearTimeout(timer)
-      done(code === 0 && out.trim() ? out.trim() : null)
+      done(code === 0 ? out.trim() || null : code === 1 ? null : undefined)
     })
   })
 }
 
-// The repository's top for a folder, or null (not one, no git).
+// The repository's top for a folder, or null (not one, no git); rejected
+// when git could not tell (failed, timed out, refused the repository).
 function defaultGitTop(cwd) {
-  return new Promise((done) => {
+  return new Promise((done, failed) => {
     let child
     let out = ''
+    let err = ''
     try {
-      child = spawn('git', ['-C', cwd, '-c', 'core.fsmonitor=false', 'rev-parse', '--show-toplevel'], { windowsHide: true, env: cleanEnv(process.env) })
-    } catch {
-      return done(null)
+      // (Its messages in English: "not a git repository" is read.)
+      child = spawn('git', ['-C', cwd, '-c', 'core.fsmonitor=false', 'rev-parse', '--show-toplevel'], { windowsHide: true, env: { ...cleanEnv(process.env), LC_ALL: 'C', LANGUAGE: 'C' } })
+    } catch (e) {
+      return e && e.code === 'ENOENT' ? done(null) : failed(e)
     }
     const timer = setTimeout(() => {
       try {
@@ -755,14 +788,20 @@ function defaultGitTop(cwd) {
     child.stdout.on('data', (s) => {
       if (out.length < 8192) out += s
     })
-    child.stderr.on('data', () => {})
-    child.on('error', () => {
+    child.stderr.setEncoding('utf8')
+    child.stderr.on('data', (s) => {
+      if (err.length < 4096) err += s
+    })
+    child.on('error', (e) => {
       clearTimeout(timer)
-      done(null)
+      if (e && e.code === 'ENOENT') done(null)
+      else failed(e)
     })
     child.on('close', (code) => {
       clearTimeout(timer)
-      done(code === 0 && out.trim() ? resolve(out.trim()) : null)
+      if (code === 0 && out.trim()) done(resolve(out.trim()))
+      else if (code === 128 && /not a git repository \(or any/i.test(err)) done(null)
+      else failed(new Error(`git rev-parse: ${code}`)) // i18n-ignore internal
     })
   })
 }

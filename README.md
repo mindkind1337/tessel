@@ -547,7 +547,10 @@ like VS Code Live Share:
   services such as `.github/`, `.gitlab-ci.yml`, a `Jenkinsfile` or
   `netlify.toml`): those also need **Type**. The code a pipeline runs (scripts,
   tests, `package.json`) is not protected: check a guest's changes before you
-  push them.
+  push them. While git can't read the project (it fails, or refuses the
+  folder: another owner, or a WSL or network drive missing from git's
+  `safe.directory`), guests change no file and see none of the files git
+  could ignore.
 - Guests **Join** from the same window by pasting the code. A code works for
   an hour; **New code** makes another.
 - It goes through a free Cloudflare tunnel (no account; Tessel downloads
