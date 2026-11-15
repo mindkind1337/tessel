@@ -55,7 +55,7 @@
 import fs from 'fs'
 import os from 'os'
 import { spawn } from 'child_process'
-import { join, relative, isAbsolute, sep, resolve, dirname } from 'path'
+import { join, relative, isAbsolute, sep, resolve, dirname, basename } from 'path'
 import { localGitArgs } from '../gitSafety'
 import { cleanEnv } from '../cleanEnv'
 import { relSegments } from '../../shared/liveSharePath'
@@ -260,6 +260,48 @@ export const writeAllowed = (rel, rights, extra = null) => !isProtectedRel(rel, 
 // Recycle Bin by a guest (only .tessel/notes.md is saved, with its right).
 export const touchesSpecial = (rel) => segsOf(rel).some((x) => x === '.git' || x === '.tessel')
 
+// A folder git takes for a repository's own folder, whatever its name (a
+// bare repository, a worktree's .bare, a --separate-git-dir): HEAD with
+// objects and refs in it, or HEAD with a commondir file (a worktree's own
+// folder: objects, refs, config and hooks are read where it points),
+// whatever they hold (git finds it when a command runs in it, and runs its
+// config and hooks). Hidden from guests like .git, with all it holds; a
+// guest never makes the entry that would complete one.
+export const GIT_MARKS = Object.freeze(['head', 'objects', 'refs', 'commondir'])
+const onDisk = (m) => (m === 'head' ? 'HEAD' : m)
+// Names (lower case) a folder that has these marks is one with.
+export const isGitDirMarks = (has) => has.has('head') && ((has.has('objects') && has.has('refs')) || has.has('commondir'))
+// The marks in a folder (lower case): a Set.
+export function gitMarksIn(abs) {
+  const has = new Set()
+  for (const m of GIT_MARKS) {
+    try {
+      fs.lstatSync(join(abs, onDisk(m)))
+      has.add(m)
+    } catch {
+      // not there
+    }
+  }
+  return has
+}
+export function looksGitDir(abs) {
+  try {
+    fs.lstatSync(join(abs, 'HEAD'))
+  } catch {
+    return false
+  }
+  return isGitDirMarks(gitMarksIn(abs))
+}
+// Would making `name` in the folder parentAbs make it one?
+export function completesGitDir(parentAbs, name) {
+  const n = lower(name)
+  if (!parentAbs || !GIT_MARKS.includes(n)) return false
+  const has = gitMarksIn(parentAbs)
+  if (isGitDirMarks(has)) return true
+  has.add(n)
+  return isGitDirMarks(has)
+}
+
 // --- Roots -------------------------------------------------------------------------
 // The project's folder as the window gave it: absolute, local (not ssh:// or
 // lshare://, not a share's long-path form), an existing folder.
@@ -276,6 +318,11 @@ export function rootInfo(root) {
     // folder of all homes, by its real path too (a link to one), whatever
     // the window let through (shared/projectRootPolicy.js).
     if (dirname(real) === real || localRootTooBroad(real) || localRootTooBroad(resolve(root))) return null
+    // Nor a repository's own folder or a folder in one (a bare repository,
+    // .git or its hooks): its config and hooks would be shared.
+    for (let p = real; dirname(p) !== p; p = dirname(p)) {
+      if (lower(basename(p)) === '.git' || looksGitDir(p)) return null
+    }
     return { root: resolve(root), real }
   } catch {
     return null
@@ -368,6 +415,33 @@ export function createShareScope({ ignoreCheck = checkIgnore, gitTop = defaultGi
   // change of a .gitignore).
   const sticky = new Map() // real root -> Set of lower-case rels
   const STICKY_MAX = 200000
+  // Folders looked at for a repository's own folder (looksGitDir): abs path
+  // -> { at, v }, kept a moment (one request's many paths ask once).
+  const gitDirSeen = new Map()
+  const GITDIR_TTL_MS = 2000
+  function gitDirAt(abs, fresh) {
+    const hit = fresh ? null : gitDirSeen.get(abs)
+    if (hit && Date.now() - hit.at < GITDIR_TTL_MS) return hit.v
+    const v = looksGitDir(abs)
+    gitDirSeen.set(abs, { at: Date.now(), v })
+    if (gitDirSeen.size > 50000) gitDirSeen.delete(gitDirSeen.keys().next().value)
+    return v
+  }
+  // Is `rel` (from the root's real path) a repository's own folder, or in
+  // one? Each folder down to it is looked at (links followed). leaf: false
+  // for a path known to be a file (only its folders are looked at); fresh:
+  // nothing kept is used (a path about to be read or written).
+  function inGitDir(info, rel, { leaf = true, fresh = false } = {}) {
+    const segs = relSegments(rel)
+    if (!info || !segs) return true
+    let p = info.real
+    const n = leaf ? segs.length : segs.length - 1
+    for (let i = 0; i < n; i++) {
+      p = join(p, segs[i])
+      if (gitDirAt(p, fresh)) return true
+    }
+    return false
+  }
 
   function root(path) {
     if (roots.has(path)) return roots.get(path)
@@ -478,6 +552,7 @@ export function createShareScope({ ignoreCheck = checkIgnore, gitTop = defaultGi
   // read again; a .gitignore changed, or none known: every answer not
   // "ignored".
   function invalidatePaths(real, rels) {
+    gitDirSeen.clear()
     const s = ignores.get(real)
     if (!s) return
     if (!Array.isArray(rels) || rels.some((r) => /(^|\/)\.gitignore$/i.test(r))) {
@@ -492,6 +567,7 @@ export function createShareScope({ ignoreCheck = checkIgnore, gitTop = defaultGi
     ignores.clear()
     sticky.clear()
     hookFolders.clear()
+    gitDirSeen.clear()
   }
 
   // The folder the project's git runs its hooks from (core.hooksPath), when
@@ -553,6 +629,7 @@ export function createShareScope({ ignoreCheck = checkIgnore, gitTop = defaultGi
       for (const d of items) {
         const r = base ? `${base}/${d.name}` : d.name
         if (hiddenByName(r, settings) || touchesSpecial(r) || !writeAllowed(r, rights, extra)) return true
+        if (d.isDirectory() && looksGitDir(join(dir, d.name))) return true
         names.push(r)
         if (names.length > BELOW_MAX) return true
         if (d.isDirectory() && !d.isSymbolicLink()) stack.push([join(dir, d.name), r])
@@ -568,7 +645,7 @@ export function createShareScope({ ignoreCheck = checkIgnore, gitTop = defaultGi
     const out = new Set()
     const rest = []
     for (const r of rels) {
-      if (hiddenByName(r, settings)) out.add(r)
+      if (hiddenByName(r, settings) || inGitDir(info, r)) out.add(r)
       else rest.push(r)
     }
     if (hidesPrivate(settings) && rest.length) for (const r of await ignoredOf(info, rest, { charge })) out.add(r)
@@ -660,6 +737,7 @@ export function createShareScope({ ignoreCheck = checkIgnore, gitTop = defaultGi
       return missing
     }
     if (realRel === null || hiddenByName(realRel, settings)) return missing
+    if (inGitDir(info, realRel, { fresh: true }) || inGitDir(info, rel, { fresh: true })) return missing
     if (!skipIgnore && hidesPrivate(settings) && (await ignoredOf(info, [rel, realRel], { charge })).size) return missing
     let id = null
     let isDir = false
@@ -724,7 +802,7 @@ export function createShareScope({ ignoreCheck = checkIgnore, gitTop = defaultGi
     }
   }
 
-  return { root, resolve: resolveRel, readResolved, hiddenOf, ignoredOf, invalidate, invalidatePaths, reset, hiddenBelow, protectedOf }
+  return { root, resolve: resolveRel, readResolved, hiddenOf, ignoredOf, invalidate, invalidatePaths, reset, hiddenBelow, protectedOf, inGitDir }
 }
 
 // The project's core.hooksPath (as set, ~ expanded: relative to the

@@ -287,7 +287,7 @@ const MERGE_DRIVER_RE = /^merge\.(.+)\.driver$/i
 export const GUEST_CONFIG_ARGS = ['config', '--includes', '-z', '--get-regexp', `${RISKY_PATTERN}|^merge\\..+\\.driver$`]
 // What a guest's git always gets beyond them (credential.helper empty: no
 // helper at all).
-export const GUEST_FIXED_ARGS = ['-c', 'log.showSignature=false', '-c', 'gpg.program=gpg', '-c', 'gpg.ssh.program=ssh-keygen', '-c', 'gpg.x509.program=gpgsm', '-c', 'gpg.openpgp.program=gpg', '-c', 'commit.gpgSign=false', '-c', 'tag.gpgSign=false', '-c', 'diff.external=', '-c', 'gc.auto=0', '-c', 'maintenance.auto=false', '-c', 'core.alternateRefsCommand=', '-c', 'core.sshCommand=ssh', '-c', 'credential.helper=']
+export const GUEST_FIXED_ARGS = ['-c', 'log.showSignature=false', '-c', 'gpg.program=gpg', '-c', 'gpg.ssh.program=ssh-keygen', '-c', 'gpg.x509.program=gpgsm', '-c', 'gpg.openpgp.program=gpg', '-c', 'commit.gpgSign=false', '-c', 'tag.gpgSign=false', '-c', 'diff.external=', '-c', 'gc.auto=0', '-c', 'maintenance.auto=false', '-c', 'core.alternateRefsCommand=', '-c', 'core.sshCommand=ssh', '-c', 'credential.helper=', '-c', 'submodule.recurse=false']
 // The merge drivers named in config output, each turned off.
 export function mergeDriverArgs(out) {
   const names = new Set()
