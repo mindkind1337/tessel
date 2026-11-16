@@ -8660,7 +8660,7 @@ function taskPrompt(task, ws) {
   const wt = task.worktree
   // Sent to the agent: stays English.
   const where = wt
-    ? `You work in your own copy of the project: ${wt.path} (git branch ${wt.branch}, made from ${wt.baseBranch || 'the main branch'}). ` + // i18n-ignore
+    ? `You work in your own copy of the project: ${wt.path} (${wt.branch ? `git branch ${wt.branch}` : 'its own git branch'}, made from ${wt.baseBranch || 'the main branch'}). ` + // i18n-ignore
       'Commit your work on that branch (git add the files you changed, then git commit). Do not merge it and do not push: the user reviews and merges it. ' + // i18n-ignore
       'In your last commit message, list the checks you ran (tests, build) and their results. ' + // i18n-ignore
       'If the project needs its dependencies installed, install them in this copy (for example npm ci); never link them to another folder.' // i18n-ignore
@@ -8697,7 +8697,7 @@ async function startTask(spec, opts = {}) {
   // Taking a card nobody is doing any more (a lead's "revive"): keep the card
   // that is already there instead of minting a second one for the same work,
   // so the stranded one stops costing the team a slot (LEAD_MAX_ACTIVE).
-  const existing = spec.cardId ? boardTasks.value.find((t) => t.id === spec.cardId) : null
+  const existing = spec.cardId ? boardTasks.find((t) => t.id === spec.cardId) : null
   if (spec.cardId && (!existing || existing.column === 'done'))
     return { error: `no card "${spec.cardId}" to take back` } // i18n-ignore
   const task = existing || addTask({ title: spec.title, wsId: ws.id })
@@ -8715,11 +8715,26 @@ async function startTask(spec, opts = {}) {
   if (spec.agent.kind === 'pane') {
     leaf = findLeaf(spec.agent.id)
     const why = leaf ? busyReason(leaf) : 'gone'
+    // A card taken back (revive) stays on the board, in To do; a new one goes.
+    const giveUp = () => (existing ? updateTask(task.id, { column: 'todo' }) : removeTask(task.id))
     if (why) {
-      removeTask(task.id)
+      giveUp()
       showToast(t('app.task.cannotTake', '{{name}} cannot take this task: {{why}}.', { name: leaf ? leaf.paneName || leaf.title : t('app.task.thatAgent', 'That agent'), why: busyReasonText(leaf) }), { kind: 'error', timeout: 7000 })
       return { error: `${leaf ? paneLabel(leaf) : 'that agent'} cannot take it: ${why}` } // i18n-ignore
     }
+    // An agent that works in a copy of the project does the card there: the
+    // card keeps that copy (its prompt, review and branch). A card that has
+    // its own copy goes only to the agent in that copy.
+    const norm = (p) => String(p || '').replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase()
+    const samePath = (a, b) => norm(a) === norm(b)
+    const own = existing && existing.worktree && existing.worktree.path ? existing.worktree : null
+    const copy = leaf.worktree && leaf.worktree.path ? leaf.worktree : null
+    if (own && !(copy && samePath(own.path, copy.path))) {
+      giveUp()
+      showToast(t('app.task.otherCopy', '{{name}} cannot take this task: its folder is not the card’s copy.', { name: leaf.paneName || leaf.title }), { kind: 'error', timeout: 7000 })
+      return { error: `${paneLabel(leaf)} cannot take it: it works in another folder than the card's copy (${own.path})` } // i18n-ignore
+    }
+    if (copy && !own) updateTask(task.id, { worktree: { path: copy.path, branch: copy.branch || '', baseBranch: copy.baseBranch || null, root: copy.root || ws.cwd } })
   } else {
     const agent = agentById(spec.agent.id)
     if (!agent) {

@@ -479,6 +479,7 @@
       },
       "folderChanged": "Le dossier de l'espace de travail a changé. Aucun agent n'a été démarré.",
       "cannotTake": "{{name}} ne peut pas prendre cette tâche : {{why}}.",
+      "otherCopy": "{{name}} ne peut pas prendre cette tâche : son dossier n'est pas la copie de la carte.",
       "thatAgent": "Cet agent",
       "agentUnavailable": "Cet agent n'est pas disponible.",
       "setupFailed": "La copie est prête, mais .tessel/setup.ps1 a échoué : {{error}}.",

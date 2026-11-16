@@ -23,6 +23,7 @@ function fixture() {
     agentById: () => ({ id: 'codex' }),
     worktreeSettings: () => ({ branchPrefix: 'custom', branchPrefixCustom: 'agent', workspaceDir: '' }),
     showToast: vi.fn(),
+    warnSetup: vi.fn(),
     splitLeaf: vi.fn(),
     createLeaf: vi.fn(),
     window: {
