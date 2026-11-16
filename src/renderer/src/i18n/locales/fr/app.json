@@ -482,6 +482,7 @@
       "thatAgent": "Cet agent",
       "agentUnavailable": "Cet agent n'est pas disponible.",
       "setupFailed": "La copie est prête, mais .tessel/setup.ps1 a échoué : {{error}}.",
+      "setupNotRun": "La copie est prête, mais .tessel/setup.ps1 n'a pas été lancé : {{error}}.",
       "seeScript": "voir le script",
       "envFailed": "La copie est prête, mais ses fichiers .env n'ont pas tous été copiés : {{error}}.",
       "copyFailed": "Impossible de créer une copie séparée : {{error}}. La tâche reste dans À faire.",

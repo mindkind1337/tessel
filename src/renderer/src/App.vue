@@ -8731,8 +8731,7 @@ async function startTask(spec, opts = {}) {
     if (spec.isolated) {
       const res = await window.shellApi.createWorktree(ws.cwd, spec.title, { ...(spec.worktreeOptions || {}), ...worktreeSettings() })
       // The copy exists even when its setup script failed: said, never undone.
-      if (res && res.ok && res.setup && res.setup.ran && !res.setup.ok)
-        showToast(t('app.task.setupFailed', 'The copy is ready, but .tessel/setup.ps1 failed: {{error}}.', { error: res.setup.error || t('app.task.seeScript', 'see the script') }), { kind: 'error', timeout: 9000 })
+      if (res && res.ok) warnSetup(res.setup)
       if (res && res.ok && res.copyEnvResult && res.copyEnvResult.error)
         showToast(t('app.task.envFailed', 'The copy is ready, but its .env files were not all copied: {{error}}.', { error: res.copyEnvResult.error }), { kind: 'error', timeout: 9000 })
       if (!res || !res.ok) {
@@ -11838,11 +11837,19 @@ provide('resolveDecision', resolveDecision)
 const workersSigs = {} // team id -> the workers list last published
 // A task's own copy of the project (git worktree), for a worker or an
 // automation's run. -> { worktree } | { error }
+// A new copy's .tessel/setup.ps1 that failed, or was not run (not a tracked
+// file, could not be checked or started safely): said, the copy is kept. No
+// script at all says nothing.
+function warnSetup(setup) {
+  if (!setup || setup.ok) return
+  const error = String(setup.error || t('app.task.seeScript', 'see the script')).replace(/\.$/, '')
+  if (setup.ran) showToast(t('app.task.setupFailed', 'The copy is ready, but .tessel/setup.ps1 failed: {{error}}.', { error }), { kind: 'error', timeout: 9000 })
+  else showToast(t('app.task.setupNotRun', 'The copy is ready, but .tessel/setup.ps1 was not run: {{error}}.', { error }), { kind: 'error', timeout: 9000 })
+}
 async function makeTaskCopy(ws, title) {
   const res = await window.shellApi.createWorktree(ws.cwd, title, worktreeSettings()).catch((err) => ({ ok: false, error: err && err.message }))
   if (!res || !res.ok) return { error: (res && res.error) || t('app.common.unknownError', 'unknown error') }
-  if (res.setup && res.setup.ran && !res.setup.ok)
-    showToast(t('app.task.setupFailed', 'The copy is ready, but .tessel/setup.ps1 failed: {{error}}.', { error: res.setup.error || t('app.task.seeScript', 'see the script') }), { kind: 'error', timeout: 9000 })
+  warnSetup(res.setup)
   return { worktree: { path: res.path, branch: res.branch, baseBranch: res.baseBranch || null, root: res.root || ws.cwd } }
 }
 // A new pane in a workspace (its largest pane is split), launched with the
