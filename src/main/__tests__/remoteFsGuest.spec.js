@@ -171,6 +171,49 @@ describe.skipIf(!gitSh())('a guest\'s requests on a fake host (real sh, real git
     expect(await rfs.guest.read({ root, rel: '../outside.txt', max: 1024 })).toEqual({ ok: false, code: 'refused' })
   }, 30000)
 
+  it('a repository\'s own folder under another name (HEAD with objects and refs of any kind, or with commondir) is refused like .git, and never made by a save', async () => {
+    const mk = (rel, text = 'x') => {
+      fs.mkdirSync(join(proj, ...rel.split('/').slice(0, -1)), { recursive: true })
+      fs.writeFileSync(join(proj, ...rel.split('/')), text)
+    }
+    // A bare repository whose objects and refs are files; a worktree's own folder.
+    mk('repos/svc/HEAD', 'ref: refs/heads/main\n')
+    mk('repos/svc/objects')
+    mk('repos/svc/refs')
+    mk('repos/svc/config', '[core]\n')
+    mk('wt/HEAD', 'ref: refs/heads/main\n')
+    mk('wt/commondir', '../repos/svc\n')
+    mk('wt/sub/x.txt')
+    const res = await rfs.guest.list({ root, dirs: ['repos', '', 'repos/svc', 'wt/sub'] })
+    const by = Object.fromEntries(res.results.map((r) => [r.rel, r]))
+    expect(Object.fromEntries(by.repos.entries.map((e) => [e.name, e.kind]))).toEqual({ svc: 'r' })
+    expect(by[''].entries.find((e) => e.name === 'wt').kind).toBe('r')
+    expect(by['repos/svc']).toMatchObject({ ok: false, code: 'refused' })
+    expect(by['wt/sub']).toMatchObject({ ok: false, code: 'refused' })
+    expect(await rfs.guest.read({ root, rel: 'repos/svc/config', max: 1024 })).toEqual({ ok: false, code: 'refused' })
+    expect((await rfs.guest.write({ root, rel: 'repos/svc/hooks-x', data: Buffer.from('y'), createOnly: true, ignore: false })).ok).toBe(false)
+    expect(fs.existsSync(join(proj, 'repos', 'svc', 'hooks-x'))).toBe(false)
+    expect((await rfs.guest.stat({ root, rel: 'repos/svc/config' })).ok).toBe(false)
+    // The last of them, in any case: never made.
+    mk('half/HEAD', 'h')
+    mk('half/objects')
+    mk('two/HEAD', 'h')
+    mk('three/commondir', '../x\n')
+    mk('four/objects')
+    mk('four/refs')
+    mk('five/HEAD', 'h')
+    mk('five/refs')
+    for (const rel of ['half/refs', 'half/REFS', 'two/commondir', 'three/HEAD', 'three/head', 'four/HEAD', 'five/objects']) {
+      expect((await rfs.guest.write({ root, rel, data: Buffer.from('x'), createOnly: true, ignore: false })).ok, rel).toBe(false)
+      expect(fs.existsSync(join(proj, ...rel.split('/'))), rel).toBe(false)
+    }
+    // Another name there, or a mark where it completes nothing: saved.
+    expect((await rfs.guest.write({ root, rel: 'half/notes.txt', data: Buffer.from('n'), createOnly: true, ignore: false })).ok).toBe(true)
+    expect((await rfs.guest.write({ root, rel: 'src/refs', data: Buffer.from('n'), createOnly: true, ignore: false })).ok).toBe(true)
+    for (const d of ['repos', 'wt', 'half', 'two', 'three', 'four', 'five']) fs.rmSync(join(proj, d), { recursive: true, force: true })
+    fs.rmSync(join(proj, 'src', 'refs'), { force: true })
+  }, 60000)
+
   it('never follows a link, even one made after the folder was listed', async () => {
     fs.mkdirSync(join(proj, 'docs'))
     fs.writeFileSync(join(proj, 'docs', 'r.md'), 'readme\n')
@@ -484,6 +527,49 @@ describe('a guest\'s lane: never a sign-in, never the host\'s session', () => {
     expect(await rfs.guest.list({ root: remoteRoot(HOST, '/srv/other'), dirs: [''] })).toEqual({ ok: false, code: 'refused' })
     expect((await rfs.guest.list({ root, dirs: ['../up'] })).results).toEqual([{ rel: '../up', ok: false, code: 'refused' }])
     rfs.close()
+  })
+})
+
+describe.skipIf(!gitSh())('a project folder that is a repository\'s own, by what it holds (real sh)', () => {
+  it('is named so by __t_ghk whatever git says, and __t_gp refuses it', () => {
+    const base = fs.realpathSync.native(fs.mkdtempSync(join(os.tmpdir(), 'tessel-rfs-root-')))
+    try {
+      const svc = join(base, 'svc.git')
+      fs.mkdirSync(join(svc, 'objects'), { recursive: true })
+      fs.mkdirSync(join(svc, 'refs'))
+      fs.mkdirSync(join(svc, 'hooks'))
+      fs.writeFileSync(join(svc, 'HEAD'), 'ref: refs/heads/main\n')
+      const wt = join(base, 'wt')
+      fs.mkdirSync(wt)
+      fs.writeFileSync(join(wt, 'HEAD'), 'ref: refs/heads/main\n')
+      fs.writeFileSync(join(wt, 'commondir'), '../svc.git\n')
+      fs.mkdirSync(join(base, 'plain'))
+      const S = posixPath(svc)
+      const W = posixPath(wt)
+      const P = posixPath(join(base, 'plain'))
+      const script = [
+        prelude('0'.repeat(32)),
+        // git refusing to name it (safe.bareRepository=explicit, dubious ownership).
+        '__t_git() { return 128; }',
+        `__t_ghk "${S}" | grep '^G '`,
+        `__t_ghk "${S}/hooks" | grep '^G '`,
+        `__t_ghk "${W}" | grep '^G '`,
+        `__t_ghk "${P}" | grep -c '^G ' ; echo plain`,
+        `( __t_gp "${S}" "${S}/config" ); echo "gp=$?"`,
+        ''
+      ].join('\n')
+      const file = join(base, 'run.sh')
+      fs.writeFileSync(file, script)
+      const out = execFileSync(gitSh(), [posixPath(file)], { stdio: 'pipe', timeout: 30000 }).toString()
+      const named = (p) => out.split('\n').filter((l) => l.startsWith('G ') && l.slice(2).toLowerCase().endsWith(p.toLowerCase())).length
+      // The folder itself, and from its hooks folder: the one above.
+      expect(named('svc.git')).toBe(2)
+      expect(named('wt')).toBe(1)
+      expect(out).toMatch(/^0\r?\nplain$/m)
+      expect(out).toMatch(/gp=90/)
+    } finally {
+      fs.rmSync(base, { recursive: true, force: true })
+    }
   })
 })
 

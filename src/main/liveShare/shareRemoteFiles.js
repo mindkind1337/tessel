@@ -84,6 +84,11 @@ const sigOf = (mtimeMs, size) => (Number.isFinite(mtimeMs) && Number.isFinite(si
 // A folder's real path inside a git folder is no project to share (its
 // objects and config would be its files).
 const inGitFolder = (real) => /(^|\/)\.git(\/|$)/i.test(String(real || ''))
+// The entries that make a folder a repository's own (remoteShell.js
+// __t_gd): a save of one waits for any other on the same host, so two
+// guests cannot each make one half (the host refuses the last: __t_gmk).
+const GIT_MARKS = new Set(['head', 'objects', 'refs', 'commondir'])
+const isMarkPath = (rel) => GIT_MARKS.has(String(rel || '').split('/').pop().toLowerCase())
 
 // createRemoteShareFiles({ remote, log?, now? }): remote is the remoteFs
 // service (or a function giving it, or null while it is not there).
@@ -91,6 +96,20 @@ const inGitFolder = (real) => /(^|\/)\.git(\/|$)/i.test(String(real || ''))
 // ctx: { remoteRoots: Map project -> virtual root, rights, settings,
 // recheck?, cancelled?, person? }, the host's.
 export function createRemoteShareFiles({ remote, log = null, now = () => Date.now() } = {}) {
+  const markChains = new Map() // hostId -> the last mark save on it
+  function oneMarkAtATime(hostId, fn) {
+    const prev = markChains.get(hostId) || Promise.resolve()
+    const next = prev.then(fn, fn)
+    const tail = next.then(
+      () => {},
+      () => {}
+    )
+    markChains.set(hostId, tail)
+    tail.then(() => {
+      if (markChains.get(hostId) === tail) markChains.delete(hostId)
+    })
+    return next
+  }
   const service = () => (typeof remote === 'function' ? remote() : remote) || null
   const gates = new Map() // hostId -> { active, queue: [] }
   const persons = new Map() // hostId\nperson -> count
@@ -420,7 +439,7 @@ export function createRemoteShareFiles({ remote, log = null, now = () => Date.no
       if (!res || !res.ok) return fail(readCode(svc, st, res && res.code))
       return done({ size: res.buf.length, base64: res.buf.toString('base64') })
     },
-    'fs.write': (svc, a, st, c) => opWrite(svc, a, st, c.settings, c.rights, c),
+    'fs.write': (svc, a, st, c) => (isMarkPath(a.path) ? oneMarkAtATime(st.hostId, () => opWrite(svc, a, st, c.settings, c.rights, c)) : opWrite(svc, a, st, c.settings, c.rights, c)),
     'fs.searchNames': (svc, a, st, c) => opSearchNames(svc, a, st, c.settings),
     'fs.searchContent': (svc, a, st, c) => opSearchContent(svc, a, st, c.settings)
   }

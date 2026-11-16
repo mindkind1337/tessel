@@ -552,8 +552,8 @@ like VS Code Live Share:
   `safe.directory`), guests change no file and see none of the files git
   could ignore.
 - Guests never see a repository's own folder, its config or its hooks: `.git`,
-  or, in a project on this PC, a bare repository kept in it under any name.
-  They can't make one either.
+  or a bare repository kept in the project under any name, on this PC or an
+  SSH host. They can't make one either.
 - Guests **Join** from the same window by pasting the code. A code works for
   an hour; **New code** makes another.
 - It goes through a free Cloudflare tunnel (no account; Tessel downloads

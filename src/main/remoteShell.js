@@ -146,7 +146,10 @@ export const FUNCTIONS = new Set([
   // liveShare/shareRemoteFiles.js), each checked here, on the host, in the
   // same request as what it reads or writes (__t_gp): every part of the path
   // below the project folder is a real folder (never a link, never a folder
-  // holding a .git: a nested repository), and, with the share's "hide ignored
+  // holding a .git: a nested repository, nor a repository's own folder under
+  // another name: HEAD with objects and refs, or HEAD with commondir, of any
+  // kind; a save never makes the entry that would complete one), and, with
+  // the share's "hide ignored
   // files" on, what git ignores is asked of git itself (git check-ignore, one
   // run per request, the folder's own names only; never a scan of the
   // project). A listing, a stat, a read, a save, a batch of search results,
@@ -570,7 +573,14 @@ __t_fp() {
   if [ -s "$__T_D/fpl" ]; then printf 'changed\\000'; cat "$__T_D/fpl"; else echo same; fi
   rm -f "$__T_D/fpl"
 }
-__t_gd() { [ -f "$1/HEAD" ] && [ -d "$1/objects" ] && [ -d "$1/refs" ]; }
+__t_ge() { [ -e "$1" ] || [ -L "$1" ]; }
+__t_gd() { __t_ge "$1/HEAD" && { { __t_ge "$1/objects" && __t_ge "$1/refs"; } || __t_ge "$1/commondir"; }; }
+__t_gmk() {
+  __mh=; __mo=; __mr=; __mc=
+  __t_ge "$1/HEAD" && __mh=1; __t_ge "$1/objects" && __mo=1; __t_ge "$1/refs" && __mr=1; __t_ge "$1/commondir" && __mc=1
+  case $2 in head) __mh=1 ;; objects) __mo=1 ;; refs) __mr=1 ;; commondir) __mc=1 ;; *) return 1 ;; esac
+  [ -n "$__mh" ] && { { [ -n "$__mo" ] && [ -n "$__mr" ]; } || [ -n "$__mc" ]; }
+}
 __t_gw() {
   __gc=$1
   __go=$IFS; IFS=/; set -f; set -- $2; IFS=$__go; set +f
@@ -590,6 +600,7 @@ __t_gw() {
 }
 __t_gp() {
   __t_root "$1" || return $?
+  __t_gd "$__R" && return 90
   __gb=\${1%/}
   [ "$2" = "$1" ] || [ "$2" = "$__gb" ] && return 0
   case $2 in "$__gb"/*) ;; *) return 90 ;; esac
@@ -673,12 +684,17 @@ __t_gwr() {
   __t_gp "$1" "$2" || return $?
   __t_grel "$1" "$2"
   case "/$(printf '%s' "$__gq" | LC_ALL=C tr 'A-Z' 'a-z')/" in */.git/*) return 90 ;; esac
+  __gnm=$(printf '%s' "\${2##*/}" | LC_ALL=C tr 'A-Z' 'a-z')
+  __t_gmk "\${2%/*}" "$__gnm" && return 90
   [ -n "$3" ] || [ "$5" = new ] || return 90
   __tmp=
   trap '[ -n "$__tmp" ] && rm -f "$__tmp"' EXIT
   trap '[ -n "$__tmp" ] && rm -f "$__tmp"; exit 124' HUP TERM PIPE
   __t_gone "$1" "$2" "$6" || return $?
-  __t_write "$1" "$2" "$3" "$4" '' "$5"
+  __t_write "$1" "$2" "$3" "$4" '' "$5"; __wr=$?
+  # Made at the same time as another mark (another connection): undone.
+  if [ "$__wr" = 0 ] && [ "$5" = new ] && __t_gd "\${2%/*}"; then rm -f -- "$2"; return 90; fi
+  return $__wr
 }
 __t_gchk() {
   __t_root "$1" || return $?
@@ -701,6 +717,14 @@ __t_gabs() { case $1 in -*|'') return 1 ;; esac; __q=$(cd "$__R" 2>/dev/null && 
 __t_ghk() {
   __t_root "$1" || return $?
   printf 'R %s\\n' "$__R"
+  # The project folder or a folder above it that is a repository's own (by
+  # what it holds, whatever git says: it can refuse to name a bare one):
+  # nothing of it is shared.
+  __gu=$__R
+  while [ -n "$__gu" ]; do
+    if [ "$(printf '%s' "\${__gu##*/}" | LC_ALL=C tr 'A-Z' 'a-z')" = .git ] || __t_gd "$__gu"; then printf 'G %s\\n' "$__gu"; fi
+    case $__gu in */*) __gu=\${__gu%/*} ;; *) __gu= ;; esac
+  done
   printf 'M %s\\n' "$HOME"
   __q=$(cd -P "$HOME" 2>/dev/null && pwd -P) && [ -n "$__q" ] && printf 'P %s\\n' "$__q"
   __t=
