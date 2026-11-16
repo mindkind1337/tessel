@@ -189,7 +189,8 @@ describe('activity archive', () => {
     const a = createActivityArchive(dir)
     fs.writeFileSync(join(dir, 'activity.json'), JSON.stringify(all))
     // What the window does: everything settled goes to the archive, the rest stays live.
-    await a.append(all.slice(0, 5990))
+    // (At that time: the archive keeps the days before it from now.)
+    await a.append(all.slice(0, 5990), now)
     const live = JSON.stringify(all.slice(5990))
     const back = mergeSavedActivity(live, await a.read(now), now)
     expect(back.events.map((e) => e.n)).toEqual(all.map((e) => e.n))
