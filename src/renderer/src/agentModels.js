@@ -109,6 +109,31 @@ export function modelsFor(agent) {
   return models
 }
 
+// The list for a pane: on an SSH host without the exact models this
+// computer's Claude Code resolved its aliases to (the host's own resolves
+// them: another provider, its own overrides), so it gets the alias.
+const hostLists = new WeakMap()
+export function paneModelsFor(agent, remote) {
+  const models = modelsFor(agent)
+  if (!remote || !models.some((m) => m && m.runs)) return models
+  let hit = hostLists.get(models)
+  if (!hit) {
+    hit = models.map((m) => {
+      if (!m || !m.runs) return m
+      const { runs, ...rest } = m
+      return rest
+    })
+    hostLists.set(models, hit)
+  }
+  return hit
+}
+
+// The model id to send for a row: its exact model when it has one.
+export function sentModelId(models, id) {
+  const row = (models || []).find((m) => m && m.id === id)
+  return row && typeof row.runs === 'string' && row.runs ? row.runs : id
+}
+
 // Tests.
 export function resetModelListsForTests() {
   for (const k of Object.keys(modelLists)) delete modelLists[k]

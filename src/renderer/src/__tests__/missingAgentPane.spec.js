@@ -72,6 +72,8 @@ function load({ shared = true, status = null, tree = null } = {}) {
     validSavedFiles: () => [],
     launchSessionValues: () => null,
     modelsFor: () => null,
+    paneModelsFor: () => null,
+    sentModelId: (m, id) => id,
     effectiveAgent: (a) => ({ command: a.command, args: '', env: {} }),
     launchSignature: () => 'sig',
     launchIsYolo: () => false,

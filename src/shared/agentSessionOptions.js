@@ -734,7 +734,8 @@ export function resolveAgentSessionOptionLaunch(agent, values, trailingAgentArgs
   const modelOverridden = !!(catalog.modelApply.agentArgsOverride && catalog.modelApply.agentArgsOverride(trailingAgentArgs) === true)
 
   if (catalog.modelApply.launchArgs) {
-    args.push(...catalog.modelApply.launchArgs(composedModelId))
+    // A Claude alias row runs its exact model (fable -> claude-fable-5-2).
+    args.push(...catalog.modelApply.launchArgs(agent === 'claude' && model && typeof model.runs === 'string' && model.runs ? model.runs : composedModelId))
     if (!modelOverridden) appliedValues.model = modelId
   }
   for (const option of opts) {

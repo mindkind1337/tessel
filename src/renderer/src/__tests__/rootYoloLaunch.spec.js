@@ -79,6 +79,8 @@ function load({ username = 'root', status = { hostId: HOST, claude: '/usr/local/
     savedPaneModel,
     launchSessionValues: () => null,
     modelsFor: () => null,
+    paneModelsFor: () => null,
+    sentModelId: (m, id) => id,
     effectiveAgent,
     launchSignature,
     launchIsYolo,

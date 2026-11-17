@@ -41,7 +41,7 @@ import SshPasswordDialog from './components/remote/SshPasswordDialog.vue'
 import { settings, loadSettings, DEFAULT_SETTINGS } from './settings'
 import { effectiveAgent, agentEnabled, launchSignature, launchIsYolo, launchSessionValues, launchPermissions, sameFolder } from '../../shared/agentPrefs'
 import { validPaneSessionOptions } from '../../shared/agentSessionOptions'
-import { loadModelLists, modelsFor, refreshModels, canProbeModels } from './agentModels'
+import { loadModelLists, modelsFor, paneModelsFor, sentModelId, refreshModels, canProbeModels } from './agentModels'
 import { THEMES } from './themes'
 import McpDialog from './components/McpDialog.vue'
 import SkillsDialog from './components/SkillsDialog.vue'
@@ -765,7 +765,8 @@ async function chatOpen(leaf, { askTrust = true } = {}) {
   const narrowed = leaf.maxPermissions === 'manual'
   const permissions = narrowed ? 'manual' : launchPermissions(null, [leaf.projectDir, leaf.cwd], settings.yoloFolders, settings.agentPermissions)
   const sessionValues = launchSessionValues(null, settings.agentSessionOptions, agentId)
-  const launch = effectiveAgent(agent, settings.agentPrefs, permissions, null, modelsFor(agentId))
+  const chatModels = paneModelsFor(agentId, isRemotePath(leaf.cwd))
+  const launch = effectiveAgent(agent, settings.agentPrefs, permissions, null, chatModels)
   // A permission mode set in your own arguments (--permission-mode plan).
   const ownMode = agentId === 'claude' ? /--permission-mode[ =](default|acceptEdits|plan|auto|dontAsk)/.exec((launch && launch.args) || '') : null
   const extraEnv = launch && launch.env ? { ...launch.env } : {}
@@ -792,7 +793,8 @@ async function chatOpen(leaf, { askTrust = true } = {}) {
       resumeId: leaf.sessionId || null,
       // The pane's own choice (its model picker) first, else Settings > Agents
       // (OpenCode: only a provider/model id, which is all it takes).
-      model: chatModelFor(leaf.model || (sessionValues && sessionValues.model) || null),
+      // A Claude alias row: its exact model (fable -> claude-fable-5-2).
+      model: chatModelFor(agentId === 'claude' ? sentModelId(chatModels, leaf.model || (sessionValues && sessionValues.model) || null) : leaf.model || (sessionValues && sessionValues.model) || null),
       effort: leaf.effort || (sessionValues && sessionValues.effort) || null,
       permissions,
       permissionMode: ownMode && !narrowed ? ownMode[1] : null,
@@ -844,7 +846,9 @@ async function chatOpen(leaf, { askTrust = true } = {}) {
 async function chatSetOption(leaf, payload) {
   const api = window.shellApi.chat
   if (!api || !leaf || leaf.kind !== 'chat') return { ok: false }
-  const res = await api.setOption({ ...payload, paneId: leaf.id })
+  // A Claude alias row: its exact model (the pane keeps the row's id).
+  const sent = leaf.agentId === 'claude' && typeof payload.model === 'string' ? { ...payload, model: sentModelId(paneModelsFor('claude', isRemotePath(leaf.cwd)), payload.model) } : payload
+  const res = await api.setOption({ ...sent, paneId: leaf.id })
   if (res && res.ok && payload.permissionMode != null && (res.permissions === 'yolo' || res.permissions === 'manual')) {
     leaf.chatPermissions = res.permissions
     if (typeof res.permissionMode === 'string') leaf.chatPermissionMode = res.permissionMode
@@ -1613,7 +1617,7 @@ async function createLeaf(shellId, agent = null, cwd = null, worktree = null, op
       : null
   const paneChoice = agent ? validPaneSessionOptions(opts.sessionOptions) || workerChoice : null
   const sessionValues = agent ? launchSessionValues(paneChoice, settings.agentSessionOptions, agent.id) : null
-  const agentModels = agent ? modelsFor(agent.id) : null
+  const agentModels = agent ? paneModelsFor(agent.id, !!opts.remoteHostId) : null
   // Ask first or Yolo: the pane's own choice (pane menu > Restart in Yolo),
   // else Yolo in a Yolo folder, else Settings > Agents.
   const panePermissions = opts.permissions === 'manual' || opts.permissions === 'yolo' ? opts.permissions : null

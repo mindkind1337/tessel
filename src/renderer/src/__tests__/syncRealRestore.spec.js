@@ -116,6 +116,8 @@ function makeWindow({ running = [], settings = {}, layout = null, held = false }
     t: (key, def, vars = {}) => String(def ?? key).replace(/\{\{(\w+)\}\}/g, (_, k) => vars[k]),
     newId: (prefix) => `${prefix}-${++counter}`,
     modelsFor: () => null,
+    paneModelsFor: () => null,
+    sentModelId: (m, id) => id,
     hostShared: () => true,
     hostAccountChoice: () => undefined,
     defaultHostAccount: () => undefined,

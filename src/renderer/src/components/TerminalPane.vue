@@ -72,7 +72,7 @@ import { antigravityListed, antigravityModelOnScreen } from '../../../shared/ant
 import { codexModelOnScreen } from '../../../shared/codexScreen'
 import { paneModels, paneModelIds } from '../paneModels'
 import { savedPaneModel, paneModelToSave, samePaneModel } from '../paneLastModel'
-import { modelsFor, refreshIfStale } from '../agentModels'
+import { modelsFor, paneModelsFor, sentModelId, refreshIfStale } from '../agentModels'
 import { afterStartup, isStartupFinished } from '../startupIdle'
 import { CLAUDE_PRICING } from '../../../shared/claudePricing'
 import { modelChoiceLabel, sessionPillLabel } from '../sessionOptionLabels'
@@ -637,7 +637,7 @@ function modelOnScreen() {
 const modelMenu = reactive({ visible: false, x: 0, y: 0, pending: false })
 const modelMenuEl = ref(null)
 const hasModelChoice = computed(() => isAgent.value && !props.node.detected && !!getAgentSessionOptionCatalog(props.node.agentId))
-const paneModelList = computed(() => (hasModelChoice.value ? modelsFor(props.node.agentId) : []))
+const paneModelList = computed(() => (hasModelChoice.value ? paneModelsFor(props.node.agentId, !!props.node.remoteHostId) : []))
 // The listed model the agent runs with (what it shows, else the list's
 // default): its effort can be chosen without picking a model first.
 // The listed row a shown model is (its id), or null.
@@ -852,7 +852,9 @@ async function applyModelPick({ optionId, value }) {
   modelMenu.pending = true
   try {
     if (mid.detectAgentInteraction === 'claude-model-switch-confirmation') {
-      const outcome = await switchClaudeModel(n.id, value, modelChoiceLabel(paneModelList.value, value))
+      // The exact model of an alias row (fable -> claude-fable-5-2): a running
+      // Claude Code took "/model fable" as Fable 5.1 while listing Fable 5.2.
+      const outcome = await switchClaudeModel(n.id, sentModelId(paneModelList.value, value), modelChoiceLabel(paneModelList.value, value))
       if (outcome === 'applied') adoptLive(next)
       else if (outcome !== 'rejected') setPaneChoice(next)
       return outcome === 'applied' || outcome === 'rejected' ? outcome : 'unknown'
@@ -1270,7 +1272,7 @@ const sleptAt = computed(() =>
 // The model chosen for it (its own, else Settings > Agents) counts too.
 function signatureNow(n, choice = n.sessionOptions) {
   const values = launchSessionValues(choice, settings.agentSessionOptions, n.agentId)
-  return launchSignature(effectiveAgent({ id: n.agentId, command: n.agentCommand }, settings.agentPrefs, ctx.permissionsOf ? ctx.permissionsOf(n) : settings.agentPermissions, values, modelsFor(n.agentId)))
+  return launchSignature(effectiveAgent({ id: n.agentId, command: n.agentCommand }, settings.agentPrefs, ctx.permissionsOf ? ctx.permissionsOf(n) : settings.agentPermissions, values, paneModelsFor(n.agentId, !!n.remoteHostId)))
 }
 const launchStale = computed(() => {
   const n = props.node

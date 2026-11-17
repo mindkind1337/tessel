@@ -43,6 +43,8 @@ function load({ held = false, running = {} } = {}) {
     launchSignature: () => 'sig',
     launchIsYolo: () => true,
     modelsFor: () => null,
+    paneModelsFor: () => null,
+    sentModelId: (m, id) => id,
     hostAccountChoice: () => undefined,
     defaultHostAccount: () => undefined,
     HOST_ACCOUNT_AGENTS: [],

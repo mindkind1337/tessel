@@ -15,8 +15,10 @@ import {
   finalizeProbeOutput,
   listedToCatalogModels,
   validListedModels,
-  labelFromModelId
+  labelFromModelId,
+  claudeAliasRuns
 } from '../agentModelProbe'
+import { resolveAgentSessionOptionLaunch } from '../agentSessionOptions'
 
 const fixture = (name) => readFileSync(join(__dirname, 'fixtures', name), 'utf8')
 
@@ -44,6 +46,47 @@ describe('Claude Code: one list_models control request', () => {
     expect(rows[0].options.map((o) => o.id)).toEqual(['effort', 'fastMode'])
     expect(rows.find((m) => m.id === 'haiku').options).toEqual([])
     expect(rows.find((m) => m.id === 'claude-opus-4-6').options[0].kind.choices.map((c) => c.value)).toEqual(['low', 'medium', 'high', 'max'])
+  })
+
+  it('an alias row keeps the exact model it runs, and a launch sends that one', () => {
+    const models = parseClaudeModelList(fixture('claude-list-models.jsonl'))
+    expect(models.find((m) => m.id === 'opus').runs).toBe('claude-opus-5-5')
+    expect(models.find((m) => m.id === 'haiku').runs).toBe('claude-haiku-4-5-20251001')
+    // A full id runs itself: nothing kept.
+    expect(models.find((m) => m.id === 'claude-opus-4-6').runs).toBeUndefined()
+    // Kept on disk, refused when it is not a Claude id.
+    const kept = validListedModels([
+      { id: 'fable', label: 'Fable 5.2', runs: 'claude-fable-5-2' },
+      { id: 'opus', label: 'Opus', runs: 'opus; rm -rf' },
+      { id: 'sonnet', label: 'Sonnet', runs: 'claude-sonnet-5[1m]' }
+    ])
+    expect(kept.map((r) => r.runs)).toEqual(['claude-fable-5-2', undefined, 'claude-sonnet-5[1m]'])
+    const rows = listedToCatalogModels('claude', kept)
+    expect(rows[0].runs).toBe('claude-fable-5-2')
+    expect(resolveAgentSessionOptionLaunch('claude', { model: 'fable' }, [], false, rows).args).toEqual(['--model', 'claude-fable-5-2'])
+    // The choice itself stays the row's id.
+    expect(resolveAgentSessionOptionLaunch('claude', { model: 'fable' }, [], false, rows).appliedValues.model).toBe('fable')
+  })
+
+  it('a 1M row runs its 1M context', () => {
+    const line = (rows) => JSON.stringify({ type: 'control_response', response: { subtype: 'success', request_id: 'orca-model-discovery', response: { models: rows } } })
+    const models = parseClaudeModelList(line([{ value: 'opus[1m]', resolvedModel: 'claude-opus-5-5', displayName: 'Opus 5.5 (1M context)' }]))
+    expect(models.map((m) => m.runs)).toEqual(['claude-opus-5-5[1m]'])
+  })
+
+  it('a list kept before that finds the exact model from its label', () => {
+    expect(claudeAliasRuns('fable', 'Fable 5.2')).toBe('claude-fable-5-2')
+    expect(claudeAliasRuns('opus', 'Opus 5.5')).toBe('claude-opus-5-5')
+    expect(claudeAliasRuns('haiku', 'Haiku 4.5')).toBe('claude-haiku-4-5')
+    // No guess where the id is not "<family>-<major>-<minor>".
+    expect(claudeAliasRuns('sonnet', 'Sonnet 5')).toBe('')
+    expect(claudeAliasRuns('haiku', 'Haiku 3.5')).toBe('')
+    expect(claudeAliasRuns('fable', 'Opus 5.5')).toBe('')
+    expect(claudeAliasRuns('claude-fable-5-1', 'Fable 5.1')).toBe('')
+    expect(claudeAliasRuns('fable', 'Fable')).toBe('')
+    expect(claudeAliasRuns('opus', 'Opus 5.5 (1M context)')).toBe('')
+    const rows = listedToCatalogModels('claude', validListedModels([{ id: 'fable', label: 'Fable 5.2' }, { id: 'claude-fable-5-1', label: 'Fable 5.1' }]))
+    expect(rows.map((r) => r.runs)).toEqual(['claude-fable-5-2', undefined])
   })
 
   it('an older CLI answering an error lists nothing (the seed stays)', () => {

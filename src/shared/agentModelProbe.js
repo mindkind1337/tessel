@@ -69,7 +69,25 @@ function toListedClaudeModel(value) {
     value.supportsEffort === true && Array.isArray(value.supportedEffortLevels)
       ? value.supportedEffortLevels.filter((level) => typeof level === 'string')
       : []
-  return { id, label, ...(description ? { description } : {}), effortLevels, supportsFastMode: value.supportsFastMode === true }
+  // The exact model an alias row runs (fable -> claude-fable-5-2): what
+  // Tessel sends, since a running Claude Code can take "/model fable" as an
+  // older Fable than the one its own picker lists.
+  const resolved = typeof value.resolvedModel === 'string' ? value.resolvedModel.trim() : ''
+  let runs = resolved !== id && /^claude-[a-z0-9.-]+(\[1m\])?$/i.test(resolved) ? resolved : ''
+  // A 1M row runs its 1M context even if the CLI named the model without it.
+  if (runs && /\[1m\]$/i.test(id) && !/\[1m\]$/i.test(runs)) runs += '[1m]'
+  return { id, label, ...(description ? { description } : {}), effortLevels, supportsFastMode: value.supportsFastMode === true, ...(runs ? { runs } : {}) }
+}
+
+// A family alias row listed before Tessel kept what it runs: its exact id
+// from its label ("fable" + "Fable 5.2" -> claude-fable-5-2), only for a
+// "<Family> <4+>.<n>" label (the ids those take: claude-haiku-4-5, not a
+// "Sonnet 4" or "Haiku 3.5" guess); '' otherwise.
+export function claudeAliasRuns(id, label) {
+  const fam = /^(fable|opus|sonnet|haiku)$/i.exec(String(id || ''))
+  const m = /^(fable|opus|sonnet|haiku) (\d{1,2})\.(\d{1,2})$/i.exec(String(label || '').trim())
+  if (!fam || !m || m[1].toLowerCase() !== fam[1].toLowerCase() || Number(m[2]) < 4) return ''
+  return `claude-${m[1].toLowerCase()}-${m[2]}-${m[3]}`
 }
 
 // -> [{ id, label, description?, effortLevels, supportsFastMode }]
@@ -319,8 +337,10 @@ export function listedToCatalogModels(agent, rows) {
     }))
   return rows.map((row) => {
     const base = { id: row.id, label: row.label, ...(row.description ? { description: row.description } : {}), ...(row.isDefault ? { isDefault: true } : {}) }
-    if (agent === 'claude')
-      return { ...base, options: createClaudeCatalogOptions({ effortLevelIds: row.effortLevels || [], supportsFastMode: !!row.supportsFastMode }) }
+    if (agent === 'claude') {
+      const runs = row.runs || claudeAliasRuns(row.id, row.label)
+      return { ...base, ...(runs ? { runs } : {}), options: createClaudeCatalogOptions({ effortLevelIds: row.effortLevels || [], supportsFastMode: !!row.supportsFastMode }) }
+    }
     if (agent === 'codex')
       return { ...base, options: row.effortLevels && row.effortLevels.length ? createCodexCatalogOptions({ effortLevelIds: row.effortLevels, defaultEffort: row.defaultEffort }) : [] }
     if (agent === 'pi') return { ...base, options: createPiCatalogOptions(row.effortLevels || []) }
@@ -347,6 +367,7 @@ export function validListedModels(rows) {
     if (typeof r.defaultEffort === 'string' && /^[a-z]{1,20}$/.test(r.defaultEffort)) row.defaultEffort = r.defaultEffort
     if (r.supportsFastMode === true) row.supportsFastMode = true
     if (r.isDefault === true) row.isDefault = true
+    if (typeof r.runs === 'string' && /^claude-[a-z0-9.-]+(\[1m\])?$/i.test(r.runs) && r.runs.length <= 160) row.runs = r.runs
     out.push(row)
   }
   return out
