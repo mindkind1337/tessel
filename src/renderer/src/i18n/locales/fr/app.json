@@ -987,6 +987,7 @@
       "appsHostTitle": "{{agent}}, sur le serveur {{host}}, veut utiliser votre {{service}} ({{account}})",
       "appsHostWriteTitle": "{{agent}}, sur le serveur {{host}}, veut changer des choses dans votre {{service}} ({{account}})",
       "appsHostText": "Cet agent tourne sur le serveur {{host}} : ce qu'il lit va là-bas, puis à son fournisseur d'IA, et tout programme qu'il y a lancé peut demander en son nom. On vous le demande à chaque fois.",
+      "appsHostReadText": "Cet agent tourne sur le serveur {{host}} : ce qu'il lit va là-bas, puis à son fournisseur d'IA, et tout programme qu'il y a lancé peut demander en son nom. Autoriser lui permet, à lui et à eux, de continuer à lire ce compte jusqu'au redémarrage de Tessel.",
       "mailCodeMailRead": "Cet agent a déjà le droit de lire votre Gmail : il peut donc lire lui-même ce courriel et son code.",
       "mailCodeAgentSays": "L'agent dit",
       "mailCodeJustNow": "Reçu : il y a moins d'une minute",

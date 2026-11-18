@@ -391,8 +391,9 @@ working on Tessel itself (see [Build from source](#build-from-source)).
   account, before it first reads a service and before it first changes something there, again
   after a restart of its pane; while the project is shared in Live Share, it asks each time.
   Deleting or changing an event, inviting someone, writing to a calendar other than your main
-  one, creating an issue, a comment or a Notion page, and every request from an agent on an SSH
-  host are asked each time, with what will happen. Mail can be read and drafted, never sent.
+  one, creating an issue, a comment or a Notion page, and any change made by an agent on an SSH
+  host are asked each time, with what will happen. Such an agent's reads can be allowed until
+  Tessel restarts; its card says that programs it started on that server can read too. Mail can be read and drafted, never sent.
   Outlook mails an event's guests by itself, so agents make no Outlook event with guests and leave
   one that has guests, or a whole repeating series, alone. Dropbox, Sentry, Vercel and Stripe are
   read only, and no tool is there to send mail, deploy, move money or delete a repository. Creating

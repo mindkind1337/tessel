@@ -149,8 +149,10 @@ function actionLabel(a) {
   return t('app.agentTerminal.allowPrefix', 'Allow {{what}} {{scope}}', { what, scope: scopeLabel(a.scope) })
 }
 const paneText = computed(() =>
-  props.card.kind === 'apps' && props.card.onHost
+  props.card.kind === 'apps' && props.card.onHost && asksEachTime.value
     ? t('app.agentTerminal.appsHostText', 'This agent runs on the server {{host}}: what it reads goes there, then to its AI provider, and any program it started there can ask in its name. You are asked every time.', { host: props.card.onHost })
+    : props.card.kind === 'apps' && props.card.onHost
+    ? t('app.agentTerminal.appsHostReadText', 'This agent runs on the server {{host}}: what it reads goes there, then to its AI provider, and any program it started there can ask in its name. Allowing it lets it, and them, read this account again until Tessel restarts.', { host: props.card.onHost })
     : props.card.kind === 'apps' && props.card.writes && asksEachTime.value
     ? t('app.agentTerminal.appsWriteTextEach', 'It will create or change things there with your account. You are asked every time.')
     : props.card.kind === 'apps' && props.card.writes

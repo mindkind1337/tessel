@@ -969,14 +969,34 @@ describe("security review: the user's own computer, asked for by an agent that w
       expect(cards[0].card).toMatchObject({ shared: true, eachTime: true })
     })
 
-    it('an agent on a server: asked each time, nothing remembered, and the card names the server', async () => {
+    it('an agent on a server: reading may be allowed until restart, and the card names the server', async () => {
       const win = fakeWindow({ target: { ...OWN, onHost: 'build-box' }, approve: allowAll })
       const { at } = make(win, { apps: fakeApps() })
       await at.handle(use('gmail_read'))
       await at.handle(use('gmail_read'))
       const cards = win.calls.filter((c) => c.op === 'approve')
-      expect(cards).toHaveLength(2)
-      expect(cards[0].card).toMatchObject({ onHost: 'build-box', eachTime: true })
+      expect(cards).toHaveLength(1)
+      expect(cards[0].card).toMatchObject({ onHost: 'build-box', eachTime: false, writes: false })
+    })
+
+    it('an agent on a server: allowed once only, asked again', async () => {
+      const once = (p) => ({ allow: true, remember: 'once' })
+      const win = fakeWindow({ target: { ...OWN, onHost: 'build-box' }, approve: once })
+      const { at } = make(win, { apps: fakeApps() })
+      await at.handle(use('gmail_read'))
+      await at.handle(use('gmail_read'))
+      expect(win.calls.filter((c) => c.op === 'approve')).toHaveLength(2)
+    })
+
+    it('an agent on a server: a change is asked each time, even after reading was allowed', async () => {
+      const win = fakeWindow({ target: { ...OWN, onHost: 'build-box' }, approve: allowAll })
+      const { at } = make(win, { apps: fakeApps() })
+      await at.handle(use('gmail_read'))
+      await at.handle(use('gmail_create_draft', { to: 'a@b.c' }))
+      await at.handle(use('gmail_create_draft', { to: 'a@b.c' }))
+      const cards = win.calls.filter((c) => c.op === 'approve')
+      expect(cards).toHaveLength(3)
+      expect(cards[1].card).toMatchObject({ onHost: 'build-box', writes: true, eachTime: true })
     })
 
     it('a shared project ends what a pane was allowed before', async () => {

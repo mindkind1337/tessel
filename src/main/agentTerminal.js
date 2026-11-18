@@ -484,7 +484,8 @@ export function createAgentTerminal({ apps = null, verify, settings = () => ({ e
 
   // tessel_apps (Gmail, Outlook, GitHub...): the user is asked before an agent first uses a service
   // and first changes something there, until Tessel restarts; each time while a Live Share guest
-  // is in its project, who could be behind the request. The tokens stay in tesselApps.
+  // is in its project, who could be behind the request, and each time an agent on a server
+  // changes something. The tokens stay in tesselApps.
   async function useApp(agentPane, args, signal = null) {
     if (!apps) throw fail('no_apps', 'Tessel\'s connectors are not available here.')
     const name = String(args.tool || '')
@@ -513,9 +514,11 @@ export function createAgentTerminal({ apps = null, verify, settings = () => ({ e
     // Agreeing to a connection is not agreeing to a later one of the same address.
     const scope = `app:${spec.service}:${spec.writes ? 'write' : 'read'}:${account}:${apps.connectedAt ? apps.connectedAt(spec.service, account) : ''}`
     // An agent on a server: anything it started there holds the same pane's token, so an
-    // allowance would go to them too. Asked each time, and the card says where it is.
+    // allowance goes to them too, and the card says so and where it is. Reading may be allowed
+    // until Tessel restarts (the user's choice: a mail search made fifty times asked fifty times);
+    // a change there is asked each time.
     const onHost = who && typeof who.onHost === 'string' && who.onHost ? who.onHost.slice(0, 100) : null
-    const eachTime = shared || !!onHost || spec.eachTime(input)
+    const eachTime = shared || (!!onHost && spec.writes) || spec.eachTime(input)
     if (shared) for (const k of [...appPanes]) if (k.startsWith(`${agentPane}|app:`)) appPanes.delete(k)
     // Before anything is read for the card: a pane cannot make Tessel read for it without limit.
     if (spec.writes) rateLimit(agentPane)
