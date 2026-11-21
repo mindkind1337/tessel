@@ -134,6 +134,72 @@ describe('what is shown is what opens', () => {
     const r = detectDeviceLogin(['Approve in your browser', 'https://accounts.x.ai/oauth2/device/?user_code=abcd-1234'])
     expect(r).toMatchObject({ known: true, page: 'https://accounts.x.ai/oauth2/device/', url: 'https://accounts.x.ai/oauth2/device/?user_code=abcd-1234', code: 'ABCD-1234' })
   })
+  it('a link further up the screen does not hide the sign-in page under its phrase (Claude Code /login)', () => {
+    const screen = [
+      'Artifact comment monitor for https://claude.ai/artifact/U4fsDeDkPoerHrkFzh8dc7 did not resume',
+      '',
+      '> a message',
+      '  [Image #29]',
+      '',
+      'Login expired · Please run /login',
+      '',
+      '> another message',
+      '',
+      'Login expired · Please run /login',
+      '',
+      '  Login',
+      '',
+      "  Browser didn't open? Use the URL below to sign in (c to copy)",
+      '',
+      'https://platform.claude.com/oauth/authorize?code=true&client_id=abc&state=xyz',
+      '',
+      '  Paste code here if prompted'
+    ]
+    const found = detectDeviceLogin(screen)
+    expect(found.url).toBe('https://platform.claude.com/oauth/authorize?code=true&client_id=abc&state=xyz')
+    expect(found.known).toBe(false)
+    // Two pages both by the phrase: still none.
+    const two = screen.slice()
+    two[12] = 'https://evil.test/x'
+    expect(detectDeviceLogin(two)).toBeNull()
+  })
+
+  it('a sign-in page further up still counts: another page under a later phrase gets no banner', () => {
+    const screen = ['https://platform.claude.com/oauth/authorize?code=true&client_id=abc', '', '', '', '', '', '', '', '', 'cat notes.txt', 'Open this link in your browser: https://evil.test/x']
+    expect(detectDeviceLogin(screen)).toBeNull()
+  })
+
+  it('an unrelated link further up leaves GitHub CLI its page and Grok its button', () => {
+    const top = ['See https://claude.ai/artifact/abc', '', '', '', '', '', '', '', '']
+    const gh = detectDeviceLogin([...top, '! First copy your one-time code: ABCD-1234', 'Press Enter to open github.com in your browser...'])
+    expect(gh.url).toBe('https://github.com/login/device')
+    expect(gh.code).toBe('ABCD-1234')
+    const grok = detectDeviceLogin([...top, 'Approve in your browser', 'Code: ABCD-1234', 'Copying not working? Click here to show full URL.'])
+    expect(grok.url).toBeNull()
+    expect(grok.showUrl).not.toBeNull()
+    // Even a link with "login" or "auth" in it.
+    const blank = ['', '', '', '', '', '', '', '']
+    const gh2 = detectDeviceLogin(['Merged https://github.com/acme/login/pull/12', ...blank, '! First copy your one-time code: ABCD-1234', 'Press Enter to open github.com in your browser...'])
+    expect(gh2.url).toBe('https://github.com/login/device')
+    const grok2 = detectDeviceLogin(['docs: https://example.com/auth/setup', ...blank, 'Approve in your browser', 'Code: ABCD-1234', 'Copying not working? Click here to show full URL.'])
+    expect(grok2.url).toBeNull()
+    expect(grok2.showUrl).not.toBeNull()
+  })
+
+  it('a second /login: the earlier try further up does not hide the new one', () => {
+    const blank = ['', '', '', '', '', '', '', '']
+    const screen = [
+      'https://platform.claude.com/oauth/authorize?code=true&client_id=abc&state=OLD',
+      ...blank,
+      "  Browser didn't open? Use the URL below to sign in (c to copy)",
+      '',
+      'https://platform.claude.com/oauth/authorize?code=true&client_id=abc&state=NEW',
+      '',
+      '  Paste code here if prompted'
+    ]
+    expect(detectDeviceLogin(screen).url).toBe('https://platform.claude.com/oauth/authorize?code=true&client_id=abc&state=NEW')
+  })
+
   it('two different https pages: no banner', () => {
     expect(detectDeviceLogin(['Enter the code ABCD-1234', 'https://github.com/login/device', 'https://evil.test/x'])).toBeNull()
   })

@@ -30,6 +30,14 @@ const MAX_URL = 4096
 // Rows between a sign-in phrase and the code it goes with.
 const CODE_NEAR = 6
 const SHOW_URL = /\bclick here to show full URL\b/i
+// A page that looks like a sign-in: a whole path segment of one, or a
+// query an OAuth or device page takes.
+const SIGN_IN_SEGMENT = /^(?:oauth2?|authori[sz]e|device|devicelogin|activate|signin|sign-in)$/i
+const SIGN_IN_QUERY = ['client_id', 'redirect_uri', 'user_code', 'code_challenge']
+function signInLike(u) {
+  if (u.pathname.split('/').some((s) => SIGN_IN_SEGMENT.test(s))) return true
+  return SIGN_IN_QUERY.some((k) => u.searchParams.has(k))
+}
 
 // Phrases of a sign-in prompt. One must match for any banner to show.
 const TRIGGERS = [
@@ -159,12 +167,27 @@ export function detectDeviceLogin(lines, { wrapped = null, cols = 0 } = {}) {
   const triggered = triggerRows(logical)
   if (!triggered.length) return null
 
+  // The pages on the screen. A link well above the first sign-in phrase (an
+  // earlier message, a log) is not the sign-in: it hid the banner of Claude
+  // Code's /login under it, or took the place of GitHub CLI's page. It is
+  // left out, unless it looks like another sign-in page (its prompt may
+  // have scrolled off): then which one is meant is not for us to guess. An
+  // earlier try of the same sign-in (same page, another state) is left out.
+  const firstTrigger = Math.min(...triggered)
   const urls = new Map()
-  for (const line of logical)
+  const above = []
+  logical.forEach((line, i) => {
     for (const m of line.matchAll(URL_TEXT)) {
       const u = cleanUrl(m[0])
-      if (u) urls.set(u.href, u)
+      if (!u) continue
+      if (i < firstTrigger - CODE_NEAR) above.push(u)
+      else urls.set(u.href, u)
     }
+  })
+  if (urls.size) {
+    const pages = new Set([...urls.values()].map((u) => u.origin + u.pathname))
+    for (const u of above) if (signInLike(u) && !pages.has(u.origin + u.pathname)) urls.set(u.href, u)
+  }
   // Two different pages: which one is the sign-in is not for us to guess.
   if (urls.size > 1) return null
   let url = urls.size ? [...urls.values()][0] : null
