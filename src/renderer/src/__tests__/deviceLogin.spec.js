@@ -1,7 +1,8 @@
 import { describe, it, expect } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { detectDeviceLogin, wholeSignInUrl, columnOfIndex, mouseClickBytes, mouseWheelBytes, linkClickOpens, clickPassesThrough } from '../deviceLogin'
+import { detectDeviceLogin,
+  agentOwnSignIn, wholeSignInUrl, columnOfIndex, mouseClickBytes, mouseWheelBytes, linkClickOpens, clickPassesThrough } from '../deviceLogin'
 
 const pane = readFileSync(join(__dirname, '..', 'components', 'TerminalPane.vue'), 'utf8')
 // Grok Build 1.0.62's real screens (fixtures/grokDeviceLogin.json says how
@@ -158,10 +159,61 @@ describe('what is shown is what opens', () => {
     const found = detectDeviceLogin(screen)
     expect(found.url).toBe('https://platform.claude.com/oauth/authorize?code=true&client_id=abc&state=xyz')
     expect(found.known).toBe(false)
-    // Two pages both by the phrase: still none.
+    // Two pages under the phrase: still none.
     const two = screen.slice()
-    two[12] = 'https://evil.test/x'
+    two[16] = 'https://evil.test/x'
     expect(detectDeviceLogin(two)).toBeNull()
+  })
+
+  it('a URL printed before its phrase still counts, and a page below it is not let in (AWS, a wrapped phrase)', () => {
+    const aws = ['Attempting to open the SSO authorization page:', '', 'https://device.sso.us-east-1.amazonaws.com/', '', 'Then enter the code:', '', 'ABCD-EFGH']
+    expect(detectDeviceLogin(aws)).toMatchObject({ url: 'https://device.sso.us-east-1.amazonaws.com/', code: 'ABCD-EFGH' })
+    expect(detectDeviceLogin([...aws, 'https://evil.test/x'])).toBeNull()
+    expect(detectDeviceLogin([...aws, 'https://evil.test/device'])).toBeNull()
+    expect(detectDeviceLogin([...aws, 'Open the URL below in your browser:', 'https://evil.test/device'])).toBeNull()
+    expect(detectDeviceLogin([...aws, 'use the url below to sign in https://evil.test/device'])).toBeNull()
+    expect(detectDeviceLogin([...aws.slice(0, 5), 'Open the URL below in your browser: https://evil.test/device', 'ABCD-EFGH'])).toBeNull()
+    const split = ['Please visit the following URL to', 'authorize the application:', 'https://accounts.google.com/o/oauth2/v2/auth?client_id=x', 'Enter the authorization code:']
+    expect(detectDeviceLogin(split).url).toBe('https://accounts.google.com/o/oauth2/v2/auth?client_id=x')
+    expect(detectDeviceLogin([...split, 'https://evil.test/x'])).toBeNull()
+  })
+
+  it('a sign-in page well above with another query is not taken for an earlier try', () => {
+    const blank = ['', '', '', '', '', '', '', '']
+    const screen = ['https://accounts.google.com/o/oauth2/v2/auth?client_id=x', ...blank, "Browser didn't open? Use the URL below to sign in", 'https://accounts.google.com/o/oauth2/v2/auth?client_id=evil&redirect_uri=https://evil.test']
+    expect(detectDeviceLogin(screen)).toBeNull()
+  })
+
+  it("names the pane's account only for its agent's own sign-in page", () => {
+    expect(agentOwnSignIn('claude', 'https://claude.com/cai/oauth/authorize?x=1')).toBe(true)
+    expect(agentOwnSignIn('claude', 'https://platform.claude.com/oauth/authorize')).toBe(true)
+    expect(agentOwnSignIn('claude', 'https://github.com/login/device')).toBe(false)
+    expect(agentOwnSignIn('claude', 'https://claude.com.evil.test/')).toBe(false)
+    expect(agentOwnSignIn('codex', 'https://auth.openai.com/codex/device')).toBe(true)
+    expect(agentOwnSignIn('codex', 'https://claude.ai/x')).toBe(false)
+    expect(agentOwnSignIn('grok', 'https://accounts.x.ai/oauth2/device')).toBe(false)
+    expect(agentOwnSignIn('claude', null)).toBe(false)
+  })
+
+  it("/usage-credits' link a few rows above Claude Code's /login (a real screen, wrapped to the pane)", () => {
+    const cols = 70
+    const url =
+      'https://claude.com/cai/oauth/authorize?code=true&client_id=9d1c250a-e61b-44d9-88ed-5944d1962f5e&response_type=code&redirect_uri=https%3A%2F%2Fplatform.claude.com%2Foauth%2Fcode%2Fcallback&scope=org%3Acreate_api_key+user%3Aprofile&code_challenge=Pmm7uS1rSw7&code_challenge_method=S256&state=oms-pS1j08oH'
+    const rows = []
+    for (let i = 0; i < url.length; i += cols) rows.push(url.slice(i, i + cols))
+    const screen = [
+      '> /usage-credits',
+      '  L Visit https://claude.ai/settings/usage?from=cc_cli_limit_message to manage usage credits.',
+      '',
+      '  Login',
+      '',
+      "  Browser didn't open? Use the URL below to sign in (c to copy)",
+      '',
+      ...rows,
+      '',
+      '  Paste code here if prompted'
+    ]
+    expect(detectDeviceLogin(screen, { cols }).url).toBe(url)
   })
 
   it('a sign-in page further up still counts: another page under a later phrase gets no banner', () => {
@@ -266,6 +318,12 @@ describe('TerminalPane sign-in banner and clicks', () => {
     expect(pane).toContain('scheduleSignInScan()')
     expect(pane).toMatch(/function scheduleSignInScan\(\) \{\s*if \(signInTimer \|\| props\.node\.backend === 'liveshare' \|\| props\.node\.liveShare\) return/)
     expect(pane).toContain('data-test="device-login-banner"')
+    // Another account signed in already: the pane restarts on it.
+    expect(pane).toContain('data-test="device-login-switch"')
+    expect(pane).toMatch(/function signInSwitchTo\(accountId\) \{\s*signInSwitchOpen\.value = false\s*ctx\.restartOnAccount\(props\.node\.id, accountId\)/)
+    // The pane's account, to sign in with that one.
+    expect(pane).toContain('data-test="device-login-account"')
+    expect(pane).toMatch(/function signInAccount\(\) \{[^}]*if \(!signIn\.value \|\| !agentOwnSignIn\(props\.node\.agentId, signIn\.value\.url\)\) return null/)
     expect(pane).toContain('openLink(s.url, event, true, where)')
     expect(pane).toContain('detectDeviceLogin(lines, { wrapped, cols: term.cols })')
   })

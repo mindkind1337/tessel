@@ -19,7 +19,7 @@ import { terminalTheme } from '../themes'
 // Mouse-reporting modes (X10, normal, button, any-event, UTF-8, SGR, urxvt).
 const MOUSE_MODES = [9, 1000, 1002, 1003, 1005, 1006, 1015]
 import { registerPane, unregisterPane, getPane } from '../paneRegistry'
-import { detectDeviceLogin, wholeSignInUrl, columnOfIndex, mouseClickBytes, mouseWheelBytes, linkClickOpens, clickPassesThrough } from '../deviceLogin'
+import { detectDeviceLogin, agentOwnSignIn, wholeSignInUrl, columnOfIndex, mouseClickBytes, mouseWheelBytes, linkClickOpens, clickPassesThrough } from '../deviceLogin'
 import {
   setAgentStatus,
   setAttention,
@@ -3139,6 +3139,30 @@ function signInText() {
   if (s.known) return t('pane.signin.ready', '{{who}} sign-in: open this page on this PC, then enter the code. Only if you started this sign-in.', { who })
   return t('pane.signin.readyOther', 'Sign-in page from this terminal: check its address, and open it only if you started this sign-in.')
 }
+// The account this pane runs on (its header chip), for the person to sign
+// in with that one in the browser, not whichever one it has open.
+function signInAccount() {
+  // Only for this agent's own sign-in page (not a gh/az login it ran, or a
+  // page in a file it printed).
+  if (!signIn.value || !agentOwnSignIn(props.node.agentId, signIn.value.url)) return null
+  const info = accountInfo.value
+  return info && info.name && !info.unknown ? info : null
+}
+// The banner's "Use another account": the accounts Pane menu > Restart on
+// <account> offers (signed in already), the pane restarted on the one chosen.
+const signInSwitchOpen = ref(false)
+watch(
+  () => (signIn.value ? signIn.value.key : '') + '|' + signInDismissed.value,
+  () => (signInSwitchOpen.value = false)
+)
+function signInSwitchTo(accountId) {
+  signInSwitchOpen.value = false
+  ctx.restartOnAccount(props.node.id, accountId)
+}
+function signInAccountText() {
+  const info = signInAccount()
+  return info ? t('pane.signin.account', 'Sign in with: {{account}}', { account: info.name }) : ''
+}
 // The page the banner opens, on its own line: its host first, in bold.
 function signInPage() {
   const s = signIn.value
@@ -4736,12 +4760,17 @@ const paneMenuBindings = computed(() => ({
 
     <div v-if="signIn && signInShown && !node.failed" class="root-note signin-note" :class="{ 'signin-ask': signInAsk }" :style="{ top: `${signInNoteTop}px` }" data-test="device-login-banner" role="status" @mousedown.stop>
       <span class="root-note-text" data-test="device-login-text"
-        >{{ signInText() }}<span v-if="signInPage()" class="signin-page" data-test="device-login-page" :title="signIn.url || signIn.page"><b>{{ signInPage().host }}</b>{{ signInPage().rest }}</span></span
+        >{{ signInText() }}<span v-if="signInPage()" class="signin-page" data-test="device-login-page" :title="signIn.url || signIn.page"><b>{{ signInPage().host }}</b>{{ signInPage().rest }}</span
+        ><span v-if="signIn.url && signInAccount()" class="signin-account" data-test="device-login-account" :title="signInAccount().title">{{ signInAccountText() }}</span></span
       >
       <button v-if="signIn.url" class="exit-btn primary" data-test="device-login-open" :title="signIn.url" @click="openSignIn($event, 'builtin')">{{ t('pane.signin.openTessel', 'Open in Tessel') }}</button>
       <button v-if="signIn.url" class="exit-btn" data-test="device-login-open-system" :title="signIn.url" @click="openSignIn($event, 'system')">{{ t('pane.signin.openSystem', 'Open in my browser') }}</button>
       <button v-else-if="signIn.showUrl && signInCanClick" class="exit-btn primary" data-test="device-login-show" @click="showSignInUrl">{{ t('pane.signin.showUrl', 'Show the URL') }}</button>
       <button v-if="signIn.url" class="exit-btn" data-test="device-login-copy-url" :title="signIn.url" @click="copySignInUrl">{{ t('pane.signin.copyLink', 'Copy the link') }}</button>
+      <button v-if="signIn.url && signInAccount() && accountRestartChoices.length" class="exit-btn" data-test="device-login-switch" :aria-expanded="signInSwitchOpen" @click="signInSwitchOpen = !signInSwitchOpen">{{ t('pane.signin.switchAccount', 'Use another account') }}</button>
+      <span v-if="signInSwitchOpen && signIn.url && signInAccount() && accountRestartChoices.length" class="signin-switch" data-test="device-login-switch-list">
+        <button v-for="c in accountRestartChoices" :key="c.id ?? 'default'" class="exit-btn" data-test="device-login-switch-to" :title="c.hint || c.title" @click="signInSwitchTo(c.id)">{{ c.name }}</button>
+      </span>
       <button v-if="signIn.code" class="exit-btn" data-test="device-login-copy" :title="signIn.code" @click="copySignInCode">{{ t('pane.signin.copyCode', 'Copy the code') }}</button>
       <button class="pane-nav-btn" data-test="device-login-close" :title="t('pane.rootNoYolo.close', 'Close')" :aria-label="t('pane.rootNoYolo.close', 'Close')" @click="dismissSignIn">
         <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true">

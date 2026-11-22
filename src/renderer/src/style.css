@@ -2940,6 +2940,17 @@ kbd {
   flex: 1 1 calc(100% - 40px);
   min-width: 0;
 }
+.signin-note .signin-switch {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  flex-basis: 100%;
+}
+.signin-note .signin-account {
+  display: block;
+  margin-top: 2px;
+  font-weight: 600;
+}
 .signin-note .signin-page {
   margin-top: 4px;
   white-space: nowrap;

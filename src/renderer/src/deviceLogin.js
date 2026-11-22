@@ -34,6 +34,30 @@ const SHOW_URL = /\bclick here to show full URL\b/i
 // query an OAuth or device page takes.
 const SIGN_IN_SEGMENT = /^(?:oauth2?|authori[sz]e|device|devicelogin|activate|signin|sign-in)$/i
 const SIGN_IN_QUERY = ['client_id', 'redirect_uri', 'user_code', 'code_challenge']
+// The same sign-in tried again: same page and query, but for what changes
+// with every try.
+const PER_TRY = ['state', 'code_challenge', 'nonce']
+function sameSignIn(a, b) {
+  if (a.origin + a.pathname !== b.origin + b.pathname) return false
+  const rest = (u) => [...u.searchParams.entries()].filter(([k]) => !PER_TRY.includes(k)).sort().join('&')
+  return rest(a) === rest(b)
+}
+// The pages an agent's own sign-in opens: the banner names the pane's
+// account, and offers another, only for those.
+const AGENT_SIGN_IN_HOSTS = {
+  claude: ['claude.com', 'claude.ai', 'platform.claude.com', 'console.anthropic.com'],
+  codex: ['auth.openai.com']
+}
+export function agentOwnSignIn(agentId, url) {
+  const hosts = AGENT_SIGN_IN_HOSTS[agentId]
+  if (!hosts || !url) return false
+  try {
+    const u = new URL(url)
+    return u.protocol === 'https:' && hosts.includes(u.hostname)
+  } catch {
+    return false
+  }
+}
 function signInLike(u) {
   if (u.pathname.split('/').some((s) => SIGN_IN_SEGMENT.test(s))) return true
   return SIGN_IN_QUERY.some((k) => u.searchParams.has(k))
@@ -167,26 +191,42 @@ export function detectDeviceLogin(lines, { wrapped = null, cols = 0 } = {}) {
   const triggered = triggerRows(logical)
   if (!triggered.length) return null
 
-  // The pages on the screen. A link well above the first sign-in phrase (an
-  // earlier message, a log) is not the sign-in: it hid the banner of Claude
-  // Code's /login under it, or took the place of GitHub CLI's page. It is
-  // left out, unless it looks like another sign-in page (its prompt may
-  // have scrolled off): then which one is meant is not for us to guess. An
-  // earlier try of the same sign-in (same page, another state) is left out.
+  // The pages on the screen, around the first sign-in phrase:
+  // - well above it (an earlier message, a log): left out, unless it looks
+  //   like another sign-in page (its prompt may have scrolled off), when
+  //   which one is meant is not for us to guess; an earlier try of the same
+  //   sign-in (the same page and query but for its state) is left out;
+  // - a few rows above it: counts (some programs print the URL, then "enter
+  //   the code"), except a link that does not look like a sign-in page when
+  //   one that does is on or below the phrase (/usage-credits' link just
+  //   above Claude Code's /login hid its banner);
+  // - on or below it: counts.
   const firstTrigger = Math.min(...triggered)
-  const urls = new Map()
-  const above = []
+  const far = []
+  const near = []
+  const below = []
   logical.forEach((line, i) => {
     for (const m of line.matchAll(URL_TEXT)) {
       const u = cleanUrl(m[0])
       if (!u) continue
-      if (i < firstTrigger - CODE_NEAR) above.push(u)
-      else urls.set(u.href, u)
+      if (i < firstTrigger - CODE_NEAR) far.push(u)
+      else if (i < firstTrigger) near.push(u)
+      else below.push(u)
     }
   })
+  // Only when the phrase itself says its link comes below ("Use the URL
+  // below to sign in"): a URL printed before "enter the code" stays.
+  // The first phrase only (with the next row when it is one phrase over two
+  // rows): a phrase printed later cannot make the real URL go.
+  const anchorAlone = TRIGGERS.some((re) => re.test(logical[firstTrigger]))
+  const anchorText = logical[firstTrigger] + (!anchorAlone && triggered.includes(firstTrigger + 1) ? ' ' + logical[firstTrigger + 1] : '')
+  const saysBelow = /\b(?:url|link|address) below\b/i.test(anchorText)
+  const signInBelow = saysBelow && below.some(signInLike)
+  const urls = new Map()
+  for (const u of [...near.filter((u) => !signInBelow || signInLike(u)), ...below]) urls.set(u.href, u)
   if (urls.size) {
-    const pages = new Set([...urls.values()].map((u) => u.origin + u.pathname))
-    for (const u of above) if (signInLike(u) && !pages.has(u.origin + u.pathname)) urls.set(u.href, u)
+    const shown = [...urls.values()]
+    for (const u of far) if (signInLike(u) && !shown.some((s) => sameSignIn(s, u))) urls.set(u.href, u)
   }
   // Two different pages: which one is the sign-in is not for us to guess.
   if (urls.size > 1) return null

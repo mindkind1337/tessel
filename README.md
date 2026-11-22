@@ -480,7 +480,10 @@ working on Tessel itself (see [Build from source](#build-from-source)).
 - **Sign-in from a terminal**: when an agent prints a sign-in page (Claude, Codex,
   Grok, Gemini, Antigravity…), a banner offers **Open in Tessel**, **Open in my
   browser** and **Copy the link**, with the whole address even if the program cut
-  it over several rows.
+  it over several rows. It takes the page under the sign-in text, so an older link
+  higher on the screen does not hide it; it names the pane's account to sign in
+  with, and **Use another account** restarts the pane on another account already
+  signed in.
 
 ### Native chat
 
