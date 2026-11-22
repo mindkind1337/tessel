@@ -15,6 +15,10 @@ const APPS = ['Antigravity IDE', 'Antigravity']
 const MAX_VALUE = 1024 * 1024
 const LOG_TAIL = 256 * 1024
 const EMAIL = /^[^\s@]{1,64}@[^\s@]{1,255}\.[^\s@]{2,}$/
+// The app writes the plan when it runs: one it has not written for a week
+// may be a plan since changed (an Ultra shown long after it ended), so it is
+// not shown.
+export const PLAN_MAX_AGE = 7 * 24 * 60 * 60 * 1000
 
 function varint(buf, i) {
   let value = 0
@@ -146,7 +150,8 @@ export function createAntigravityPlan({
   home = os.homedir(),
   status = readStatus,
   email = () => agyAccountEmail({ home }),
-  mtime = (file) => fs.statSync(file).mtimeMs
+  mtime = (file) => fs.statSync(file).mtimeMs,
+  now = Date.now
 } = {}) {
   function read() {
     const files = APPS.map((name) => path.join(appData, name, 'User', 'globalStorage', 'state.vscdb'))
@@ -158,6 +163,7 @@ export function createAntigravityPlan({
         }
       })
       .filter(Boolean)
+      .filter((f) => now() - f.at <= PLAN_MAX_AGE)
       .sort((a, b) => b.at - a.at)
     let cli
     try {

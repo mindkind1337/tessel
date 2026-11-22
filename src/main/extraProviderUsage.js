@@ -272,11 +272,13 @@ export function createExtraProviderUsage({
             'unavailable',
             t('main.usage.antigravityNeedsCli', "Antigravity's usage needs the Antigravity CLI (agy), installed and signed in.")
           )
+        // null: no plan to show now (none, or too old), so a plan shown
+        // before goes; left out when it could not be read this time.
         let plan = null
         try {
-          plan = antigravityPlan?.read?.() || null
+          plan = typeof antigravityPlan?.read === 'function' ? antigravityPlan.read() || null : undefined
         } catch {
-          plan = null
+          plan = undefined
         }
         return {
           ok: true,
@@ -285,7 +287,7 @@ export function createExtraProviderUsage({
           source: 'live',
           observedAt: Number.isFinite(cli.observedAt) ? cli.observedAt : clock(),
           windows: cli.windows,
-          ...(typeof plan === 'string' ? { plan } : {})
+          ...(typeof plan === 'string' || plan === null ? { plan } : {})
         }
       }
       const work = async () => {

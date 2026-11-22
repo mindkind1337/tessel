@@ -199,6 +199,8 @@ async function readProvider(id) {
     if (!alive || request !== providerRequests.get(id) || accountId !== selectedAccount(id)) return
     // Its plan (from its login) even when its usage could not be read.
     if (typeof result?.plan === 'string') providerPlans.value[id] = { accountId, plan: result.plan }
+    // No plan now (Antigravity's, too old): the one shown before goes.
+    else if (result?.ok && result.plan === null) delete providerPlans.value[id]
     if (result?.code === 'no-usage-limits') {
       providerNoLimits.value[id] = accountId
       delete providerReadings.value[id]
@@ -273,6 +275,7 @@ async function pushed(result) {
   if (accountsReadFailed.value || providerAccounts(id)?.error) return
   providerRequests.set(id, (providerRequests.get(id) || 0) + 1)
   if (typeof result.plan === 'string') providerPlans.value[id] = { accountId, plan: result.plan }
+  else if (result.ok && result.plan === null) delete providerPlans.value[id]
   if (result.code === 'no-usage-limits') {
     providerErrors.value[id] = ''
     delete providerErrorCodes.value[id]

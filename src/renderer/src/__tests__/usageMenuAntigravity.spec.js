@@ -63,6 +63,22 @@ describe('Antigravity usage flyout', () => {
     expect(labels(await openAntigravity())).toEqual(['Gemini 5-hour', 'Gemini weekly', 'Claude and GPT 5-hour', 'Claude and GPT weekly'])
   })
 
+  it('a plan that went (too old) leaves the row at the next refresh', async () => {
+    const base = await window.shellApi.providerUsage.read()
+    window.shellApi.providerUsage.read = vi.fn(async () => ({ ...base, plan: 'Ultra' }))
+    wrapper = mount(UsageMenu, { attachTo: document.body })
+    await flushPromises()
+    await wrapper.get('[data-test="usage-button"]').trigger('click')
+    await flushPromises()
+    const row = () => document.querySelector('[data-test="usage-row-antigravity"]').textContent
+    expect(row()).toContain('Ultra')
+    window.shellApi.providerUsage.read = vi.fn(async () => ({ ...base, plan: null }))
+    document.querySelector('[data-test="usage-refresh"]').click()
+    await flushPromises()
+    expect(window.shellApi.providerUsage.read).toHaveBeenCalled()
+    expect(row()).not.toContain('Ultra')
+  })
+
   it('speaks French', async () => {
     setMessages('fr', fr)
     expect(labels(await openAntigravity())).toEqual(['Gemini 5 heures', 'Gemini hebdomadaire', 'Claude and GPT 5 heures', 'Claude and GPT hebdomadaire'])

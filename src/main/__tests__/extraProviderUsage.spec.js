@@ -365,7 +365,7 @@ describe('Antigravity quota, from the Antigravity CLI only', () => {
     const antigravityCli = cli({ ok: true, windows: rows, observedAt: now - 5000 })
     const { service, sources, request } = setup({ listAgents: withAntigravity, antigravityCli })
     const result = await read(service, 'antigravity')
-    expect(result).toEqual({ ok: true, provider: 'antigravity', accountId: null, source: 'live', observedAt: now - 5000, windows: rows })
+    expect(result).toEqual({ ok: true, provider: 'antigravity', accountId: null, source: 'live', observedAt: now - 5000, windows: rows, plan: null })
     expect(antigravityCli.read).toHaveBeenCalledTimes(1)
     expect(sources.auth).not.toHaveBeenCalled()
     expect(request).not.toHaveBeenCalled()
@@ -380,6 +380,9 @@ describe('Antigravity quota, from the Antigravity CLI only', () => {
     const result = await read(again.service, 'antigravity')
     expect(result.ok).toBe(true)
     expect(result).not.toHaveProperty('plan')
+    // No plan to show (none, or too old): said, so one shown before goes.
+    const none = setup({ listAgents: withAntigravity, antigravityCli: cli({ ok: true, windows: rows, observedAt: now }), antigravityPlan: { read: vi.fn(() => null) } })
+    expect(await read(none.service, 'antigravity')).toMatchObject({ ok: true, plan: null })
   })
   it.each(['missing', 'signed-out', 'failed'])('%s: says the Antigravity CLI is needed, never Gemini', async (reason) => {
     const { service, sources, request } = setup({ listAgents: withAntigravity, antigravityCli: cli({ ok: false, reason }) })

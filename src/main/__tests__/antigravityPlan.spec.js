@@ -67,11 +67,24 @@ describe("Antigravity's plan, from the app's saved user status", () => {
     const values = { 'Antigravity IDE': userStatus({ email: 'other@example.com', tier: 'g1-ultra-tier', name: 'Google AI Ultra' }), Antigravity: userStatus() }
     const appOf = (file) => path.basename(path.dirname(path.dirname(path.dirname(file))))
     const plan = (email) =>
-      createAntigravityPlan({ appData: tmp, home: tmp, email: () => email, mtime: (file) => at[appOf(file)], status: (file) => values[appOf(file)] }).read()
+      createAntigravityPlan({ appData: tmp, home: tmp, email: () => email, mtime: (file) => at[appOf(file)], status: (file) => values[appOf(file)], now: () => 3 }).read()
     expect(plan('me@example.com')).toBe('Pro') // the newer folder is another account's
     expect(plan('ME@example.com')).toBe('Pro')
     expect(plan(null)).toBe('Ultra') // the CLI says nothing: the newest
     expect(plan('third@example.com')).toBe(null)
+  })
+  it('a plan the app has not written for over a week is not shown (it may have changed since)', () => {
+    const day = 24 * 60 * 60 * 1000
+    const values = { 'Antigravity IDE': userStatus({ tier: 'g1-ultra-tier', name: 'Google AI Ultra' }), Antigravity: userStatus() }
+    const appOf = (file) => path.basename(path.dirname(path.dirname(path.dirname(file))))
+    const plan = (at, now) =>
+      createAntigravityPlan({ appData: tmp, home: tmp, email: () => 'me@example.com', mtime: (file) => at[appOf(file)], status: (file) => values[appOf(file)], now: () => now }).read()
+    const now = 100 * day
+    expect(plan({ 'Antigravity IDE': now - 6 * day, Antigravity: now - 30 * day }, now)).toBe('Ultra')
+    // The newest is too old: none, not an older one either.
+    expect(plan({ 'Antigravity IDE': now - 19 * day, Antigravity: now - 200 * day }, now)).toBe(null)
+    // An older folder written lately still counts.
+    expect(plan({ 'Antigravity IDE': now - 19 * day, Antigravity: now - day }, now)).toBe('Pro')
   })
   it("reads the app's real state database, read only", () => {
     const sqlite = process.getBuiltinModule?.('node:sqlite')

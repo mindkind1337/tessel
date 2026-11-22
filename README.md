@@ -568,7 +568,9 @@ like VS Code Live Share:
 
 - **Usage meter**: the quotas of Claude, Codex and other providers (5-hour and
   weekly windows, plan, reset times), refreshed every 2 minutes and live from
-  running chats; the icon turns yellow at 60 % and red at 80 %.
+  running chats; the icon turns yellow at 60 % and red at 80 %. Antigravity's
+  plan comes from the Antigravity app; one it has not updated for a week is
+  not shown, since it may have changed.
 - **Session search** (opt-in): find a conversation by what was said in it,
   across agents, from a local private index.
 
