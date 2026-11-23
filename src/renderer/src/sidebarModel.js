@@ -637,6 +637,20 @@ export function buildSidebarRows(projects, options = {}, now = Date.now()) {
   return rows
 }
 
+// The rows cut into runs: a project's header with everything under it, so the
+// sidebar can frame the current project and its agents as one block. A group
+// of projects' own row stands alone.
+export function sidebarRowRuns(rows) {
+  const runs = []
+  for (const row of rows) {
+    if (row.type === 'header' || row.type === 'folder' || !runs.length) {
+      runs.push({ key: row.key, project: row.type === 'header' ? row.project : null, rows: [] })
+    }
+    runs[runs.length - 1].rows.push(row)
+  }
+  return runs
+}
+
 // --- Projects in your order (drag a project, Alt+Up/Down) -----------------------
 // Where a dragged project lands: the groups shown, in order, as their
 // extent on screen ([{ top, bottom }], a project's header and its rows);
