@@ -9,7 +9,7 @@
 // folder clicked. The listing comes from the host's signed-in session
 // (window.shellApi.remoteFs.browse; src/main/remoteFs.js).
 import { ref, computed, onMounted, onBeforeUnmount, nextTick } from 'vue'
-import { ArrowUp, ChevronRight, Folder, Home, LoaderCircle, Search } from 'lucide-vue-next'
+import { ArrowUp, ChevronRight, Folder, Home, LoaderCircle, RefreshCw, Search } from 'lucide-vue-next'
 import { t } from '../../i18n'
 import FileIcon from '../FileIcon.vue'
 import { joinRemote, parentRemote, remoteCrumbs, isPathInput, resolveTypedPath, filterRemoteEntries, enterAction } from '../../addProject'
@@ -93,6 +93,11 @@ function navigate(dir) {
 }
 function goUp() {
   if (path.value && path.value !== '/') navigate(parentRemote(path.value))
+}
+// The folder shown, read again (a folder made or removed since); the filter stays.
+function refresh() {
+  clearHint()
+  load(path.value || props.initialPath || '~')
 }
 function retry() {
   load(failedPath.value || path.value || props.initialPath || '~')
@@ -193,6 +198,17 @@ onBeforeUnmount(() => {
       >
         <Home :size="14" aria-hidden="true" />
       </button>
+      <button
+        type="button"
+        class="rfb-tool"
+        :disabled="loading"
+        :title="t('project.remoteBrowser.refresh', 'Refresh')"
+        :aria-label="t('project.remoteBrowser.refresh', 'Refresh')"
+        data-test="rfb-refresh"
+        @click="refresh"
+      >
+        <RefreshCw :size="14" aria-hidden="true" />
+      </button>
       <nav class="rfb-crumbs" :aria-label="t('project.remoteBrowser.path', 'Path')">
         <button type="button" class="rfb-crumb" :class="{ current: crumbs.length === 0 }" data-test="rfb-root" @click="navigate('/')">/</button>
         <template v-for="(c, i) in crumbs" :key="c.path">
@@ -280,13 +296,12 @@ onBeforeUnmount(() => {
   min-width: 0;
   width: 100%;
 }
+/* The whole path shows: the breadcrumb goes on more lines rather than being cut. */
 .rfb-bar {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 2px;
   min-height: 28px;
-  overflow-x: auto;
-  scrollbar-width: none;
 }
 .rfb-tool {
   display: grid;
@@ -308,15 +323,20 @@ onBeforeUnmount(() => {
 }
 .rfb-crumbs {
   display: flex;
+  flex: 1;
+  flex-wrap: wrap;
   align-items: center;
+  row-gap: 2px;
   min-width: 0;
+  min-height: 22px;
   margin-left: 4px;
   color: var(--text-dim);
   font-size: 11px;
 }
 .rfb-crumb {
-  flex-shrink: 0;
-  max-width: 120px;
+  flex-shrink: 1;
+  min-width: 0;
+  max-width: 100%;
   padding: 0 2px;
   overflow: hidden;
   border: 0;
@@ -444,11 +464,9 @@ onBeforeUnmount(() => {
 }
 .rfb-footer {
   margin: 0;
-  overflow: hidden;
   color: var(--text-dim);
   font-size: 10px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 .rfb-actions {
   display: flex;

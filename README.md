@@ -51,7 +51,8 @@ working on Tessel itself (see [Build from source](#build-from-source)).
   one folded "N other branches" line; an agent can work in its own copy (its
   own worktree and branch) so two agents never overwrite each other.
 - **Add a project**: browse a folder, clone from a URL, create one, or import
-  every repository in a folder, on this computer or on an SSH host. A new
+  every repository in a folder, on this computer or on an SSH host (its folder
+  browser shows the whole path and has Refresh). A new
   project opens on a **launcher** instead of a shell: pick an agent, a
   terminal, a web page, or resume one of the project's recent sessions.
 - **Clean up worktrees**: one dialog lists every worktree with its git

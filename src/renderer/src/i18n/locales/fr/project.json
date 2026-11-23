@@ -177,6 +177,7 @@
       "path": "Chemin",
       "filterPlaceholder": "Tapez pour filtrer ou saisissez un chemin…",
       "retry": "Réessayer",
+      "refresh": "Actualiser",
       "empty": "Dossier vide",
       "fileHint": "Un fichier ne peut pas être ouvert comme projet",
       "truncated": "Seules les premières entrées sont affichées. Saisissez un chemin pour aller plus loin.",

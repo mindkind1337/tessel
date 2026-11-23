@@ -233,6 +233,12 @@ describe('browse the host and choose a folder', () => {
     await w.find('[data-test="rfb-home"]').trigger('click')
     await flushPromises()
     expect(calls[calls.length - 1]).toEqual(['browse', 'ssh-box', '~'])
+    // Refresh: the folder shown, read again.
+    const before = calls.length
+    await w.find('[data-test="rfb-refresh"]').trigger('click')
+    await flushPromises()
+    expect(calls.length).toBe(before + 1)
+    expect(calls[calls.length - 1]).toEqual(['browse', 'ssh-box', '/home/fivem'])
     // Filter.
     const input = w.find('[data-test="rfb-filter"]')
     await input.setValue('tx')
