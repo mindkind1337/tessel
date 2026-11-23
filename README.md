@@ -382,7 +382,8 @@ working on Tessel itself (see [Build from source](#build-from-source)).
   **Settings > Connections**. The same panel lists Outlook mail, Outlook Calendar, OneDrive,
   GitHub, Dropbox, Notion, Linear, Jira, Confluence, Sentry, Vercel and Stripe; the server tells
   it which can be connected, and one whose app is not registered yet says **Not available yet**
-  and has no Connect button. You sign in through tesselcode.com on
+  and has no Connect button. Reading a Gmail message or conversation gives all its headers (Reply-To,
+  Received, Authentication-Results...); a search shows its Reply-To and Sender. You sign in through tesselcode.com on
   the service's own page, after a page that names the Tessel account asking, so it takes a Tessel
   account and nothing to set up. An account can be an address, a login or a workspace. The refresh
   token stays encrypted on your computer and access

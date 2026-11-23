@@ -34,12 +34,40 @@ export function messageParts(payload) {
 
 const headersOf = (message) => {
   const out = {}
-  for (const h of message.payload?.headers || []) if (h && typeof h.name === 'string') out[h.name.toLowerCase()] = oneLine(h.value)
+  // The first of a header given twice, as mail programs read it (one added at the end does not
+  // win); All headers lists both.
+  for (const h of message.payload?.headers || []) if (h && typeof h.name === 'string' && !(h.name.toLowerCase() in out)) out[h.name.toLowerCase()] = oneLine(h.value)
   return out
 }
+// Who answers go to (a form or a payment notice sends from a service and
+// names the person here), and the message's own id (a draft's inReplyTo).
+const replyLines = (h) => [...(h['reply-to'] ? [`Reply-To: ${h['reply-to']}`] : []), ...(h.sender ? [`Sender: ${h.sender}`] : [])]
 const summary = (m) => {
   const h = headersOf(m)
-  return `id: ${m.id}  thread: ${m.threadId}\nDate: ${h.date || '?'}\nFrom: ${h.from || '?'}\nTo: ${h.to || '?'}\nSubject: ${h.subject || '(none)'}\n${m.snippet ? `Snippet: ${m.snippet}\n` : ''}`
+  return [`id: ${m.id}  thread: ${m.threadId}`, `Date: ${h.date || '?'}`, `From: ${h.from || '?'}`, ...replyLines(h), `To: ${h.to || '?'}`, `Subject: ${h.subject || '(none)'}`, ...(m.snippet ? [`Snippet: ${m.snippet}`] : [])].join('\n') + '\n'
+}
+// Every header of a message, in its order, one line each (Received,
+// Authentication-Results, List-Unsubscribe...): at most 200, 32 K characters,
+// a value at most 4000.
+const MAX_HEADERS = 200
+const MAX_THREAD_TEXT = 2 * 1024 * 1024
+const MAX_HEADER_TEXT = 32 * 1024
+function allHeaders(m) {
+  const list = (Array.isArray(m.payload?.headers) ? m.payload.headers : []).filter((h) => h && typeof h.name === 'string')
+  const lines = []
+  let size = 0
+  for (const h of list.slice(0, MAX_HEADERS)) {
+    const value = oneLine(h.value)
+    const line = `${oneLine(h.name).slice(0, 200)}: ${value.length > 4000 ? `${value.slice(0, 4000)} [cut]` : value}`
+    if (size + line.length > MAX_HEADER_TEXT) {
+      lines.push('[more headers cut]')
+      return lines
+    }
+    size += line.length + 1
+    lines.push(line)
+  }
+  if (list.length > MAX_HEADERS) lines.push('[more headers cut]')
+  return lines
 }
 function fullMessage(m) {
   const h = headersOf(m)
@@ -48,10 +76,15 @@ function fullMessage(m) {
     `id: ${m.id}  thread: ${m.threadId}`,
     `Date: ${h.date || '?'}`,
     `From: ${h.from || '?'}`,
+    ...replyLines(h),
     `To: ${h.to || '?'}`,
     ...(h.cc ? [`Cc: ${h.cc}`] : []),
     `Subject: ${h.subject || '(none)'}`,
+    ...(h['message-id'] ? [`Message-ID: ${h['message-id']}`] : []),
     ...(attachments.length ? [`Attachments: ${attachments.join('; ')}`] : []),
+    '',
+    'All headers:',
+    ...allHeaders(m),
     '',
     cut(body)
   ].join('\n')
@@ -180,7 +213,7 @@ export function createGoogleTools({ connections, fetchFn = fetch }) {
         const found = await call(args.account, `${GMAIL}/messages?${query({ q, maxResults: count(args.max, 10, 50) })}`)
         const ids = (found.messages || []).map((m) => m.id)
         if (!ids.length) return 'No message found.'
-        const list = await Promise.all(ids.map((id) => call(args.account, `${GMAIL}/messages/${encodeURIComponent(id)}?${query({ format: 'metadata' })}&metadataHeaders=From&metadataHeaders=To&metadataHeaders=Subject&metadataHeaders=Date`)))
+        const list = await Promise.all(ids.map((id) => call(args.account, `${GMAIL}/messages/${encodeURIComponent(id)}?${query({ format: 'metadata' })}&metadataHeaders=From&metadataHeaders=Reply-To&metadataHeaders=Sender&metadataHeaders=To&metadataHeaders=Subject&metadataHeaders=Date`)))
         return `${list.map(summary).join('\n')}${moreWhen(found.nextPageToken)}`
       }
     },
@@ -194,7 +227,8 @@ export function createGoogleTools({ connections, fetchFn = fetch }) {
       service: 'gmail',
       async run(args) {
         const thread = await call(args.account, `${GMAIL}/threads/${pathId(args.id, 'id')}?format=full`)
-        return (thread.messages || []).map(fullMessage).join('\n\n----\n\n')
+        // A long thread: at most 2 MB in all.
+        return cut((thread.messages || []).map(fullMessage).join('\n\n----\n\n'), MAX_THREAD_TEXT)
       }
     },
     gmail_list_labels: {

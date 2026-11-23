@@ -50,7 +50,8 @@ export function pathId(value, name) {
   return encodeURIComponent(id)
 }
 // A header or a card's value: on one line, whatever it was given.
-export const oneLine = (value) => String(value || '').replace(/[\r\n]+/g, ' ').trim()
+// Every kind of line break (\u2028, \u2029, NEL, \v, \f too): a value cannot look like a line of its own.
+export const oneLine = (value) => String(value || '').replace(/[\r\n\u2028\u2029\u0085\v\f]+/g, ' ').trim()
 
 // What a card shows: on one line, with nothing that hides or turns text around, and spaces that
 // cannot push a word to look like a line of its own.
