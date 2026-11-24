@@ -68,6 +68,9 @@ working on Tessel itself (see [Build from source](#build-from-source)).
   (your default browser first) to stay signed in to your sites. A site's
   sign-in popup (Google, GitHub, Microsoft…) opens as a small window of its
   own and hands its result back to the page, as in a browser.
+  A page prints only right after your own click (a page that prints by itself
+  when it loads no longer opens the print dialog); right-click > **Print…**
+  prints any page.
 - **Saved passwords**: import logins from your browsers into an encrypted,
   on-this-computer vault (never sent through Live Share), then fill them on a
   private page. All profiles of every Chromium browser are found — Chrome (and

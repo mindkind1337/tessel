@@ -965,7 +965,8 @@
       "back": "Retour",
       "forward": "Suivant",
       "reload": "Recharger",
-      "inspect": "Inspecter"
+      "inspect": "Inspecter",
+      "print": "Imprimer…"
     },
     "providerCredentials": {
       "storageInvalid": "Le stockage des identifiants de fournisseurs de Tessel est invalide.",

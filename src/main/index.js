@@ -4113,6 +4113,8 @@ const browserGuests = createBrowserGuests({
   downloadsDir: () => app.getPath('downloads'),
   revealDownload: (file) => shell.showItemInFolder(file),
   agentControlsPage: (id) => agentBrowser.isControlling(id),
+  // print() only after the user's click or key (src/preload/pageGuard.js).
+  pageGuardPreload: join(__dirname, '../preload/pageGuard.js'),
   agentSessionOnly: () => agentBrowserSeparate,
   getWindow: () => mainWindow,
   send,

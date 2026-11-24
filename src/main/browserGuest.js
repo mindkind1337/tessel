@@ -268,6 +268,8 @@ export function contextMenuItems(params = {}, nav = {}) {
   items.push({ id: 'back', label: t('main.browserMenu.back', 'Back'), enabled: !!nav.canGoBack })
   items.push({ id: 'forward', label: t('main.browserMenu.forward', 'Forward'), enabled: !!nav.canGoForward })
   items.push({ id: 'reload', label: t('main.browserMenu.reload', 'Reload') })
+  // The user's own way to print (a page's print() needs their click: src/preload/pageGuard.js).
+  items.push({ id: 'print', label: t('main.browserMenu.print', 'Print…') })
   if (!params.isEditable) items.push({ id: 'selectAll', label: t('main.browserMenu.selectAll', 'Select All') })
   sep()
   // The page's devtools open from the toolbar too (F12).
@@ -278,7 +280,7 @@ export function contextMenuItems(params = {}, nav = {}) {
 // agentSessionOnly() -> bool: Settings > Browser > "Agents use a separate
 // browser session". On, guestById (the agents' only way to a page) gives only
 // pages of the agents' own session, never the user's with its logins.
-export function createBrowserGuests({ getWindow, send, log = null, screenshotDir, electron, openExternal = null, onGuest = null, agentSessionOnly = () => false, downloadsDir = () => screenshotDir, revealDownload = () => {}, agentControlsPage = () => false }) {
+export function createBrowserGuests({ getWindow, send, log = null, screenshotDir, electron, openExternal = null, onGuest = null, agentSessionOnly = () => false, downloadsDir = () => screenshotDir, revealDownload = () => {}, agentControlsPage = () => false, pageGuardPreload = null }) {
   const { webContents, clipboard, nativeImage, session: electronSession, Menu = null } = electron
   // guest id -> { cancel } while an element is being picked.
   const picking = new Map()
@@ -315,6 +317,15 @@ export function createBrowserGuests({ getWindow, send, log = null, screenshotDir
     const ses = electronSession.fromPartition(partition)
     ourSessions.set(partition, ses)
     if (isViewPartition(partition)) guardViewSession(ses, { log })
+    // Tessel's own preload in every page (src/preload/pageGuard.js): print
+    // only after the user's click or key. It exposes nothing to the page.
+    if (pageGuardPreload && typeof ses.registerPreloadScript === 'function') {
+      try {
+        ses.registerPreloadScript({ id: 'tessel-page-guard', type: 'frame', filePath: pageGuardPreload })
+      } catch (err) {
+        warn(`the page guard could not be added: ${err.message}`)
+      }
+    }
     ses.setPermissionRequestHandler((wc, permission, callback, details) => {
       const ok = GRANTED_PERMISSIONS.has(permission)
       if (!ok && shouldTellDenied(wc, permission)) {
@@ -752,6 +763,8 @@ export function createBrowserGuests({ getWindow, send, log = null, screenshotDir
         return goHistory(guest, 1)
       case 'reload':
         return guest.reload()
+      case 'print':
+        return guest.print({}, () => {})
       case 'inspect':
         // In its own window, like the toolbar's devtools.
         guest.openDevTools({ mode: 'detach' })

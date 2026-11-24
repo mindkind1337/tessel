@@ -98,8 +98,9 @@ if (process.platform === 'win32' && !fs.existsSync(path.join(dir, 'tessel-cli.ex
   failed = true
 }
 // The preloads: CommonJS files that require electron at runtime. The themed
-// dialog's is sandboxed (src/main/themedDialog.js), so it loads nothing else.
-for (const name of ['index.js', 'themedDialog.js']) {
+// dialog's and the browser pages' print guard are sandboxed
+// (src/main/themedDialog.js, browserGuest.js), so they load nothing else.
+for (const name of ['index.js', 'themedDialog.js', 'pageGuard.js']) {
   const f = path.join('out', 'preload', name)
   if (!fs.existsSync(f)) {
     console.error(`check-bundle: ${f} is missing`)
@@ -111,7 +112,7 @@ for (const name of ['index.js', 'themedDialog.js']) {
     console.error(`check-bundle: ${f} must require electron at runtime, not bundle it`)
     failed = true
   }
-  if (name === 'themedDialog.js' && /require\(["'](?!electron["'])/.test(text)) {
+  if ((name === 'themedDialog.js' || name === 'pageGuard.js') && /require\(["'](?!electron["'])/.test(text)) {
     console.error(`check-bundle: ${f} must be self-contained (a sandboxed preload loads only electron)`)
     failed = true
   }

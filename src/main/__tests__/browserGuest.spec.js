@@ -16,6 +16,7 @@ function fakeSession() {
   ses.setPermissionRequestHandler = vi.fn((h) => (ses.request = h))
   ses.setPermissionCheckHandler = vi.fn((h) => (ses.check = h))
   ses.setDisplayMediaRequestHandler = vi.fn((h) => (ses.display = h))
+  ses.registerPreloadScript = vi.fn()
   ses.webRequest = { onBeforeRequest: vi.fn((h) => (ses.beforeRequest = h)) }
   for (const name of ['clearStorageData', 'clearCache', 'clearAuthCache', 'clearHostResolverCache']) ses[name] = vi.fn(() => Promise.resolve())
   return ses
@@ -91,7 +92,7 @@ function setup(opts = {}) {
   }
   const log = { warn: vi.fn() }
   const openExternal = vi.fn()
-  const bg = createBrowserGuests({ getWindow: () => win, send: (ch, payload) => sent.push([ch, payload]), log, screenshotDir: dir, electron, openExternal, agentSessionOnly: opts.agentSessionOnly, ...(opts.agentControlsPage ? { agentControlsPage: opts.agentControlsPage } : {}) })
+  const bg = createBrowserGuests({ getWindow: () => win, send: (ch, payload) => sent.push([ch, payload]), log, screenshotDir: dir, electron, openExternal, agentSessionOnly: opts.agentSessionOnly, ...(opts.agentControlsPage ? { agentControlsPage: opts.agentControlsPage } : {}), ...(opts.pageGuardPreload ? { pageGuardPreload: opts.pageGuardPreload } : {}) })
   bg.attachToWindow(win)
   const handlers = {}
   bg.register({ handle: (ch, fn) => (handlers[ch] = fn) })
@@ -176,6 +177,29 @@ describe('will-attach-webview', () => {
     // The session's rules are in place before the page loads anything.
     expect(t.electron.session.fromPartition).toHaveBeenCalledWith(BROWSER_PARTITION)
     expect(t.ses.setPermissionRequestHandler).toHaveBeenCalledTimes(1)
+  })
+
+  it('the right-click menu has Print…, which prints the page', () => {
+    const ids = contextMenuItems({}, {}).map((i) => i.id)
+    expect(ids).toContain('print')
+    const t = setup()
+    const g = t.attach()
+    g.print = vi.fn()
+    t.bg.runMenuItem(g, 'print', {})
+    expect(g.print).toHaveBeenCalledTimes(1)
+  })
+
+  it('every page session gets the print guard preload once (print only after a click)', () => {
+    const t = setup({ pageGuardPreload: 'C:/app/out/preload/pageGuard.js' })
+    const willAttach = (w) => w.winWc.emit('will-attach-webview', ev(), {}, { src: 'https://example.com/', partition: BROWSER_PARTITION })
+    willAttach(t)
+    willAttach(t)
+    expect(t.ses.registerPreloadScript).toHaveBeenCalledTimes(1)
+    expect(t.ses.registerPreloadScript).toHaveBeenCalledWith({ id: 'tessel-page-guard', type: 'frame', filePath: 'C:/app/out/preload/pageGuard.js' })
+    // None given: none added.
+    const u = setup()
+    willAttach(u)
+    expect(u.ses.registerPreloadScript).not.toHaveBeenCalled()
   })
 
   it('refuses a page in another session', () => {
@@ -1109,7 +1133,7 @@ describe('the right-click menu', () => {
 
   it('a link: open it in a new pane, in the default browser, copy it; then history, reload, inspect', () => {
     const items = contextMenuItems({ linkURL: 'https://example.com/x' }, { canGoBack: true, canGoForward: false })
-    expect(ids(items)).toEqual(['openLinkNewPane', 'openLinkExternal', 'copyLink', '-', 'back', 'forward', 'reload', 'selectAll', '-', 'inspect'])
+    expect(ids(items)).toEqual(['openLinkNewPane', 'openLinkExternal', 'copyLink', '-', 'back', 'forward', 'reload', 'print', 'selectAll', '-', 'inspect'])
     expect(items[0].label).toBe('Open Link in New Pane')
     expect(items.find((i) => i.id === 'back').enabled).toBe(true)
     expect(items.find((i) => i.id === 'forward').enabled).toBe(false)
@@ -1123,7 +1147,7 @@ describe('the right-click menu', () => {
 
   it('a field: undo, redo, cut, copy, paste, select all as the page allows', () => {
     const items = contextMenuItems({ isEditable: true, editFlags: { canUndo: false, canRedo: false, canCut: true, canCopy: true, canPaste: true, canSelectAll: true } })
-    expect(ids(items)).toEqual(['undo', 'redo', '-', 'cut', 'copy', 'paste', 'selectAll', '-', 'back', 'forward', 'reload', '-', 'inspect'])
+    expect(ids(items)).toEqual(['undo', 'redo', '-', 'cut', 'copy', 'paste', 'selectAll', '-', 'back', 'forward', 'reload', 'print', '-', 'inspect'])
     expect(items[0].enabled).toBe(false)
     expect(items.find((i) => i.id === 'paste').enabled).toBe(true)
   })
@@ -1173,6 +1197,9 @@ describe('the right-click menu', () => {
     g.destroyed = true
     t.bg.runMenuItem(g, 'reload', {})
     expect(g.reload).not.toHaveBeenCalled()
+    g.print = vi.fn()
+    t.bg.runMenuItem(g, 'print', {})
+    expect(g.print).not.toHaveBeenCalled()
     expect(t.sent).toEqual([])
     expect(t.openExternal).not.toHaveBeenCalled()
     expect(t.bg.showContextMenu(g, {})).toBe(null)

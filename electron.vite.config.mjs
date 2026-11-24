@@ -65,7 +65,9 @@ const config = {
         // (src/main/themedDialog.js: sandboxed, so one self-contained file).
         input: {
           index: 'src/preload/index.js',
-          themedDialog: 'src/preload/themedDialog.js'
+          themedDialog: 'src/preload/themedDialog.js',
+          // Every page of Tessel's browser (src/main/browserGuest.js).
+          pageGuard: 'src/preload/pageGuard.js'
         },
         // As with a single entry: Electron required at runtime (never
         // bundled), CommonJS files named after their entry.
