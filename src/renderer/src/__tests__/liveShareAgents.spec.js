@@ -42,7 +42,9 @@ const tick = async (w, sel) => {
 }
 const lastArg = (fn) => fn.mock.calls.at(-1)[0]
 // A person's row in People, opened.
+// A person's page, opened from their row (back to the list first).
 const expand = async (w, id) => {
+  if (w.find('[data-test="ls-back"]').exists()) await w.find('[data-test="ls-back"]').trigger('click')
   await w.find(`[data-test="ls-person-toggle-${id}"]`).trigger('click')
   await flushPromises()
 }

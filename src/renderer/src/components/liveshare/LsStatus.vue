@@ -2,9 +2,9 @@
 // Live Share: what the share is doing, on top of the Share tab while it runs
 // or gets ready. Sharing: a red dot, how many projects and since when (when
 // main says), and the facts that hold for it: it comes back after a restart
-// until you stop it, whether the ntfy.sh relay helps guests find it again,
-// whether ignored and secret files are hidden, and that it came back by
-// itself (for a couple of minutes after). Getting ready: how far it got, and
+// until you stop it, and only what is unusual as a tag: the ntfy.sh relay
+// off, ignored and secret files visible, and that it came back by itself
+// (for a couple of minutes after). Getting ready: how far it got, and
 // Cancel (Stop sharing for a share starting again by itself). Stop sharing
 // is here, the dialog asks first (stop).
 import { computed } from 'vue'
@@ -53,9 +53,9 @@ const title = computed(() => {
       <div class="lss-main">
         <div class="lss-title" data-test="ls-status-title">{{ title }}</div>
         <div class="lss-tags">
-          <span class="tag tag-scope" :title="t('liveShare.status.permanentHint', 'Until you stop it, the share starts again by itself when Tessel restarts, with its invitations and people.')" data-test="ls-status-permanent">{{ t('liveShare.status.permanent', 'Comes back after restarts') }}</span>
-          <span class="tag" :class="relayOn ? 'tag-ok' : 'tag-off'" :title="relayTitle" data-test="ls-status-relay">{{ relayOn ? t('liveShare.status.relayOn', 'Relay on') : t('liveShare.status.relayOff', 'Relay off') }}</span>
-          <span v-if="hidden" class="tag" data-test="ls-status-hidden">{{ t('liveShare.status.hidden', 'Secret files hidden') }}</span>
+          <span class="lss-fact" :title="t('liveShare.status.permanentHint', 'Until you stop it, the share starts again by itself when Tessel restarts, with its invitations and people.')" data-test="ls-status-permanent">{{ t('liveShare.status.permanent', 'Comes back after restarts') }}</span>
+          <span v-if="!relayOn" class="tag tag-warn" :title="relayTitle" data-test="ls-status-relay">{{ t('liveShare.status.relayOff', 'Relay off') }}</span>
+          <span v-if="!hidden" class="tag tag-danger" data-test="ls-status-visible">{{ t('liveShare.status.visible', 'Secret files visible') }}</span>
           <span v-if="host.resumed" class="tag tag-info" data-test="ls-status-resumed">{{ t('liveShare.status.resumed', 'Came back after a restart') }}</span>
         </div>
       </div>
@@ -123,5 +123,9 @@ const title = computed(() => {
 }
 .lss-btn {
   flex: none;
+}
+.lss-fact {
+  color: var(--text-dim);
+  font-size: 11.5px;
 }
 </style>

@@ -424,7 +424,15 @@
       "noneProject": "Personne ne voit encore ce projet.",
       "noneYet": "Personne pour l'instant : une fois le partage lancé, les personnes que vous acceptez apparaissent ici. Les personnes de confiance restent d'un partage à l'autre.",
       "removeAccess": "Retirer l'accès",
-      "accessOf": "Ce que {{name}} peut faire"
+      "accessOf": "Ce que {{name}} peut faire",
+      "willEnter": "Entrera sans demander",
+      "noTicked": "Aucun de ses projets n'est choisi",
+      "raiseText": "{{name}} pourra exécuter n'importe quelle commande sur ce PC en votre nom.",
+      "raiseYes": "Donner le contrôle total",
+      "raiseType": "Autoriser à taper",
+      "dangerOne": "1 personne peut exécuter des commandes sur ce PC",
+      "dangerMany": "{{count}} personnes peuvent exécuter des commandes sur ce PC",
+      "open": "Détails de {{name}}"
     },
     "section": {
       "access": "Accès",
@@ -587,7 +595,8 @@
       "flaggedHint": "Ce fichier dit aux agents quoi faire : vérifiez la modification.",
       "flagged": "Instructions d'agent",
       "fewer": "Afficher moins",
-      "all": "Tout voir ({{count}})"
+      "all": "Tout voir ({{count}})",
+      "toCheck": "{{count}} à vérifier"
     },
     "paste": {
       "forbidden": "{{host}} ne vous a pas donné le droit de taper dans ce panneau : l'image n'a pas été collée.",
@@ -638,7 +647,8 @@
       "relayOn": "Relais activé",
       "relayOff": "Relais désactivé",
       "hidden": "Fichiers secrets masqués",
-      "resumed": "Repris après un redémarrage"
+      "resumed": "Repris après un redémarrage",
+      "visible": "Fichiers secrets visibles"
     },
     "settings": {
       "guestsTitle": "Ce que voient les invités",
@@ -667,9 +677,24 @@
       "renew": "Prolonger…",
       "yes": "Chaque personne attend votre accord",
       "manage": "Options de l'invitation…",
-      "manageMore": "Invitations ({{count}} de plus)…"
+      "manageMore": "Invitations ({{count}} de plus)…",
+      "raiseText": "Avec Contrôle total, les personnes que vous laissez entrer avec cette invitation peuvent exécuter n'importe quelle commande sur ce PC en votre nom.",
+      "typesNote": "Cette invitation donne le Contrôle total : les personnes que vous laissez entrer avec elle peuvent exécuter des commandes sur ce PC."
     },
     "back": "Retour",
-    "done": "Terminé"
+    "done": "Terminé",
+    "projects": {
+      "add": "Ajouter un projet",
+      "addMore": "Ajouter un projet…",
+      "search": "Rechercher parmi {{count}} projets…",
+      "local": "Sur ce PC",
+      "sshGroup": "SSH · {{host}}",
+      "none": "Aucun projet ne correspond à « {{q}} ».",
+      "remove": "Ne plus partager {{project}}"
+    },
+    "waiting": {
+      "one": "Une demande d'accès",
+      "many": "{{count}} demandes d'accès"
+    }
   }
 }

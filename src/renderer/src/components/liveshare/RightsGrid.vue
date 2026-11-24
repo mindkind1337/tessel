@@ -65,7 +65,7 @@ const customPicked = ref(false)
 const preset = computed(() => rightsPreset(props.rights))
 const segment = computed(() => (customPicked.value ? 'custom' : preset.value))
 const PRESETS = computed(() => ['view', 'collaborate', 'full', 'custom'].map((id) => ({ id, label: presetLabel(id) })))
-function pick(id) {
+function pick(id, event) {
   if (props.disabled) return
   if (id === 'custom') {
     customPicked.value = true
@@ -73,6 +73,10 @@ function pick(id) {
   }
   customPicked.value = false
   emit('preset', id)
+  // The radios show what the rights are until the change is made (a preset
+  // asked first and cancelled leaves them as they were, and can be picked again).
+  const form = event && event.target && event.target.closest('.lsr-seg')
+  if (form) for (const el of form.querySelectorAll('input[type="radio"]')) el.checked = el.value === segment.value
 }
 const group = useId()
 
@@ -98,7 +102,7 @@ const describeWarn = computed(() => (pointedRight.value ? pointedRight.value.dan
         :data-test="p.id === 'custom' ? 'ls-' + testKey + '-customize' : 'ls-' + testKey + '-preset-' + p.id"
         @click="p.id === 'custom' && pick('custom')"
       >
-        <input type="radio" :name="group" :value="p.id" :checked="segment === p.id" :disabled="disabled" @change="pick(p.id)" />
+        <input type="radio" :name="group" :value="p.id" :checked="segment === p.id" :disabled="disabled" @change="pick(p.id, $event)" />
         <span>{{ p.label }}</span>
       </label>
     </div>

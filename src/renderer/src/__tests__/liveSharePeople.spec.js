@@ -41,11 +41,15 @@ const tick = async (w, sel) => {
   await flushPromises()
 }
 // A person's row, opened.
+// A person's page, opened from their row (back to the list first).
 const expand = async (w, id) => {
+  if (w.find('[data-test="ls-back"]').exists()) await w.find('[data-test="ls-back"]').trigger('click')
   await w.find(`[data-test="ls-person-toggle-${id}"]`).trigger('click')
   await flushPromises()
 }
-const ids = (w) => w.findAll('.sl-list > li').map((li) => li.attributes('data-test'))
+// Who waits (the band), then the list's rows.
+const ids = (w) => [...w.findAll('[data-test^="ls-waiting-g"]'), ...w.findAll('.lpe-list > li')].map((x) => x.attributes('data-test'))
+const page = (w) => w.find('[data-test="ls-person-page"]')
 // A person's access menu.
 const access = (w, id) => w.findAllComponents(ThemedSelect).find((c) => c.vm.$attrs['data-test'] === 'ls-person-access-' + id)
 const pick = async (w, id, value) => {
@@ -73,36 +77,36 @@ describe('Live Share: People', () => {
     // Waiting first, then in now, then offline.
     expect(ids(w)).toEqual(['ls-waiting-g2', 'ls-guest-g1', 'ls-guest-g4', 'ls-offline-k-abc'])
     const bob = w.find('[data-test="ls-guest-g1"]')
-    expect(bob.text()).toContain('Came with Simpa')
-    expect(bob.text()).toContain('Watching Claude Code')
+    // One line: what they watch (else the invitation they came with), then their projects.
+    expect(bob.text()).toContain('Watching Claude Code · tessel')
     expect(bob.text()).toContain('In now')
-    expect(bob.find('.sl-row-meta').text()).toContain('tessel')
     expect(access(w, 'g1').props('value')).toBe('custom')
     // The first invitation is named as the Invitations section names it.
     expect(w.find('[data-test="ls-guest-g4"]').text()).toContain('Came with First invitation')
-    // Closed: no boxes yet.
+    // The list has no boxes: they are on the person's page.
     expect(w.find('[data-test="ls-proj-ws-1-g1"]').exists()).toBe(false)
     await expand(w, 'g1')
-    expect(w.find('[data-test="ls-person-toggle-g1"]').attributes('aria-expanded')).toBe('true')
+    expect(page(w).text()).toContain('Bob')
     expect(w.find('[data-test="ls-proj-ws-1-g1"] input').element.checked).toBe(true)
     expect(w.find('[data-test="ls-proj-ws-1-g1"]').classes()).toContain('on')
     expect(w.find('[data-test="ls-proj-ws-2-g1"] input').element.checked).toBe(false)
     expect(w.find('[data-test="ls-right-open-g1"] input').element.checked).toBe(true)
     // Every right of the catalog is a tile (and nothing else), under presets.
-    expect(w.find('[data-test="ls-guest-g1"]').findAll('[data-test^="ls-right-"]').map((x) => x.attributes('data-test'))).toEqual(RIGHT_IDS.map((id) => `ls-right-${id}-g1`))
+    expect(page(w).findAll('[data-test^="ls-right-"]').map((x) => x.attributes('data-test'))).toEqual(RIGHT_IDS.map((id) => `ls-right-${id}-g1`))
     expect(w.find('[data-test="ls-g1-preset-view"]').exists()).toBe(true)
+    await w.find('[data-test="ls-back"]').trigger('click')
     const eve = w.find('[data-test="ls-waiting-g2"]')
-    expect(eve.text()).toContain('Waiting for your answer')
     expect(eve.text()).toContain('Code 123 456')
+    expect(w.find('[data-test="ls-waiting-band"]').text()).toContain('One access request')
     const alex = w.find('[data-test="ls-offline-k-abc"]')
-    expect(alex.text()).toContain('Offline: comes back by itself')
-    expect(alex.text()).toContain('Came with Old (no longer exists)')
+    expect(alex.text()).toContain('Offline: comes back by itself · site')
     // An older Tessel can't be trusted.
     await expand(w, 'k-abc')
     expect(w.find('[data-test="ls-person-remove-k-abc"]').exists()).toBe(true)
     expect(w.find('[data-test="ls-person-trust-k-abc"]').exists()).toBe(false)
-    // One row open at a time.
+    // One person's page at a time; who waits stays on top of it.
     expect(w.find('[data-test="ls-proj-ws-1-g1"]').exists()).toBe(false)
+    expect(w.find('[data-test="ls-waiting-g2"]').exists()).toBe(true)
     w.unmount()
   })
 
@@ -121,8 +125,6 @@ describe('Live Share: People', () => {
     // Someone waiting has no access menu yet; the others one each.
     expect(access(w, 'g2')).toBeUndefined()
     expect(access(w, 'g1').props('value')).toBe('view')
-    // The waiting count beside the title.
-    expect(w.find('[data-test="ls-people-block"]').text()).toContain('1 waiting')
     w.unmount()
   })
 
@@ -194,7 +196,8 @@ describe('Live Share: People', () => {
     await flushPromises()
     expect(api.removeGuest).toHaveBeenLastCalledWith({ guestId: 'g1', untrust: false })
     // Trusted: "Also stop trusting" comes ticked.
-    expect(w.find('[data-test="ls-guest-g2"]').text()).toContain('Trusted')
+    await w.find('[data-test="ls-back"]').trigger('click')
+    expect(w.find('[data-test="ls-guest-g2"] [data-test="ls-person-trusted"]').exists()).toBe(true)
     await expand(w, 'g2')
     await w.find('[data-test="ls-person-remove-g2"]').trigger('click')
     const untrust = w.find('[data-test="ls-person-untrust-g2"] input')
@@ -203,6 +206,7 @@ describe('Live Share: People', () => {
     await flushPromises()
     expect(api.removeGuest).toHaveBeenLastCalledWith({ guestId: 'g2', untrust: true })
     // Unticked: removed, still trusted (and it says so).
+    await expand(w, 'g2')
     await w.find('[data-test="ls-person-remove-g2"]').trigger('click')
     expect(w.find('[data-test="ls-person-keep-trust-g2"]').exists()).toBe(false)
     await w.find('[data-test="ls-person-untrust-g2"] input').setValue(false)
@@ -219,7 +223,7 @@ describe('Live Share: someone waiting for your answer', () => {
     const w = await openAt('people', sharing({ guests: [guest({ id: 'g2', name: 'Eve', state: 'waiting', code: '123 456' })] }))
     const row = w.find('[data-test="ls-waiting-g2"]')
     expect(row.text()).toContain('Code 123 456')
-    // Nothing to open: the answer is on the row.
+    // Nothing to open: the answer is in the band.
     expect(w.find('[data-test="ls-person-toggle-g2"]').exists()).toBe(false)
     await row.find('[data-test="ls-waiting-letin-g2"]').trigger('click')
     expect(w.emitted('review-guest')).toEqual([['g2']])
@@ -242,12 +246,16 @@ describe('Live Share: trusted people', () => {
     // Before sharing: the trusted people are there.
     const row = w.find(`[data-test="ls-trusted-${tess.id}"]`)
     expect(row.text()).toContain('Tess')
-    expect(row.text()).toContain('Last seen')
+    // Before sharing: whether they will get in, and their projects.
+    expect(row.text()).toContain('None of their projects is ticked · tessel')
     await expand(w, tess.id)
     // A project kept that this window does not have: counted, not lost.
-    expect(w.find(`[data-test="ls-trusted-${tess.id}"]`).text()).toContain('And 1 project not in this window (kept).')
-    expect(w.find(`[data-test="ls-proj-ws-3-${tess.id}"]`).exists()).toBe(true)
-    await tick(w, `[data-test="ls-proj-ws-3-${tess.id}"] input`)
+    expect(page(w).text()).toContain('And 1 project not in this window (kept).')
+    // Their own projects as chips; any other project of this window through the picker.
+    expect(w.find(`[data-test="ls-proj-ws-1-${tess.id}"]`).exists()).toBe(true)
+    expect(w.find(`[data-test="ls-proj-ws-3-${tess.id}"]`).exists()).toBe(false)
+    await w.find('[data-test="ls-pp-add-project"]').trigger('click')
+    await tick(w, `[data-test="ls-project-ws-3-pick-${tess.id}"] input`)
     expect(api.access).toHaveBeenLastCalledWith({ subject: tess.id, project: 'ws-3', on: true })
     await tick(w, `[data-test="ls-right-close-${tess.id}"] input`)
     expect(api.access).toHaveBeenLastCalledWith({ subject: tess.id, right: 'close', on: true })
@@ -261,10 +269,11 @@ describe('Live Share: trusted people', () => {
     const tess = trustedOne()
     const w = await openAt('trusted', { ...OFF_HOST, trusted: [tess] })
     await expand(w, tess.id)
-    await tick(w, `[data-test="ls-proj-ws-2-${tess.id}"] input`)
+    await w.find('[data-test="ls-pp-add-project"]').trigger('click')
+    await tick(w, `[data-test="ls-project-ws-2-pick-${tess.id}"] input`)
     expect(w.find('[data-test="ls-host-error"]').text()).toBe('site could not be given to Tess (a trusted person can have up to 64 projects).')
     api.access.mockResolvedValue({ ok: false, reason: 'trust-projects', max: 64 })
-    await tick(w, `[data-test="ls-proj-ws-3-${tess.id}"] input`)
+    await tick(w, `[data-test="ls-project-ws-3-pick-${tess.id}"] input`)
     expect(w.find('[data-test="ls-host-error"]').text()).toBe('A trusted person can have up to 64 projects: take one away first.')
     w.unmount()
   })
@@ -278,7 +287,7 @@ describe('Live Share: trusted people', () => {
     const input = w.find(`[data-test="ls-trusted-name-input-${tess.id}"]`)
     expect(document.activeElement).toBe(input.element)
     await input.setValue('Tess B')
-    await w.find(`[data-test="ls-trusted-${tess.id}"] form`).trigger('submit')
+    await page(w).find('form').trigger('submit')
     await flushPromises()
     expect(api.renameTrusted).toHaveBeenCalledWith({ id: tess.id, name: 'Tess B' })
     await w.find(`[data-test="ls-trusted-untrust-${tess.id}"]`).trigger('click')
@@ -296,7 +305,7 @@ describe('Live Share: trusted people', () => {
     await expand(w, 'g3')
     await w.find('[data-test="ls-trusted-rename-g3"]').trigger('click')
     await w.find('[data-test="ls-trusted-name-input-g3"]').setValue('Tess R')
-    await w.find('[data-test="ls-guest-g3"] form').trigger('submit')
+    await page(w).find('form').trigger('submit')
     await flushPromises()
     expect(api.renameTrusted).toHaveBeenCalledWith({ id: tid, name: 'Tess R' })
     await w.find('[data-test="ls-trusted-untrust-g3"]').trigger('click')
@@ -322,14 +331,57 @@ describe('Live Share: the access menu', () => {
     expect(access(w, 'k-abc').props('value')).toBe('view')
     await pick(w, 'k-abc', 'collaborate')
     expect(api.access.mock.calls.map((c) => c[0])).toEqual(['open', 'close', 'edit', 'git', 'tasks', 'pagesView'].map((right) => ({ subject: 'k-abc', right, on: true })))
-    // Full control: their row opens on the rights, with the warning.
-    expect(w.find('[data-test="ls-person-toggle-k-abc"]').attributes('aria-expanded')).toBe('false')
-    await pick(w, 'k-abc', 'full')
-    expect(w.find('[data-test="ls-person-toggle-k-abc"]').attributes('aria-expanded')).toBe('true')
     w.unmount()
   })
 
-  it('Remove access asks first, in their row; for a trusted person not here: Stop trusting', async () => {
+  it('Full control is asked first, under their row: nothing changes until Give full control', async () => {
+    const w = await openAt('people', host())
+    await pick(w, 'k-abc', 'full')
+    expect(api.access).not.toHaveBeenCalled()
+    expect(w.find('[data-test="ls-raise-confirm-k-abc"]').text()).toContain('Alex will be able to run any command on this PC as you.')
+    expect(document.activeElement).toBe(w.find('[data-test="ls-raise-cancel-k-abc"]').element)
+    await w.find('[data-test="ls-raise-cancel-k-abc"]').trigger('click')
+    expect(w.find('[data-test="ls-raise-confirm-k-abc"]').exists()).toBe(false)
+    expect(api.access).not.toHaveBeenCalled()
+    await pick(w, 'k-abc', 'full')
+    await w.find('[data-test="ls-raise-yes-k-abc"]').trigger('click')
+    await flushPromises()
+    expect(api.access.mock.calls.map((c) => c[0])).toContainEqual({ subject: 'k-abc', right: 'type', on: true })
+    // Lowering applies at once.
+    api.access.mockClear()
+    await pick(w, 'g1', 'view')
+    expect(api.access).toHaveBeenCalledWith({ subject: 'g1', right: 'type', on: false })
+    w.unmount()
+  })
+
+  it('on a person’s page, the Type tile and the Full control preset are asked first too', async () => {
+    const w = await openAt('people', host())
+    await expand(w, 'k-abc')
+    await tick(w, '[data-test="ls-right-type-k-abc"] input')
+    expect(api.access).not.toHaveBeenCalled()
+    expect(w.find('[data-test="ls-pp-raise-confirm"]').exists()).toBe(true)
+    await w.find('[data-test="ls-pp-raise-yes"]').trigger('click')
+    await flushPromises()
+    expect(api.access).toHaveBeenCalledWith({ subject: 'k-abc', right: 'type', on: true })
+    api.access.mockClear()
+    await w.find('[data-test="ls-k-abc-preset-full"] input').trigger('change')
+    await flushPromises()
+    expect(api.access).not.toHaveBeenCalled()
+    await w.find('[data-test="ls-pp-raise-cancel"]').trigger('click')
+    expect(w.find('[data-test="ls-pp-raise-confirm"]').exists()).toBe(false)
+    w.unmount()
+  })
+
+  it('the list says once how many people can run commands on this PC', async () => {
+    const w = await openAt('people', host())
+    expect(w.find('[data-test="ls-danger-summary"]').text()).toBe('1 person can run commands on this PC')
+    w.unmount()
+    const none = await openAt('people', sharing({ guests: [guest()] }))
+    expect(none.find('[data-test="ls-danger-summary"]').exists()).toBe(false)
+    none.unmount()
+  })
+
+  it('Remove access asks first, on their page; for a trusted person not here: Stop trusting', async () => {
     const w = await openAt('people', host())
     await pick(w, 'k-abc', 'remove')
     expect(w.find('[data-test="ls-person-remove-confirm-k-abc"]').exists()).toBe(true)
@@ -337,6 +389,7 @@ describe('Live Share: the access menu', () => {
     await w.find('[data-test="ls-person-remove-yes-k-abc"]').trigger('click')
     await flushPromises()
     expect(api.removeGuest).toHaveBeenCalledWith({ guestId: 'k-abc', untrust: false })
+    await w.find('[data-test="ls-back"]').trigger('click')
     const ty = 't-' + 'b'.repeat(32)
     await pick(w, ty, 'remove')
     expect(w.find(`[data-test="ls-trusted-untrust-confirm-${ty}"]`).exists()).toBe(true)
