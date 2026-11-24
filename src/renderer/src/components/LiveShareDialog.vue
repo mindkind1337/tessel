@@ -563,7 +563,7 @@ function tabKeys(event, list, current, set) {
               </div>
               <p class="ls-hint">{{ presetHint(firstPreset, firstInvite.rights) }}</p>
             </div>
-            <div class="set-callout ls-callout" :class="firstTypes ? 'danger' : 'warn'" role="note" data-test="ls-type-warning">
+            <div class="set-callout ls-callout ls-callout-gap" :class="firstTypes ? 'danger' : 'warn'" role="note" data-test="ls-type-warning">
               <AlertTriangle :size="14" aria-hidden="true" />
               <span class="set-callout-text">{{ t('liveShare.share.warning2', 'A guest you let type can run any command on this PC as you. Only let people you trust type.') }}</span>
             </div>
@@ -1125,17 +1125,6 @@ fieldset.ls-block > legend.ls-block-title {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.ls-select {
-  width: auto;
-  min-width: 140px;
-  height: 28px;
-  font-size: 12px;
-}
-.ls-select-small {
-  min-width: 0;
-  height: 24px;
-  font-size: 11.5px;
-}
 .ls-icon-btn {
   padding-inline: 8px;
 }
@@ -1187,6 +1176,9 @@ fieldset.ls-block > legend.ls-block-title {
   color: var(--text-strong);
   font-size: 13px;
   font-weight: 600;
+}
+.ls-callout-gap {
+  margin-bottom: 16px;
 }
 .ls-foot {
   display: flex;

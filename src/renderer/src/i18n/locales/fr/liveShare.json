@@ -424,8 +424,7 @@
       "noneProject": "Personne ne voit encore ce projet.",
       "noneYet": "Personne pour l'instant : une fois le partage lancé, les personnes que vous acceptez apparaissent ici. Les personnes de confiance restent d'un partage à l'autre.",
       "removeAccess": "Retirer l'accès",
-      "accessOf": "Ce que {{name}} peut faire",
-      "fullRuns": "{{preset}} (exécute des commandes en votre nom)"
+      "accessOf": "Ce que {{name}} peut faire"
     },
     "section": {
       "access": "Accès",

@@ -149,7 +149,6 @@ function pickAccess(r, event) {
     ctx.preset(r.id, r.rights, id)
   }
 }
-const fullText = computed(() => t('liveShare.people.fullRuns', '{{preset}} (runs commands as you)', { preset: presetLabel('full') }))
 const fullHint = computed(() => t('liveShare.invite.presetFullHint', 'Every right, typing included: they can run any command on this PC as you. Only for people you trust.'))
 const busyAccess = (r) => shownRights().some((x) => ctx.busy(`${r.id}:right:${x.id}`)) // i18n-ignore
 
@@ -317,7 +316,7 @@ const emptyText = computed(() => {
                 :data-test="'ls-person-access-' + r.id"
                 @change="pickAccess(r, $event)"
               >
-                <option v-for="id in ACCESS" :key="id" :value="id" :title="id === 'full' ? fullHint : undefined">{{ id === 'full' ? fullText : presetLabel(id) }}</option>
+                <option v-for="id in ACCESS" :key="id" :value="id" :title="id === 'full' ? fullHint : undefined">{{ presetLabel(id) }}</option>
                 <option v-if="accessOf(r) === 'custom'" value="custom" disabled>{{ rightsSummary(r.rights).text }}</option>
                 <option value="remove">{{ removeText(r) }}</option>
               </ThemedSelect>
@@ -502,15 +501,5 @@ const emptyText = computed(() => {
   display: inline-flex;
   align-items: center;
   gap: 3px;
-}
-.lpe-access {
-  flex: none;
-  width: 150px;
-  height: 26px;
-  margin-right: 8px;
-  font-size: 11.5px;
-}
-.lpe-access.danger {
-  border-color: color-mix(in srgb, var(--danger) 55%, transparent);
 }
 </style>
