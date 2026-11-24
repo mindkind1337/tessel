@@ -1,10 +1,12 @@
-// Live Share's dialog (LiveShareDialog.vue): Share (the setup with the first
-// invitation, the overview while sharing, its sections) and Join, against a
+// Live Share's dialog (LiveShareDialog.vue): Share (one page: the projects,
+// the invitation, the people; Invitations and Settings as pages of their
+// own) and Join, against a
 // fake window.shellApi.liveShare (src/preload: liveShare). The sections'
-// own flows: liveShareInvitations.spec.js and liveSharePeople.spec.js.
+// The pages' own flows: liveShareInvitations.spec.js and liveSharePeople.spec.js.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import LiveShareDialog from '../components/LiveShareDialog.vue'
+import ThemedSelect from '../components/ui/ThemedSelect.vue'
 import { fakeApi, OFF_HOST, OFF_GUEST, invite, guest, sharing } from './liveShareFakes'
 import { NO_RIGHTS } from '../../../shared/liveShareRights'
 import { setMessages } from '../i18n'
@@ -34,6 +36,12 @@ async function host(status) {
   push.host({ ...OFF_HOST, ...status })
   await flushPromises()
 }
+// A menu of the page, by its data-test, and a choice made in it.
+const menu = (w, id) => w.findAllComponents(ThemedSelect).find((c) => c.vm.$attrs['data-test'] === id)
+async function choose(w, id, value) {
+  menu(w, id).vm.$emit('change', { target: { value } })
+  await flushPromises()
+}
 async function guestSays(status) {
   push.guest({ ...OFF_GUEST, ...status })
   await flushPromises()
@@ -42,56 +50,41 @@ async function guestSays(status) {
 describe('LiveShareDialog: before sharing', () => {
   it('warns, then starts with the name, the projects and the first invitation', async () => {
     const wrapper = await open(PROJECTS)
-    expect(wrapper.find('[data-test="ls-overview"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="ls-main"]').exists()).toBe(true)
     expect(wrapper.text()).toContain('run any command on this PC as you')
     expect(wrapper.find('[data-test="ls-share-name"]').element.value).toBe('ada')
-    // The first invitation: 1 hour, view only, unless you change it.
-    expect(wrapper.find('[data-test="ls-first-summary"]').text()).toContain('View only')
-    expect(wrapper.find('[data-test="ls-first-summary"]').text()).toContain('1 hour')
+    // The first invitation: view only, 1 hour, unless you change it.
+    expect(menu(wrapper, 'ls-first-access').props('value')).toBe('view')
+    expect(menu(wrapper, 'ls-first-lifetime').props('value')).toBe('hour')
     await wrapper.find('[data-test="ls-start"]').trigger('click')
     expect(api.start).toHaveBeenCalledWith({ name: 'ada', projects: ['ws-1'], invite: { label: '', lifetime: 'hour', maxUses: 0, rights: { ...NO_RIGHTS, type: false, open: false, close: false } } })
     wrapper.unmount()
   })
-
-  it('the first invitation can be set before starting (label, lifetime, uses, rights)', async () => {
+  it('the first invitation can be set before starting (what people can do, how long)', async () => {
     const wrapper = await open(PROJECTS)
-    await wrapper.find('[data-test="ls-first-toggle"]').trigger('click')
-    expect(wrapper.find('[data-test="ls-first-toggle"]').attributes('aria-expanded')).toBe('true')
-    // No projects there: the first invitation offers every shared project.
-    expect(wrapper.find('[data-test="ls-invite-later"]').exists()).toBe(false)
-    await wrapper.find('[data-test="ls-invite-label"]').setValue('Team')
-    await wrapper.find('[data-test="ls-invite-lifetime-day"] input').setValue(true)
-    await wrapper.find('[data-test="ls-invite-uses"]').setValue('3')
-    // The rights as presets, or tile by tile.
-    await wrapper.find('[data-test="ls-invite-customize"]').trigger('click')
-    const openBox = wrapper.find('[data-test="ls-right-open-invite"] input')
-    openBox.element.checked = true
-    await openBox.trigger('change')
-    await flushPromises()
-    // Its summary names the preset, not every right.
-    expect(wrapper.find('[data-test="ls-first-summary"]').text()).toContain('1 day')
-    expect(wrapper.find('[data-test="ls-first-summary"]').text()).toContain('Custom · 1')
+    await choose(wrapper, 'ls-first-access', 'collaborate')
+    await choose(wrapper, 'ls-first-lifetime', 'day')
+    expect(wrapper.find('[data-test="ls-first"]').text()).toContain('edit files')
     await wrapper.find('[data-test="ls-start"]').trigger('click')
-    expect(api.start).toHaveBeenCalledWith({ name: 'ada', projects: ['ws-1'], invite: { label: 'Team', lifetime: 'day', maxUses: 3, rights: { ...NO_RIGHTS, type: false, open: true, close: false } } })
+    const sent = api.start.mock.calls[0][0]
+    expect(sent.invite.lifetime).toBe('day')
+    expect(sent.invite.rights).toMatchObject({ open: true, edit: true, type: false })
     wrapper.unmount()
   })
-
-  it('start, copy, send: once shared, the first invitation’s Copy has the keyboard', async () => {
+  it('start, copy, send: once shared, the invitation’s Copy has the keyboard', async () => {
     api.start.mockResolvedValue({ ok: true, ...sharing({ projectIds: ['ws-1'], invites: [invite({ id: 'iv-0000000001', label: '', code: 'TS1.first' })] }) })
     const wrapper = await open(PROJECTS)
     await wrapper.find('[data-test="ls-start"]').trigger('click')
     await flushPromises()
-    const copy = wrapper.find('[data-test="ls-first-copy-iv-0000000001"]')
+    const copy = wrapper.find('[data-test="ls-link-copy"]')
     expect(copy.exists()).toBe(true)
     expect(document.activeElement).toBe(copy.element)
-    expect(wrapper.find('[data-test="ls-first-iv-0000000001"]').text()).toContain('Invitation')
     await copy.trigger('click')
     await flushPromises()
     expect(window.shellApi.writeClipboard).toHaveBeenCalledWith('TS1.first')
     expect(copy.text()).toBe('Copied')
     wrapper.unmount()
   })
-
   it('shares the projects you tick, and needs one', async () => {
     const wrapper = await open(PROJECTS)
     const box = (id) => wrapper.find(`[data-test="ls-project-${id}"] input`)
@@ -148,8 +141,7 @@ describe('LiveShareDialog: before sharing', () => {
       return { ok: false, error: 'No internet.' }
     })
     const wrapper = await open(PROJECTS)
-    await wrapper.find('[data-test="ls-first-toggle"]').trigger('click')
-    await flushPromises()
+    await choose(wrapper, 'ls-first-access', 'full')
     await wrapper.find('[data-test="ls-start"]').trigger('click')
     await flushPromises()
     expect(api.start).toHaveBeenCalledTimes(1)
@@ -166,26 +158,23 @@ describe('LiveShareDialog: before sharing', () => {
     wrapper.unmount()
   })
 
-  it('four sections; invitations and people need a share (an empty state says so); trusted people and settings do not', async () => {
+  it('one page, no section tabs; Settings and Invitations are pages with Back; before sharing, invitations wait for the share', async () => {
     const wrapper = await open(PROJECTS)
-    expect(wrapper.findAll('.ls-section-tab').map((x) => x.text())).toEqual(['Overview', 'People', 'Invitations', 'Settings'])
-    await wrapper.find('[data-test="ls-section-invites"]').trigger('click')
-    expect(wrapper.find('[data-test="ls-section-off"]').text()).toContain('Invitations come with a share')
-    await wrapper.find('[data-test="ls-section-people"]').trigger('click')
-    expect(wrapper.find('[data-test="ls-section-off"]').exists()).toBe(true)
-    // People's grid needs a share; its list shows the trusted people.
-    await wrapper.find('[data-test="ls-people-view-grid"]').trigger('click')
-    expect(wrapper.find('[data-test="ls-access-off"]').exists()).toBe(true)
-    await wrapper.find('[data-test="ls-people-view-list"]').trigger('click')
-    await wrapper.find('[data-test="ls-people-filter-trusted"]').trigger('click')
-    expect(wrapper.find('[data-test="ls-people-filter-trusted"]').attributes('aria-pressed')).toBe('true')
-    expect(wrapper.find('[data-test="ls-trusted-empty"]').exists()).toBe(true)
-    await wrapper.find('[data-test="ls-section-settings"]').trigger('click')
+    expect(wrapper.find('.ls-section-tab').exists()).toBe(false)
+    expect(wrapper.find('[data-test="ls-goto-invites"]').exists()).toBe(false)
+    // The people block is there before sharing (trusted people would be in it).
+    expect(wrapper.find('[data-test="ls-people-block"]').exists()).toBe(true)
+    await wrapper.find('[data-test="ls-goto-settings"]').trigger('click')
     expect(wrapper.find('[data-test="ls-hide-ignored"]').classes()).toContain('set-switch')
+    expect(wrapper.find('[data-test="ls-main"]').exists()).toBe(false)
+    await wrapper.find('[data-test="ls-back"]').trigger('click')
+    expect(wrapper.find('[data-test="ls-main"]').exists()).toBe(true)
     wrapper.unmount()
+    const invites = await open({ ...PROJECTS, initialSection: 'invites' })
+    expect(invites.find('[data-test="ls-section-off"]').text()).toContain('Invitations come with a share')
+    invites.unmount()
   })
-
-  it('the setup card: project chips (a project without a folder shows terminals only; an SSH project shows an SSH tag), the warning as a callout, the facts and a way to Settings', async () => {
+  it('before sharing: project chips (a project without a folder shows terminals only; an SSH project shows an SSH tag), the warning as a callout', async () => {
     const wrapper = await open({ projects: [...PROJECTS.projects, { id: 'ws-3', name: 'box', noFiles: true }, { id: 'ws-4', name: 'srv', ssh: true, sshPath: '/srv/app' }, { id: 'ws-5', name: 'home', ssh: true, sshPath: '/home/me' }], projectIds: ['ws-1'] })
     expect(wrapper.find('[data-test="ls-project-ws-1"]').classes()).toContain('on')
     expect(wrapper.find('[data-test="ls-nofiles-ws-3"]').text()).toBe('Terminals only')
@@ -200,15 +189,9 @@ describe('LiveShareDialog: before sharing', () => {
     expect(wrapper.find('[data-test="ls-nofiles-ws-4"]').exists()).toBe(false)
     expect(wrapper.find('[data-test="ls-type-warning"]').classes()).toContain('warn')
     // A first invitation that lets them type: the warning turns red.
-    await wrapper.find('[data-test="ls-first-toggle"]').trigger('click')
-    await wrapper.find('[data-test="ls-invite-preset-full"] input').trigger('change')
-    await flushPromises()
+    await choose(wrapper, 'ls-first-access', 'full')
     expect(wrapper.find('[data-test="ls-type-warning"]').classes()).toContain('danger')
-    expect(wrapper.find('[data-test="ls-first-summary"]').text()).toContain('Full control')
-    expect(wrapper.find('[data-test="ls-facts"]').text()).toContain('Comes back after restarts')
-    expect(wrapper.find('[data-test="ls-facts"]').text()).toContain('ntfy.sh: on')
-    await wrapper.find('[data-test="ls-goto-settings"]').trigger('click')
-    expect(wrapper.find('[data-test="ls-section-settings"]').attributes('aria-selected')).toBe('true')
+    expect(menu(wrapper, 'ls-first-access').props('value')).toBe('full')
     wrapper.unmount()
   })
 })
@@ -226,52 +209,65 @@ describe('LiveShareDialog: while sharing', () => {
     wrapper.unmount()
   })
 
-  it('the overview lists the codes to copy and who is there, with a way to each section', async () => {
+  it('the invitation: its code, what people who join can do, Copy; the others and its options on the Invitations page', async () => {
     const wrapper = await open({ ...PROJECTS, projectIds: ['ws-1', 'ws-2'] })
-    await host(sharing({ invites: [invite(), invite({ id: 'iv-bbbbbbbbbb', label: 'Team', state: 'blocked' })], guests: [guest(), guest({ id: 'g2', name: 'Eve', state: 'waiting', code: '123 456' })] }))
-    expect(wrapper.findAll('[data-test="ls-invite"]').map((x) => x.attributes('title'))).toEqual(['TS1.code-a', 'TS1.code-a'])
-    // A blocked code can't be copied from here.
-    expect(wrapper.find('[data-test="ls-first-copy-iv-bbbbbbbbbb"]').attributes('disabled')).toBeDefined()
-    expect(wrapper.find('[data-test="ls-people-summary"]').text()).toContain('1 connected · 1 waiting for your answer')
-    expect(wrapper.find('[data-test="ls-section-invites"]').text()).toContain('2')
-    expect(wrapper.find('[data-test="ls-section-people"]').text()).toContain('2')
-    expect(wrapper.text()).toContain('Codes stop working when you stop sharing')
+    await host(sharing({ invites: [invite({ id: 'iv-bbbbbbbbbb', label: 'Team', state: 'blocked' }), invite()], guests: [guest(), guest({ id: 'g2', name: 'Eve', state: 'waiting', code: '123 456' })] }))
+    // The first invitation that lets people in.
+    expect(wrapper.findAll('[data-test="ls-invite"]').map((x) => x.attributes('title'))).toEqual(['TS1.code-a'])
+    expect(wrapper.find('[data-test="ls-link-copy"]').attributes('disabled')).toBeUndefined()
+    expect(menu(wrapper, 'ls-link-access').props('value')).toBe('view')
+    // A change goes to that invitation (the people already in keep theirs).
+    await choose(wrapper, 'ls-link-access', 'collaborate')
+    expect(api.updateInvite).toHaveBeenLastCalledWith({ id: 'iv-aaaaaaaaaa', patch: { rights: expect.objectContaining({ open: true, edit: true, type: false }) }, applyRemovals: true, applyAdditions: false })
+    await choose(wrapper, 'ls-link-lifetime', 'week')
+    expect(api.updateInvite).toHaveBeenLastCalledWith({ id: 'iv-aaaaaaaaaa', patch: { lifetime: 'week' }, applyRemovals: false, applyAdditions: false })
+    expect(wrapper.find('[data-test="ls-goto-invites"]').text()).toContain('1 more')
+    expect(wrapper.find('[data-test="ls-people-block"]').text()).toContain('1 waiting')
     await wrapper.find('[data-test="ls-goto-invites"]').trigger('click')
     expect(wrapper.find('[data-test="ls-invitations"]').exists()).toBe(true)
     wrapper.unmount()
   })
 
-  it('with no invitation left: an empty state and a way to make one', async () => {
+  it('an expired invitation is not the one shown, and its code cannot be copied', async () => {
+    const wrapper = await open(PROJECTS)
+    await host(sharing({ invites: [invite({ code: 'TS1.old', expiresAt: Date.now() - 1000 }), invite({ id: 'iv-bbbbbbbbbb', code: 'TS1.new' })] }))
+    expect(wrapper.find('[data-test="ls-invite"]').attributes('title')).toBe('TS1.new')
+    await host(sharing({ invites: [invite({ code: 'TS1.old', expiresAt: Date.now() - 1000 })] }))
+    expect(wrapper.find('[data-test="ls-link-copy"]').attributes('disabled')).toBeDefined()
+    wrapper.unmount()
+  })
+  it('with no invitation left: an empty state and New invitation', async () => {
     const wrapper = await open(PROJECTS)
     await host(sharing({ invites: [] }))
     expect(wrapper.find('[data-test="ls-no-invites"]').text()).toContain('No invitation left')
+    await wrapper.find('[data-test="ls-link-new"]').trigger('click')
+    await flushPromises()
+    expect(api.createInvite).toHaveBeenCalledWith({ label: '', lifetime: 'hour', maxUses: 0, rights: expect.objectContaining({ type: false, open: false }), projects: ['ws-1', 'ws-2'], later: true })
     wrapper.unmount()
   })
-
-  it('the overview: real group labels, each code shortened with Copy code and Copy message, one Stop sharing at a time', async () => {
+  it('the page: its blocks, the code shortened with Copy code and Copy message, one Stop sharing at a time', async () => {
     const long = 'TS2.' + 'a'.repeat(80) + '.tail1234'
     const wrapper = await open(PROJECTS)
-    await host(sharing({ guests: [guest()], invites: [invite({ code: long }), invite({ id: 'iv-bbbbbbbbbb', label: 'Design review', expiresAt: null })] }))
-    const labels = wrapper.findAll('[data-test="ls-overview"] .ls-label').map((x) => x.text())
-    expect(labels).toEqual(['Projects you share', 'Invitation codes', 'In now', 'Recent guest actions'])
-    const code = wrapper.find('[data-test="ls-first-iv-aaaaaaaaaa"] [data-test="ls-invite"]')
+    await host(sharing({ guests: [guest()], invites: [invite({ code: long }), invite({ id: 'iv-bbbbbbbbbb', label: 'Design review', expiresAt: null })], actions: [{ id: 'a1', at: Date.now(), kind: 'save', name: 'Bob', path: 'a.txt', project: 'ws-1' }] }))
+    const titles = wrapper.findAll('[data-test="ls-main"] .ls-block-title').map((x) => x.text().replace(/\s*\d+$/, ''))
+    expect(titles).toEqual(['Projects you share', 'Invitation', 'People with access', 'Recent guest actions'])
+    const code = wrapper.find('[data-test="ls-invite"]')
     expect(code.text()).toBe('TS2.aaaaaaaaaa…tail1234')
     expect(code.attributes('title')).toBe(long)
-    await wrapper.find('[data-test="ls-first-message-iv-aaaaaaaaaa"]').trigger('click')
+    await wrapper.find('[data-test="ls-link-message"]').trigger('click')
     await flushPromises()
     expect(window.shellApi.writeClipboard).toHaveBeenCalledWith(expect.stringContaining('paste this code: ' + long))
-    // Who is in, with their rights in one chip.
-    expect(wrapper.find('[data-test="ls-in-g1"]').text()).toContain('Bob')
-    expect(wrapper.find('[data-test="ls-in-g1"] [data-test="ls-rights-chip"]').text()).toBe('View only')
+    // Who is in, with their access menu.
+    expect(wrapper.find('[data-test="ls-guest-g1"]').text()).toContain('Bob')
+    expect(menu(wrapper, 'ls-person-access-g1').props('value')).toBe('view')
     await wrapper.find('[data-test="ls-stop"]').trigger('click')
     expect(wrapper.find('[data-test="ls-stop-confirm"]').exists()).toBe(true)
     expect(wrapper.findAll('button').filter((b) => b.text() === 'Stop sharing')).toHaveLength(1)
-    // The footer keeps only Close meanwhile (never Start sharing).
+    // The footer: Settings and Done (never Start sharing).
     expect(wrapper.find('[data-test="ls-start"]').exists()).toBe(false)
-    expect(wrapper.findAll('.confirm-actions > button').map((b) => b.text())).toEqual(['Close'])
+    expect(wrapper.findAll('.confirm-actions > button').map((b) => b.text())).toEqual(['Settings', 'Done'])
     wrapper.unmount()
   })
-
   it('French: plural uses, the people let in, and times as French writes them', async () => {
     setMessages('fr', frLiveShare)
     try {
@@ -281,7 +277,7 @@ describe('LiveShareDialog: while sharing', () => {
       const wrapper = await open(PROJECTS)
       await host(sharing({ invites: [invite({ joined: 2 })], actions: [{ id: 'a1', at, kind: 'save', name: 'Chen', path: 'a.txt', project: 'ws-1' }] }))
       expect(wrapper.find('[data-test="ls-recent-a1"] .ls-recent-time').text()).toBe('06 h 13')
-      await wrapper.find('[data-test="ls-section-invites"]').trigger('click')
+      await wrapper.find('[data-test="ls-goto-invites"]').trigger('click')
       expect(wrapper.find('[data-test="ls-invite-summary"]').text()).toContain('2 personnes entrées')
       await wrapper.find('[data-test="ls-invite-toggle-iv-aaaaaaaaaa"]').trigger('click')
       expect(wrapper.text()).toContain('2 personnes entrées avec elle')
@@ -310,29 +306,19 @@ describe('LiveShareDialog: while sharing', () => {
     wrapper.unmount()
   })
 
-  it('opens on the section asked for (a project’s Who has access…)', async () => {
-    api.state.mockResolvedValue({ host: sharing({ guests: [guest()] }), guest: OFF_GUEST, defaultName: 'ada' })
+  it('opens on the page asked for; a project’s Who has access… shows who sees it', async () => {
+    api.state.mockResolvedValue({ host: sharing({ guests: [guest(), guest({ id: 'g3', name: 'Tess', projects: ['ws-2'] })] }), guest: OFF_GUEST, defaultName: 'ada' })
     const wrapper = await open({ ...PROJECTS, projectIds: ['ws-1', 'ws-2'], initialSection: 'access', focusProject: 'ws-2' })
-    // Access is People's grid now, the project's column lit.
-    expect(wrapper.find('[data-test="ls-section-people"]').attributes('aria-selected')).toBe('true')
-    expect(wrapper.find('[data-test="ls-people-view-grid"]').attributes('aria-pressed')).toBe('true')
-    expect(wrapper.find('[data-test="ls-access-col-ws-2"]').classes()).toContain('focus')
-    expect(wrapper.find('[data-test="ls-access-focus"]').text()).toContain('Who has access to site')
+    expect(wrapper.find('[data-test="ls-main"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="ls-people-only"]').text()).toContain('Who sees site')
+    expect(wrapper.find('[data-test="ls-guest-g1"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="ls-guest-g3"]').exists()).toBe(true)
     wrapper.unmount()
+    const settings = await open({ ...PROJECTS, initialSection: 'settings' })
+    expect(settings.find('[data-test="ls-hide-ignored"]').exists()).toBe(true)
+    settings.unmount()
   })
 
-  it('arrow keys move between the sections', async () => {
-    const wrapper = await open(PROJECTS)
-    await host(sharing())
-    const tabs = wrapper.find('.ls-sections')
-    await tabs.trigger('keydown', { key: 'ArrowRight' })
-    expect(wrapper.find('[data-test="ls-section-people"]').attributes('aria-selected')).toBe('true')
-    await tabs.trigger('keydown', { key: 'End' })
-    expect(wrapper.find('[data-test="ls-section-settings"]').attributes('aria-selected')).toBe('true')
-    await tabs.trigger('keydown', { key: 'ArrowRight' })
-    expect(wrapper.find('[data-test="ls-section-overview"]').attributes('aria-selected')).toBe('true')
-    wrapper.unmount()
-  })
 })
 
 describe('LiveShareDialog: status and waiting guests', () => {
@@ -346,8 +332,8 @@ describe('LiveShareDialog: status and waiting guests', () => {
     expect(status.find('[data-test="ls-status-hidden"]').exists()).toBe(true)
     expect(status.find('[data-test="ls-status-resumed"]').exists()).toBe(true)
     expect(status.find('[data-test="ls-stop"]').exists()).toBe(true)
-    // On every section.
-    await wrapper.find('[data-test="ls-section-settings"]').trigger('click')
+    // On every page.
+    await wrapper.find('[data-test="ls-goto-settings"]').trigger('click')
     expect(wrapper.find('[data-test="ls-status"]').exists()).toBe(true)
     expect(wrapper.find('[data-test="ls-relay-status"]').exists()).toBe(false)
     wrapper.unmount()
@@ -375,19 +361,18 @@ describe('LiveShareDialog: status and waiting guests', () => {
   it('who waits for your answer comes first: Let in brings up their prompt, Refuse turns them away', async () => {
     const wrapper = await open(PROJECTS)
     await host(sharing({ guests: [guest({ id: 'g2', name: 'Eve', state: 'waiting', code: '123 456' })] }))
-    const row = wrapper.find('[data-test="ls-ov-waiting-g2"]')
+    const row = wrapper.find('[data-test="ls-waiting-g2"]')
     expect(row.text()).toContain('Eve')
     expect(row.text()).toContain('Code 123 456')
-    expect(wrapper.find('[data-test="ls-section-people"] .ls-count').classes()).toContain('warn')
-    await wrapper.find('[data-test="ls-ov-letin-g2"]').trigger('click')
+    expect(wrapper.find('[data-test="ls-people-block"] .ls-count').classes()).toContain('warn')
+    await wrapper.find('[data-test="ls-waiting-letin-g2"]').trigger('click')
     expect(wrapper.emitted('review-guest')).toEqual([['g2']])
-    await wrapper.find('[data-test="ls-ov-refuse-g2"]').trigger('click')
+    await wrapper.find('[data-test="ls-waiting-refuse-g2"]').trigger('click')
     await flushPromises()
     expect(api.approve).toHaveBeenCalledWith(expect.objectContaining({ guestId: 'g2', yes: false }))
     expect(wrapper.find('[data-test="ls-host-notice"]').text()).toBe('Eve was turned away.')
     wrapper.unmount()
   })
-
   it('Stop sharing with only someone waiting says they will be turned away (the toolbar’s words)', async () => {
     const wrapper = await open(PROJECTS)
     await host(sharing({ guests: [guest({ id: 'g2', name: 'Eve', state: 'waiting' })] }))
@@ -400,13 +385,14 @@ describe('LiveShareDialog: status and waiting guests', () => {
     const actions = Array.from({ length: 7 }, (_, i) => ({ id: 'a' + i, at: Date.now(), kind: 'save', name: 'Chen', path: 'f' + i + '.txt', project: 'ws-1' }))
     const wrapper = await open(PROJECTS)
     await host(sharing({ actions }))
+    expect(wrapper.find('[data-test="ls-recent"]').text()).toContain('7')
     expect(wrapper.findAll('.ls-recent-item')).toHaveLength(5)
     await wrapper.find('[data-test="ls-recent-all"]').trigger('click')
     expect(wrapper.findAll('.ls-recent-item')).toHaveLength(7)
     wrapper.unmount()
   })
 
-  it('getting ready: the status says how far, with Cancel there, and the overview says when the code comes', async () => {
+  it('getting ready: the status says how far, with Cancel there, and the page says when the code comes', async () => {
     const wrapper = await open(PROJECTS)
     await host({ state: 'starting' })
     expect(wrapper.find('[data-test="ls-status"] [data-test="ls-progress"]').text()).toBe('Starting…')

@@ -3,11 +3,13 @@
 // LiveShareDialog's context runs the calls): who waits for your answer, the
 // guests in now, the people let in who are offline (they come back by
 // themselves, with what you leave them), and the people you trust (kept
-// across shares and restarts, so also before you share). Filter chips narrow
-// it: All · In now · Waiting · Offline · Trusted.
+// across shares and restarts, so also before you share). One list, as a
+// Share dialog has: whoever waits first, then the others, each with an
+// access menu (View only, Collaborate, Full control; Remove or Stop
+// trusting). A project's "Who has access…" shows only the people who see it.
 //
 // A row says who it is, how they came and what they do now, the projects
-// they see (chips) and their rights (one chip). Someone waiting has Let in…
+// they see (chips) and their access (the menu). Someone waiting has Let in…
 // (their prompt, with the code to check and what their invitation offers)
 // and Refuse on their row. Any other row opens on what they see (a chip per
 // project), what they may do (presets, then a tile per right), the agents
@@ -16,31 +18,23 @@
 // Remove takes a guest out (a trusted one: they stop being trusted too,
 // unless you untick it); Stop trusting is asked first (their connections
 // end, and they need your yes again).
-//
-// List | Grid: the grid (LsAccess.vue) shows the same people against the
-// shared projects, to change many at once.
 import { ref, computed, nextTick, inject, watch } from 'vue'
-import { ShieldCheck, ShieldOff, UserX, UserCheck, Pencil, List, Table2 } from 'lucide-vue-next'
+import { ShieldCheck, ShieldOff, UserX, UserCheck, Pencil, X } from 'lucide-vue-next'
 import ProjectChecks from './ProjectChecks.vue'
 import RightsGrid from './RightsGrid.vue'
-import RightsChip from './RightsChip.vue'
 import LsAgents from './LsAgents.vue'
 import LsAvatars from './LsAvatars.vue'
-import LsAccess from './LsAccess.vue'
+import ThemedSelect from '../ui/ThemedSelect.vue'
 import { joinedGuests, waitingGuests, offlinePeople, trustedPeople, invitesOf, personName, viaName } from '../../liveShareAccess'
 import { cleanRights } from '../../../../shared/liveShareRights'
+import { rightsPreset, presetLabel, rightsSummary, shownRights } from '../../liveShareRights'
 import { formatWhen } from '../../timeFormat'
 import { t } from '../../i18n'
 
 const props = defineProps({
-  // 'list' or 'grid'.
-  view: { type: String, default: 'list' },
-  // all, in, waiting, offline, trusted.
-  filter: { type: String, default: 'all' },
-  // The grid: a project's column lit first (a project's "Who has access…").
+  // A project's "Who has access…": only the people who see it.
   focusProject: { type: String, default: null }
 })
-const emit = defineEmits(['update:view', 'update:filter'])
 
 const ctx = inject('lsDialog')
 const host = computed(() => ctx.host.value)
@@ -64,22 +58,15 @@ const rows = computed(() => {
   return out
 })
 
-const FILTERS = {
-  all: () => true,
-  in: (r) => r.online,
-  waiting: (r) => r.kind === 'waiting',
-  offline: (r) => !r.online && r.kind !== 'waiting',
-  trusted: (r) => !!r.trusted
-}
-const filterId = computed(() => (FILTERS[props.filter] ? props.filter : 'all'))
-const shown = computed(() => rows.value.filter(FILTERS[filterId.value]))
-const filters = computed(() => [
-  { id: 'all', label: t('liveShare.people.filterAll', 'All') },
-  { id: 'in', label: t('liveShare.overview.inNow', 'In now') },
-  { id: 'waiting', label: t('liveShare.people.filterWaiting', 'Waiting') },
-  { id: 'offline', label: t('liveShare.people.offlineBadge', 'Offline') },
-  { id: 'trusted', label: t('liveShare.people.trustedBadge', 'Trusted') }
-].map((f) => ({ ...f, count: rows.value.filter(FILTERS[f.id]).length })))
+// A project's "Who has access…": the people who see it (and who waits),
+// until Show everyone.
+const onlyProject = ref(props.focusProject)
+watch(
+  () => props.focusProject,
+  (id) => (onlyProject.value = id)
+)
+const shown = computed(() => (onlyProject.value ? rows.value.filter((r) => r.kind === 'waiting' || (r.projects || []).includes(onlyProject.value)) : rows.value))
+const onlyText = computed(() => t('liveShare.people.onlyProject', 'Who sees {{project}}', { project: ctx.projectName(onlyProject.value) || '?' }))
 
 // --- Rows ----------------------------------------------------------------------
 const TEST_PREFIX = { waiting: 'ls-waiting-', guest: 'ls-guest-', offline: 'ls-offline-', trusted: 'ls-trusted-' }
@@ -144,13 +131,27 @@ function toggle(r) {
 watch(rows, (list) => {
   if (openId.value && !list.some((r) => r.id === openId.value && r.kind !== 'waiting')) openId.value = null
 })
-// From the grid: their row, open, in the list.
-function openPerson(id) {
-  emit('update:filter', 'all')
-  emit('update:view', 'list')
-  openId.value = id
-  nextTick(() => focusIn(`[data-test="ls-person-toggle-${id}"]`)) // i18n-ignore
+// The access menu: a preset (each right that differs, in turn), or Remove /
+// Stop trusting (asked first, in their row).
+const ACCESS = ['view', 'collaborate', 'full']
+const accessOf = (r) => rightsPreset(r.rights)
+const removeText = (r) => (r.kind === 'trusted' ? t('liveShare.trusted.untrust', 'Stop trusting') : t('liveShare.people.removeAccess', 'Remove access'))
+function pickAccess(r, event) {
+  const id = event && event.target ? event.target.value : ''
+  if (id === 'remove') {
+    openId.value = r.id
+    if (r.kind === 'trusted') askUntrust(r)
+    else askRemove(r)
+  } else if (ACCESS.includes(id) && id !== accessOf(r)) {
+    // Full control lets them type (run commands as you): their row opens on
+    // the rights, where the warning shows.
+    if (id === 'full') openId.value = r.id
+    ctx.preset(r.id, r.rights, id)
+  }
 }
+const fullText = computed(() => t('liveShare.people.fullRuns', '{{preset}} (runs commands as you)', { preset: presetLabel('full') }))
+const fullHint = computed(() => t('liveShare.invite.presetFullHint', 'Every right, typing included: they can run any command on this PC as you. Only for people you trust.'))
+const busyAccess = (r) => shownRights().some((x) => ctx.busy(`${r.id}:right:${x.id}`)) // i18n-ignore
 
 // --- Changes ---------------------------------------------------------------------
 const busyProject = (r) => (id) => ctx.busy(`${r.id}:project:${id}`) // i18n-ignore
@@ -247,47 +248,19 @@ async function refuse(g) {
 }
 
 const emptyText = computed(() => {
-  if (filterId.value === 'trusted') return t('liveShare.trusted.empty', 'You trust no one yet.')
-  if (!rows.value.length && sharing.value) return t('liveShare.people.empty', 'No one has joined yet. Send an invitation code: each person waits for your yes.')
-  return t('liveShare.people.noneHere', 'No one here.')
+  if (onlyProject.value && rows.value.length) return t('liveShare.people.noneProject', 'No one sees this project yet.')
+  if (sharing.value) return t('liveShare.people.empty', 'No one has joined yet. Send an invitation code: each person waits for your yes.')
+  return t('liveShare.people.noneYet', 'No one yet: once you share, the people you let in show here. People you trust stay here between shares.')
 })
-const emptyTest = computed(() => (filterId.value === 'trusted' ? 'ls-trusted-empty' : 'ls-people-empty'))
 </script>
 
 <template>
   <section ref="root" class="lsd-section" data-test="ls-people" :aria-label="t('liveShare.section.people', 'People')">
-    <div class="lpe-bar">
-      <div v-if="view !== 'grid'" class="lpe-filters" role="group" :aria-label="t('liveShare.people.filterLabel', 'Show')">
-        <button
-          v-for="f in filters"
-          :key="f.id"
-          type="button"
-          class="chip"
-          :class="{ on: filterId === f.id }"
-          :aria-pressed="filterId === f.id"
-          :data-test="'ls-people-filter-' + f.id"
-          @click="emit('update:filter', f.id)"
-        >
-          {{ f.label }}<span v-if="f.count" class="chip-count">{{ f.count }}</span>
-        </button>
-      </div>
-      <p v-else class="lpe-caption">{{ t('liveShare.access.caption', 'Who sees each shared project, and what they can do') }}</p>
-      <div class="lpe-seg" role="group" :aria-label="t('liveShare.people.viewLabel', 'View')">
-        <button type="button" class="lpe-seg-item" :class="{ on: view !== 'grid' }" :aria-pressed="view !== 'grid'" data-test="ls-people-view-list" @click="emit('update:view', 'list')">
-          <List :size="13" aria-hidden="true" /> {{ t('liveShare.peopleView.list2', 'List') }}
-        </button>
-        <button type="button" class="lpe-seg-item" :class="{ on: view === 'grid' }" :aria-pressed="view === 'grid'" data-test="ls-people-view-grid" @click="emit('update:view', 'grid')">
-          <Table2 :size="13" aria-hidden="true" /> {{ t('liveShare.peopleView.grid2', 'Grid') }}
-        </button>
-      </div>
-    </div>
-
-    <LsAccess v-if="view === 'grid'" :focus-project="focusProject" @open="openPerson" />
-
-    <template v-else>
-      <p v-if="!sharing" class="lpe-note" data-test="ls-section-off">{{ t('liveShare.section.offPeople', 'No one is here before you share. Trusted people are kept between shares.') }}</p>
-      <p v-if="filterId === 'trusted' && rows.some((r) => r.trusted)" class="lpe-note">{{ t('liveShare.trusted.intro', 'Trusted people get in without asking, with the projects and rights kept here (they see the ones you share at the time). Trust someone from People or when you let them in.') }}</p>
-      <p v-if="!shown.length" class="lsd-empty" :data-test="emptyTest">{{ emptyText }}</p>
+    <p v-if="onlyProject" class="lpe-only" data-test="ls-people-only">
+      <span>{{ onlyText }}</span>
+      <button type="button" class="ls-link" data-test="ls-people-all" @click="onlyProject = null"><X :size="11" aria-hidden="true" /> {{ t('liveShare.people.showAll', 'Show everyone') }}</button>
+    </p>
+    <p v-if="!shown.length" class="lsd-empty" data-test="ls-people-empty">{{ emptyText }}</p>
 
       <ul v-else class="sl-list lpe-list">
         <li v-for="r in shown" :key="r.kind + r.id" class="sl-item" :class="{ open: openId === r.id, waiting: r.kind === 'waiting' }" :data-test="testId(r)">
@@ -329,12 +302,25 @@ const emptyTest = computed(() => (filterId.value === 'trusted' ? 'ls-trusted-emp
                   <span v-for="p in projectsOf(r).shown" :key="p.id" class="tag tag-scope lpe-proj" :title="p.name">{{ p.name }}</span>
                   <span v-if="projectsOf(r).more.length" class="tag tag-scope" :title="projectsOf(r).more.map((p) => p.name).join(', ')">+{{ projectsOf(r).more.length }}</span>
                   <span v-if="!projectsOf(r).shown.length" class="tag tag-off">{{ t('liveShare.people.noProject', 'No project') }}</span>
-                  <RightsChip :rights="r.rights || {}" />
                 </span>
                 <svg class="sl-chevron" width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true">
                   <path d="M6 3.5l4.5 4.5L6 12.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
                 </svg>
               </button>
+              <ThemedSelect
+                class="ls-input lpe-access"
+                :class="{ danger: rightsSummary(r.rights).danger }"
+                :value="accessOf(r)"
+                :disabled="busyAccess(r)"
+                :title="rightsSummary(r.rights).title"
+                :aria-label="t('liveShare.people.accessOf', 'What {{name}} can do', { name: personName(r) })"
+                :data-test="'ls-person-access-' + r.id"
+                @change="pickAccess(r, $event)"
+              >
+                <option v-for="id in ACCESS" :key="id" :value="id" :title="id === 'full' ? fullHint : undefined">{{ id === 'full' ? fullText : presetLabel(id) }}</option>
+                <option v-if="accessOf(r) === 'custom'" value="custom" disabled>{{ rightsSummary(r.rights).text }}</option>
+                <option value="remove">{{ removeText(r) }}</option>
+              </ThemedSelect>
             </div>
 
             <div v-if="openId === r.id" :id="'lpe-details-' + r.id" class="sl-details lpe-details" role="region" :aria-label="personName(r)">
@@ -408,7 +394,6 @@ const emptyTest = computed(() => (filterId.value === 'trusted' ? 'ls-trusted-emp
           </template>
         </li>
       </ul>
-    </template>
   </section>
 </template>
 
@@ -504,5 +489,28 @@ const emptyTest = computed(() => (filterId.value === 'trusted' ? 'ls-trusted-emp
 }
 .lpe-actions {
   margin-top: 2px;
+}
+.lpe-only {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 0 6px;
+  color: var(--text);
+  font-size: 12px;
+}
+.lpe-only .ls-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+.lpe-access {
+  flex: none;
+  width: 150px;
+  height: 26px;
+  margin-right: 8px;
+  font-size: 11.5px;
+}
+.lpe-access.danger {
+  border-color: color-mix(in srgb, var(--danger) 55%, transparent);
 }
 </style>

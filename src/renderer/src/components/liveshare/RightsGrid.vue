@@ -1,7 +1,7 @@
 <script>
 import { Keyboard, SquareTerminal, SquareX, Gauge, FilePenLine, GitCommitHorizontal, ListTodo, Globe, Circle } from 'lucide-vue-next'
 // Each right's icon, also for the views that show rights as columns
-// (LsAccess.vue's grid).
+// (LsPeople.vue's rows).
 const ICONS = { type: Keyboard, open: SquareTerminal, close: SquareX, usage: Gauge, edit: FilePenLine, git: GitCommitHorizontal, tasks: ListTodo, pagesView: Globe }
 export const rightIcon = (id) => ICONS[id] || Circle
 </script>

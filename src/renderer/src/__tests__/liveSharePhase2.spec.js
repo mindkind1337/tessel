@@ -288,7 +288,7 @@ describe('the Live Share dialog: the setting and the recent guest actions', () =
   })
 
   it('turns the setting off and on through main, and lists what guests changed', async () => {
-    // The setting is in Settings, the recent actions in the overview.
+    // The setting is in Settings, the recent actions on the main page (Back).
     const w = mount(LiveShareDialog, { props: { open: true, initialSection: 'settings', projects: [{ id: 'ws-1', name: 'site' }], projectIds: ['ws-1'] }, attachTo: document.body })
     await flushPromises()
     const box = w.get('[data-test="ls-hide-ignored"]')
@@ -297,7 +297,7 @@ describe('the Live Share dialog: the setting and the recent guest actions', () =
     await flushPromises()
     expect(setSettings).toHaveBeenCalledWith({ hideIgnored: false })
     expect(w.get('[data-test="ls-hide-ignored"]').element.checked).toBe(false)
-    await w.get('[data-test="ls-section-overview"]').trigger('click')
+    await w.get('[data-test="ls-back"]').trigger('click')
     const items = w.findAll('.ls-recent-item')
     expect(items.map((i) => i.get('.ls-recent-text').text())).toEqual(['Ana saved CLAUDE.md', 'Ana committed “Fix”'])
     expect(w.get('[data-test="ls-recent-2"]').classes()).toContain('flagged')
@@ -319,11 +319,11 @@ describe('the Live Share dialog: the setting and the recent guest actions', () =
     w.unmount()
   })
 
-  it('says when no guest changed anything yet', async () => {
+  it('no guest action yet: no recent actions block', async () => {
     hostStatus.actions = []
     const w = mount(LiveShareDialog, { props: { open: true, projects: [{ id: 'ws-1', name: 'site' }], projectIds: ['ws-1'] }, attachTo: document.body })
     await flushPromises()
-    expect(w.find('[data-test="ls-recent-none"]').exists()).toBe(true)
+    expect(w.find('[data-test="ls-recent"]').exists()).toBe(false)
     w.unmount()
   })
 })

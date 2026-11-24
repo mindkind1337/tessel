@@ -78,7 +78,8 @@
       "sshTag": "SSH",
       "stoppedWhy": "Le partage s'est arrêté : {{error}}",
       "terminalsOnly": "Terminaux seulement",
-      "firstDone": "Terminé"
+      "firstDone": "Terminé",
+      "intro5": "Les invités se joignent depuis leur propre Tessel et voient en direct les projets que vous partagez. Chacun attend votre accord."
     },
     "join": {
       "intro": "Collez le code d'invitation que votre hôte vous a envoyé. Ses panneaux s'ouvrent ici, dans un projet Live Share.",
@@ -415,7 +416,16 @@
       "waitingTag": "En attente de votre réponse",
       "typingTag": "En train de taper",
       "noProject": "Aucun projet",
-      "noneHere": "Personne ici."
+      "noneHere": "Personne ici.",
+      "withAccess": "Personnes ayant accès",
+      "waitingShort": "{{count}} en attente",
+      "onlyProject": "Qui voit {{project}}",
+      "showAll": "Voir tout le monde",
+      "noneProject": "Personne ne voit encore ce projet.",
+      "noneYet": "Personne pour l'instant : une fois le partage lancé, les personnes que vous acceptez apparaissent ici. Les personnes de confiance restent d'un partage à l'autre.",
+      "removeAccess": "Retirer l'accès",
+      "accessOf": "Ce que {{name}} peut faire",
+      "fullRuns": "{{preset}} (exécute des commandes en votre nom)"
     },
     "section": {
       "access": "Accès",
@@ -649,6 +659,18 @@
     "peopleView": {
       "list2": "Liste",
       "grid2": "Grille"
-    }
+    },
+    "link": {
+      "title": "Invitation",
+      "people": "Les personnes invitées peuvent",
+      "access": "Ce que peuvent faire les personnes invitées",
+      "for": "Le code fonctionne",
+      "renew": "Prolonger…",
+      "yes": "Chaque personne attend votre accord",
+      "manage": "Options de l'invitation…",
+      "manageMore": "Invitations ({{count}} de plus)…"
+    },
+    "back": "Retour",
+    "done": "Terminé"
   }
 }

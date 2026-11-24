@@ -539,6 +539,12 @@ like VS Code Live Share:
 - **Share** (people icon in the toolbar): pick the project to share and send
   the invite code. Each guest waits until you click **Allow**; both of you see
   the same six-digit code, so you can check who it is.
+  The Share window is one page, like a document's Share dialog: the projects
+  shared, the invitation (its code, what people who join can do, how long it
+  works, Copy) and the people with access, each with one access menu (View
+  only, Collaborate, Full control, Remove access); a person's row opens on
+  their projects, rights and agents. Other invitations and Settings are pages
+  of their own.
 - Guests see that project's panes, splits and sizes, and its terminals and
   agents live, but not their history. Switching to another project does not
   show it to them.
