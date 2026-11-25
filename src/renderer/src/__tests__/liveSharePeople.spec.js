@@ -372,6 +372,44 @@ describe('Live Share: the access menu', () => {
     w.unmount()
   })
 
+  it('a person’s page shows the invitation to send them, and makes one of their own (one use, a day, never typing)', async () => {
+    const w = await openAt('people', host())
+    await expand(w, 'g1')
+    // The share's invitation, until they have their own.
+    expect(w.find('[data-test="ls-pp-code"]').attributes('title')).toBe(host().invites[0].code)
+    expect(w.find('[data-test="ls-pp-invite-hint"]').text()).toContain('Bob asks to come in and waits for your yes')
+    await w.find('[data-test="ls-pp-new-invite"]').trigger('click')
+    await flushPromises()
+    expect(api.createInvite).toHaveBeenCalledWith({ label: 'Bob', lifetime: 'day', maxUses: 1, rights: expect.objectContaining({ type: false }), projects: ['ws-1'], later: false })
+    // A trusted person keeps the projects of an invitation they use: the
+    // share's own invitation is never shown as theirs.
+    const ty = 't-' + 'b'.repeat(32)
+    await expand(w, ty)
+    expect(w.find('[data-test="ls-pp-code"]').exists()).toBe(false)
+    expect(w.find('[data-test="ls-pp-no-invite"]').text()).toBe('No invitation for Ty right now: make a new one.')
+    expect(w.find('[data-test="ls-pp-new-invite"]').text()).toBe('New invitation for Ty')
+    w.unmount()
+    // One in their name that gives only their projects is (the newest); one
+    // that gives more is not.
+    const more = invite({ id: 'iv-more000000', label: 'Ty', projects: ['ws-1', 'ws-2'], code: 'TS1.more', createdAt: 3 })
+    const old = invite({ id: 'iv-old0000000', label: 'Ty', projects: ['ws-1'], code: 'TS1.old', createdAt: 1 })
+    const fresh = invite({ id: 'iv-new0000000', label: 'Ty', projects: ['ws-1'], code: 'TS1.new', createdAt: 2 })
+    const t2 = await openAt('people', { ...host(), invites: [...host().invites, more, old, fresh] })
+    await expand(t2, ty)
+    expect(t2.find('[data-test="ls-pp-code"]').attributes('title')).toBe('TS1.new')
+    expect(t2.find('[data-test="ls-pp-invite-hint"]').text()).toContain('Ty gets in without asking')
+    await t2.find('[data-test="ls-pp-copy"]').trigger('click')
+    await flushPromises()
+    expect(window.shellApi.writeClipboard).toHaveBeenCalledWith('TS1.new')
+    t2.unmount()
+    // Not sharing: no code yet, and nothing to make.
+    const off = await openAt('trusted', { ...OFF_HOST, trusted: [trustedOne()] })
+    await expand(off, trustedOne().id)
+    expect(off.find('[data-test="ls-pp-no-invite"]').text()).toBe('The invitation code shows here once you share.')
+    expect(off.find('[data-test="ls-pp-new-invite"]').exists()).toBe(false)
+    off.unmount()
+  })
+
   it('the list says once how many people can run commands on this PC', async () => {
     const w = await openAt('people', host())
     expect(w.find('[data-test="ls-danger-summary"]').text()).toBe('1 person can run commands on this PC')

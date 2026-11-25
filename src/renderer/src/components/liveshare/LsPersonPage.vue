@@ -8,15 +8,18 @@
 // trusted person's changes are kept for next time. Typing (Full control, or
 // the Type tile) runs commands on this PC: asked first, here. Remove takes
 // a guest out (a trusted one stops being trusted too, unless you untick
-// it); Stop trusting is asked first.
+// it); Stop trusting is asked first. On top, the invitation to send them:
+// the code that lets them in (one made for them, else the one they came
+// with, else the share's), Copy, and a new one of their own (one use, a
+// day, their projects and rights, never typing: a code can be passed on).
 import { ref, computed, nextTick, inject, watch, onMounted } from 'vue'
-import { ShieldCheck, ShieldOff, UserX, Pencil, Plus } from 'lucide-vue-next'
+import { ShieldCheck, ShieldOff, UserX, Pencil, Plus, Copy, Check, MessageSquare } from 'lucide-vue-next'
 import ProjectChecks from './ProjectChecks.vue'
 import RightsGrid from './RightsGrid.vue'
 import LsAgents from './LsAgents.vue'
 import LsAvatars from './LsAvatars.vue'
 import LsProjectPicker from './LsProjectPicker.vue'
-import { personName } from '../../liveShareAccess'
+import { personName, invitesOf, inviteName, inviteExpiry, shortCode } from '../../liveShareAccess'
 import { peopleRows, trustIdOf } from '../../liveSharePeople'
 import { t } from '../../i18n'
 
@@ -37,6 +40,61 @@ watch(r, (row) => {
 const name = computed(() => (r.value ? personName(r.value) : ''))
 const focusIn = (selector) => nextTick(() => root.value?.querySelector(selector)?.focus())
 const key = (what) => `${props.personId}:${what}` // i18n-ignore
+
+// --- Their invitation --------------------------------------------------------
+const sharingNow = computed(() => !!(ctx.host.value && ctx.host.value.state === 'sharing'))
+const letsIn = (inv) => !!(inv && inv.code) && inv.state === 'live' && !inviteExpiry(inv, ctx.now.value).expired
+// The one made here, just now.
+const madeId = ref('')
+const invitation = computed(() => {
+  const row = r.value
+  if (!row) return null
+  // A trusted person keeps the projects of an invitation they use: only one
+  // that gives nothing more than theirs is shown as theirs (never the
+  // share's own, which may give every project).
+  const mine = new Set(row.projects || [])
+  const noMore = (i) => !row.trusted || (i.later !== true && (i.projects || []).every((id) => mine.has(id)))
+  // The newest first.
+  const usable = invitesOf(ctx.host.value)
+    .filter((i) => letsIn(i) && noMore(i))
+    .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))
+  const came = row.invite && row.invite.id
+  return usable.find((i) => i.id === madeId.value) || (row.name && usable.find((i) => (i.label || '') === row.name)) || (came && usable.find((i) => i.id === came)) || (row.trusted ? null : usable[0]) || null
+})
+const noInviteText = computed(() => t('liveShare.personInvite.none', 'No invitation for {{name}} right now: make a new one.', { name: name.value }))
+const inviteHint = computed(() => {
+  const inv = invitation.value
+  if (!inv) return ''
+  const vars = { name: name.value, invite: inviteName(inv), expiry: inviteExpiry(inv, ctx.now.value).text }
+  return r.value && r.value.trusted
+    ? t('liveShare.personInvite.hintTrusted', '{{invite}} · {{expiry}}. With this code, {{name}} gets in without asking.', vars)
+    : t('liveShare.personInvite.hint', '{{invite}} · {{expiry}}. With this code, {{name}} asks to come in and waits for your yes.', vars)
+})
+const newInviteText = computed(() => t('liveShare.personInvite.new', 'New invitation for {{name}}', { name: name.value }))
+const copied = ref('')
+let copiedTimer = null
+async function copyInvite(message) {
+  const inv = invitation.value
+  if (!inv) return
+  const text = message ? t('liveShare.invite.message', 'Join my Tessel Live Share: in Tessel, open Live Share, then Join, and paste this code: {{code}}', { code: inv.code }) : inv.code
+  if (!(await ctx.copy(text))) return
+  copied.value = message ? 'message' : 'code'
+  clearTimeout(copiedTimer)
+  copiedTimer = setTimeout(() => (copied.value = ''), 1500)
+}
+// One of their own: one use, a day, the shared projects they see and their
+// rights without typing (whoever holds a code could use it).
+async function newInvite() {
+  const row = r.value
+  if (!row) return
+  const shared = new Set(ctx.shared.value.map((p) => p.id))
+  const spec = { label: row.name || '', lifetime: 'day', maxUses: 1, rights: { ...(row.rights || {}), type: false }, projects: (row.projects || []).filter((id) => shared.has(id)), later: false }
+  const res = await ctx.run(key('invite'), () => ctx.api.createInvite(spec), t('liveShare.personInvite.failed', 'The invitation could not be made.'))
+  if (!res || !res.ok || !res.invite) return
+  madeId.value = res.invite.id
+  ctx.notice(t('liveShare.personInvite.made', 'New invitation for {{name}}: one use, works for a day. Copy its code and send it.', { name: name.value }))
+  focusIn('[data-test="ls-pp-copy"]')
+}
 
 // --- Projects ----------------------------------------------------------------
 // The projects shared now, and for a trusted person the ones kept for them.
@@ -202,6 +260,30 @@ const untrustText = computed(() => t('liveShare.trusted.untrustText2', 'Stop tru
       </div>
     </div>
 
+    <div class="lpp-block" data-test="ls-pp-invite">
+      <div class="lpp-title">{{ t('liveShare.link.title', 'Invitation') }}</div>
+      <template v-if="invitation">
+        <div class="lpp-code-row">
+          <code class="lpp-code" :title="invitation.code" data-test="ls-pp-code">{{ shortCode(invitation.code) }}</code>
+          <button type="button" class="confirm-btn ls-small primary" data-test="ls-pp-copy" @click="copyInvite(false)">
+            <Check v-if="copied === 'code'" :size="13" aria-hidden="true" />
+            <Copy v-else :size="13" aria-hidden="true" />
+            {{ copied === 'code' ? t('liveShare.share.copied', 'Copied') : t('liveShare.invite.copyCode', 'Copy code') }}
+          </button>
+          <button type="button" class="confirm-btn ls-small" :title="t('liveShare.invite.copyMessageTitle', 'The code with a line saying how to join')" data-test="ls-pp-copy-message" @click="copyInvite(true)">
+            <Check v-if="copied === 'message'" :size="13" aria-hidden="true" />
+            <MessageSquare v-else :size="13" aria-hidden="true" />
+            {{ t('liveShare.invite.copyMessage', 'Copy message') }}
+          </button>
+        </div>
+        <p class="lsd-hint" data-test="ls-pp-invite-hint">{{ inviteHint }}</p>
+      </template>
+      <p v-else class="lsd-hint" data-test="ls-pp-no-invite">
+        {{ sharingNow ? noInviteText : t('liveShare.personInvite.notSharing', 'The invitation code shows here once you share.') }}
+      </p>
+      <button v-if="sharingNow" type="button" class="lpp-add" :disabled="ctx.busy(key('invite'))" data-test="ls-pp-new-invite" @click="newInvite"><Plus :size="12" aria-hidden="true" /> {{ newInviteText }}</button>
+    </div>
+
     <div class="lpp-block">
       <div class="lpp-title">{{ r.kind === 'trusted' ? t('liveShare.trusted.projects', 'Projects (seen when shared)') : t('liveShare.people.sees', 'Sees') }}</div>
       <ProjectChecks
@@ -335,7 +417,34 @@ const untrustText = computed(() => t('liveShare.trusted.untrustText2', 'Stop tru
   font-size: 12px;
   cursor: pointer;
 }
-.lpp-add:hover {
+.lpp-add:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+.lpp-code-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.lpp-code {
+  flex: 1 1 160px;
+  min-width: 0;
+  height: 28px;
+  box-sizing: border-box;
+  padding: 0 10px;
+  overflow: hidden;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: var(--bg, var(--surface));
+  color: var(--text-strong);
+  font-size: 12px;
+  line-height: 26px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  user-select: all;
+}
+.lpp-add:hover:not(:disabled) {
   text-decoration: underline;
 }
 .lpp-actions {

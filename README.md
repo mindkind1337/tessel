@@ -548,7 +548,9 @@ like VS Code Live Share:
   host), the people with access, each with one access menu (View only,
   Collaborate, Full control, Remove access), and the invitation (its code,
   Copy, what people who join can do, how long it works). A click on a person
-  opens their page: projects, rights, agents, Trust. Giving **Full control**
+  opens their page: the invitation code to send them (**New invitation for…**
+  makes one of their own: one use, a day), projects, rights, agents, Trust.
+  Giving **Full control**
   is always asked first, since it lets that person run commands on your PC.
   Other invitations and Settings (the gear) are pages of their own.
 - Guests see that project's panes, splits and sizes, and its terminals and

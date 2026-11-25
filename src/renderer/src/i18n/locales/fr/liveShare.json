@@ -681,6 +681,15 @@
       "raiseText": "Avec Contrôle total, les personnes que vous laissez entrer avec cette invitation peuvent exécuter n'importe quelle commande sur ce PC en votre nom.",
       "typesNote": "Cette invitation donne le Contrôle total : les personnes que vous laissez entrer avec elle peuvent exécuter des commandes sur ce PC."
     },
+    "personInvite": {
+      "hintTrusted": "{{invite}} · {{expiry}}. Avec ce code, {{name}} entre sans demander.",
+      "hint": "{{invite}} · {{expiry}}. Avec ce code, {{name}} demande à entrer et attend votre accord.",
+      "new": "Nouvelle invitation pour {{name}}",
+      "failed": "L'invitation n'a pas pu être créée.",
+      "made": "Nouvelle invitation pour {{name}} : un seul usage, valable un jour. Copiez son code et envoyez-le.",
+      "none": "Aucune invitation pour {{name}} en ce moment : créez-en une nouvelle.",
+      "notSharing": "Le code d'invitation s'affiche ici une fois le partage démarré."
+    },
     "back": "Retour",
     "done": "Terminé",
     "projects": {
