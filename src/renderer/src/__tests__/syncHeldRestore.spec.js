@@ -44,6 +44,8 @@ function load({ held = false, running = {} } = {}) {
     launchIsYolo: () => true,
     modelsFor: () => null,
     paneModelsFor: () => null,
+    hostModelsFor: () => null,
+    withoutMissingModel: (v) => v,
     sentModelId: (m, id) => id,
     hostAccountChoice: () => undefined,
     defaultHostAccount: () => undefined,

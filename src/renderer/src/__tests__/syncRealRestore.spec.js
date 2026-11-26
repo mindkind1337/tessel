@@ -117,6 +117,8 @@ function makeWindow({ running = [], settings = {}, layout = null, held = false }
     newId: (prefix) => `${prefix}-${++counter}`,
     modelsFor: () => null,
     paneModelsFor: () => null,
+    hostModelsFor: () => null,
+    withoutMissingModel: (v) => v,
     sentModelId: (m, id) => id,
     hostShared: () => true,
     hostAccountChoice: () => undefined,

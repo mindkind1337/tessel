@@ -73,6 +73,8 @@ function load({ shared = true, status = null, tree = null } = {}) {
     launchSessionValues: () => null,
     modelsFor: () => null,
     paneModelsFor: () => null,
+    hostModelsFor: () => null,
+    withoutMissingModel: (v) => v,
     sentModelId: (m, id) => id,
     effectiveAgent: (a) => ({ command: a.command, args: '', env: {} }),
     launchSignature: () => 'sig',

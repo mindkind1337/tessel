@@ -255,6 +255,8 @@ const api = {
   agentModelLists: () => ipcRenderer.invoke('agents:modelLists'),
   agentModelListChanged: (agent) => ipcRenderer.invoke('agents:modelListChanged', String(agent || '')),
   probeAgentModels: (query) => ipcRenderer.invoke('agents:probeModels', query),
+  hostAgentModelLists: () => ipcRenderer.invoke('agents:hostModelLists'),
+  refreshHostAgentModels: (query) => ipcRenderer.invoke('agents:refreshHostModels', query),
   // { paneId, sessionId, text } -> { ok } | { ok: false, error }
   agentInbox: (query) => ipcRenderer.invoke('agents:inbox', query),
   onAgentModelChanged: (cb) => onShared('agents:modelChanged', cb),

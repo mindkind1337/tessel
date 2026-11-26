@@ -41,7 +41,7 @@ import SshPasswordDialog from './components/remote/SshPasswordDialog.vue'
 import { settings, loadSettings, DEFAULT_SETTINGS } from './settings'
 import { effectiveAgent, agentEnabled, launchSignature, launchIsYolo, launchSessionValues, launchPermissions, sameFolder } from '../../shared/agentPrefs'
 import { validPaneSessionOptions } from '../../shared/agentSessionOptions'
-import { loadModelLists, modelsFor, paneModelsFor, sentModelId, refreshModels, canProbeModels } from './agentModels'
+import { loadModelLists, modelsFor, paneModelsFor, hostModelsFor, withoutMissingModel, sentModelId, refreshModels, canProbeModels } from './agentModels'
 import { THEMES } from './themes'
 import McpDialog from './components/McpDialog.vue'
 import SkillsDialog from './components/SkillsDialog.vue'
@@ -1615,9 +1615,9 @@ async function createLeaf(shellId, agent = null, cwd = null, worktree = null, op
           ...(typeof opts.launchOptions.effort === 'string' && opts.launchOptions.effort ? { effort: opts.launchOptions.effort } : {})
         })
       : null
-  const paneChoice = agent ? validPaneSessionOptions(opts.sessionOptions) || workerChoice : null
-  const sessionValues = agent ? launchSessionValues(paneChoice, settings.agentSessionOptions, agent.id) : null
-  const agentModels = agent ? paneModelsFor(agent.id, !!opts.remoteHostId) : null
+  let paneChoice = agent ? validPaneSessionOptions(opts.sessionOptions) || workerChoice : null
+  let sessionValues = agent ? launchSessionValues(paneChoice, settings.agentSessionOptions, agent.id) : null
+  let agentModels = agent ? paneModelsFor(agent.id, !!opts.remoteHostId) : null
   // Ask first or Yolo: the pane's own choice (pane menu > Restart in Yolo),
   // else Yolo in a Yolo folder, else Settings > Agents.
   const panePermissions = opts.permissions === 'manual' || opts.permissions === 'yolo' ? opts.permissions : null
@@ -1630,6 +1630,17 @@ async function createLeaf(shellId, agent = null, cwd = null, worktree = null, op
   const chosenHostAccount = onHostAgent ? hostAccountChoice(opts.hostAccount !== undefined ? opts.hostAccount : opts.accountId) : undefined
   let hostAccount = chosenHostAccount === undefined && onHostAgent ? defaultHostAccount(opts.remoteHostId, agent.id) : chosenHostAccount || undefined
   const hostAccountFromDefault = chosenHostAccount === undefined && !!hostAccount
+  // On an SSH host whose own list is known (Codex): a model its agent there
+  // does not list (an older version, another account) is not asked for, it
+  // would refuse every message. Not the pane's own choice, not the default
+  // of Settings, not a worker's: the host's own default runs.
+  const hostModels = agent && opts.remoteHostId ? hostModelsFor(opts.remoteHostId, agent.id, hostAccount) : null
+  const launchOptions = hostModels ? withoutMissingModel(opts.launchOptions, hostModels) : opts.launchOptions
+  if (hostModels) {
+    agentModels = hostModels
+    paneChoice = validPaneSessionOptions(withoutMissingModel(paneChoice, hostModels))
+    sessionValues = withoutMissingModel(launchSessionValues(paneChoice, settings.agentSessionOptions, agent.id), hostModels)
+  }
   // A pane on an SSH host reopened when Tessel starts, its terminal gone (the
   // terminal host restarted): it does not connect by itself (no password
   // question nobody asked for). It keeps its place, name and conversation and
@@ -1951,7 +1962,7 @@ async function createLeaf(shellId, agent = null, cwd = null, worktree = null, op
     // A worker's launch options (model, effort, its first prompt) only on a
     // fresh start, through the one helper (src/shared/orchestration.js).
     const ownArgs = typeof (settings.agentPrefs[agent.id] || {}).args === 'string' ? settings.agentPrefs[agent.id].args : ''
-    const workerOpts = opts.launchOptions && start.resumed ? { model: opts.launchOptions.model, effort: opts.launchOptions.effort } : opts.launchOptions
+    const workerOpts = launchOptions && start.resumed ? { model: launchOptions.model, effort: launchOptions.effort } : launchOptions
     const workerArgs = workerOpts ? workerLaunchArgs(agent.id, workerOpts, { ownArgs, models: agentModels }) : ''
     const extra = opts.remoteHostId ? quoteGlobArgs(workerArgs) : workerArgs
     if (opts.launchOptions) leaf.launchOptions = { model: opts.launchOptions.model || null, effort: opts.launchOptions.effort || null }

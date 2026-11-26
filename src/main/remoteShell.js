@@ -256,6 +256,10 @@ export const FUNCTIONS = new Set([
   // whose first line names it), written in the last two days: their names,
   // sizes and change times, never their contents (remoteAgentChildren.js).
   '__t_cxkids',
+  // Codex's model catalog there (models_cache.json in its Codex folder: the
+  // host's sign-in, or one account folder Tessel made): what that Codex was
+  // told it can run, read only, at most 4 MB (hostModelList.js).
+  '__t_cxmodels',
   // Which account each agent there is signed in with (identity fields only,
   // never a token), and the folders Tessel makes there for one account each
   // (remoteAgent/remoteAccounts.js).
@@ -1202,6 +1206,16 @@ __t_sread() {
   __t_subdir "$1" || return 91
   [ -f "$__SD/$2" ] && [ ! -L "$__SD/$2" ] || return 91
   __t_twin "$__SD/$2" "$3" "$4"
+}
+__t_cxmodels() {
+  case $1 in
+    -) __cd="\${CODEX_HOME:-$HOME/.codex}" ;;
+    ''|*[!0-9a-z]*) return 90 ;;
+    *) __cd="$HOME/.tessel-server/accounts/codex/$1" ;;
+  esac
+  __f="\${__cd%/}/models_cache.json"
+  [ -f "$__f" ] && [ ! -L "$__f" ] || return 0
+  head -c 4194304 "$__f"
 }
 __t_home() { printf '%s\\n' "$HOME"; }
 __t_skills() {

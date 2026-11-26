@@ -163,6 +163,11 @@ working on Tessel itself (see [Build from source](#build-from-source)).
 - Their conversations, history, model, cost and skills are read on the host;
   file links open the host's files (those of the project; a picture the agent rendered in its own scratch
   folder, `/tmp/claude-…/scratchpad`, opens in the image viewer too).
+- **The host's own models** (Codex): a pane on a host lists the models the
+  Codex installed there can run (its version, the account it runs on), not
+  this computer's. A model the host's Codex does not have is not asked for
+  when the pane starts: the host's default model runs instead of every
+  message being refused.
 - **tessel-host on the server** (like VS Code's server; experimental, off by
   default: per host, Advanced → *Tessel daemon on the server*): at the next
   connection to that host, Tessel looks for its own small daemon there and puts

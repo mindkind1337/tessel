@@ -80,6 +80,8 @@ function load({ username = 'root', status = { hostId: HOST, claude: '/usr/local/
     launchSessionValues: () => null,
     modelsFor: () => null,
     paneModelsFor: () => null,
+    hostModelsFor: () => null,
+    withoutMissingModel: (v) => v,
     sentModelId: (m, id) => id,
     effectiveAgent,
     launchSignature,

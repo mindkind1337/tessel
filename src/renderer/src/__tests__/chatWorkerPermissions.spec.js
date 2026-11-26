@@ -37,6 +37,8 @@ function load(settingsMode, open = vi.fn(async () => ({ ok: true, sessionId: 's'
     agentById: (id) => ({ id }),
     modelsFor: () => null,
     paneModelsFor: () => null,
+    hostModelsFor: () => null,
+    withoutMissingModel: (v) => v,
     sentModelId: (m, id) => id,
     scheduleSave: () => {},
     window: { shellApi: { chat: { open, setOption } } }

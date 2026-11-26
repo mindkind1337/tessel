@@ -2841,6 +2841,24 @@ ${root}`, () => gitWorktreesNow(root))
     return { ok: true, files: parseSubagentListing(Buffer.isBuffer(res.out) ? res.out.toString('utf8') : String(res.out || ''), n) }
   }
 
+  // Codex's model catalog on this host (__t_cxmodels: the models_cache.json
+  // its own CLI keeps, of the host's sign-in or of one account folder): what
+  // that Codex, at its version and on that account, was told it can run.
+  // Read only, nothing started. Never a sign-in.
+  // -> { ok: true, text } ('' when it has none) | { ok: false, notConnected?, error? }
+  async function readCodexModels(hostId, { account = null } = {}) {
+    if (!hostIdOk(hostId)) return { ok: false, error: 'invalid' }
+    if (account !== null && !(typeof account === 'string' && /^[0-9a-z]{1,40}$/.test(account))) return { ok: false, error: 'invalid' }
+    if (!connectedQuietly(hostId)) return { ok: false, notConnected: true }
+    const entry = sessions.get(hostId)
+    const open = !!(entry && !entry.closed && entry.session && entry.session.state === 'ready')
+    const res = await call(hostId, '__t_cxmodels', [account || '-'], { cap: 4 * 1024 * 1024 + 1024, timeoutMs: 30_000, op: 'read', background: true, ...(open ? { ifOpen: true } : {}) })
+    if (!res || res.skipped) return { ok: false, notConnected: true }
+    if (res.error) return { ok: false, error: res.error }
+    if (res.rc !== 0 || res.truncated) return { ok: false, error: `rc ${res.rc}` } // i18n-ignore
+    return { ok: true, text: Buffer.isBuffer(res.out) ? res.out.toString('utf8') : String(res.out || '') }
+  }
+
   // The signed-in user's home folder on this host ($HOME), kept once known
   // (it does not change while Tessel runs). Never a sign-in.
   // -> { ok: true, home } | { ok: false, notConnected?, error }
@@ -3045,6 +3063,7 @@ ${q && q.root}`, () => (q && q.background === true ? scmBg : scm).scmStatus(q)),
     listSubagentFiles,
     readSubagentMetas,
     listCodexChildren,
+    readCodexModels,
     hostHome,
     listAgentSkills,
     accountCall,

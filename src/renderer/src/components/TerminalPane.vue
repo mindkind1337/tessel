@@ -72,7 +72,7 @@ import { antigravityListed, antigravityModelOnScreen } from '../../../shared/ant
 import { codexModelOnScreen } from '../../../shared/codexScreen'
 import { paneModels, paneModelIds } from '../paneModels'
 import { savedPaneModel, paneModelToSave, samePaneModel } from '../paneLastModel'
-import { modelsFor, paneModelsFor, sentModelId, refreshIfStale } from '../agentModels'
+import { modelsFor, paneModelsFor, hostModelsFor, withoutMissingModel, sentModelId, refreshIfStale, refreshHostModels } from '../agentModels'
 import { afterStartup, isStartupFinished } from '../startupIdle'
 import { CLAUDE_PRICING } from '../../../shared/claudePricing'
 import { modelChoiceLabel, sessionPillLabel } from '../sessionOptionLabels'
@@ -290,6 +290,16 @@ watch(
   () => (props.node.kind === 'agent' ? props.node.agentId : null),
   (agentId) => {
     if (agentId) afterStartup(() => refreshIfStale(agentId))
+  },
+  { immediate: true }
+)
+// On an SSH host: the list its own agent keeps there (Codex: another version,
+// another account than this computer's), read once the pane is connected and
+// each time it starts again (agentModels.js: at most every ten minutes).
+watch(
+  () => (props.node.kind === 'agent' && props.node.remoteHostId && !props.node.notConnected ? [props.node.remoteHostId, props.node.agentId, props.node.hostAccount, props.node.launchedAt] : null),
+  (on) => {
+    if (on) afterStartup(() => refreshHostModels(on[0], on[1], typeof on[2] === 'string' ? on[2] : null))
   },
   { immediate: true }
 )
@@ -637,7 +647,9 @@ function modelOnScreen() {
 const modelMenu = reactive({ visible: false, x: 0, y: 0, pending: false })
 const modelMenuEl = ref(null)
 const hasModelChoice = computed(() => isAgent.value && !props.node.detected && !!getAgentSessionOptionCatalog(props.node.agentId))
-const paneModelList = computed(() => (hasModelChoice.value ? paneModelsFor(props.node.agentId, !!props.node.remoteHostId) : []))
+const paneModelList = computed(() =>
+  hasModelChoice.value ? paneModelsFor(props.node.agentId, !!props.node.remoteHostId, props.node.remoteHostId ? { hostId: props.node.remoteHostId, account: props.node.hostAccount } : null) : []
+)
 // The listed model the agent runs with (what it shows, else the list's
 // default): its effort can be chosen without picking a model first.
 // The listed row a shown model is (its id), or null.
@@ -1270,9 +1282,14 @@ const sleptAt = computed(() =>
 // restart offered when its settings changed since (Yolo on/off, arguments,
 // command, variables). Agents started by hand in a shell are not known.
 // The model chosen for it (its own, else Settings > Agents) counts too.
+// On an SSH host whose own list is known: as its start does (App.vue
+// createLeaf), without a model the host's agent does not have.
 function signatureNow(n, choice = n.sessionOptions) {
-  const values = launchSessionValues(choice, settings.agentSessionOptions, n.agentId)
-  return launchSignature(effectiveAgent({ id: n.agentId, command: n.agentCommand }, settings.agentPrefs, ctx.permissionsOf ? ctx.permissionsOf(n) : settings.agentPermissions, values, paneModelsFor(n.agentId, !!n.remoteHostId)))
+  const onHost = n.remoteHostId ? hostModelsFor(n.remoteHostId, n.agentId, n.hostAccount) : null
+  const own = onHost ? withoutMissingModel(choice, onHost) : choice
+  const all = launchSessionValues(own, settings.agentSessionOptions, n.agentId)
+  const values = onHost ? withoutMissingModel(all, onHost) : all
+  return launchSignature(effectiveAgent({ id: n.agentId, command: n.agentCommand }, settings.agentPrefs, ctx.permissionsOf ? ctx.permissionsOf(n) : settings.agentPermissions, values, onHost || paneModelsFor(n.agentId, !!n.remoteHostId)))
 }
 const launchStale = computed(() => {
   const n = props.node

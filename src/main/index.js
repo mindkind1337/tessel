@@ -15,6 +15,7 @@ import { trimEvents, isEvent, isActivityText, mergeSavedActivity } from '../shar
 import { createActivityArchive } from './activityArchive'
 import { agentModel, agentModelLive, watchModelFiles } from './agentModel'
 import { createRemoteModelReader, remoteAgentModel } from './remoteAgentModel'
+import { createHostModelLister } from './hostModelList'
 import { createRemoteChildren } from './remoteAgentChildren'
 import { createCodexAccounts } from './codexAccounts'
 import { createClaudeAccounts } from './claudeAccounts'
@@ -2035,6 +2036,27 @@ ipcMain.handle('agents:modelListChanged', (_evt, agent) => {
     return typeof agent === 'string' && getModelLister().changed(agent)
   } catch {
     return false
+  }
+})
+// The models an agent on an SSH host can run (Codex: its own catalog there,
+// hostModelList.js): the kept lists, and one read again when a pane asks.
+let hostModelLister = null
+const getHostModelLister = () =>
+  (hostModelLister ||= createHostModelLister(app.getPath('userData'), { read: (hostId, q) => (remoteHosts.get(hostId) ? remoteFs.readCodexModels(hostId, q) : { ok: false }) }))
+ipcMain.handle('agents:hostModelLists', () => {
+  try {
+    return getHostModelLister().list()
+  } catch {
+    return {}
+  }
+})
+ipcMain.handle('agents:refreshHostModels', async (_evt, q = {}) => {
+  try {
+    const res = await getHostModelLister().refresh(q)
+    if (res.ok) log.info('models', `model list of ${res.key}: ${res.models.length} models`)
+    return res
+  } catch {
+    return { ok: false, reason: 'failed' }
   }
 })
 ipcMain.handle('agents:probeModels', async (_evt, q = {}) => {
